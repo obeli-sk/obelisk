@@ -12,13 +12,15 @@ use crate::components::execution_detail::timed_out::IntermittentlyTimedOutEvent;
 use crate::components::execution_detail::unlocked::UnlockedEvent;
 use crate::components::execution_status::ExecutionStatus;
 use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
-use crate::grpc::grpc_client::{self, execution_event};
+use crate::grpc::grpc_client::{self, execution_event, ExecutionEvent};
 use assert_matches::assert_matches;
 use chrono::DateTime;
 use log::debug;
 use std::ops::Deref;
 use yew::prelude::*;
 use yew_router::prelude::Link;
+
+const PAGE: u32 = 20;
 
 #[derive(Properties, PartialEq)]
 pub struct ExecutionDetailPageProps {
@@ -28,10 +30,12 @@ pub struct ExecutionDetailPageProps {
 pub fn execution_detail_page(
     ExecutionDetailPageProps { execution_id }: &ExecutionDetailPageProps,
 ) -> Html {
-    let events_state = use_state(|| None);
-    use_effect_with(execution_id.clone(), {
+    let version_from_state = use_state(|| 0);
+    let events_state = use_state(|| None::<Vec<ExecutionEvent>>);
+    use_effect_with((execution_id.clone(), version_from_state.clone()), {
         let events_state = events_state.clone();
-        move |execution_id| {
+        move |(execution_id, version_from_state)| {
+            let version_from_state = version_from_state.clone();
             let execution_id = execution_id.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let base_url = "/api";
@@ -42,15 +46,23 @@ pub fn execution_detail_page(
                 let events = execution_client
                     .list_execution_events(grpc_client::ListExecutionEventsRequest {
                         execution_id: Some(execution_id.clone()),
-                        version_from: 0,
-                        length: 20,
+                        version_from: *version_from_state.deref(),
+                        length: PAGE,
                     })
                     .await
                     .unwrap()
                     .into_inner()
                     .events;
                 debug!("Got {} events", events.len());
-                events_state.set(Some(events));
+                let all_events = if let Some(old) = events_state.deref() {
+                    let mut all_events = Vec::with_capacity(old.len() + events.len());
+                    all_events.extend_from_slice(old);
+                    all_events.extend(events);
+                    all_events
+                } else {
+                    events
+                };
+                events_state.set(Some(all_events));
             })
         }
     });
@@ -71,116 +83,126 @@ pub fn execution_detail_page(
         })
         .collect();
 
-    let details = if let Some(events) = events_state.deref() {
-        let execution_scheduled_at = {
-            let create_event = events
-                .first()
-                .expect("not found is sent as an error")
-                .event
-                .as_ref()
-                .expect("`event` is sent by the server");
-            let create_event = assert_matches!(
-                create_event,
-                grpc_client::execution_event::Event::Created(created) => created
-            );
+    let details = events_state.deref().as_deref();
+    let details_html = details.map(render_execution_details);
 
-            DateTime::from(
-                create_event
-                    .scheduled_at
-                    .expect("`scheduled_at` is sent by the server"),
-            )
-        };
-        let rows: Vec<_> = events
-            .iter()
-            .map(|event| {
-                let detail = match event.event.as_ref().expect("event is sent by the server") {
-                    execution_event::Event::Created(created) => {
-                        html! {
-                            <CreatedEvent created={created.clone()} />
-                        }
-                    }
-                    execution_event::Event::Locked(locked) => html! {
-                        <LockedEvent locked={locked.clone()} />
-                    },
-                    execution_event::Event::Unlocked(event) => html! {
-                        <UnlockedEvent event={*event}/>
-                    },
-                    execution_event::Event::Failed(event) => html! {
-                        <IntermittentlyFailedEvent event={event.clone()} />
-                    },
-                    execution_event::Event::TimedOut(event) => html! {
-                        <IntermittentlyTimedOutEvent event={*event} />
-                    },
-                    execution_event::Event::Finished(event) => html! {
-                        <FinishedEvent event={event.clone()} />
-                    },
-                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                        event: Some(execution_event::history_event::Event::Schedule(event)),
-                    }) => html! {
-                        <HistoryScheduleEvent event={event.clone()} />
-                    },
-                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                        event: Some(execution_event::history_event::Event::JoinSetCreated(event)),
-                    }) => html! {
-                        <HistoryJoinSetCreatedEvent event={event.clone()} />
-                    },
-                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                        event: Some(execution_event::history_event::Event::JoinSetRequest(event)),
-                    }) => html! {
-                        <HistoryJoinSetRequestEvent event={event.clone()} />
-                    },
-                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                        event: Some(execution_event::history_event::Event::JoinNext(event)),
-                    }) => html! {
-                        <HistoryJoinNextEvent event={event.clone()} />
-                    },
-                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                        event: Some(execution_event::history_event::Event::Persist(event)),
-                    }) => html! {
-                        <HistoryPersistEvent event={event.clone()} />
-                    },
-
-                    other => html! { {format!("unknown variant {other:?}")}},
-                };
-                let created_at =
-                    DateTime::from(event.created_at.expect("`created_at` sent by the server"));
-                let since_scheduled = (created_at - execution_scheduled_at)
-                    .to_std()
-                    .ok()
-                    .unwrap_or_default();
-                html! { <tr>
-                    <td>{event.version}</td>
-                        <td>{created_at.to_string()}</td>
-                    <td>
-                        if !since_scheduled.is_zero() {
-                            {format!("{since_scheduled:?}")}
-                        }
-                    </td>
-                    <td>{detail}</td>
-                </tr>}
-            })
-            .collect();
-        html! {
-            <table>
-            <tr>
-                <th>{"Version"}</th>
-                <th>{"Timestamp"}</th>
-                <th>{"Since scheduled"}</th>
-                <th>{"Detail"}</th>
-            </tr>
-            {rows}
-            </table>
-        }
-    } else {
-        html! {
-            <p>{"Loading"}</p>
-        }
-    };
+    let load_more_callback = Callback::from(move |_| {
+        version_from_state.set(*version_from_state + PAGE);
+    });
 
     html! {
         <>
         <h3>{ execution_parts }</h3>
         <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
-        {details}
+        if let Some(details_html) = details_html {
+            {details_html}
+            if !matches!(details.and_then(|d| d.last()), Some(ExecutionEvent{event: Some(execution_event::Event::Finished(_)),..})) {
+                <button onclick={load_more_callback} >{"Load more"} </button>
+            }
+        } else {
+            <p>{"Loading details..."}</p>
+        }
     </>}
+}
+
+fn render_execution_details(events: &[ExecutionEvent]) -> Html {
+    let execution_scheduled_at = {
+        let create_event = events
+            .first()
+            .expect("not found is sent as an error")
+            .event
+            .as_ref()
+            .expect("`event` is sent by the server");
+        let create_event = assert_matches!(
+            create_event,
+            grpc_client::execution_event::Event::Created(created) => created
+        );
+
+        DateTime::from(
+            create_event
+                .scheduled_at
+                .expect("`scheduled_at` is sent by the server"),
+        )
+    };
+    let rows: Vec<_> = events
+        .iter()
+        .map(|event| {
+            let detail = match event.event.as_ref().expect("event is sent by the server") {
+                execution_event::Event::Created(created) => {
+                    html! {
+                        <CreatedEvent created={created.clone()} />
+                    }
+                }
+                execution_event::Event::Locked(locked) => html! {
+                    <LockedEvent locked={locked.clone()} />
+                },
+                execution_event::Event::Unlocked(event) => html! {
+                    <UnlockedEvent event={*event}/>
+                },
+                execution_event::Event::Failed(event) => html! {
+                    <IntermittentlyFailedEvent event={event.clone()} />
+                },
+                execution_event::Event::TimedOut(event) => html! {
+                    <IntermittentlyTimedOutEvent event={*event} />
+                },
+                execution_event::Event::Finished(event) => html! {
+                    <FinishedEvent event={event.clone()} />
+                },
+                execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                    event: Some(execution_event::history_event::Event::Schedule(event)),
+                }) => html! {
+                    <HistoryScheduleEvent event={event.clone()} />
+                },
+                execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                    event: Some(execution_event::history_event::Event::JoinSetCreated(event)),
+                }) => html! {
+                    <HistoryJoinSetCreatedEvent event={event.clone()} />
+                },
+                execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                    event: Some(execution_event::history_event::Event::JoinSetRequest(event)),
+                }) => html! {
+                    <HistoryJoinSetRequestEvent event={event.clone()} />
+                },
+                execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                    event: Some(execution_event::history_event::Event::JoinNext(event)),
+                }) => html! {
+                    <HistoryJoinNextEvent event={event.clone()} />
+                },
+                execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                    event: Some(execution_event::history_event::Event::Persist(event)),
+                }) => html! {
+                    <HistoryPersistEvent event={event.clone()} />
+                },
+
+                other => html! { {format!("unknown variant {other:?}")}},
+            };
+            let created_at =
+                DateTime::from(event.created_at.expect("`created_at` sent by the server"));
+            let since_scheduled = (created_at - execution_scheduled_at)
+                .to_std()
+                .ok()
+                .unwrap_or_default();
+            html! { <tr>
+                <td>{event.version}</td>
+                    <td>{created_at.to_string()}</td>
+                <td>
+                    if !since_scheduled.is_zero() {
+                        {format!("{since_scheduled:?}")}
+                    }
+                </td>
+                <td>{detail}</td>
+            </tr>}
+        })
+        .collect();
+    html! {
+        <table>
+        <tr>
+            <th>{"Version"}</th>
+            <th>{"Timestamp"}</th>
+            <th>{"Since scheduled"}</th>
+            <th>{"Detail"}</th>
+        </tr>
+        {rows}
+        </table>
+    }
 }
