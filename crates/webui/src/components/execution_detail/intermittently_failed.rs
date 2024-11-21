@@ -7,22 +7,22 @@ use yewprint::{
 };
 
 #[derive(Properties, PartialEq, Clone)]
-pub struct LockedEventProps {
-    pub locked: grpc_client::execution_event::Locked,
+pub struct IntermittentlyFailedEventProps {
+    pub event: grpc_client::execution_event::IntermittentlyFailed,
 }
 
-impl LockedEventProps {
+impl IntermittentlyFailedEventProps {
     fn construct_tree(&self) -> TreeData<u32> {
-        let locked = &self.locked;
         let mut tree = TreeBuilder::new().build();
         let root_id = tree
             .insert(Node::new(NodeData::default()), InsertBehavior::AsRoot)
             .unwrap();
-        let event_type = tree
+
+        let failed_node = tree
             .insert(
                 Node::new(NodeData {
-                    icon: Icon::Lock,
-                    label: "Locked".into(),
+                    icon: Icon::Error,
+                    label: "Intermittently Failed".into_html(),
                     has_caret: true,
                     ..Default::default()
                 }),
@@ -30,32 +30,31 @@ impl LockedEventProps {
             )
             .unwrap();
 
-        // Expires at
-        let expires_at = DateTime::from(
-            locked
-                .lock_expires_at
-                .expect("`lock_expires_at` is sent by the server"),
+        // Add reason node
+        tree.insert(
+            Node::new(NodeData {
+                icon: Icon::Comment,
+                label: format!("Reason: {}", self.event.reason).into_html(),
+                ..Default::default()
+            }),
+            InsertBehavior::UnderNode(&failed_node),
+        )
+        .unwrap();
+
+        // Add backoff expiration
+        let backoff_expires_at = DateTime::from(
+            self.event
+                .backoff_expires_at
+                .expect("`backoff_expires_at` is sent by the server"),
         );
         tree.insert(
             Node::new(NodeData {
                 icon: Icon::Time,
-                label: html! { {format!("Expires At: {}", expires_at)} },
+                label: format!("Backoff Expires At: {}", backoff_expires_at).into_html(),
                 has_caret: false,
                 ..Default::default()
             }),
-            InsertBehavior::UnderNode(&event_type),
-        )
-        .unwrap();
-
-        // Run ID
-        tree.insert(
-            Node::new(NodeData {
-                icon: Icon::IdNumber,
-                label: html! { {format!("Run ID: {}", locked.run_id)} },
-                has_caret: false,
-                ..Default::default()
-            }),
-            InsertBehavior::UnderNode(&event_type),
+            InsertBehavior::UnderNode(&failed_node),
         )
         .unwrap();
 
@@ -63,8 +62,8 @@ impl LockedEventProps {
     }
 }
 
-#[function_component(LockedEvent)]
-pub fn locked_event(props: &LockedEventProps) -> Html {
+#[function_component(IntermittentlyFailedEvent)]
+pub fn intermittently_failed_event(props: &IntermittentlyFailedEventProps) -> Html {
     let tree = props.construct_tree();
     html! {
         <TreeComponent {tree} />

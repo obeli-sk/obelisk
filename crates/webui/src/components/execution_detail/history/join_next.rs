@@ -1,4 +1,5 @@
 use crate::{components::execution_detail::tree_component::TreeComponent, grpc::grpc_client};
+use chrono::DateTime;
 use yew::prelude::*;
 use yewprint::{
     id_tree::{InsertBehavior, Node, TreeBuilder},
@@ -37,17 +38,20 @@ impl HistoryJoinNextEventProps {
                 .unwrap();
 
             // Add run expiration details
-            if let Some(expires_at) = &self.event.run_expires_at {
-                tree.insert(
-                    Node::new(NodeData {
-                        icon: Icon::Time,
-                        label: format!("Workflow run expires at: {}", expires_at).into_html(),
-                        ..Default::default()
-                    }),
-                    InsertBehavior::UnderNode(&join_next_node),
-                )
-                .unwrap();
-            }
+            let expires_at = DateTime::from(
+                self.event
+                    .run_expires_at
+                    .expect("`run_expires_at` is sent by the server"),
+            );
+            tree.insert(
+                Node::new(NodeData {
+                    icon: Icon::Time,
+                    label: format!("Workflow run expires at: {}", expires_at).into_html(),
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&join_next_node),
+            )
+            .unwrap();
 
             // Add closing status
             tree.insert(

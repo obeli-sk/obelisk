@@ -1,11 +1,15 @@
 use crate::app::Route;
 use crate::components::execution_detail::created::CreatedEvent;
+use crate::components::execution_detail::finished::FinishedEvent;
 use crate::components::execution_detail::history::join_next::HistoryJoinNextEvent;
 use crate::components::execution_detail::history::join_set_created::HistoryJoinSetCreatedEvent;
 use crate::components::execution_detail::history::join_set_request::HistoryJoinSetRequestEvent;
 use crate::components::execution_detail::history::persist::HistoryPersistEvent;
 use crate::components::execution_detail::history::schedule::HistoryScheduleEvent;
+use crate::components::execution_detail::intermittently_failed::IntermittentlyFailedEvent;
 use crate::components::execution_detail::locked::LockedEvent;
+use crate::components::execution_detail::timed_out::IntermittentlyTimedOutEvent;
+use crate::components::execution_detail::unlocked::UnlockedEvent;
 use crate::components::execution_status::ExecutionStatus;
 use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
 use crate::grpc::grpc_client::{self, execution_event};
@@ -98,10 +102,18 @@ pub fn execution_detail_page(
                     execution_event::Event::Locked(locked) => html! {
                         <LockedEvent locked={locked.clone()} />
                     },
-                    // execution_event::Event::Unlocked(_) => todo!(),
-                    // execution_event::Event::Failed(_) => todo!(),
-                    // execution_event::Event::TimedOut(_) => todo!(),
-                    // execution_event::Event::Finished(_) => todo!(),
+                    execution_event::Event::Unlocked(event) => html! {
+                        <UnlockedEvent event={event.clone()}/>
+                    },
+                    execution_event::Event::Failed(event) => html! {
+                        <IntermittentlyFailedEvent event={event.clone()} />
+                    },
+                    execution_event::Event::TimedOut(event) => html! {
+                        <IntermittentlyTimedOutEvent event={event.clone()} />
+                    },
+                    execution_event::Event::Finished(event) => html! {
+                        <FinishedEvent event={event.clone()} />
+                    },
                     execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
                         event: Some(execution_event::history_event::Event::Schedule(event)),
                     }) => html! {
