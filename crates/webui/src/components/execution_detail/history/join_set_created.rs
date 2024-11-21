@@ -21,7 +21,7 @@ impl HistoryJoinSetCreatedEventProps {
         if let Some(join_set_id) = &self.event.join_set_id {
             tree.insert(
                 Node::new(NodeData {
-                    icon: Icon::Box,
+                    icon: Icon::History,
                     label: html! {
                         <>
                             {"Join Set Created: "}

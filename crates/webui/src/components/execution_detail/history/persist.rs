@@ -20,7 +20,7 @@ impl HistoryPersistEventProps {
         // Add node for Persist event
         tree.insert(
             Node::new(NodeData {
-                icon: Icon::Database,
+                icon: Icon::History,
                 label: "Persist Event".into_html(),
                 ..Default::default()
             }),

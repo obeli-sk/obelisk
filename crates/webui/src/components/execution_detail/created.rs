@@ -87,7 +87,7 @@ impl ProcessedProps {
         let event_type = tree
             .insert(
                 Node::new(NodeData {
-                    icon: Icon::FolderClose,
+                    icon: Icon::NewObject,
                     label: "Created".into(),
                     has_caret: true,
                     ..Default::default()

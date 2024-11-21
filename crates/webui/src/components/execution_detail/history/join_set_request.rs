@@ -25,7 +25,7 @@ impl HistoryJoinSetRequestEventProps {
             let join_set_node = tree
                 .insert(
                     Node::new(NodeData {
-                        icon: Icon::Box,
+                        icon: Icon::History,
                         label: html! {
                             <>
                                 {"Join Set Request: "}

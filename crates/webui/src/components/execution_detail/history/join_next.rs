@@ -23,7 +23,7 @@ impl HistoryJoinNextEventProps {
             let join_next_node = tree
                 .insert(
                     Node::new(NodeData {
-                        icon: Icon::Box,
+                        icon: Icon::History,
                         label: html! {
                             <>
                                 {"Join Next: "}

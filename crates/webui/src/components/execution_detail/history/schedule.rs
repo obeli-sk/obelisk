@@ -27,7 +27,7 @@ impl HistoryScheduleEventProps {
         let event_type = tree
             .insert(
                 Node::new(NodeData {
-                    icon: Icon::FolderClose,
+                    icon: Icon::History,
                     label: html!{<>
                         {"Scheduled execution "}
                         <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_execution_id.clone() } }>
