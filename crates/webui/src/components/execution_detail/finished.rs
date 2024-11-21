@@ -73,7 +73,6 @@ impl FinishedEventProps {
                         Node::new(NodeData {
                             icon: Icon::Database,
                             label: String::from_utf8_lossy(&any.value).into_html(),
-                            has_caret: true,
                             ..Default::default()
                         }),
                         InsertBehavior::UnderNode(&serialized),
@@ -122,7 +121,6 @@ impl FinishedEventProps {
                         Node::new(NodeData {
                             icon: Icon::Database,
                             label: String::from_utf8_lossy(&any.value).into_html(),
-                            has_caret: true,
                             ..Default::default()
                         }),
                         InsertBehavior::UnderNode(&serialized),
