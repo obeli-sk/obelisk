@@ -1,5 +1,9 @@
 use crate::app::Route;
 use crate::components::execution_detail::created::CreatedEvent;
+use crate::components::execution_detail::history::join_next::HistoryJoinNextEvent;
+use crate::components::execution_detail::history::join_set_created::HistoryJoinSetCreatedEvent;
+use crate::components::execution_detail::history::join_set_request::HistoryJoinSetRequestEvent;
+use crate::components::execution_detail::history::persist::HistoryPersistEvent;
 use crate::components::execution_detail::history::schedule::HistoryScheduleEvent;
 use crate::components::execution_detail::locked::LockedEvent;
 use crate::components::execution_status::ExecutionStatus;
@@ -99,10 +103,31 @@ pub fn execution_detail_page(
                     // execution_event::Event::TimedOut(_) => todo!(),
                     // execution_event::Event::Finished(_) => todo!(),
                     execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                        event: Some(execution_event::history_event::Event::Schedule(schedule)),
+                        event: Some(execution_event::history_event::Event::Schedule(event)),
                     }) => html! {
-                        <HistoryScheduleEvent event={schedule.clone()} />
+                        <HistoryScheduleEvent event={event.clone()} />
                     },
+                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                        event: Some(execution_event::history_event::Event::JoinSetCreated(event)),
+                    }) => html! {
+                        <HistoryJoinSetCreatedEvent event={event.clone()} />
+                    },
+                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                        event: Some(execution_event::history_event::Event::JoinSetRequest(event)),
+                    }) => html! {
+                        <HistoryJoinSetRequestEvent event={event.clone()} />
+                    },
+                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                        event: Some(execution_event::history_event::Event::JoinNext(event)),
+                    }) => html! {
+                        <HistoryJoinNextEvent event={event.clone()} />
+                    },
+                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                        event: Some(execution_event::history_event::Event::Persist(event)),
+                    }) => html! {
+                        <HistoryPersistEvent event={event.clone()} />
+                    },
+
                     other => html! { {format!("unknown variant {other:?}")}},
                 };
                 let created_at =

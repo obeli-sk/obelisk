@@ -13,7 +13,7 @@ use serde_json::Value;
 use yew::prelude::*;
 use yew::Html;
 use yew_router::prelude::Link;
-use yewprint::id_tree::{InsertBehavior, Node, NodeId, TreeBuilder};
+use yewprint::id_tree::{InsertBehavior, Node, TreeBuilder};
 use yewprint::{Icon, NodeData, TreeData};
 
 #[derive(Properties, PartialEq, Clone)]
@@ -161,11 +161,6 @@ impl ProcessedProps {
         }
         TreeData::from(tree)
     }
-}
-
-#[derive(Debug)]
-pub enum Action {
-    ExpandNode(NodeId),
 }
 
 #[function_component(CreatedEvent)]

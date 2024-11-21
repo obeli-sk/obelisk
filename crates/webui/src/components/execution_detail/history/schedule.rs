@@ -17,13 +17,7 @@ impl HistoryScheduleEventProps {
     fn construct_tree(&self) -> TreeData<u32> {
         let mut tree = TreeBuilder::new().build();
         let root_id = tree
-            .insert(
-                Node::new(NodeData {
-                    data: 0_u32,
-                    ..Default::default()
-                }),
-                InsertBehavior::AsRoot,
-            )
+            .insert(Node::new(NodeData::default()), InsertBehavior::AsRoot)
             .unwrap();
         let scheduled_execution_id = self
             .event
@@ -55,7 +49,6 @@ impl HistoryScheduleEventProps {
             Node::new(NodeData {
                 icon: Icon::Time,
                 label: format!("At: {scheduled_at:?}").into_html(),
-                has_caret: false,
                 ..Default::default()
             }),
             InsertBehavior::UnderNode(&event_type),
