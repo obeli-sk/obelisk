@@ -1,4 +1,10 @@
-use crate::{components::execution_detail::tree_component::TreeComponent, grpc::grpc_client};
+use crate::{
+    components::{
+        execution_detail::tree_component::TreeComponent,
+        json_tree::{insert_json_into_tree, render_json_value},
+    },
+    grpc::grpc_client,
+};
 use yew::prelude::*;
 use yewprint::{
     id_tree::{InsertBehavior, Node, TreeBuilder},
@@ -39,14 +45,39 @@ impl FinishedEventProps {
                     .unwrap();
 
                 if let Some(any) = &ok.return_value {
+                    let json_tree_parent = tree
+                        .insert(
+                            Node::new(NodeData {
+                                icon: Icon::Database,
+                                label: "Value".into_html(),
+                                has_caret: true,
+                                ..Default::default()
+                            }),
+                            InsertBehavior::UnderNode(&ok_node),
+                        )
+                        .unwrap();
+
+                    insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
+
+                    let serialized = tree
+                        .insert(
+                            Node::new(NodeData {
+                                icon: Icon::Database,
+                                label: "Value: (serialized)".into_html(),
+                                has_caret: true,
+                                ..Default::default()
+                            }),
+                            InsertBehavior::UnderNode(&ok_node),
+                        )
+                        .unwrap();
                     tree.insert(
                         Node::new(NodeData {
                             icon: Icon::Database,
-                            label: "Return Value: (Serialized)".into_html(),
-                            has_caret: false,
+                            label: String::from_utf8_lossy(&any.value).into_html(),
+                            has_caret: true,
                             ..Default::default()
                         }),
-                        InsertBehavior::UnderNode(&ok_node),
+                        InsertBehavior::UnderNode(&serialized),
                     )
                     .unwrap();
                 }
@@ -63,16 +94,39 @@ impl FinishedEventProps {
                         InsertBehavior::UnderNode(&root_id),
                     )
                     .unwrap();
-
                 if let Some(any) = &fallible.return_value {
+                    let json_tree_parent = tree
+                        .insert(
+                            Node::new(NodeData {
+                                icon: Icon::Database,
+                                label: "Value".into_html(),
+                                has_caret: true,
+                                ..Default::default()
+                            }),
+                            InsertBehavior::UnderNode(&error_node),
+                        )
+                        .unwrap();
+                    insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
+
+                    let serialized = tree
+                        .insert(
+                            Node::new(NodeData {
+                                icon: Icon::Database,
+                                label: "Value: (serialized)".into_html(),
+                                has_caret: true,
+                                ..Default::default()
+                            }),
+                            InsertBehavior::UnderNode(&error_node),
+                        )
+                        .unwrap();
                     tree.insert(
                         Node::new(NodeData {
                             icon: Icon::Database,
-                            label: "Error Value: (Serialized)".into_html(),
-                            has_caret: false,
+                            label: String::from_utf8_lossy(&any.value).into_html(),
+                            has_caret: true,
                             ..Default::default()
                         }),
-                        InsertBehavior::UnderNode(&error_node),
+                        InsertBehavior::UnderNode(&serialized),
                     )
                     .unwrap();
                 }
