@@ -16,7 +16,7 @@ pub fn render_json_value(
     parent: &NodeId,
     key: Option<&str>,
     value: &Value,
-) -> Result<NodeId, ()> {
+) -> NodeId {
     // Create a display label for the node
     let label = match value {
         Value::Null => "null".to_string(),
@@ -55,58 +55,53 @@ pub fn render_json_value(
             }),
             InsertBehavior::UnderNode(parent),
         )
-        .map_err(|_| ())?;
-
+        .unwrap();
     // Recursively add children for complex types
     match value {
         Value::Array(arr) => {
             for (idx, item) in arr.iter().enumerate() {
-                render_json_value(tree, &node_id, Some(&idx.to_string()), item)?;
+                render_json_value(tree, &node_id, Some(&idx.to_string()), item);
             }
         }
         Value::Object(obj) => {
             // Sort keys for consistent display
             let sorted_keys: BTreeMap<_, _> = obj.iter().collect();
             for (k, v) in sorted_keys {
-                render_json_value(tree, &node_id, Some(k), v)?;
+                render_json_value(tree, &node_id, Some(k), v);
             }
         }
         _ => {} // Primitive types have no children
     }
 
-    Ok(node_id)
+    node_id
 }
 
 pub fn insert_json_into_tree(
     tree: &mut id_tree::Tree<NodeData<u32>>,
     root_id: NodeId,
     json_data: &[u8],
-) -> Option<()> {
+) -> Result<(), serde_json::Error> {
     // Try to parse the JSON
-    match serde_json::from_slice::<Value>(json_data) {
-        Ok(json_value) => {
-            // Render the entire JSON structure
-            match json_value {
-                Value::Object(obj) => {
-                    // Sort keys for consistent display
-                    let sorted_keys: BTreeMap<_, _> = obj.iter().collect();
-                    for (k, v) in sorted_keys {
-                        render_json_value(tree, &root_id, Some(k), v).ok()?;
-                    }
-                }
-                Value::Array(arr) => {
-                    for (idx, item) in arr.iter().enumerate() {
-                        render_json_value(tree, &root_id, Some(&idx.to_string()), item).ok()?;
-                    }
-                }
-                _ => {
-                    // For primitive root values
-                    render_json_value(tree, &root_id, None, &json_value).ok()?;
-                }
-            }
+    let json_value = serde_json::from_slice::<Value>(json_data)?;
 
-            Some(())
+    // Render the entire JSON structure
+    match json_value {
+        Value::Object(obj) => {
+            // Sort keys for consistent display
+            let sorted_keys: BTreeMap<_, _> = obj.iter().collect();
+            for (k, v) in sorted_keys {
+                render_json_value(tree, &root_id, Some(k), v);
+            }
         }
-        Err(_) => None,
+        Value::Array(arr) => {
+            for (idx, item) in arr.iter().enumerate() {
+                render_json_value(tree, &root_id, Some(&idx.to_string()), item);
+            }
+        }
+        _ => {
+            // For primitive root values
+            render_json_value(tree, &root_id, None, &json_value);
+        }
     }
+    Ok(())
 }

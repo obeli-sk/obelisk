@@ -1,7 +1,6 @@
 use crate::{
     components::{
-        execution_detail::tree_component::TreeComponent,
-        json_tree::{insert_json_into_tree, render_json_value},
+        execution_detail::tree_component::TreeComponent, json_tree::insert_json_into_tree,
     },
     grpc::grpc_client,
 };
@@ -57,7 +56,7 @@ impl FinishedEventProps {
                         )
                         .unwrap();
 
-                    insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
+                    let _ = insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
 
                     let serialized = tree
                         .insert(
@@ -106,7 +105,7 @@ impl FinishedEventProps {
                             InsertBehavior::UnderNode(&error_node),
                         )
                         .unwrap();
-                    insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
+                    let _ = insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
 
                     let serialized = tree
                         .insert(

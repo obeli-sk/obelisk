@@ -103,13 +103,13 @@ pub fn execution_detail_page(
                         <LockedEvent locked={locked.clone()} />
                     },
                     execution_event::Event::Unlocked(event) => html! {
-                        <UnlockedEvent event={event.clone()}/>
+                        <UnlockedEvent event={*event}/>
                     },
                     execution_event::Event::Failed(event) => html! {
                         <IntermittentlyFailedEvent event={event.clone()} />
                     },
                     execution_event::Event::TimedOut(event) => html! {
-                        <IntermittentlyTimedOutEvent event={event.clone()} />
+                        <IntermittentlyTimedOutEvent event={*event} />
                     },
                     execution_event::Event::Finished(event) => html! {
                         <FinishedEvent event={event.clone()} />

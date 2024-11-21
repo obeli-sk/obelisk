@@ -1,6 +1,9 @@
 use crate::{
-    app::Route, components::execution_detail::tree_component::TreeComponent, grpc::grpc_client,
+    app::Route,
+    components::execution_detail::tree_component::TreeComponent,
+    grpc::grpc_client::{self, execution_event::history_event::join_set_request},
 };
+use chrono::DateTime;
 use yew::prelude::*;
 use yew_router::prelude::Link;
 use yewprint::{
@@ -40,48 +43,57 @@ impl HistoryJoinSetRequestEventProps {
                 .unwrap();
 
             // Handle different types of join set requests
-            match &self.event.join_set_request {
-                Some(grpc_client::execution_event::history_event::join_set_request::JoinSetRequest::DelayRequest(delay_req)) => {
-                    if let (Some(delay_id), Some(expires_at)) = (&delay_req.delay_id, &delay_req.expires_at) {
-                        tree.insert(
-                            Node::new(NodeData {
-                                icon: Icon::Time,
-                                label: html! {
-                                    <>
-                                        {"Delay Request: "}
-                                        {&delay_id.id}
-                                        {" expires at "}
-                                        {expires_at.clone()}
-                                    </>
-                                },
-                                ..Default::default()
-                            }),
-                            InsertBehavior::UnderNode(&join_set_node),
-                        )
-                        .unwrap();
-                    }
-                },
-                Some(grpc_client::execution_event::history_event::join_set_request::JoinSetRequest::ChildExecutionRequest(child_req)) => {
-                    if let Some(child_execution_id) = &child_req.child_execution_id {
-                        tree.insert(
-                            Node::new(NodeData {
-                                icon: Icon::Flows,
-                                label: html! {
-                                    <>
-                                        {"Child Execution Request: "}
-                                        <Link<Route> to={Route::ExecutionDetail { execution_id: child_execution_id.clone() } }>
-                                            {child_execution_id}
-                                        </Link<Route>>
-                                    </>
-                                },
-                                ..Default::default()
-                            }),
-                            InsertBehavior::UnderNode(&join_set_node),
-                        )
-                        .unwrap();
-                    }
-                },
-                None => {}
+            match self
+                .event
+                .join_set_request
+                .as_ref()
+                .expect("`join_set_request` is sent in `JoinSetRequest`")
+            {
+                join_set_request::JoinSetRequest::DelayRequest(delay_req) => {
+                    let (Some(delay_id), Some(expires_at)) =
+                        (&delay_req.delay_id, &delay_req.expires_at)
+                    else {
+                        panic!("`delay_id` and `expires_at` are sent in `DelayRequest` message");
+                    };
+                    let expires_at = DateTime::from(*expires_at);
+                    tree.insert(
+                        Node::new(NodeData {
+                            icon: Icon::Time,
+                            label: html! {
+                                <>
+                                    {"Delay Request: "}
+                                    {&delay_id.id}
+                                    {" expires at "}
+                                    {expires_at}
+                                </>
+                            },
+                            ..Default::default()
+                        }),
+                        InsertBehavior::UnderNode(&join_set_node),
+                    )
+                    .unwrap();
+                }
+                join_set_request::JoinSetRequest::ChildExecutionRequest(child_req) => {
+                    let Some(child_execution_id) = &child_req.child_execution_id else {
+                        panic!("`child_execution_id` is sent in `ChildExecutionRequest`");
+                    };
+                    tree.insert(
+                        Node::new(NodeData {
+                            icon: Icon::Flows,
+                            label: html! {
+                                <>
+                                    {"Child Execution Request: "}
+                                    <Link<Route> to={Route::ExecutionDetail { execution_id: child_execution_id.clone() } }>
+                                        {child_execution_id}
+                                    </Link<Route>>
+                                </>
+                            },
+                            ..Default::default()
+                        }),
+                        InsertBehavior::UnderNode(&join_set_node),
+                    )
+                    .unwrap();
+                }
             }
         }
 
