@@ -449,7 +449,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .await
             .to_status()?
             .into_iter()
-            .map(|resp| grpc::ResponseWithCursor::from(resp))
+            .map(grpc::ResponseWithCursor::from)
             .collect();
 
         Ok(tonic::Response::new(grpc::ListResponsesResponse {

@@ -1866,8 +1866,8 @@ impl SqlitePool {
         let order_by = "ORDER BY id";
         let limit = match &pagination {
             Some(
-                pagination @ Pagination::NewerThan { cursor, .. }
-                | pagination @ Pagination::OlderThan { cursor, .. },
+                pagination @ (Pagination::NewerThan { cursor, .. }
+                | Pagination::OlderThan { cursor, .. }),
             ) => {
                 params.push((":cursor", Box::new(cursor)));
                 sql.push_str(&format!(
@@ -1879,7 +1879,7 @@ impl SqlitePool {
             None => None,
         };
         sql.push_str(order_by);
-        if pagination.as_ref().map(|p| p.is_desc()).unwrap_or_default() {
+        if pagination.as_ref().is_some_and(Pagination::is_desc) {
             sql.push_str(" DESC");
         }
         if let Some(limit) = limit {

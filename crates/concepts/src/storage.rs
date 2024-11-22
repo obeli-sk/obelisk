@@ -826,8 +826,7 @@ pub enum Pagination<T> {
 impl<T> Pagination<T> {
     pub fn length(&self) -> u32 {
         match self {
-            Pagination::NewerThan { length, .. } => *length,
-            Pagination::OlderThan { length, .. } => *length,
+            Pagination::NewerThan { length, .. } | Pagination::OlderThan { length, .. } => *length,
         }
     }
     pub fn rel(&self) -> &'static str {
