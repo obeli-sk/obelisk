@@ -9,6 +9,7 @@ use yewprint::{
 #[derive(Properties, PartialEq, Clone)]
 pub struct HistoryJoinNextEventProps {
     pub event: grpc_client::execution_event::history_event::JoinNext,
+    pub response: Option<grpc_client::JoinSetResponseEvent>,
 }
 
 impl HistoryJoinNextEventProps {
@@ -23,7 +24,11 @@ impl HistoryJoinNextEventProps {
             let join_next_node = tree
                 .insert(
                     Node::new(NodeData {
-                        icon: Icon::History,
+                        icon: if self.response.is_some() {
+                            Icon::Tick
+                        } else {
+                            Icon::Search
+                        },
                         label: html! {
                             <>
                                 {"Join Next: "}

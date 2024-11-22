@@ -33,44 +33,62 @@ pub fn execution_detail_page(
     let execution_id_state = use_state(|| execution_id.clone());
     let version_from_state = use_state(|| 0);
     let events_state = use_state(|| None::<Vec<ExecutionEvent>>);
-    use_effect_with((execution_id.clone(), *version_from_state.deref()), {
+
+    // Cleanup the state on execution_id change.
+    use_effect_with(execution_id.clone(), {
+        let execution_id_state = execution_id_state.clone();
+        let version_from_state = version_from_state.clone();
         let events_state = events_state.clone();
-        move |(execution_id, version_from)| {
-            let (version_from, old_events) = if *execution_id != *execution_id_state.deref() {
+        move |execution_id| {
+            if *execution_id != *execution_id_state.deref() {
                 debug!("Execution ID changed");
                 execution_id_state.set(execution_id.clone());
-                (0, None)
-            } else {
-                (*version_from, events_state.deref().clone())
-            };
-            let execution_id = execution_id.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                let base_url = "/api";
-                let mut execution_client =
-                    grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
-                        tonic_web_wasm_client::Client::new(base_url.to_string()),
-                    );
-                let events = execution_client
-                    .list_execution_events(grpc_client::ListExecutionEventsRequest {
-                        execution_id: Some(execution_id.clone()),
-                        version_from,
-                        length: PAGE,
-                    })
-                    .await
-                    .unwrap()
-                    .into_inner()
-                    .events;
-                debug!("Got {} events", events.len());
-                let all_events = if let Some(mut old_events) = old_events {
-                    old_events.extend(events);
-                    old_events
-                } else {
-                    events
-                };
-                events_state.set(Some(all_events));
-            });
+                version_from_state.set(Default::default());
+                events_state.set(Default::default());
+            }
         }
     });
+
+    use_effect_with(
+        (
+            execution_id_state.deref().clone(),
+            *version_from_state.deref(),
+        ),
+        {
+            let events_state = events_state.clone();
+            move |(execution_id, version_from)| {
+                let version_from = *version_from;
+                let old_events = events_state.deref().clone();
+                let execution_id = execution_id.clone();
+                debug!("list_execution_events {execution_id} {version_from}");
+                wasm_bindgen_futures::spawn_local(async move {
+                    let base_url = "/api";
+                    let mut execution_client =
+                        grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
+                            tonic_web_wasm_client::Client::new(base_url.to_string()),
+                        );
+                    let events = execution_client
+                        .list_execution_events(grpc_client::ListExecutionEventsRequest {
+                            execution_id: Some(execution_id.clone()),
+                            version_from,
+                            length: PAGE,
+                        })
+                        .await
+                        .unwrap()
+                        .into_inner()
+                        .events;
+                    debug!("Got {} events", events.len());
+                    let all_events = if let Some(mut old_events) = old_events {
+                        old_events.extend(events);
+                        old_events
+                    } else {
+                        events
+                    };
+                    events_state.set(Some(all_events));
+                });
+            }
+        },
+    );
 
     let execution_parts = execution_id.as_hierarchy();
     let execution_parts: Vec<_> = execution_parts
@@ -171,7 +189,7 @@ fn render_execution_details(events: &[ExecutionEvent]) -> Html {
                 execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
                     event: Some(execution_event::history_event::Event::JoinNext(event)),
                 }) => html! {
-                    <HistoryJoinNextEvent event={event.clone()} />
+                    <HistoryJoinNextEvent event={event.clone()} response={None} />
                 },
                 execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
                     event: Some(execution_event::history_event::Event::Persist(event)),
