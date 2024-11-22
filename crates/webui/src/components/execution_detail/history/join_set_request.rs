@@ -86,9 +86,10 @@ impl HistoryJoinSetRequestEventProps {
                     .unwrap();
                 }
                 join_set_request::JoinSetRequest::ChildExecutionRequest(child_req) => {
-                    let Some(child_execution_id) = &child_req.child_execution_id else {
-                        panic!("`child_execution_id` is sent in `ChildExecutionRequest`");
-                    };
+                    let child_execution_id = child_req
+                        .child_execution_id
+                        .as_ref()
+                        .expect("`child_execution_id` is sent in `ChildExecutionRequest`");
                     tree.insert(
                         Node::new(NodeData {
                             icon: Icon::Flows,

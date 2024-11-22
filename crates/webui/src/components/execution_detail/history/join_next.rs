@@ -1,6 +1,12 @@
-use crate::{components::execution_detail::tree_component::TreeComponent, grpc::grpc_client};
+use crate::{
+    app::Route,
+    components::execution_detail::{finished::attach_result_detail, tree_component::TreeComponent},
+    grpc::grpc_client::{self, join_set_response_event, JoinSetResponseEvent},
+};
 use chrono::DateTime;
+use log::error;
 use yew::prelude::*;
+use yew_router::prelude::Link;
 use yewprint::{
     id_tree::{InsertBehavior, Node, TreeBuilder},
     Icon, NodeData, TreeData,
@@ -9,7 +15,7 @@ use yewprint::{
 #[derive(Properties, PartialEq, Clone)]
 pub struct HistoryJoinNextEventProps {
     pub event: grpc_client::execution_event::history_event::JoinNext,
-    pub response: Option<grpc_client::JoinSetResponseEvent>,
+    pub response: Option<JoinSetResponseEvent>,
 }
 
 impl HistoryJoinNextEventProps {
@@ -41,6 +47,96 @@ impl HistoryJoinNextEventProps {
                     InsertBehavior::UnderNode(&root_id),
                 )
                 .unwrap();
+
+            match &self.response {
+                Some(JoinSetResponseEvent {
+                    created_at: Some(finished_at),
+                    join_set_id: _,
+                    response:
+                        Some(join_set_response_event::Response::ChildExecutionFinished(child_finished)),
+                }) => {
+                    let child_execution_id = child_finished
+                        .child_execution_id
+                        .as_ref()
+                        .expect("`child_execution_id` of `ChildExecutionFinished` must be sent");
+                    let child_node = tree.insert(
+                        Node::new(NodeData {
+                            icon: Icon::Flows,
+                            label: html! {
+                                <>
+                                    {"Matched Child Execution Finished: "}
+                                    <Link<Route> to={Route::ExecutionDetail { execution_id: child_execution_id.clone() } }>
+                                        {child_execution_id}
+                                    </Link<Route>>
+                                </>
+                            },
+                            has_caret: true,
+                            ..Default::default()
+                        }),
+                        InsertBehavior::UnderNode(&join_next_node),
+                    )
+                    .unwrap();
+
+                    let result_detail = child_finished
+                        .result_detail
+                        .as_ref()
+                        .expect("`child_execution_id` of `ChildExecutionFinished` must be sent");
+                    attach_result_detail(&mut tree, &child_node, result_detail);
+
+                    let finished_at = DateTime::from(*finished_at);
+                    tree.insert(
+                        Node::new(NodeData {
+                            icon: Icon::Time,
+                            label: format!("Finished At: {finished_at}").into_html(),
+                            ..Default::default()
+                        }),
+                        InsertBehavior::UnderNode(&child_node),
+                    )
+                    .unwrap();
+                }
+                Some(JoinSetResponseEvent {
+                    created_at: Some(finished_at),
+                    join_set_id: _,
+                    response: Some(join_set_response_event::Response::DelayFinished(delay_finished)),
+                }) => {
+                    let delay_id = delay_finished
+                        .delay_id
+                        .as_ref()
+                        .expect("`delay_id` of `DelayFinished` must be sent");
+                    let delay_node = tree
+                        .insert(
+                            Node::new(NodeData {
+                                icon: Icon::Time,
+                                label: html! {
+                                    <>
+                                        {"Matched Delay Finished: "}
+                                        {&delay_id.id}
+                                    </>
+                                },
+                                has_caret: true,
+                                ..Default::default()
+                            }),
+                            InsertBehavior::UnderNode(&join_next_node),
+                        )
+                        .unwrap();
+
+                    let finished_at = DateTime::from(*finished_at);
+                    tree.insert(
+                        Node::new(NodeData {
+                            icon: Icon::Time,
+                            label: format!("Finished At: {finished_at}").into_html(),
+                            ..Default::default()
+                        }),
+                        InsertBehavior::UnderNode(&delay_node),
+                    )
+                    .unwrap();
+                }
+                None => {}
+                // Some(join_set_response_event::Response::DelayFinished(delay)) => {}
+                other => {
+                    error!("Unknown format {other:?}");
+                }
+            }
 
             // Add run expiration details
             let expires_at = DateTime::from(

@@ -6,7 +6,7 @@ use crate::{
 };
 use yew::prelude::*;
 use yewprint::{
-    id_tree::{InsertBehavior, Node, TreeBuilder},
+    id_tree::{InsertBehavior, Node, NodeId, Tree, TreeBuilder},
     Icon, NodeData, TreeData,
 };
 
@@ -15,166 +15,166 @@ pub struct FinishedEventProps {
     pub event: grpc_client::execution_event::Finished,
 }
 
-impl FinishedEventProps {
-    fn construct_result_detail_tree(
-        &self,
-        result_detail: &grpc_client::ResultDetail,
-    ) -> TreeData<u32> {
-        let mut tree = TreeBuilder::new().build();
-        let root_id = tree
-            .insert(Node::new(NodeData::default()), InsertBehavior::AsRoot)
-            .unwrap();
-
-        match &result_detail
-            .value
-            .as_ref()
-            .expect("`value` is sent in `ResultDetail` message")
-        {
-            grpc_client::result_detail::Value::Ok(ok) => {
-                let ok_node = tree
-                    .insert(
-                        Node::new(NodeData {
-                            icon: Icon::Tick,
-                            label: "Execution Successful".into_html(),
-                            has_caret: ok.return_value.is_some(),
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&root_id),
-                    )
-                    .unwrap();
-
-                if let Some(any) = &ok.return_value {
-                    let json_tree_parent = tree
-                        .insert(
-                            Node::new(NodeData {
-                                icon: Icon::Database,
-                                label: "Value".into_html(),
-                                has_caret: true,
-                                ..Default::default()
-                            }),
-                            InsertBehavior::UnderNode(&ok_node),
-                        )
-                        .unwrap();
-
-                    let _ = insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
-
-                    let serialized = tree
-                        .insert(
-                            Node::new(NodeData {
-                                icon: Icon::Database,
-                                label: "Value: (serialized)".into_html(),
-                                has_caret: true,
-                                ..Default::default()
-                            }),
-                            InsertBehavior::UnderNode(&ok_node),
-                        )
-                        .unwrap();
-                    tree.insert(
-                        Node::new(NodeData {
-                            icon: Icon::Database,
-                            label: String::from_utf8_lossy(&any.value).into_html(),
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&serialized),
-                    )
-                    .unwrap();
-                }
-            }
-            grpc_client::result_detail::Value::FallibleError(fallible) => {
-                let error_node = tree
-                    .insert(
-                        Node::new(NodeData {
-                            icon: Icon::Error,
-                            label: "Fallible Error".into_html(),
-                            has_caret: fallible.return_value.is_some(),
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&root_id),
-                    )
-                    .unwrap();
-                if let Some(any) = &fallible.return_value {
-                    let json_tree_parent = tree
-                        .insert(
-                            Node::new(NodeData {
-                                icon: Icon::Database,
-                                label: "Value".into_html(),
-                                has_caret: true,
-                                ..Default::default()
-                            }),
-                            InsertBehavior::UnderNode(&error_node),
-                        )
-                        .unwrap();
-                    let _ = insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
-
-                    let serialized = tree
-                        .insert(
-                            Node::new(NodeData {
-                                icon: Icon::Database,
-                                label: "Value: (serialized)".into_html(),
-                                has_caret: true,
-                                ..Default::default()
-                            }),
-                            InsertBehavior::UnderNode(&error_node),
-                        )
-                        .unwrap();
-                    tree.insert(
-                        Node::new(NodeData {
-                            icon: Icon::Database,
-                            label: String::from_utf8_lossy(&any.value).into_html(),
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&serialized),
-                    )
-                    .unwrap();
-                }
-            }
-            grpc_client::result_detail::Value::Timeout(_) => {
-                tree.insert(
+pub fn attach_result_detail(
+    mut tree: &mut Tree<NodeData<u32>>,
+    root_id: &NodeId,
+    result_detail: &grpc_client::ResultDetail,
+) {
+    match &result_detail
+        .value
+        .as_ref()
+        .expect("`value` is sent in `ResultDetail` message")
+    {
+        grpc_client::result_detail::Value::Ok(ok) => {
+            let ok_node = tree
+                .insert(
                     Node::new(NodeData {
-                        icon: Icon::Time,
-                        label: "Execution Timed Out".into_html(),
-                        has_caret: false,
+                        icon: Icon::Tick,
+                        label: "Execution Successful".into_html(),
+                        has_caret: ok.return_value.is_some(),
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(&root_id),
                 )
                 .unwrap();
-            }
-            grpc_client::result_detail::Value::NondeterminismDetected(nondeterminism) => {
+
+            if let Some(any) = &ok.return_value {
+                let json_tree_parent = tree
+                    .insert(
+                        Node::new(NodeData {
+                            icon: Icon::Database,
+                            label: "Value".into_html(),
+                            has_caret: true,
+                            ..Default::default()
+                        }),
+                        InsertBehavior::UnderNode(&ok_node),
+                    )
+                    .unwrap();
+
+                let _ = insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
+
+                let serialized = tree
+                    .insert(
+                        Node::new(NodeData {
+                            icon: Icon::Database,
+                            label: "Value: (serialized)".into_html(),
+                            has_caret: true,
+                            ..Default::default()
+                        }),
+                        InsertBehavior::UnderNode(&ok_node),
+                    )
+                    .unwrap();
                 tree.insert(
                     Node::new(NodeData {
-                        icon: Icon::Error,
-                        label: format!("Nondeterminism Detected: {}", nondeterminism.reason)
-                            .into_html(),
+                        icon: Icon::Database,
+                        label: String::from_utf8_lossy(&any.value).into_html(),
                         ..Default::default()
                     }),
-                    InsertBehavior::UnderNode(&root_id),
-                )
-                .unwrap();
-            }
-            grpc_client::result_detail::Value::ExecutionFailure(failure) => {
-                tree.insert(
-                    Node::new(NodeData {
-                        icon: Icon::Error,
-                        label: format!("Execution Failure: {}", failure.reason).into_html(),
-                        ..Default::default()
-                    }),
-                    InsertBehavior::UnderNode(&root_id),
+                    InsertBehavior::UnderNode(&serialized),
                 )
                 .unwrap();
             }
         }
+        grpc_client::result_detail::Value::FallibleError(fallible) => {
+            let error_node = tree
+                .insert(
+                    Node::new(NodeData {
+                        icon: Icon::Error,
+                        label: "Fallible Error".into_html(),
+                        has_caret: fallible.return_value.is_some(),
+                        ..Default::default()
+                    }),
+                    InsertBehavior::UnderNode(&root_id),
+                )
+                .unwrap();
+            if let Some(any) = &fallible.return_value {
+                let json_tree_parent = tree
+                    .insert(
+                        Node::new(NodeData {
+                            icon: Icon::Database,
+                            label: "Value".into_html(),
+                            has_caret: true,
+                            ..Default::default()
+                        }),
+                        InsertBehavior::UnderNode(&error_node),
+                    )
+                    .unwrap();
+                let _ = insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
 
-        TreeData::from(tree)
+                let serialized = tree
+                    .insert(
+                        Node::new(NodeData {
+                            icon: Icon::Database,
+                            label: "Value: (serialized)".into_html(),
+                            has_caret: true,
+                            ..Default::default()
+                        }),
+                        InsertBehavior::UnderNode(&error_node),
+                    )
+                    .unwrap();
+                tree.insert(
+                    Node::new(NodeData {
+                        icon: Icon::Database,
+                        label: String::from_utf8_lossy(&any.value).into_html(),
+                        ..Default::default()
+                    }),
+                    InsertBehavior::UnderNode(&serialized),
+                )
+                .unwrap();
+            }
+        }
+        grpc_client::result_detail::Value::Timeout(_) => {
+            tree.insert(
+                Node::new(NodeData {
+                    icon: Icon::Time,
+                    label: "Execution Timed Out".into_html(),
+                    has_caret: false,
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&root_id),
+            )
+            .unwrap();
+        }
+        grpc_client::result_detail::Value::NondeterminismDetected(nondeterminism) => {
+            tree.insert(
+                Node::new(NodeData {
+                    icon: Icon::Error,
+                    label: format!("Nondeterminism Detected: {}", nondeterminism.reason)
+                        .into_html(),
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&root_id),
+            )
+            .unwrap();
+        }
+        grpc_client::result_detail::Value::ExecutionFailure(failure) => {
+            tree.insert(
+                Node::new(NodeData {
+                    icon: Icon::Error,
+                    label: format!("Execution Failure: {}", failure.reason).into_html(),
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&root_id),
+            )
+            .unwrap();
+        }
     }
+}
 
+impl FinishedEventProps {
     fn construct_tree(&self) -> TreeData<u32> {
-        self.construct_result_detail_tree(
-            self.event
-                .result_detail
-                .as_ref()
-                .expect("`result_detail` is sent in the `Finished` message"),
-        )
+        let result_detail = self
+            .event
+            .result_detail
+            .as_ref()
+            .expect("`result_detail` is sent in the `Finished` message");
+
+        let mut tree = TreeBuilder::new().build();
+        let root_id = tree
+            .insert(Node::new(NodeData::default()), InsertBehavior::AsRoot)
+            .unwrap();
+        attach_result_detail(&mut tree, &root_id, result_detail);
+        TreeData::from(tree)
     }
 }
 

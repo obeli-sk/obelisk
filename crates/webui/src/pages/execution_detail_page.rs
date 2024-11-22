@@ -12,7 +12,9 @@ use crate::components::execution_detail::timed_out::IntermittentlyTimedOutEvent;
 use crate::components::execution_detail::unlocked::UnlockedEvent;
 use crate::components::execution_status::ExecutionStatus;
 use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
-use crate::grpc::grpc_client::{self, execution_event, ExecutionEvent};
+use crate::grpc::grpc_client::{
+    self, execution_event, join_set_response_event, ExecutionEvent, JoinSetId, JoinSetResponseEvent,
+};
 use assert_matches::assert_matches;
 use chrono::DateTime;
 use hashbrown::HashMap;
@@ -133,10 +135,8 @@ pub fn execution_detail_page(
                         .expect("`event` is sent in `ResponseWithCursor`");
                     let join_set_id = response
                         .join_set_id
+                        .clone()
                         .expect("`join_set_id` is sent in `JoinSetResponseEvent`");
-                    let response = response
-                        .response
-                        .expect("`response` is sent in `JoinSetResponseEvent`");
                     let execution_responses = responses.entry(join_set_id).or_default();
                     execution_responses.push(response);
                 }
@@ -162,9 +162,10 @@ pub fn execution_detail_page(
         .collect();
 
     let events = events_state.deref();
-    //let join_next_version_to_response = compute_join_next_to_response();
+    let join_next_version_to_response =
+        compute_join_next_to_response(events, responses_state.deref());
 
-    let details_html = render_execution_details(&events);
+    let details_html = render_execution_details(&events, &join_next_version_to_response);
 
     let load_more_callback = Callback::from(move |_| {
         events_version_from_state.set(*events_version_from_state + PAGE);
@@ -191,7 +192,38 @@ pub fn execution_detail_page(
     </>}
 }
 
-fn render_execution_details(events: &[ExecutionEvent]) -> Option<Html> {
+fn compute_join_next_to_response<'a>(
+    events: &[ExecutionEvent],
+    responses: &'a HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
+) -> HashMap<u32, &'a JoinSetResponseEvent> {
+    let mut map = HashMap::new();
+    let mut seen_join_nexts: HashMap<&JoinSetId, usize> = HashMap::new();
+    for event in events {
+        if let Some(execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+            event: Some(execution_event::history_event::Event::JoinNext(join_next)),
+        })) = &event.event
+        {
+            let join_set_id = join_next
+                .join_set_id
+                .as_ref()
+                .expect("`join_set_id` is sent in `JoinNext`");
+            let counter_val = seen_join_nexts.entry(join_set_id).or_default();
+            if let Some(response) = responses
+                .get(join_set_id)
+                .and_then(|responses| responses.get(*counter_val))
+            {
+                map.insert(event.version, response);
+            }
+            *counter_val += 1;
+        }
+    }
+    map
+}
+
+fn render_execution_details(
+    events: &[ExecutionEvent],
+    join_next_version_to_response: &HashMap<u32, &JoinSetResponseEvent>,
+) -> Option<Html> {
     if events.is_empty() {
         return None;
     }
@@ -253,10 +285,19 @@ fn render_execution_details(events: &[ExecutionEvent]) -> Option<Html> {
                     <HistoryJoinSetRequestEvent event={event.clone()} />
                 },
                 execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                    event: Some(execution_event::history_event::Event::JoinNext(event)),
-                }) => html! {
-                    <HistoryJoinNextEvent event={event.clone()} response={None} />
-                },
+                    event: Some(execution_event::history_event::Event::JoinNext(join_next)),
+                }) => {
+                    let response = join_next_version_to_response
+                        .get(&event.version)
+                        .cloned()
+                        .cloned();
+                    html! {
+                        <HistoryJoinNextEvent
+                            event={join_next.clone()}
+                            {response}
+                        />
+                    }
+                }
                 execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
                     event: Some(execution_event::history_event::Event::Persist(event)),
                 }) => html! {
