@@ -11,6 +11,7 @@ service ExecutionRepository {
     rpc GetStatus(GetStatusRequest) returns (stream GetStatusResponse);
     rpc ListExecutions(ListExecutionsRequest) returns (ListExecutionsResponse);
     rpc ListExecutionEvents(ListExecutionEventsRequest) returns (ListExecutionEventsResponse);
+    rpc ListResponses (ListResponsesRequest) returns (ListResponsesResponse);
 }
 
 service FunctionRepository {
@@ -341,10 +342,44 @@ message ExecutionEvent {
 
 message ListExecutionEventsRequest {
     ExecutionId execution_id = 1;
-    uint32 version_from = 2;
+    uint32 version_from = 2; // 0 to request the first page
     uint32 length = 3;
 }
 
 message ListExecutionEventsResponse {
     repeated ExecutionEvent events = 2;
+}
+
+message JoinSetResponseEvent {
+    message DelayFinished {
+        DelayId delay_id = 1;
+    }
+
+    message ChildExecutionFinished {
+        ExecutionId child_execution_id = 1;
+        ResultDetail result_detail = 2;
+    }
+
+    google.protobuf.Timestamp created_at = 1;
+    JoinSetId join_set_id = 2;
+    oneof response {
+        DelayFinished delay_finished = 3;
+        ChildExecutionFinished child_execution_finished = 4;
+    }
+}
+
+message ResponseWithCursor {
+    JoinSetResponseEvent event = 1;
+    uint32 cursor = 2;
+}
+
+message ListResponsesRequest {
+    ExecutionId execution_id = 1;
+    uint32 cursor_from = 2; // 0 to request the first page
+    uint32 length = 3;
+    bool including_cursor = 4; // true to request the first page
+}
+
+message ListResponsesResponse {
+    repeated ResponseWithCursor responses = 1;
 }

@@ -1,7 +1,7 @@
 use crate::command::grpc::{self};
 use anyhow::anyhow;
 use concepts::{
-    prefixed_ulid::{JoinSetId, RunId},
+    prefixed_ulid::{DelayId, JoinSetId, RunId},
     storage::{
         DbError, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, HistoryEvent,
         HistoryEventScheduledAt, JoinSetRequest, Pagination, PendingState, PendingStateFinished,
@@ -17,6 +17,14 @@ impl<T: Borrow<ExecutionId>> From<T> for grpc::ExecutionId {
     fn from(value: T) -> Self {
         Self {
             id: value.borrow().to_string(),
+        }
+    }
+}
+
+impl From<DelayId> for grpc::DelayId {
+    fn from(value: DelayId) -> Self {
+        Self {
+            id: value.to_string(),
         }
     }
 }
@@ -286,54 +294,54 @@ pub(crate) fn to_any<T: serde::Serialize>(
         })
 }
 
-pub(crate) fn from_finished_result_to_grpc_result_detail(
-    finished_result: FinishedExecutionResult,
-    ffqn: &FunctionFqn,
-) -> grpc::ResultDetail {
-    let value = match finished_result {
-        Ok(SupportedFunctionReturnValue::None) => {
-            grpc::result_detail::Value::Ok(grpc::result_detail::Ok { return_value: None })
-        }
-        Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(val_with_type)) => {
-            grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
-                return_value: to_any(
-                    val_with_type.value,
-                    format!("urn:obelisk:json:params:{ffqn}"),
-                ),
-            })
-        }
-        Ok(SupportedFunctionReturnValue::FallibleResultErr(val_with_type)) => {
-            grpc::result_detail::Value::FallibleError(grpc::result_detail::FallibleError {
-                return_value: to_any(
-                    val_with_type.value,
-                    format!("urn:obelisk:json:params:{ffqn}"),
-                ),
-            })
-        }
-        Err(FinishedExecutionError::PermanentTimeout) => {
-            grpc::result_detail::Value::Timeout(grpc::result_detail::Timeout {})
-        }
-        Err(FinishedExecutionError::PermanentFailure(reason)) => {
-            grpc::result_detail::Value::ExecutionFailure(grpc::result_detail::ExecutionFailure {
-                reason: reason.to_string(),
-            })
-        }
-        Err(FinishedExecutionError::NondeterminismDetected(reason)) => {
-            grpc::result_detail::Value::NondeterminismDetected(
-                grpc::result_detail::NondeterminismDetected {
-                    reason: reason.to_string(),
-                },
-            )
-        }
-    };
-    grpc::ResultDetail { value: Some(value) }
+impl From<FinishedExecutionResult> for grpc::ResultDetail {
+    fn from(finished_result: FinishedExecutionResult) -> Self {
+        let value = match finished_result {
+            Ok(SupportedFunctionReturnValue::None) => {
+                grpc::result_detail::Value::Ok(grpc::result_detail::Ok { return_value: None })
+            }
+            Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(val_with_type)) => {
+                grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
+                    return_value: to_any(
+                        val_with_type.value,
+                        "urn:obelisk:json:result:TBD".to_string(),
+                    ),
+                })
+            }
+            Ok(SupportedFunctionReturnValue::FallibleResultErr(val_with_type)) => {
+                grpc::result_detail::Value::FallibleError(grpc::result_detail::FallibleError {
+                    return_value: to_any(
+                        val_with_type.value,
+                        "urn:obelisk:json:result:TBD".to_string(),
+                    ),
+                })
+            }
+            Err(FinishedExecutionError::PermanentTimeout) => {
+                grpc::result_detail::Value::Timeout(grpc::result_detail::Timeout {})
+            }
+            Err(FinishedExecutionError::PermanentFailure(reason)) => {
+                grpc::result_detail::Value::ExecutionFailure(
+                    grpc::result_detail::ExecutionFailure {
+                        reason: reason.to_string(),
+                    },
+                )
+            }
+            Err(FinishedExecutionError::NondeterminismDetected(reason)) => {
+                grpc::result_detail::Value::NondeterminismDetected(
+                    grpc::result_detail::NondeterminismDetected {
+                        reason: reason.to_string(),
+                    },
+                )
+            }
+        };
+        grpc::ResultDetail { value: Some(value) }
+    }
 }
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn from_execution_event_to_grpc(
     event: ExecutionEvent,
     version: VersionType,
-    ffqn: &FunctionFqn,
 ) -> grpc::ExecutionEvent {
     grpc::ExecutionEvent {
             created_at: Some(prost_wkt_types::Timestamp::from(event.created_at)),
@@ -382,7 +390,7 @@ pub(crate) fn from_execution_event_to_grpc(
                 }),
                 ExecutionEventInner::Finished { result } => grpc::execution_event::Event::Finished(grpc::execution_event::Finished {
                     result_detail: Some(
-                        from_finished_result_to_grpc_result_detail(result, ffqn)
+                        result.into()
                     ),
                 }),
                 ExecutionEventInner::HistoryEvent { event } => grpc::execution_event::Event::HistoryVariant(grpc::execution_event::HistoryEvent {
@@ -402,7 +410,7 @@ pub(crate) fn from_execution_event_to_grpc(
                                 JoinSetRequest::DelayRequest { delay_id, expires_at } => {
                                     Some(grpc::execution_event::history_event::join_set_request::JoinSetRequest::DelayRequest(
                                         grpc::execution_event::history_event::join_set_request::DelayRequest {
-                                            delay_id: Some(grpc::DelayId { id: delay_id.to_string() }),
+                                            delay_id: Some(delay_id.into()),
                                             expires_at: Some(prost_wkt_types::Timestamp::from(expires_at)),
                                         }
                                     ))
@@ -439,4 +447,48 @@ pub(crate) fn from_execution_event_to_grpc(
                 }),
             }),
         }
+}
+
+pub mod response {
+    use crate::command::grpc;
+    use concepts::storage::{JoinSetResponse, JoinSetResponseEventOuter, ResponseWithCursor};
+    use prost_wkt_types::Timestamp;
+
+    impl From<ResponseWithCursor> for grpc::ResponseWithCursor {
+        fn from(response: ResponseWithCursor) -> Self {
+            Self {
+                event: Some(response.event.into()),
+                cursor: response.cursor,
+            }
+        }
+    }
+
+    impl From<JoinSetResponseEventOuter> for grpc::JoinSetResponseEvent {
+        fn from(event: JoinSetResponseEventOuter) -> Self {
+            let response = match event.event.event {
+                JoinSetResponse::DelayFinished { delay_id } => {
+                    grpc::join_set_response_event::Response::DelayFinished(
+                        grpc::join_set_response_event::DelayFinished {
+                            delay_id: Some(delay_id.into()),
+                        },
+                    )
+                }
+                JoinSetResponse::ChildExecutionFinished {
+                    child_execution_id,
+                    result,
+                } => grpc::join_set_response_event::Response::ChildExecutionFinished(
+                    grpc::join_set_response_event::ChildExecutionFinished {
+                        child_execution_id: Some(child_execution_id.into()),
+                        result_detail: Some(result.into()),
+                    },
+                ),
+            };
+
+            Self {
+                created_at: Some(Timestamp::from(event.created_at)),
+                join_set_id: Some(event.event.join_set_id.into()),
+                response: Some(response),
+            }
+        }
+    }
 }

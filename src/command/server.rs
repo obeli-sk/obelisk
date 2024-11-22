@@ -13,7 +13,6 @@ use crate::config::ComponentConfigImportable;
 use crate::grpc_util::extractor::accept_trace;
 use crate::grpc_util::grpc_mapping::db_error_to_status;
 use crate::grpc_util::grpc_mapping::from_execution_event_to_grpc;
-use crate::grpc_util::grpc_mapping::from_finished_result_to_grpc_result_detail;
 use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
 use crate::grpc_util::grpc_mapping::TonicServerResultExt;
 use crate::grpc_util::TonicRespResult;
@@ -28,8 +27,6 @@ use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
-use concepts::storage::ExecutionEvent;
-use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionWithState;
 use concepts::storage::PendingState;
@@ -401,40 +398,62 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
-        let version_from = request.version_from;
-        let length = request.length;
+
         let conn = self.db_pool.connection();
         let events = conn
-            .list_execution_events(&execution_id, &Version(version_from), length)
+            .list_execution_events(
+                &execution_id,
+                &Version(request.version_from),
+                request.length,
+            )
             .await
             .to_status()?;
-        let ffqn = if let Some(ExecutionEvent {
-            event: ExecutionEventInner::Created { ffqn, .. },
-            ..
-        }) = events.first()
-        {
-            ffqn.clone()
-        } else {
-            // TODO(perf): This db fetch could be omitted if the finished event is not serialized.
-            conn.get_create_request(&execution_id)
-                .await
-                .to_status()?
-                .ffqn
-        };
+
         let events = events
             .into_iter()
             .enumerate()
             .map(|(idx, execution_event)| {
                 from_execution_event_to_grpc(
                     execution_event,
-                    version_from
+                    request.version_from
                         + VersionType::try_from(idx).expect("both from and to are VersionType"),
-                    &ffqn,
                 )
             })
             .collect();
         Ok(tonic::Response::new(grpc::ListExecutionEventsResponse {
             events,
+        }))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn list_responses(
+        &self,
+        request: tonic::Request<grpc::ListResponsesRequest>,
+    ) -> std::result::Result<tonic::Response<grpc::ListResponsesResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let conn = self.db_pool.connection();
+        let responses = conn
+            .list_responses(
+                &execution_id,
+                concepts::storage::Pagination::NewerThan {
+                    length: request.length,
+                    cursor: request.cursor_from,
+                    including_cursor: request.including_cursor,
+                },
+            )
+            .await
+            .to_status()?
+            .into_iter()
+            .map(|resp| grpc::ResponseWithCursor::from(resp))
+            .collect();
+
+        Ok(tonic::Response::new(grpc::ListResponsesResponse {
+            responses,
         }))
     }
 }
@@ -444,8 +463,7 @@ fn to_finished_status(
     create_request: &CreateRequest,
     finished_at: DateTime<Utc>,
 ) -> grpc::FinishedStatus {
-    let result_detail =
-        from_finished_result_to_grpc_result_detail(finished_result, &create_request.ffqn);
+    let result_detail = finished_result.into();
     grpc::FinishedStatus {
         result_detail: Some(result_detail),
         created_at: Some(create_request.created_at.into()),
