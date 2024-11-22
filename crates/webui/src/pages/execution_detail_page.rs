@@ -33,7 +33,7 @@ pub fn execution_detail_page(
 ) -> Html {
     let execution_id_state = use_state(|| execution_id.clone());
     let events_version_from_state = use_state(|| 0);
-    let events_state = use_state(|| None::<Vec<ExecutionEvent>>); // TODO: Drop the Option
+    let events_state = use_state(|| Vec::new());
     let last_response_cursor = use_state(|| 0);
     let responses_state: UseStateHandle<HashMap<_, Vec<_>>> = use_state(|| HashMap::new());
 
@@ -67,7 +67,7 @@ pub fn execution_detail_page(
             let events_state = events_state.clone();
             move |(execution_id, version_from)| {
                 let version_from = *version_from;
-                let old_events = events_state.deref().clone();
+                let mut events = events_state.deref().clone();
                 let execution_id = execution_id.clone();
                 debug!("list_execution_events {execution_id} {version_from}");
                 wasm_bindgen_futures::spawn_local(async move {
@@ -76,7 +76,7 @@ pub fn execution_detail_page(
                         grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
                             tonic_web_wasm_client::Client::new(base_url.to_string()),
                         );
-                    let events = execution_client
+                    let new_events = execution_client
                         .list_execution_events(grpc_client::ListExecutionEventsRequest {
                             execution_id: Some(execution_id.clone()),
                             version_from,
@@ -86,14 +86,9 @@ pub fn execution_detail_page(
                         .unwrap()
                         .into_inner()
                         .events;
-                    debug!("Got {} events", events.len());
-                    let all_events = if let Some(mut old_events) = old_events {
-                        old_events.extend(events);
-                        old_events
-                    } else {
-                        events
-                    };
-                    events_state.set(Some(all_events));
+                    debug!("Got {} events", new_events.len());
+                    events.extend(new_events);
+                    events_state.set(events);
                 });
             }
         },
@@ -166,20 +161,28 @@ pub fn execution_detail_page(
         })
         .collect();
 
-    let details = events_state.deref().as_deref();
-    let details_html = details.map(render_execution_details);
+    let events = events_state.deref();
+    //let join_next_version_to_response = compute_join_next_to_response();
+
+    let details_html = render_execution_details(&events);
 
     let load_more_callback = Callback::from(move |_| {
         events_version_from_state.set(*events_version_from_state + PAGE);
     });
-
+    let finished = matches!(
+        events.last(),
+        Some(ExecutionEvent {
+            event: Some(execution_event::Event::Finished(_)),
+            ..
+        })
+    );
     html! {
         <>
         <h3>{ execution_parts }</h3>
         <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
-        if let Some(details_html) = details_html {
+        if !events.is_empty() {
             {details_html}
-            if !matches!(details.and_then(|d| d.last()), Some(ExecutionEvent{event: Some(execution_event::Event::Finished(_)),..})) {
+            if !finished {
                 <button onclick={load_more_callback} >{"Load more"} </button>
             }
         } else {
@@ -188,7 +191,10 @@ pub fn execution_detail_page(
     </>}
 }
 
-fn render_execution_details(events: &[ExecutionEvent]) -> Html {
+fn render_execution_details(events: &[ExecutionEvent]) -> Option<Html> {
+    if events.is_empty() {
+        return None;
+    }
     let execution_scheduled_at = {
         let create_event = events
             .first()
@@ -277,7 +283,7 @@ fn render_execution_details(events: &[ExecutionEvent]) -> Html {
             </tr>}
         })
         .collect();
-    html! {
+    Some(html! {
         <table>
         <tr>
             <th>{"Version"}</th>
@@ -287,5 +293,5 @@ fn render_execution_details(events: &[ExecutionEvent]) -> Html {
         </tr>
         {rows}
         </table>
-    }
+    })
 }
