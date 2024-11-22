@@ -1861,24 +1861,20 @@ impl SqlitePool {
         let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
         let mut sql =
             "SELECT id, created_at, join_set_id, json_value FROM t_join_set_response WHERE \
-            execution_id = :execution_id " // trailing space is required.
+            execution_id = :execution_id"
                 .to_string();
-        let order_by = "ORDER BY id";
         let limit = match &pagination {
             Some(
                 pagination @ (Pagination::NewerThan { cursor, .. }
                 | Pagination::OlderThan { cursor, .. }),
             ) => {
                 params.push((":cursor", Box::new(cursor)));
-                sql.push_str(&format!(
-                    "AND id {rel} :cursor {order_by}",
-                    rel = pagination.rel(),
-                ));
+                sql.push_str(&format!(" AND id {rel} :cursor", rel = pagination.rel(),));
                 Some(pagination.length())
             }
             None => None,
         };
-        sql.push_str(order_by);
+        sql.push_str(" ORDER BY id");
         if pagination.as_ref().is_some_and(Pagination::is_desc) {
             sql.push_str(" DESC");
         }
