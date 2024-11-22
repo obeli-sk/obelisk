@@ -12,8 +12,8 @@ use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest, DbConnection,
     DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
     ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
-    JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, SpecificError,
-    Version, VersionType,
+    JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
+    ResponseWithCursor, SpecificError, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant};
@@ -302,6 +302,14 @@ impl DbConnection for InMemoryDbConnection {
         _since: &Version,
         _max_length: VersionType,
     ) -> Result<Vec<ExecutionEvent>, DbError> {
+        unimplemented!("only needed for gRPC")
+    }
+
+    async fn list_responses(
+        &self,
+        _execution_id: &ExecutionId,
+        _pagination: Pagination<u32>,
+    ) -> Result<Vec<ResponseWithCursor>, DbError> {
         unimplemented!("only needed for gRPC")
     }
 }

@@ -8,7 +8,8 @@ use concepts::{
         AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
         DbConnection, DbError, DbPool, ExecutionEvent, ExecutionListPagination, ExecutionLog,
         ExecutionWithState, ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        LockPendingResponse, LockResponse, PendingState, Version, VersionType,
+        LockPendingResponse, LockResponse, Pagination, PendingState, ResponseWithCursor, Version,
+        VersionType,
     },
     ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn,
 };
@@ -235,5 +236,13 @@ impl DbConnection for DbConnectionProxy {
         self.0
             .list_execution_events(execution_id, since, max_length)
             .await
+    }
+
+    async fn list_responses(
+        &self,
+        execution_id: &ExecutionId,
+        pagination: Pagination<u32>,
+    ) -> Result<Vec<ResponseWithCursor>, DbError> {
+        self.0.list_responses(execution_id, pagination).await
     }
 }

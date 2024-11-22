@@ -164,7 +164,6 @@ pub struct ExecutionEvent {
 }
 
 /// Moves the execution to [`PendingState::PendingNow`] if it is currently blocked on `JoinNextBlocking`.
-
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct JoinSetResponseEventOuter {
     pub created_at: DateTime<Utc>,
@@ -781,6 +780,21 @@ pub trait DbConnection: Send + Sync {
         ffqn: Option<FunctionFqn>,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError>;
+
+    /// Returns responses of an execution ordered as they arrived,
+    /// enabling matching each `JoinNext` to its corresponding response.
+    /// Used by gRPC only.
+    async fn list_responses(
+        &self,
+        execution_id: &ExecutionId,
+        pagination: Pagination<u32>,
+    ) -> Result<Vec<ResponseWithCursor>, DbError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct ResponseWithCursor {
+    pub event: JoinSetResponseEventOuter,
+    pub cursor: u32,
 }
 
 pub struct ExecutionWithState {
@@ -792,22 +806,53 @@ pub struct ExecutionWithState {
 }
 
 pub enum ExecutionListPagination {
-    CreatedBy(Pagination<DateTime<Utc>>),
-    ExecutionId(Pagination<ExecutionId>),
+    CreatedBy(Pagination<Option<DateTime<Utc>>>),
+    ExecutionId(Pagination<Option<ExecutionId>>),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Pagination<T> {
     NewerThan {
         length: u32,
-        cursor: Option<T>,
+        cursor: T,
         including_cursor: bool,
     },
     OlderThan {
         length: u32,
-        cursor: Option<T>,
+        cursor: T,
         including_cursor: bool,
     },
+}
+impl<T> Pagination<T> {
+    pub fn length(&self) -> u32 {
+        match self {
+            Pagination::NewerThan { length, .. } => *length,
+            Pagination::OlderThan { length, .. } => *length,
+        }
+    }
+    pub fn rel(&self) -> &'static str {
+        match self {
+            Pagination::NewerThan {
+                including_cursor: false,
+                ..
+            } => ">",
+            Pagination::NewerThan {
+                including_cursor: true,
+                ..
+            } => ">=",
+            Pagination::OlderThan {
+                including_cursor: false,
+                ..
+            } => "<",
+            Pagination::OlderThan {
+                including_cursor: true,
+                ..
+            } => "<=",
+        }
+    }
+    pub fn is_desc(&self) -> bool {
+        matches!(self, Pagination::OlderThan { .. })
+    }
 }
 
 #[cfg(feature = "test")]

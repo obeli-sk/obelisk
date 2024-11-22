@@ -9,8 +9,8 @@ use concepts::{
         ExecutionListPagination, ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetRequest,
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
         LockResponse, LockedExecution, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, SpecificError, Version, VersionType, DUMMY_CREATED,
-        DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
+        PendingStateFinishedResultKind, ResponseWithCursor, SpecificError, Version, VersionType,
+        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
     ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
 };
@@ -19,7 +19,7 @@ use hdrhistogram::{Counter, Histogram};
 use rusqlite::{
     named_params,
     types::{FromSql, FromSqlError},
-    Connection, OpenFlags, OptionalExtension, Transaction,
+    Connection, OpenFlags, OptionalExtension, ToSql, Transaction,
 };
 use std::{
     cmp::max,
@@ -1176,53 +1176,27 @@ impl SqlitePool {
             limit_desc: bool,
         }
         fn paginate<T: rusqlite::ToSql + 'static>(
-            pagination: Pagination<T>,
+            pagination: Pagination<Option<T>>,
             column: &str,
         ) -> StatementModifier {
             let mut where_vec: Vec<String> = vec![];
             let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
-            let limit;
-            let mut limit_desc = false;
-
+            let limit = pagination.length();
+            let limit_desc = pagination.is_desc();
+            let rel = pagination.rel();
             match pagination {
                 Pagination::NewerThan {
-                    length,
-                    cursor: None,
-                    including_cursor: _,
-                } => limit = length,
-                Pagination::NewerThan {
-                    length,
-                    cursor: Some(after),
-                    including_cursor,
-                } => {
-                    limit = length;
-                    where_vec.push(format!(
-                        "{column} {rel} :cursor",
-                        rel = if including_cursor { ">=" } else { ">" }
-                    ));
-                    params.push((":cursor", Box::new(after)));
+                    cursor: Some(cursor),
+                    ..
                 }
-                Pagination::OlderThan {
-                    length,
-                    cursor: None,
-                    including_cursor: _,
+                | Pagination::OlderThan {
+                    cursor: Some(cursor),
+                    ..
                 } => {
-                    limit_desc = true;
-                    limit = length;
+                    where_vec.push(format!("{column} {rel} :cursor"));
+                    params.push((":cursor", Box::new(cursor)));
                 }
-                Pagination::OlderThan {
-                    length,
-                    cursor: Some(before),
-                    including_cursor,
-                } => {
-                    limit_desc = true;
-                    limit = length;
-                    where_vec.push(format!(
-                        "{column} {rel} :cursor",
-                        rel = if including_cursor { "<=" } else { "<" }
-                    ));
-                    params.push((":cursor", Box::new(before)));
-                }
+                _ => {}
             }
             StatementModifier {
                 where_vec,
@@ -1435,7 +1409,10 @@ impl SqlitePool {
                 StrVariant::Static("execution log must contain `Created` event"),
             )));
         };
-        let responses = Self::list_responses(tx, execution_id)?;
+        let responses = Self::list_responses(tx, execution_id, None)?
+            .into_iter()
+            .map(|resp| resp.event)
+            .collect();
         let event_history = events
             .into_iter()
             .map(|event| {
@@ -1792,7 +1769,10 @@ impl SqlitePool {
             return Err(DbError::Specific(SpecificError::NotFound));
         }
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let responses = Self::list_responses(tx, execution_id)?;
+        let responses = Self::list_responses(tx, execution_id, None)?
+            .into_iter()
+            .map(|resp| resp.event)
+            .collect();
         Ok(concepts::storage::ExecutionLog {
             execution_id: execution_id.clone(),
             events,
@@ -1876,29 +1856,61 @@ impl SqlitePool {
     fn list_responses(
         tx: &Transaction,
         execution_id: &ExecutionId,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
-        tx.prepare(
-            "SELECT created_at, join_set_id, json_value FROM t_join_set_response WHERE \
-                execution_id = :execution_id ORDER BY id",
-        )
-        .map_err(convert_err)?
-        .query_map(
-            named_params! {
-                ":execution_id": execution_id.to_string(),
-            },
-            |row| {
-                let created_at: DateTime<Utc> = row.get("created_at")?;
-                let join_set_id = row.get::<_, JoinSetIdW>("join_set_id")?.0;
-                let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
-                Ok(JoinSetResponseEventOuter {
-                    event: JoinSetResponseEvent { join_set_id, event },
-                    created_at,
-                })
-            },
-        )
-        .map_err(convert_err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(convert_err)
+        pagination: Option<Pagination<u32>>,
+    ) -> Result<Vec<ResponseWithCursor>, DbError> {
+        let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
+        let mut sql =
+            "SELECT id, created_at, join_set_id, json_value FROM t_join_set_response WHERE \
+            execution_id = :execution_id " // trailing space is required.
+                .to_string();
+        let order_by = "ORDER BY id";
+        let limit = match &pagination {
+            Some(
+                pagination @ Pagination::NewerThan { cursor, .. }
+                | pagination @ Pagination::OlderThan { cursor, .. },
+            ) => {
+                params.push((":cursor", Box::new(cursor)));
+                sql.push_str(&format!(
+                    "AND id {rel} :cursor {order_by}",
+                    rel = pagination.rel(),
+                ));
+                Some(pagination.length())
+            }
+            None => None,
+        };
+        sql.push_str(order_by);
+        if pagination.as_ref().map(|p| p.is_desc()).unwrap_or_default() {
+            sql.push_str(" DESC");
+        }
+        if let Some(limit) = limit {
+            sql.push_str(&format!(" LIMIT {limit}"));
+        }
+        params.push((":execution_id", Box::new(execution_id.to_string())));
+        tx.prepare(&sql)
+            .map_err(convert_err)?
+            .query_map::<_, &[(&'static str, &dyn ToSql)], _>(
+                params
+                    .iter()
+                    .map(|(key, value)| (*key, value.as_ref()))
+                    .collect::<Vec<_>>()
+                    .as_ref(),
+                |row| {
+                    let cursor = row.get("id")?;
+                    let created_at: DateTime<Utc> = row.get("created_at")?;
+                    let join_set_id = row.get::<_, JoinSetIdW>("join_set_id")?.0;
+                    let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
+                    Ok(ResponseWithCursor {
+                        cursor,
+                        event: JoinSetResponseEventOuter {
+                            event: JoinSetResponseEvent { join_set_id, event },
+                            created_at,
+                        },
+                    })
+                },
+            )
+            .map_err(convert_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(convert_err)
     }
 
     fn nth_response(
@@ -1933,6 +1945,7 @@ impl SqlitePool {
         .map_err(convert_err)
     }
 
+    // TODO(perf): Instead of OFFSET an per-execution sequential ID could improve the read performance.
     #[instrument(level = Level::TRACE, skip_all)]
     fn get_responses_with_offset(
         tx: &Transaction,
@@ -2637,6 +2650,20 @@ impl DbConnection for SqlitePool {
         Ok(self
             .transaction_read(
                 move |tx| Self::list_executions(tx, ffqn, pagination),
+                "list_executions",
+            )
+            .await?)
+    }
+
+    async fn list_responses(
+        &self,
+        execution_id: &ExecutionId,
+        pagination: Pagination<u32>,
+    ) -> Result<Vec<ResponseWithCursor>, DbError> {
+        let execution_id = execution_id.clone();
+        Ok(self
+            .transaction_read(
+                move |tx| Self::list_responses(tx, &execution_id, Some(pagination)),
                 "list_executions",
             )
             .await?)
