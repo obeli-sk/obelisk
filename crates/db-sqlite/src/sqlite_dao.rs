@@ -1435,7 +1435,7 @@ impl SqlitePool {
                 StrVariant::Static("execution log must contain `Created` event"),
             )));
         };
-        let responses = Self::get_responses(tx, execution_id)?;
+        let responses = Self::list_responses(tx, execution_id)?;
         let event_history = events
             .into_iter()
             .map(|event| {
@@ -1792,7 +1792,7 @@ impl SqlitePool {
             return Err(DbError::Specific(SpecificError::NotFound));
         }
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let responses = Self::get_responses(tx, execution_id)?;
+        let responses = Self::list_responses(tx, execution_id)?;
         Ok(concepts::storage::ExecutionLog {
             execution_id: execution_id.clone(),
             events,
@@ -1873,7 +1873,7 @@ impl SqlitePool {
         .map_err(convert_err)?
     }
 
-    fn get_responses(
+    fn list_responses(
         tx: &Transaction,
         execution_id: &ExecutionId,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
