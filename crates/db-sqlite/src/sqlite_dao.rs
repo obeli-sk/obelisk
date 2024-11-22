@@ -2507,7 +2507,7 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(level = Level::TRACE, skip(self))]
-    async fn subscribe_to_pending(
+    async fn wait_for_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,

@@ -767,8 +767,7 @@ pub trait DbConnection: Send + Sync {
     /// Implementation must return not later than at expiry date, which is: `pending_at_or_sooner` + `max_wait`.
     /// Timers that expire until the expiry date can be disregarded.
     /// Databases that do not support subscriptions should wait for `max_wait`.
-    // FIXME: Rename to wait_for_pending
-    async fn subscribe_to_pending(
+    async fn wait_for_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,

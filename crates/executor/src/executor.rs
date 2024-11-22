@@ -147,7 +147,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 let executed_at = clock_fn.now();
                 task.db_pool
                     .connection()
-                    .subscribe_to_pending(executed_at, ffqns.clone(), task.config.tick_sleep)
+                    .wait_for_pending(executed_at, ffqns.clone(), task.config.tick_sleep)
                     .await;
                 if is_closing_inner.load(Ordering::Relaxed) {
                     return;

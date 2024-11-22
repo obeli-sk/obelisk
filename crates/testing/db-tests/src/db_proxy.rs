@@ -188,14 +188,14 @@ impl DbConnection for DbConnectionProxy {
             .await
     }
 
-    async fn subscribe_to_pending(
+    async fn wait_for_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         max_wait: Duration,
     ) {
         self.0
-            .subscribe_to_pending(pending_at_or_sooner, ffqns, max_wait)
+            .wait_for_pending(pending_at_or_sooner, ffqns, max_wait)
             .await;
     }
     async fn wait_for_finished_result(

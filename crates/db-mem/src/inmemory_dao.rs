@@ -220,7 +220,7 @@ impl DbConnection for InMemoryDbConnection {
             .map_err(DbError::Specific)
     }
 
-    async fn subscribe_to_pending(
+    async fn wait_for_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
