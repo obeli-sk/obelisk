@@ -16,7 +16,7 @@ pub struct FinishedEventProps {
 }
 
 pub fn attach_result_detail(
-    mut tree: &mut Tree<NodeData<u32>>,
+    tree: &mut Tree<NodeData<u32>>,
     root_id: &NodeId,
     result_detail: &grpc_client::ResultDetail,
 ) {
@@ -34,7 +34,7 @@ pub fn attach_result_detail(
                         has_caret: ok.return_value.is_some(),
                         ..Default::default()
                     }),
-                    InsertBehavior::UnderNode(&root_id),
+                    InsertBehavior::UnderNode(root_id),
                 )
                 .unwrap();
 
@@ -51,7 +51,7 @@ pub fn attach_result_detail(
                     )
                     .unwrap();
 
-                let _ = insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
+                let _ = insert_json_into_tree(tree, json_tree_parent, &any.value);
 
                 let serialized = tree
                     .insert(
@@ -84,7 +84,7 @@ pub fn attach_result_detail(
                         has_caret: fallible.return_value.is_some(),
                         ..Default::default()
                     }),
-                    InsertBehavior::UnderNode(&root_id),
+                    InsertBehavior::UnderNode(root_id),
                 )
                 .unwrap();
             if let Some(any) = &fallible.return_value {
@@ -99,7 +99,7 @@ pub fn attach_result_detail(
                         InsertBehavior::UnderNode(&error_node),
                     )
                     .unwrap();
-                let _ = insert_json_into_tree(&mut tree, json_tree_parent, &any.value);
+                let _ = insert_json_into_tree(tree, json_tree_parent, &any.value);
 
                 let serialized = tree
                     .insert(
@@ -131,7 +131,7 @@ pub fn attach_result_detail(
                     has_caret: false,
                     ..Default::default()
                 }),
-                InsertBehavior::UnderNode(&root_id),
+                InsertBehavior::UnderNode(root_id),
             )
             .unwrap();
         }
@@ -143,7 +143,7 @@ pub fn attach_result_detail(
                         .into_html(),
                     ..Default::default()
                 }),
-                InsertBehavior::UnderNode(&root_id),
+                InsertBehavior::UnderNode(root_id),
             )
             .unwrap();
         }
@@ -154,7 +154,7 @@ pub fn attach_result_detail(
                     label: format!("Execution Failure: {}", failure.reason).into_html(),
                     ..Default::default()
                 }),
-                InsertBehavior::UnderNode(&root_id),
+                InsertBehavior::UnderNode(root_id),
             )
             .unwrap();
         }

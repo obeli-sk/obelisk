@@ -13,7 +13,7 @@ use crate::components::execution_detail::unlocked::UnlockedEvent;
 use crate::components::execution_status::ExecutionStatus;
 use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
 use crate::grpc::grpc_client::{
-    self, execution_event, join_set_response_event, ExecutionEvent, JoinSetId, JoinSetResponseEvent,
+    self, execution_event, ExecutionEvent, JoinSetId, JoinSetResponseEvent,
 };
 use assert_matches::assert_matches;
 use chrono::DateTime;
@@ -35,9 +35,9 @@ pub fn execution_detail_page(
 ) -> Html {
     let execution_id_state = use_state(|| execution_id.clone());
     let events_version_from_state = use_state(|| 0);
-    let events_state = use_state(|| Vec::new());
+    let events_state = use_state(Vec::new);
     let last_response_cursor = use_state(|| 0);
-    let responses_state: UseStateHandle<HashMap<_, Vec<_>>> = use_state(|| HashMap::new());
+    let responses_state: UseStateHandle<HashMap<_, Vec<_>>> = use_state(HashMap::new);
 
     // Cleanup the state on execution_id change.
     use_effect_with(execution_id.clone(), {
@@ -165,7 +165,7 @@ pub fn execution_detail_page(
     let join_next_version_to_response =
         compute_join_next_to_response(events, responses_state.deref());
 
-    let details_html = render_execution_details(&events, &join_next_version_to_response);
+    let details_html = render_execution_details(events, &join_next_version_to_response);
 
     let load_more_callback = Callback::from(move |_| {
         events_version_from_state.set(*events_version_from_state + PAGE);
