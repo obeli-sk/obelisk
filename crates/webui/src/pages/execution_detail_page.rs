@@ -18,7 +18,7 @@ use crate::grpc::grpc_client::{
 use assert_matches::assert_matches;
 use chrono::DateTime;
 use hashbrown::HashMap;
-use log::debug;
+use log::{debug, trace};
 use std::ops::Deref;
 use yew::prelude::*;
 use yew_router::prelude::Link;
@@ -33,117 +33,108 @@ pub struct ExecutionDetailPageProps {
 pub fn execution_detail_page(
     ExecutionDetailPageProps { execution_id }: &ExecutionDetailPageProps,
 ) -> Html {
+    debug!("<ExecutionDetailPage />");
     let execution_id_state = use_state(|| execution_id.clone());
-    let events_version_from_state = use_state(|| 0);
-    let events_state = use_state(Vec::new);
-    let last_response_cursor = use_state(|| 0);
-    let responses_state: UseStateHandle<HashMap<_, Vec<_>>> = use_state(HashMap::new);
+    let events_state: UseStateHandle<Vec<ExecutionEvent>> = use_state(Vec::new);
+    let responses_state: UseStateHandle<(HashMap<_, Vec<_>>, u32)> =
+        use_state(|| (HashMap::new(), 0));
+    let next_page_state = use_state(|| 0_u32); // any change triggers requests to get next execution events and responses.
 
     // Cleanup the state on execution_id change.
     use_effect_with(execution_id.clone(), {
         let execution_id_state = execution_id_state.clone();
-        let events_version_from_state = events_version_from_state.clone();
         let events_state = events_state.clone();
-        let last_response_cursor = last_response_cursor.clone();
         let responses_state = responses_state.clone();
+        let next_page_state = next_page_state.clone();
         move |execution_id| {
             if *execution_id != *execution_id_state.deref() {
                 debug!("Execution ID changed");
                 execution_id_state.set(execution_id.clone());
-                events_version_from_state.set(Default::default());
                 events_state.set(Default::default());
-                last_response_cursor.set(Default::default());
                 responses_state.set(Default::default());
+                next_page_state.set(Default::default());
             }
         }
     });
 
     // Fetch ListExecutionEvents
-    // TODO: make dependent on timestamp changed by the button, fixes noop when no new events arrived with this version yet.
     use_effect_with(
-        (
-            execution_id_state.deref().clone(),
-            *events_version_from_state.deref(),
-        ),
+        (execution_id_state.deref().clone(), *next_page_state.deref()),
         {
             let events_state = events_state.clone();
-            move |(execution_id, version_from)| {
-                let version_from = *version_from;
-                let mut events = events_state.deref().clone();
-                let execution_id = execution_id.clone();
-                debug!("list_execution_events {execution_id} {version_from}");
-                wasm_bindgen_futures::spawn_local(async move {
-                    let base_url = "/api";
-                    let mut execution_client =
+            let responses_state = responses_state.clone();
+            move |(execution_id, _)| {
+                // Request ListExecutionEvents
+                {
+                    let execution_id = execution_id.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let mut events = events_state.deref().clone();
+                        let version_from = events.last().map(|e| e.version + 1).unwrap_or_default();
+                        trace!("list_execution_events {execution_id} {version_from}");
+                        let base_url = "/api";
+                        let mut execution_client =
                         grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
                             tonic_web_wasm_client::Client::new(base_url.to_string()),
                         );
-                    let new_events = execution_client
-                        .list_execution_events(grpc_client::ListExecutionEventsRequest {
-                            execution_id: Some(execution_id.clone()),
-                            version_from,
-                            length: PAGE,
-                        })
-                        .await
-                        .unwrap()
-                        .into_inner()
-                        .events;
-                    debug!("Got {} events", new_events.len());
-                    events.extend(new_events);
-                    events_state.set(events);
-                });
+                        let new_events = execution_client
+                            .list_execution_events(grpc_client::ListExecutionEventsRequest {
+                                execution_id: Some(execution_id.clone()),
+                                version_from,
+                                length: PAGE,
+                            })
+                            .await
+                            .unwrap()
+                            .into_inner()
+                            .events;
+                        debug!("Got {} events", new_events.len());
+                        events.extend(new_events);
+                        events_state.set(events);
+                    });
+                }
+                // Request ListResponses
+                {
+                    let execution_id = execution_id.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let (mut responses, cursor_from) = responses_state.deref().clone();
+                        trace!("list_responses {execution_id} {cursor_from}");
+                        let base_url = "/api";
+                        let mut execution_client =
+                        grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
+                            tonic_web_wasm_client::Client::new(base_url.to_string()),
+                        );
+                        let new_responses = execution_client
+                            .list_responses(grpc_client::ListResponsesRequest {
+                                execution_id: Some(execution_id.clone()),
+                                cursor_from,
+                                length: PAGE,
+                                including_cursor: cursor_from == 0,
+                            })
+                            .await
+                            .unwrap()
+                            .into_inner()
+                            .responses;
+                        debug!("Got {} responses", new_responses.len());
+                        let cursor_from = new_responses
+                            .last()
+                            .map(|r| r.cursor)
+                            .unwrap_or(cursor_from);
+                        for response in new_responses {
+                            let response = response
+                                .event
+                                .expect("`event` is sent in `ResponseWithCursor`");
+                            let join_set_id = response
+                                .join_set_id
+                                .clone()
+                                .expect("`join_set_id` is sent in `JoinSetResponseEvent`");
+                            let execution_responses = responses.entry(join_set_id).or_default();
+                            execution_responses.push(response);
+                        }
+                        responses_state.set((responses, cursor_from));
+                    });
+                }
             }
         },
     );
-
-    // Fetch ListResponses
-    // The closure is the only writer to `last_response_cursor` except for
-    // cleanup. We get the new execution_id after cleanup runs.
-    // TODO: make dependent on timestamp changed by the button
-    use_effect_with(execution_id_state.deref().clone(), {
-        let responses_state = responses_state.clone();
-        let cursor_from = *last_response_cursor.deref();
-
-        move |execution_id| {
-            let mut responses = responses_state.deref().clone();
-            let execution_id = execution_id.clone();
-            debug!("list_responses {execution_id} {cursor_from}");
-            wasm_bindgen_futures::spawn_local(async move {
-                let base_url = "/api";
-                let mut execution_client =
-                    grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
-                        tonic_web_wasm_client::Client::new(base_url.to_string()),
-                    );
-                let new_responses = execution_client
-                    .list_responses(grpc_client::ListResponsesRequest {
-                        execution_id: Some(execution_id.clone()),
-                        cursor_from,
-                        length: PAGE,
-                        including_cursor: false,
-                    })
-                    .await
-                    .unwrap()
-                    .into_inner()
-                    .responses;
-                debug!("Got {} responses", new_responses.len());
-                if let Some(last) = new_responses.last() {
-                    last_response_cursor.set(last.cursor);
-                }
-                for response in new_responses {
-                    let response = response
-                        .event
-                        .expect("`event` is sent in `ResponseWithCursor`");
-                    let join_set_id = response
-                        .join_set_id
-                        .clone()
-                        .expect("`join_set_id` is sent in `JoinSetResponseEvent`");
-                    let execution_responses = responses.entry(join_set_id).or_default();
-                    execution_responses.push(response);
-                }
-                responses_state.set(responses);
-            });
-        }
-    });
 
     let execution_parts = execution_id.as_hierarchy();
     let execution_parts: Vec<_> = execution_parts
@@ -163,12 +154,13 @@ pub fn execution_detail_page(
 
     let events = events_state.deref();
     let join_next_version_to_response =
-        compute_join_next_to_response(events, responses_state.deref());
+        compute_join_next_to_response(events, &responses_state.deref().0);
 
     let details_html = render_execution_details(events, &join_next_version_to_response);
 
     let load_more_callback = Callback::from(move |_| {
-        events_version_from_state.set(*events_version_from_state + PAGE);
+        let request_version = next_page_state.deref().wrapping_add(1);
+        next_page_state.set(request_version);
     });
     let finished = matches!(
         events.last(),
