@@ -1,7 +1,8 @@
+use crate::grpc::ResultValueExt;
 use crate::{
     app::Route,
     components::execution_detail::{finished::attach_result_detail, tree_component::TreeComponent},
-    grpc::grpc_client::{self, join_set_response_event, JoinSetResponseEvent},
+    grpc::grpc_client::{self, join_set_response_event, JoinSetResponseEvent, ResultDetail},
 };
 use chrono::DateTime;
 use log::error;
@@ -27,14 +28,25 @@ impl HistoryJoinNextEventProps {
 
         // Add node for JoinSet ID and details
         if let Some(join_set_id) = &self.event.join_set_id {
+            let icon = match &self.response {
+                Some(JoinSetResponseEvent {
+                    response:
+                        Some(join_set_response_event::Response::ChildExecutionFinished(
+                            join_set_response_event::ChildExecutionFinished {
+                                result_detail: Some(ResultDetail { value: Some(value) }),
+                                ..
+                            },
+                        )),
+                    ..
+                }) if value.is_err() => Icon::Error,
+                Some(_) => Icon::Tick,
+                None => Icon::Search,
+            };
+
             let join_next_node = tree
                 .insert(
                     Node::new(NodeData {
-                        icon: if self.response.is_some() {
-                            Icon::Tick
-                        } else {
-                            Icon::Search
-                        },
+                        icon,
                         label: html! {
                             <>
                                 {"Join Next: "}
