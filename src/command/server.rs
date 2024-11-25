@@ -951,7 +951,6 @@ async fn start_webhooks(
                 db_pool.clone(),
                 Now,
                 fn_registry.clone(),
-                http_server.request_timeout.into(),
                 http_server.max_inflight_requests.into(),
             ))
             .abort_handle(),

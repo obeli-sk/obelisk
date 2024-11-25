@@ -162,7 +162,6 @@ async fn start_outgoing_request(
     impl Future<Output = anyhow::Result<()>>,
     impl Future<Output = Result<IncomingResponse, ErrorCode>>,
 )> {
-    // let outgoing_request = OutgoingRequest::new(Fields::new());
     let headers = incoming_request.headers().entries();
     let outgoing_request = OutgoingRequest::new(Fields::from_list(&headers).unwrap());
     outgoing_request

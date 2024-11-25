@@ -60,7 +60,6 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # [[http_server]]
 # name = "external"
 # listening_addr = "0.0.0.0:8080"
-# request_timeout.secs = 1
 # max_inflight_requests = "unlimited" # If set to an integer, limits the number of inflight requests
 #
 # [[webhook_component]]

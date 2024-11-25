@@ -622,7 +622,7 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 }
 
 pub(crate) mod webhook {
-    use super::{ComponentCommon, DurationConfig, InflightSemaphore, StdOutput};
+    use super::{ComponentCommon, InflightSemaphore, StdOutput};
     use anyhow::Context;
     use concepts::{ConfigId, ConfigIdType, ContentDigest, StrVariant};
     use serde::Deserialize;
@@ -639,8 +639,6 @@ pub(crate) mod webhook {
     pub(crate) struct HttpServer {
         pub(crate) name: String,
         pub(crate) listening_addr: SocketAddr,
-        #[serde(default = "super::default_request_timeout")]
-        pub(crate) request_timeout: DurationConfig,
         #[serde(default)]
         pub(crate) max_inflight_requests: InflightSemaphore,
     }
@@ -868,8 +866,4 @@ const fn default_retry_on_trap() -> bool {
 
 fn default_out_style() -> LoggingStyle {
     LoggingStyle::PlainCompact
-}
-
-fn default_request_timeout() -> DurationConfig {
-    DurationConfig::Secs(1)
 }

@@ -260,7 +260,6 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
     db_pool: P,
     clock_fn: C,
     fn_registry: Arc<dyn FunctionRegistry>,
-    request_timeout: Duration,
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
 ) -> Result<(), WebhookServerError> {
     let router = Arc::new(router);
@@ -296,7 +295,6 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                                     clock_fn: clock_fn.clone(),
                                     db_pool: db_pool.clone(),
                                     fn_registry: fn_registry.clone(),
-                                    request_timeout,
                                     execution_id,
                                     router: router.clone(),
                                     phantom_data: PhantomData,
@@ -680,7 +678,6 @@ struct RequestHandler<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPoo
     clock_fn: C,
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
-    request_timeout: Duration,
     execution_id: ExecutionId,
     router: Arc<MethodAwareRouter<WebhookInstance<C, DB, P>>>,
     phantom_data: PhantomData<DB>,
@@ -778,15 +775,11 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
 
             let task = tokio::task::spawn(
                 async move {
-                    tokio::select! {
-                        result = proxy.wasi_http_incoming_handler().call_handle(store, req, out)=> {
-                            result.inspect_err(|err| error!("Webhook instance returned error: {err:?}"))
-                        },
-                        () = tokio::time::sleep(self.request_timeout) => {
-                            info!("Timing out the request");
-                            Err(TimeoutError.into())
-                        }
-                    }
+                    proxy
+                        .wasi_http_incoming_handler()
+                        .call_handle(store, req, out)
+                        .await
+                        .inspect_err(|err| error!("Webhook instance returned error: {err:?}"))
                 }
                 .instrument(request_span),
             );
@@ -872,7 +865,6 @@ pub(crate) mod tests {
         use std::net::SocketAddr;
         use std::str::FromStr;
         use std::sync::Arc;
-        use std::time::Duration;
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
         use tracing::info;
@@ -959,7 +951,6 @@ pub(crate) mod tests {
                         db_pool.clone(),
                         sim_clock.clone(),
                         fn_registry,
-                        Duration::from_secs(1),
                         None,
                     ))
                     .abort_handle(),
