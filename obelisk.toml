@@ -89,7 +89,7 @@ listening_addr = "127.0.0.1:8080"
 [[webhook_component]]
 name = "obelisk_webui"
 http_server = "webui"
-location.oci = "docker.io/getobelisk/webui:2024-11-25@sha256:f5336d227f856e69c2773124bb4abe5f6536fa326625a4564c39771307633c02"
+location.oci = "docker.io/getobelisk/webui:2024-11-25@sha256:33a45d48ba5a1d6ff85d74f9f7b75bb99313e4f7a0e9c80fc42f0aa22e0bc6f5"
 routes = [{ route = "" }]
 forward_stdout = "stderr"
 forward_stderr = "stderr"
