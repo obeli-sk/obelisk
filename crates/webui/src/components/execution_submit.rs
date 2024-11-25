@@ -1,5 +1,5 @@
 use crate::{app::Route, grpc::ffqn::FunctionFqn, grpc::grpc_client};
-use log::{debug, error};
+use log::{debug, error, trace};
 use std::ops::Deref;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
@@ -79,7 +79,7 @@ pub fn execution_submit_form(
                             function: Some(grpc_client::FunctionName::from(ffqn)),
                         })
                         .await;
-                    debug!("Got gRPC {response:?}");
+                    trace!("Got gRPC {response:?}");
                     match response {
                         Ok(response) => {
                             let execution_id = response

@@ -5,7 +5,7 @@ use crate::grpc::grpc_client::{
     ResultKind,
 };
 use chrono::DateTime;
-use log::trace;
+use log::{error, trace};
 use std::ops::Deref;
 use yew::prelude::*;
 
@@ -57,16 +57,21 @@ pub fn execution_status(
                         .await
                         .unwrap()
                         .into_inner();
-                    while let Some(status) = response_stream
-                        .message()
-                        .await
-                        .expect("TODO error handling")
-                    {
-                        let status = status
-                            .message
-                            .expect("GetStatusResponse.message is sent by the server");
-                        trace!("<ExecutionStatus /> Got {status:?}");
-                        status_state.set(Some(status));
+                    loop {
+                        match response_stream.message().await {
+                            Ok(Some(status)) => {
+                                let status = status
+                                    .message
+                                    .expect("GetStatusResponse.message is sent by the server");
+                                trace!("<ExecutionStatus /> Got {status:?}");
+                                status_state.set(Some(status));
+                            }
+                            Ok(None) => break,
+                            Err(err) => {
+                                error!("Error wile listening to status updates: {err:?}");
+                                break;
+                            }
+                        }
                     }
                 })
             }
