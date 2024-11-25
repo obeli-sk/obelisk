@@ -43,15 +43,5 @@ fn run_trunk_build(current_dir: &Path) {
 }
 
 fn add_dependency(file: &Utf8Path) {
-    if file.is_file() {
-        println!("cargo:rerun-if-changed={file}");
-    } else {
-        for file in file
-            .read_dir_utf8()
-            .unwrap_or_else(|err| panic!("cannot read folder `{file}` - {err:?}"))
-            .flatten()
-        {
-            add_dependency(file.path());
-        }
-    }
+    println!("cargo:rerun-if-changed={file}");
 }
