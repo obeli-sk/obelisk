@@ -272,7 +272,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             "Worker::run starting"
         );
         let can_be_retried = ExecutionLog::can_be_retried_after(
-            locked_execution.intermittent_event_count + 1,
+            locked_execution.temporary_event_count + 1,
             locked_execution.max_retries,
             locked_execution.retry_exp_backoff,
         );
@@ -313,7 +313,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     }
 
     // FIXME: On a slow execution: race between `expired_timers_watcher` this if retry_exp_backoff is 0.
-    /// Map the `WorkerError` to an intermittent or a permanent failure.
+    /// Map the `WorkerError` to an temporary or a permanent failure.
     #[expect(clippy::too_many_lines)]
     fn worker_result_to_execution_event(
         execution_id: ExecutionId,
@@ -344,15 +344,15 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             WorkerResult::DbUpdatedByWorker => None,
             WorkerResult::Err(err) => {
                 let (primary_event, parent, version) = match err {
-                    WorkerError::IntermittentTimeout => {
-                        info!("Intermittent timeout");
+                    WorkerError::TemporaryTimeout => {
+                        info!("Temporary timeout");
                         // Will be updated by `expired_timers_watcher`.
                         return Ok(None);
                     }
                     WorkerError::DbError(db_error) => {
                         return Err(db_error);
                     }
-                    WorkerError::IntermittentError {
+                    WorkerError::TemporaryError {
                         reason,
                         err: _,
                         version,
@@ -361,7 +361,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             let expires_at = result_obtained_at + duration;
                             debug!("Retrying failed execution after {duration:?} at {expires_at}");
                             (
-                                ExecutionEventInner::IntermittentlyFailed {
+                                ExecutionEventInner::TemporarilyFailed {
                                     backoff_expires_at: expires_at,
                                     reason,
                                 },
@@ -819,7 +819,7 @@ mod tests {
             task_limiter: None,
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
-            WorkerError::IntermittentError {
+            WorkerError::TemporaryError {
                 reason: StrVariant::Static("fail"),
                 err: None,
                 version: Version::new(2),
@@ -847,7 +847,7 @@ mod tests {
             let (reason, at, expires_at) = assert_matches!(
                 &execution_log.events.get(2).unwrap(),
                 ExecutionEvent {
-                    event: ExecutionEventInner::IntermittentlyFailed {
+                    event: ExecutionEventInner::TemporarilyFailed {
                         reason,
                         backoff_expires_at,
                     },
@@ -930,7 +930,7 @@ mod tests {
             task_limiter: None,
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
-            WorkerError::IntermittentError {
+            WorkerError::TemporaryError {
                 reason: StrVariant::Static("error reason"),
                 err: None,
                 version: Version::new(2),
@@ -968,12 +968,12 @@ mod tests {
 
     #[rstest::rstest(
         worker_error => [
-            WorkerError::IntermittentError {
+            WorkerError::TemporaryError {
                 reason: StrVariant::Static("error reason"),
                 err: None,
                 version: Version::new(2),
             },
-            WorkerError::IntermittentTimeout,
+            WorkerError::TemporaryTimeout,
         ]
     )]
     #[tokio::test]
@@ -1079,10 +1079,10 @@ mod tests {
                 .unwrap();
         }
         let expected_child_err = match worker_error {
-            WorkerError::IntermittentError { .. } => {
+            WorkerError::TemporaryError { .. } => {
                 FinishedExecutionError::PermanentFailure(StrVariant::Static("error reason"))
             }
-            WorkerError::IntermittentTimeout => FinishedExecutionError::PermanentTimeout,
+            WorkerError::TemporaryTimeout => FinishedExecutionError::PermanentTimeout,
             worker_error => {
                 unreachable!("unexpected {worker_error}")
             }
@@ -1264,7 +1264,7 @@ mod tests {
         assert_matches!(
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
-                event: ExecutionEventInner::IntermittentTimedOut { backoff_expires_at },
+                event: ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at },
                 created_at: at,
             } if *at == now_after_first_lock_expiry && *backoff_expires_at == expected_first_timeout_expiry
         );

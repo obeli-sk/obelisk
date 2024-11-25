@@ -114,13 +114,13 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
             ExpiredTimer::Lock {
                 execution_id,
                 version,
-                intermittent_event_count,
+                temporary_event_count,
                 max_retries,
                 retry_exp_backoff,
                 parent,
             } => {
                 let append = if let Some(duration) = ExecutionLog::can_be_retried_after(
-                    intermittent_event_count + 1,
+                    temporary_event_count + 1,
                     max_retries,
                     retry_exp_backoff,
                 ) {
@@ -130,7 +130,7 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                         created_at: executed_at,
                         primary_event: AppendRequest {
                             created_at: executed_at,
-                            event: ExecutionEventInner::IntermittentTimedOut { backoff_expires_at },
+                            event: ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at },
                         },
                         execution_id: execution_id.clone(),
                         version,

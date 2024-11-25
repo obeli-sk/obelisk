@@ -287,7 +287,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 if reason.starts_with("maximum concurrent") {
                     return Err(WorkerError::LimitReached(reason, version));
                 }
-                return Err(WorkerError::IntermittentError {
+                return Err(WorkerError::TemporaryError {
                     reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
                     err: Some(err.into()),
                     version,
@@ -384,7 +384,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     worker_span.in_scope(||
                         info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %self.clock_fn.now(), "Timed out")
                     );
-                    WorkerResult::Err(WorkerError::IntermittentTimeout)
+                    WorkerResult::Err(WorkerError::TemporaryTimeout)
                 }
             }
         }
@@ -461,9 +461,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 let version = workflow_ctx.version;
                 let err = if retry_on_trap {
                     worker_span.in_scope(||
-                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as an intermittent error - {err:?}")
+                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as an temporary error - {err:?}")
                     );
-                    WorkerError::IntermittentError {
+                    WorkerError::TemporaryError {
                         reason: StrVariant::Arc(Arc::from(format!("trap - {err}"))),
                         err: Some(err),
                         version,

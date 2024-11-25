@@ -24,7 +24,7 @@ The software doesn't have backward compatibility guarantees for the CLI, gRPC or
     * WASI activities are executed in a WASM sandbox
         * Able to contact HTTP servers using the WASI 0.2 HTTP client.
         * Able to read/write to the filesystem (planned).
-    * Max execution duration support, after which the execution is suspended into intermittent timeout.
+    * Max execution duration support, after which the execution is suspended into temporary timeout.
     * Retries on errors - on WASM traps (panics), or when returning an Error result.
     * Retries on timeouts with exponential backoff.
     * Execution result is persisted.

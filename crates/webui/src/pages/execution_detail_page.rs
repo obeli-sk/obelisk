@@ -8,7 +8,7 @@ use crate::components::execution_detail::history::persist::HistoryPersistEvent;
 use crate::components::execution_detail::history::schedule::HistoryScheduleEvent;
 use crate::components::execution_detail::locked::LockedEvent;
 use crate::components::execution_detail::temporarily_failed::TemporarilyFailedEvent;
-use crate::components::execution_detail::timed_out::IntermittentlyTimedOutEvent;
+use crate::components::execution_detail::timed_out::TemporarilyTimedOutEvent;
 use crate::components::execution_detail::unlocked::UnlockedEvent;
 use crate::components::execution_status::ExecutionStatus;
 use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
@@ -256,7 +256,7 @@ fn render_execution_details(
                     <TemporarilyFailedEvent event={event.clone()} />
                 },
                 execution_event::Event::TimedOut(event) => html! {
-                    <IntermittentlyTimedOutEvent event={*event} />
+                    <TemporarilyTimedOutEvent event={*event} />
                 },
                 execution_event::Event::Finished(event) => html! {
                     <FinishedEvent event={event.clone()} />

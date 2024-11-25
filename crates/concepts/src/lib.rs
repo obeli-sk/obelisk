@@ -39,7 +39,7 @@ pub enum FinishedExecutionError {
     #[error("nondeterminism detected: `{0}`")]
     NondeterminismDetected(StrVariant),
     #[error("permanent failure: `{0}`")]
-    PermanentFailure(StrVariant), // intermittent failure that is not retried (anymore)
+    PermanentFailure(StrVariant), // temporary failure that is not retried (anymore)
 }
 
 impl FinishedExecutionError {

@@ -10,7 +10,7 @@ use concepts::{
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
         LockResponse, LockedExecution, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedResultKind, ResponseWithCursor, SpecificError, Version, VersionType,
-        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
+        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_TEMPORARILY_FAILED, DUMMY_TEMPORARILY_TIMED_OUT,
     },
     ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
 };
@@ -115,7 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_id ON t_join_set
 /// `state` to column mapping:
 /// `PendingAt`:
 /// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
-/// `Locked`:               `executor_id`, `run_id`, `intermittent_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>
+/// `Locked`:               `executor_id`, `run_id`, `temporary_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>
 /// `Finished` :            `result_kind`, `next_version` is not bumped, points to the finished version.
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS t_state (
 
     executor_id TEXT,
     run_id TEXT,
-    intermittent_event_count INTEGER,
+    temporary_event_count INTEGER,
     max_retries INTEGER,
     retry_exp_backoff_millis INTEGER,
     parent_execution_id TEXT,
@@ -280,7 +280,7 @@ struct PendingAt {
 
 #[derive(Default)]
 struct IndexUpdated {
-    intermittent_event_count: Option<u32>,
+    temporary_event_count: Option<u32>,
     pending_at: Option<PendingAt>,
 }
 
@@ -776,7 +776,7 @@ impl SqlitePool {
         }
     }
 
-    fn count_intermittent_events(
+    fn count_temporary_events(
         conn: &Connection,
         execution_id: &ExecutionId,
     ) -> Result<u32, DbError> {
@@ -786,8 +786,8 @@ impl SqlitePool {
         stmt.query_row(
             named_params! {
                 ":execution_id": execution_id.to_string(),
-                ":v1": DUMMY_INTERMITTENT_TIMEOUT.variant(),
-                ":v2": DUMMY_INTERMITTENT_FAILURE.variant(),
+                ":v1": DUMMY_TEMPORARILY_TIMED_OUT.variant(),
+                ":v2": DUMMY_TEMPORARILY_FAILED.variant(),
             },
             |row| row.get("count"),
         )
@@ -907,7 +907,7 @@ impl SqlitePool {
                         "UPDATE t_state SET \
                         state=:state, next_version = :next_version, pending_expires_finished = :pending_expires_finished, \
                         join_set_id = NULL,join_set_closing=NULL, \
-                        executor_id = NULL,run_id = NULL,intermittent_event_count = NULL, \
+                        executor_id = NULL,run_id = NULL,temporary_event_count = NULL, \
                         max_retries = NULL,retry_exp_backoff_millis = NULL,parent_execution_id = NULL,parent_join_set_id = NULL, \
                         result_kind = NULL \
                         WHERE execution_id = :execution_id AND next_version = :expected_current_version",
@@ -935,7 +935,7 @@ impl SqlitePool {
                     Self::fetch_created_event(tx, execution_id)?.ffqn
                 };
                 Ok(IndexUpdated {
-                    intermittent_event_count: None,
+                    temporary_event_count: None,
                     pending_at: Some(PendingAt { scheduled_at, ffqn }),
                 })
             }
@@ -948,7 +948,7 @@ impl SqlitePool {
                     %executor_id,
                     %run_id, "Setting state `Locked({next_version}, {lock_expires_at})`"
                 );
-                let intermittent_event_count = Self::count_intermittent_events(tx, execution_id)?;
+                let temporary_event_count = Self::count_temporary_events(tx, execution_id)?;
                 let create_req = Self::fetch_created_event(tx, execution_id)?;
 
                 let updated = tx
@@ -956,7 +956,7 @@ impl SqlitePool {
                         "UPDATE t_state SET \
                         state=:state, next_version = :next_version, pending_expires_finished = :pending_expires_finished, \
                         join_set_id = NULL,join_set_closing=NULL, \
-                        executor_id = :executor_id, run_id = :run_id, intermittent_event_count = :intermittent_event_count, \
+                        executor_id = :executor_id, run_id = :run_id, temporary_event_count = :temporary_event_count, \
                         max_retries = :max_retries, retry_exp_backoff_millis = :retry_exp_backoff_millis, \
                         parent_execution_id = :parent_execution_id, parent_join_set_id = :parent_join_set_id, \
                         result_kind = NULL \
@@ -970,7 +970,7 @@ impl SqlitePool {
 
                         ":executor_id": executor_id.to_string(),
                         ":run_id": run_id.to_string(),
-                        ":intermittent_event_count": intermittent_event_count,
+                        ":temporary_event_count": temporary_event_count,
                         ":max_retries": create_req.max_retries,
                         ":retry_exp_backoff_millis": u64::try_from(create_req.retry_exp_backoff.as_millis()).unwrap(),
                         ":parent_execution_id": create_req.parent.as_ref().map(|(pid, _) | pid.to_string()),
@@ -989,7 +989,7 @@ impl SqlitePool {
                 }
 
                 Ok(IndexUpdated {
-                    intermittent_event_count: Some(intermittent_event_count),
+                    temporary_event_count: Some(temporary_event_count),
                     pending_at: None,
                 })
             }
@@ -1004,7 +1004,7 @@ impl SqlitePool {
                         "UPDATE t_state SET \
                         state=:state, next_version = :next_version, pending_expires_finished = :pending_expires_finished, \
                         join_set_id = :join_set_id, join_set_closing=:join_set_closing, \
-                        executor_id = NULL,run_id = NULL,intermittent_event_count = NULL, \
+                        executor_id = NULL,run_id = NULL,temporary_event_count = NULL, \
                         max_retries = NULL,retry_exp_backoff_millis = NULL,parent_execution_id = NULL,parent_join_set_id = NULL, \
                         result_kind = NULL \
                         WHERE execution_id = :execution_id AND next_version = :expected_current_version",
@@ -1047,7 +1047,7 @@ impl SqlitePool {
                         "UPDATE t_state SET \
                         state=:state, next_version = :next_version, pending_expires_finished = :pending_expires_finished, \
                         join_set_id = NULL,join_set_closing=NULL, \
-                        executor_id = NULL,run_id = NULL,intermittent_event_count = NULL, \
+                        executor_id = NULL,run_id = NULL,temporary_event_count = NULL, \
                         max_retries = NULL,retry_exp_backoff_millis = NULL,parent_execution_id = NULL,parent_join_set_id = NULL, \
                         result_kind = :result_kind \
                         WHERE execution_id = :execution_id AND next_version = :expected_current_version",
@@ -1353,7 +1353,7 @@ impl SqlitePool {
         };
 
         let next_version = Version::new(appending_version.0 + 1);
-        let intermittent_event_count = Self::update_state(
+        let temporary_event_count = Self::update_state(
             tx,
             execution_id,
             pending_state,
@@ -1361,8 +1361,8 @@ impl SqlitePool {
             &next_version,
             Some(ffqn),
         )?
-        .intermittent_event_count
-        .expect("intermittent_event_count must be set");
+        .temporary_event_count
+        .expect("temporary_event_count must be set");
         // Fetch event_history and `Created` event to construct the response.
         let mut events = tx
             .prepare(
@@ -1441,7 +1441,7 @@ impl SqlitePool {
             retry_exp_backoff,
             max_retries,
             parent,
-            intermittent_event_count,
+            temporary_event_count,
         })
     }
 
@@ -1534,10 +1534,10 @@ impl SqlitePool {
             ExecutionEventInner::Locked { .. } => {
                 unreachable!("handled above")
             }
-            ExecutionEventInner::IntermittentlyFailed {
+            ExecutionEventInner::TemporarilyFailed {
                 backoff_expires_at, ..
             }
-            | ExecutionEventInner::IntermittentTimedOut { backoff_expires_at } => {
+            | ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at } => {
                 IndexAction::PendingStateChanged(PendingState::PendingAt {
                     scheduled_at: *backoff_expires_at,
                 })
@@ -2481,7 +2481,7 @@ impl DbConnection for SqlitePool {
                     ;
                     // Extend with expired locks
                     expired_timers.extend(conn.prepare(&format!(
-                        "SELECT execution_id, next_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id FROM t_state \
+                        "SELECT execution_id, next_version, temporary_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id FROM t_state \
                         WHERE pending_expires_finished <= :at AND state = \"{STATE_LOCKED}\"")
                     ).map_err(convert_err)?
                     .query_map(
@@ -2492,13 +2492,13 @@ impl DbConnection for SqlitePool {
                                 let execution_id = row.get("execution_id")?;
                                 let version = Version::new(row.get::<_, VersionType>("next_version")?);
 
-                                let intermittent_event_count = row.get::<_, u32>("intermittent_event_count")?;
+                                let temporary_event_count = row.get::<_, u32>("temporary_event_count")?;
                                 let max_retries = row.get::<_, u32>("max_retries")?;
                                 let retry_exp_backoff = Duration::from_millis(row.get::<_, u64>("retry_exp_backoff_millis")?);
                                 let parent_execution_id = row.get::<_, Option<ExecutionId>>("parent_execution_id")?;
                                 let parent_join_set_id = row.get::<_, Option<JoinSetIdW>>("parent_join_set_id")?.map(|it|it.0);
 
-                                Ok(ExpiredTimer::Lock { execution_id, version, intermittent_event_count, max_retries,
+                                Ok(ExpiredTimer::Lock { execution_id, version, temporary_event_count, max_retries,
                                     retry_exp_backoff, parent: parent_execution_id.and_then(|pexe| parent_join_set_id.map(|pjs| (pexe, pjs)))})
                             },
                         ).map_err(convert_err)?

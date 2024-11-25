@@ -28,7 +28,7 @@ impl TemporarilyTimedOutEventProps {
             .insert(
                 Node::new(NodeData {
                     icon: Icon::Time,
-                    label: "Intermittently Timed Out".into_html(),
+                    label: "Temporarily Timed Out".into_html(),
                     has_caret: self.event.backoff_expires_at.is_some(),
                     ..Default::default()
                 }),
@@ -57,7 +57,7 @@ impl TemporarilyTimedOutEventProps {
     }
 }
 
-#[function_component(IntermittentlyTimedOutEvent)]
+#[function_component(TemporarilyTimedOutEvent)]
 pub fn temporarily_timed_out_event(props: &TemporarilyTimedOutEventProps) -> Html {
     let tree = props.construct_tree();
     html! {

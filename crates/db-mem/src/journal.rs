@@ -173,11 +173,11 @@ impl ExecutionJournal {
                     run_id: *run_id,
                 }),
 
-                ExecutionEventInner::IntermittentlyFailed {
+                ExecutionEventInner::TemporarilyFailed {
                     backoff_expires_at: expires_at,
                     ..
                 }
-                | ExecutionEventInner::IntermittentTimedOut {
+                | ExecutionEventInner::TemporarilyTimedOut {
                     backoff_expires_at: expires_at,
                     ..
                 } => Some(PendingState::PendingAt {
@@ -263,11 +263,11 @@ impl ExecutionJournal {
     }
 
     #[must_use]
-    pub fn intermittent_event_count(&self) -> u32 {
+    pub fn temporary_event_count(&self) -> u32 {
         u32::try_from(
             self.execution_events
                 .iter()
-                .filter(|event| event.event.is_intermittent_event())
+                .filter(|event| event.event.is_temporary_event())
                 .count(),
         )
         .unwrap()

@@ -50,16 +50,16 @@ pub struct WorkerContext {
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
     // retriable errors
-    #[error("intermittent error: {reason}")]
-    IntermittentError {
+    #[error("temporary error: {reason}")]
+    TemporaryError {
         reason: StrVariant,
         err: Option<Box<dyn Error + Send + Sync>>,
         version: Version,
     },
     #[error("Limit reached: {0}")]
     LimitReached(String, Version),
-    #[error("intermittent timeout")]
-    IntermittentTimeout,
+    #[error("temporary timeout")]
+    TemporaryTimeout,
     #[error(transparent)]
     DbError(DbError),
     // non-retriable errors

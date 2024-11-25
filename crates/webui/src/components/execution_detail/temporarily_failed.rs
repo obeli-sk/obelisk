@@ -22,7 +22,7 @@ impl TemporarilyFailedEventProps {
             .insert(
                 Node::new(NodeData {
                     icon: Icon::Error,
-                    label: "Intermittently Failed".into_html(),
+                    label: "Temporarily Failed".into_html(),
                     has_caret: true,
                     ..Default::default()
                 }),

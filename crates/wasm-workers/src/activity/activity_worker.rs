@@ -118,7 +118,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 if reason.starts_with("maximum concurrent") {
                     return WorkerResult::Err(WorkerError::LimitReached(reason, ctx.version));
                 }
-                return WorkerResult::Err(WorkerError::IntermittentError {
+                return WorkerResult::Err(WorkerError::TemporaryError {
                     reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
                     err: Some(err.into()),
                     version: ctx.version,
@@ -150,8 +150,8 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             let worker_span = ctx.worker_span.clone();
             async move {
                 if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
-                    // guest panic is translated to an IntermittentError, which allows for retries.
-                    return WorkerResult::Err(WorkerError::IntermittentError {
+                    // guest panic is translated to an TemporaryError, which allows for retries.
+                    return WorkerResult::Err(WorkerError::TemporaryError {
                         reason: StrVariant::Arc(Arc::from(format!(
                             "wasm function call error - {err}"
                         ))),
@@ -171,7 +171,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                     }
                 };
                 if let Err(err) = func.post_return_async(&mut store).await {
-                    return WorkerResult::Err(WorkerError::IntermittentError {
+                    return WorkerResult::Err(WorkerError::TemporaryError {
                         reason: StrVariant::Arc(Arc::from(format!(
                             "wasm post function call error - {err}"
                         ))),
@@ -181,14 +181,14 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 }
 
                 if retry_on_err {
-                    // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (IntermittentError)
+                    // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (TemporaryError)
                     if let SupportedFunctionReturnValue::FallibleResultErr(result_err) = &result {
                         if ctx.can_be_retried {
                             let result_err = serde_json::to_string(result_err).expect(
                                 "SupportedFunctionReturnValue should be serializable to JSON",
                             );
                             let reason = StrVariant::Arc(Arc::from(result_err));
-                            return WorkerResult::Err(WorkerError::IntermittentError {
+                            return WorkerResult::Err(WorkerError::TemporaryError {
                                 reason,
                                 err: None,
                                 version: ctx.version,
@@ -223,7 +223,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 ctx.worker_span.in_scope(||
                         info!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %self.clock_fn.now(), "Timed out")
                     );
-                    return WorkerResult::Err(WorkerError::IntermittentTimeout);
+                    return WorkerResult::Err(WorkerError::TemporaryTimeout);
             }
         }
     }
@@ -459,7 +459,7 @@ pub(crate) mod tests {
         #[case(10, 10, Ok(SupportedFunctionReturnValue::None))] // 0.1s -> Ok
         #[case(1500, 1, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
         #[tokio::test]
-        async fn flaky_sleep_should_produce_intermittent_timeout(
+        async fn flaky_sleep_should_produce_temporary_timeout(
             #[case] sleep_millis: u32,
             #[case] sleep_iterations: u32,
             #[case] expected: concepts::FinishedExecutionResult,
@@ -604,7 +604,7 @@ pub(crate) mod tests {
             let WorkerResult::Err(err) = worker.run(ctx).await else {
                 panic!()
             };
-            assert_matches!(err, WorkerError::IntermittentTimeout);
+            assert_matches!(err, WorkerError::TemporaryTimeout);
         }
 
         #[tokio::test]
@@ -797,7 +797,7 @@ pub(crate) mod tests {
             debug!("started mock server on {}", server.address());
 
             {
-                // Expect error result to be interpreted as an intermittent failure
+                // Expect error result to be interpreted as an temporary failure
                 assert_eq!(
                     1,
                     exec_task
@@ -812,7 +812,7 @@ pub(crate) mod tests {
 
                 let (reason, found_expires_at) = assert_matches!(
                     &exec_log.last_event().event,
-                    ExecutionEventInner::IntermittentlyFailed {
+                    ExecutionEventInner::TemporarilyFailed {
                         backoff_expires_at,
                         reason,
                     }

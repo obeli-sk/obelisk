@@ -39,14 +39,14 @@ pub struct ExecutionLog {
 impl ExecutionLog {
     #[must_use]
     pub fn can_be_retried_after(
-        intermittent_event_count: u32,
+        temporary_event_count: u32,
         max_retries: u32,
         retry_exp_backoff: Duration,
     ) -> Option<Duration> {
         // If max_retries == u32::MAX, wrapping is OK after this succeeds - we want to retry forever.
-        if intermittent_event_count <= max_retries {
+        if temporary_event_count <= max_retries {
             // TODO: Add test for number of retries
-            let duration = retry_exp_backoff * 2_u32.saturating_pow(intermittent_event_count - 1);
+            let duration = retry_exp_backoff * 2_u32.saturating_pow(temporary_event_count - 1);
             Some(duration)
         } else {
             None
@@ -228,15 +228,14 @@ pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::Histor
         join_set_id: JoinSetId::from_parts(0, 0),
     },
 };
-pub const DUMMY_INTERMITTENT_TIMEOUT: ExecutionEventInner =
-    ExecutionEventInner::IntermittentTimedOut {
+pub const DUMMY_TEMPORARILY_TIMED_OUT: ExecutionEventInner =
+    ExecutionEventInner::TemporarilyTimedOut {
         backoff_expires_at: DateTime::from_timestamp_nanos(0),
     };
-pub const DUMMY_INTERMITTENT_FAILURE: ExecutionEventInner =
-    ExecutionEventInner::IntermittentlyFailed {
-        backoff_expires_at: DateTime::from_timestamp_nanos(0),
-        reason: StrVariant::empty(),
-    };
+pub const DUMMY_TEMPORARILY_FAILED: ExecutionEventInner = ExecutionEventInner::TemporarilyFailed {
+    backoff_expires_at: DateTime::from_timestamp_nanos(0),
+    reason: StrVariant::empty(),
+};
 
 #[derive(
     Clone,
@@ -287,16 +286,16 @@ pub enum ExecutionEventInner {
     Unlocked,
     // Created by the executor holding the lock.
     // After expiry interpreted as pending.
-    #[display("IntermittentlyFailed(`{backoff_expires_at}`)")]
-    IntermittentlyFailed {
+    #[display("TemporarilyFailed(`{backoff_expires_at}`)")]
+    TemporarilyFailed {
         backoff_expires_at: DateTime<Utc>,
         #[arbitrary(value = StrVariant::Static("reason"))]
         reason: StrVariant,
     },
     // Created by the executor holding last lock.
     // After expiry interpreted as pending.
-    #[display("IntermittentlyTimedOut(`{backoff_expires_at}`)")]
-    IntermittentTimedOut { backoff_expires_at: DateTime<Utc> },
+    #[display("TemporarilyTimedOut(`{backoff_expires_at}`)")]
+    TemporarilyTimedOut { backoff_expires_at: DateTime<Utc> },
     // Created by the executor holding last lock.
     // Processed by a scheduler if a parent execution needs to be notified,
     // also when
@@ -312,10 +311,10 @@ pub enum ExecutionEventInner {
 
 impl ExecutionEventInner {
     #[must_use]
-    pub fn is_intermittent_event(&self) -> bool {
+    pub fn is_temporary_event(&self) -> bool {
         matches!(
             self,
-            Self::IntermittentlyFailed { .. } | Self::IntermittentTimedOut { .. }
+            Self::TemporarilyFailed { .. } | Self::TemporarilyTimedOut { .. }
         )
     }
 
@@ -537,7 +536,7 @@ pub struct LockedExecution {
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
     pub parent: Option<(ExecutionId, JoinSetId)>,
-    pub intermittent_event_count: u32,
+    pub temporary_event_count: u32,
 }
 
 pub type LockPendingResponse = Vec<LockedExecution>;
@@ -888,8 +887,8 @@ pub enum ExpiredTimer {
     Lock {
         execution_id: ExecutionId,
         version: Version,
-        /// As the execution may still be running, this represents the number of intermittent failures prior to this execution.
-        intermittent_event_count: u32,
+        /// As the execution may still be running, this represents the number of temporary failures + timeouts prior to this execution.
+        temporary_event_count: u32,
         max_retries: u32,
         retry_exp_backoff: Duration,
         parent: Option<(ExecutionId, JoinSetId)>,
@@ -911,7 +910,7 @@ pub enum PendingState {
         lock_expires_at: DateTime<Utc>,
     },
     #[display("PendingAt(`{scheduled_at}`)")]
-    PendingAt { scheduled_at: DateTime<Utc> }, // e.g. created with a schedule, intermittent timeout/failure
+    PendingAt { scheduled_at: DateTime<Utc> }, // e.g. created with a schedule, temporary timeout/failure
     #[display("BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
     /// Caused by [`HistoryEvent::JoinNext`]
     BlockedByJoinSet {

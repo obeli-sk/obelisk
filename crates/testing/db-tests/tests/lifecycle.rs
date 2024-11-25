@@ -269,10 +269,10 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         .await;
     {
         let created_at = sim_clock.now();
-        info!(now = %created_at, "Intermittent timeout");
+        info!(now = %created_at, "Temporary timeout");
         let req = AppendRequest {
             created_at,
-            event: ExecutionEventInner::IntermittentTimedOut {
+            event: ExecutionEventInner::TemporarilyTimedOut {
                 backoff_expires_at: created_at + lock_expiry,
             },
         };
@@ -542,8 +542,8 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
             retry_exp_backoff,
             parent,
         ) = assert_matches!(expired,
-            ExpiredTimer::Lock { execution_id, version, intermittent_event_count, max_retries, retry_exp_backoff, parent } =>
-            (execution_id, version, intermittent_event_count, max_retries, retry_exp_backoff, parent));
+            ExpiredTimer::Lock { execution_id, version, temporary_event_count, max_retries, retry_exp_backoff, parent } =>
+            (execution_id, version, temporary_event_count, max_retries, retry_exp_backoff, parent));
         assert_eq!(execution_id, *found_execution_id);
         assert_eq!(Version::new(2), *version);
         assert_eq!(0, *already_retried_count);
@@ -964,7 +964,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
     let expected = ExpiredTimer::Lock {
         execution_id,
         version,
-        intermittent_event_count: 0,
+        temporary_event_count: 0,
         max_retries: 0,
         retry_exp_backoff: Duration::ZERO,
         parent: None,

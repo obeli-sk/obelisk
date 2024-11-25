@@ -528,7 +528,7 @@ impl DbHolder {
                 max_retries: journal.max_retries(),
                 run_id: RunId::generate(),
                 parent: journal.parent(),
-                intermittent_event_count: journal.intermittent_event_count(),
+                temporary_event_count: journal.temporary_event_count(),
             };
             payload.push(item);
         }
@@ -654,7 +654,7 @@ impl DbHolder {
                     execution_id: journal.execution_id().clone(),
                     version: journal.version(),
                     max_retries: journal.max_retries(),
-                    intermittent_event_count: journal.intermittent_event_count(),
+                    temporary_event_count: journal.temporary_event_count(),
                     retry_exp_backoff: journal.retry_exp_backoff(),
                     parent: journal.parent(),
                 },

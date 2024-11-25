@@ -54,7 +54,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.
 # join_next_blocking_strategy = "await" # Default strategy is "await"
 # non_blocking_event_batching = 100 # Number of non-blocking events that can be cached and written in a batch.
-# retry_on_trap = false # If set to true, traps(panics) will be handled as intermittent failures and retried until the problem goes away.
+# retry_on_trap = false # If set to true, traps(panics) will be handled as temporary failures and retried until the problem goes away.
 
 ### Webhook section
 # [[http_server]]
