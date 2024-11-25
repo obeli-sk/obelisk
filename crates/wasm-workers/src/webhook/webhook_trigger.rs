@@ -252,7 +252,6 @@ impl<T> Default for MethodAwareRouter<T> {
     }
 }
 
-#[expect(clippy::too_many_arguments)]
 pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     listener: TcpListener,
     engine: Arc<Engine>,
