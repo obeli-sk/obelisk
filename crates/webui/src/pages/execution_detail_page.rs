@@ -6,8 +6,8 @@ use crate::components::execution_detail::history::join_set_created::HistoryJoinS
 use crate::components::execution_detail::history::join_set_request::HistoryJoinSetRequestEvent;
 use crate::components::execution_detail::history::persist::HistoryPersistEvent;
 use crate::components::execution_detail::history::schedule::HistoryScheduleEvent;
-use crate::components::execution_detail::intermittently_failed::IntermittentlyFailedEvent;
 use crate::components::execution_detail::locked::LockedEvent;
+use crate::components::execution_detail::temporarily_failed::TemporarilyFailedEvent;
 use crate::components::execution_detail::timed_out::IntermittentlyTimedOutEvent;
 use crate::components::execution_detail::unlocked::UnlockedEvent;
 use crate::components::execution_status::ExecutionStatus;
@@ -253,7 +253,7 @@ fn render_execution_details(
                     <UnlockedEvent event={*event}/>
                 },
                 execution_event::Event::Failed(event) => html! {
-                    <IntermittentlyFailedEvent event={event.clone()} />
+                    <TemporarilyFailedEvent event={event.clone()} />
                 },
                 execution_event::Event::TimedOut(event) => html! {
                     <IntermittentlyTimedOutEvent event={*event} />

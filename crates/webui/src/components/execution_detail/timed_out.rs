@@ -7,11 +7,11 @@ use yewprint::{
 };
 
 #[derive(Properties, PartialEq, Clone)]
-pub struct IntermittentlyTimedOutEventProps {
-    pub event: grpc_client::execution_event::IntermittentlyTimedOut,
+pub struct TemporarilyTimedOutEventProps {
+    pub event: grpc_client::execution_event::TemporarilyTimedOut,
 }
 
-impl IntermittentlyTimedOutEventProps {
+impl TemporarilyTimedOutEventProps {
     fn construct_tree(&self) -> TreeData<u32> {
         let mut tree = TreeBuilder::new().build();
         let root_id = tree
@@ -58,7 +58,7 @@ impl IntermittentlyTimedOutEventProps {
 }
 
 #[function_component(IntermittentlyTimedOutEvent)]
-pub fn intermittently_timed_out_event(props: &IntermittentlyTimedOutEventProps) -> Html {
+pub fn temporarily_timed_out_event(props: &TemporarilyTimedOutEventProps) -> Html {
     let tree = props.construct_tree();
     html! {
         <TreeComponent {tree} />
