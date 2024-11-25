@@ -73,6 +73,7 @@ impl Debug for EngineConfig {
                 .field("allocation_strategy", &"Polling")
                 .field("polling_config", &polling)
                 .finish(),
+            _ => f.field("allocation_strategy", &"Unknown").finish(),
         }
     }
 }
