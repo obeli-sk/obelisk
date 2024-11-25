@@ -3,6 +3,73 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/obeli-sk/obelisk/compare/v0.7.0...v0.8.0) - 2024-11-25
+
+### Added
+
+- [**breaking**] Remove `request_timeout` configuration from webhooks
+- *(grpc)* Implement `ListResponses`
+- *(ui)* Show time since scheduling in the execution detail page
+- *(grpc)* [**breaking**] send `scheduled_at` in `FinishedStatus`
+- *(grpc)* Send `scheduled_at` in `ExecutionSummary`
+- *(sqlite)* Persist `t_state.schedule_at`, pass it in `ExecutionWithState`
+- *(grpc)* [**breaking**] Remove `WitType.internal`
+- *(ui)* Show parameter names in `<CreateEvent />`
+- *(grpc)* [**breaking**] Allow sorting executions by creation date, execution ID
+- *(sqlite)* [**breaking**] Add `t_state.created_at`
+- *(grpc)* Implement `list_execution_events`
+- *(grpc)* Add stub for `GetExecutionLog` rpc
+- *(grpc)* Add definitions for execution history
+- *(sqlite)* Implement `list_responses` with pagination
+- *(db)* Add `DbConnection::get_execution_events`
+- [**breaking**] Change format for derived `ExecutionId`
+
+### Fixed
+
+- *(grpc)* Fix version in `list_execution_events`
+- *(sqlite)* Fix sql statement of `list_responses`
+
+### Other
+
+- Bump the webui OCI image
+- *(sqlite)* [**breaking**] Rename `Intermittently...` to `Temporarily...`
+- *(grpc)* [**breaking**] Rename `Intermittently...` to `Temporarily...`
+- Bump the webui OCI image
+- Update the documentation
+- Run `cargo upgrade`
+- Bump `flake.lock`
+- Fix clippy
+- Fix clippy
+- *(concepts)* Implement `FromSql` and `ToSql` for `ExecutionId`
+- Bump `flake.lock`
+- *(grpc)* [**breaking**] Change `ListExecutions` pagination to date-based
+- *(grpc)* Rename `ListExecutionEvents`
+- Update the readme
+- *(grpc)* [**breaking**] Rename `FunctionDetail`
+- *(grpc)* [**breaking**] Introduce ` ResultDetail` message
+- Make `get_finished_result` return `Ok(None)` on unfinished executions
+- *(ui)* Build webui with `release_trunk` profile
+- Bump `trunk` to v0.21.1
+- Run `cargo upgrade`
+- Rename `wait_for_pending`
+- Fix clippy warnings
+- *(concepts)* Change `append_batch`,`append_batch_respond_to_parent`
+- *(concepts)* [**breaking**] Change signature of `append_batch_create_new_execution`
+- *(db)* Rename `list_execution_events`
+- Convert `Version(usize)` to `Version(u32)`
+- *(concepts)* [**breaking**] Rename `ExecutionEventInner::IntermittentTimedOut`
+- *(concepts)* [**breaking**] `ExecutionEventInner::IntermittentlyFailed`
+- *(concepts)* [**breaking**] Rename `JoinNext.run_expires_at`
+- Extract `SupportedFunctionReturnValue::FallibleResultErr`
+- Rename `list_responses`
+- *(sqlite)* [**breaking**] Introduce `t_join_set_response.id`
+- *(sqlite)* Add index to `t_state.created_at`
+- Remove `ExecutionIdW`
+- *(sqlite)* Revert adding `t_ffqn`
+- *(sqlite)* Add more stats to the dumped json
+- update Cargo.toml dependencies
+- Fix clippy
+
 ## [0.7.0](https://github.com/obeli-sk/obelisk/compare/v0.6.1...v0.7.0) - 2024-11-09
 
 ### Added
