@@ -5,7 +5,7 @@ use concepts::{
 };
 use indexmap::{indexmap, IndexMap};
 use std::{borrow::Cow, path::Path, sync::Arc};
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 use val_json::type_wrapper::{TypeConversionError, TypeWrapper};
 use wasmtime::{
     component::{types::ComponentItem, Component, ComponentExportIndex},
@@ -520,9 +520,7 @@ fn enrich_function_params<'a>(
                 extension: false,
             });
         } else {
-            return Err(DecodeError::CannotReadComponent(format!(
-                "not a ComponentInstance: {item:?}"
-            )));
+            warn!("Ignoring {ifc_fqn}.{item:?} - only component functions nested in component instances are supported");
         }
     }
     Ok(vec)
