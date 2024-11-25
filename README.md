@@ -126,8 +126,8 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [x] Mapping from any execution result (e.g. traps, timeouts, err variants) to other execution results via `-await-next`
 - [x] Server verification - downloads components, checks the TOML configuration and matches component imports with exports.
 - [x] Structured concurrency for join sets - blocking parent until all child executions are finished
-- [ ] HTML based UI for showing executions, event history and relations
-- [ ] Print each component's imports and exports in the WIT format
+- [x] HTML based UI for showing executions, event history and relations
+- [ ] WIT Explorer
 - [ ] Heterogenous join sets, allowing one join set to combine multiple function signatures and delays
 - [ ] Expose filesystem with directory mapping for activities, webhooks
 - [ ] Expose network configuration for activities, webhooks
