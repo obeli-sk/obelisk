@@ -6154,14 +6154,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "webui-webhook"
+name = "webui-proxy"
 version = "0.8.0"
 dependencies = [
  "anyhow",
  "futures",
  "url",
  "webui-builder",
- "wit-bindgen-rt 0.36.0",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]

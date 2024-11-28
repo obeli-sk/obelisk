@@ -1,19 +1,18 @@
-#[allow(warnings)]
-mod bindings;
+use wit_bindgen::generate;
 
-use crate::bindings::exports::wasi::http::incoming_handler::Guest;
+generate!({ generate_all });
+struct Component;
+export!(Component);
+
 use anyhow::anyhow;
-use bindings::wasi::http::types::{
-    ErrorCode, Fields, IncomingBody, IncomingRequest, IncomingResponse, Method, OutgoingBody,
-    OutgoingRequest, OutgoingResponse, ResponseOutparam, Scheme,
-};
+use exports::wasi::http::incoming_handler::Guest;
 use futures::{SinkExt as _, StreamExt as _};
 use std::future::Future;
 use url::Url;
-
-struct Component;
-
-bindings::export!(Component with_types_in bindings);
+use wasi::http::types::{
+    ErrorCode, Fields, IncomingRequest, IncomingResponse, OutgoingBody, OutgoingRequest,
+    OutgoingResponse, ResponseOutparam, Scheme,
+};
 
 // release: Include real files
 #[cfg(not(debug_assertions))]
@@ -255,7 +254,7 @@ mod executor {
         task::{Context, Poll, Wake, Waker},
     };
 
-    use crate::bindings::wasi::{
+    use crate::wasi::{
         http::{
             outgoing_handler,
             types::{

@@ -277,8 +277,7 @@ wasmtime-wasi-http = "27.0"
 wast = "219.0.1"
 wit-parser = "0.219.1"
 
-# cargo-component
-wit-bindgen-rt = "0.36.0" # TODO: add feature="bitflags"
+# testing components
 wit-bindgen = "0.36.0"
 
 # otlp
