@@ -8,7 +8,6 @@ cd $(dirname "$0")/..
 
 rm -f dev-deps.txt
 echo "cargo-binstall $(cargo-binstall -V)" >> dev-deps.txt
-cargo-component --version >> dev-deps.txt
 cargo dist --version >> dev-deps.txt
 cargo upgrade --version >> dev-deps.txt
 cargo-expand --version >> dev-deps.txt

@@ -83,7 +83,6 @@
               [
                 (pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                 cargo-binstall
-                cargo-component
                 cargo-dist
                 cargo-edit
                 cargo-expand
