@@ -85,7 +85,7 @@ pub mod extractor {
 
     struct HttpHeaderExtractor<'a>(&'a http::HeaderMap);
 
-    impl<'a> Extractor for HttpHeaderExtractor<'a> {
+    impl Extractor for HttpHeaderExtractor<'_> {
         fn get(&self, key: &str) -> Option<&str> {
             self.0.get(key).and_then(|v| {
                 let s = v.to_str();

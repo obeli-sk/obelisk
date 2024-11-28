@@ -758,7 +758,6 @@ pub(crate) mod webhook {
 
 #[derive(Debug, Deserialize, Hash)]
 #[serde(untagged)]
-
 pub(crate) enum InflightSemaphore {
     Unlimited(Unlimited),
     Some(u32),

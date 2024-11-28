@@ -154,7 +154,7 @@ mod serde_strvariant {
 
     struct StrVariantVisitor;
 
-    impl<'de> Visitor<'de> for StrVariantVisitor {
+    impl Visitor<'_> for StrVariantVisitor {
         type Value = StrVariant;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -1460,7 +1460,7 @@ struct ExecutionMetadataInjectorView<'a> {
     metadata: &'a mut ExecutionMetadata,
 }
 
-impl<'a> ExecutionMetadataInjectorView<'a> {
+impl ExecutionMetadataInjectorView<'_> {
     fn is_empty(&self) -> bool {
         self.metadata
             .0
@@ -1469,7 +1469,7 @@ impl<'a> ExecutionMetadataInjectorView<'a> {
     }
 }
 
-impl<'a> opentelemetry::propagation::Injector for ExecutionMetadataInjectorView<'a> {
+impl opentelemetry::propagation::Injector for ExecutionMetadataInjectorView<'_> {
     fn set(&mut self, key: &str, value: String) {
         let key = format!("tracing:{key}");
         let map = if let Some(map) = self.metadata.0.as_mut() {
@@ -1486,7 +1486,7 @@ struct ExecutionMetadataExtractorView<'a> {
     metadata: &'a ExecutionMetadata,
 }
 
-impl<'a> opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'a> {
+impl opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'_> {
     fn get(&self, key: &str) -> Option<&str> {
         self.metadata
             .0

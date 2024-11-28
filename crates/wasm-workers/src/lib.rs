@@ -37,7 +37,7 @@ pub mod envvar {
 
     struct EnvVarVisitor;
 
-    impl<'de> serde::de::Visitor<'de> for EnvVarVisitor {
+    impl serde::de::Visitor<'_> for EnvVarVisitor {
         type Value = EnvVar;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {

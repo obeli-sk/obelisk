@@ -133,7 +133,7 @@ impl<'de> Visitor<'de> for WastValWithTypeVisitor {
 
 struct WastValDeserialize<'a>(&'a TypeWrapper);
 
-impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
+impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
     type Value = WastVal;
 
     #[expect(clippy::too_many_lines)]
@@ -145,7 +145,7 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
 
         struct WastValVisitor<'a>(&'a TypeWrapper);
 
-        impl<'de, 'a> Visitor<'de> for WastValVisitor<'a> {
+        impl<'de> Visitor<'de> for WastValVisitor<'_> {
             type Value = WastVal;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
