@@ -758,7 +758,7 @@ pub(crate) mod tests {
         batching: u32,
     ) {
         const INPUT_ITERATIONS: u32 = 1;
-        let _guard = test_utils::set_up();
+        test_utils::set_up();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
                 .await,
@@ -832,7 +832,7 @@ pub(crate) mod tests {
     async fn fibo_workflow_with_missing_imports_should_fail() {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
-        let _guard = test_utils::set_up();
+        test_utils::set_up();
         let fn_registry = fn_registry_dummy(&[]);
         spawn_workflow_fibo(
             db_pool.clone(),
@@ -919,7 +919,7 @@ pub(crate) mod tests {
         #[values(0, 10)] batching: u32,
     ) {
         const SLEEP_MILLIS: u32 = 100;
-        let _guard = test_utils::set_up();
+        test_utils::set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
 
@@ -1225,7 +1225,7 @@ pub(crate) mod tests {
         const ITERATIONS: u8 = 1;
         const RESCHEDULE_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::RESCHEDULE);
-        let _guard = test_utils::set_up();
+        test_utils::set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![

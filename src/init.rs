@@ -146,44 +146,14 @@ pub(crate) fn init(config: &mut ObeliskConfig) -> Guard {
         .with(tokio_tracing_otlp(config))
         .with(out_layer)
         .with(rolling_file_layer)
-        .with({
-            let (layer, chrome_guard) = chrome_layer();
-            guard.chrome_guard = chrome_guard;
-            layer
-        })
         .init();
 
     std::panic::set_hook(Box::new(utils::tracing_panic_hook));
     guard
 }
 
-#[cfg(not(feature = "tracing-chrome"))]
-fn chrome_layer() -> (Option<tracing::level_filters::LevelFilter>, Option<()>) {
-    (None, None)
-}
-#[cfg(feature = "tracing-chrome")]
-fn chrome_layer<
-    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span> + Send + Sync,
->() -> (
-    Option<tracing_chrome::ChromeLayer<S>>,
-    Option<tracing_chrome::FlushGuard>,
-) {
-    if crate::env_vars::is_env_true(&crate::env_vars::SupportedEnvVar::CHROME_TRACE) {
-        let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
-            .trace_style(tracing_chrome::TraceStyle::Async)
-            .build();
-        (Some(chrome_layer), Some(guard))
-    } else {
-        (None, None)
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct Guard {
-    #[cfg(feature = "tracing-chrome")]
-    chrome_guard: Option<tracing_chrome::FlushGuard>,
-    #[cfg(not(feature = "tracing-chrome"))]
-    chrome_guard: Option<()>,
     file_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
 }
 

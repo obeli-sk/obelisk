@@ -591,7 +591,7 @@ pub(crate) mod tests {
 
     #[test]
     fn check_determinism() {
-        let _guard = test_utils::set_up();
+        test_utils::set_up();
         let mut builder_a = madsim::runtime::Builder::from_env();
         builder_a.check = false;
         info!("MADSIM_TEST_SEED={}", builder_a.seed);

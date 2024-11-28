@@ -16,7 +16,6 @@ chrono.workspace = true
 madsim.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-chrome.workspace = true
 tracing-subscriber.workspace = true
 
 [lints]
