@@ -9,16 +9,10 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-wit-bindgen-rt.workspace = true
+wit-bindgen.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
-
-[package.metadata.component.dependencies]
-
-[package.metadata.component.target.dependencies]
-"testing:sleep".path = "wit/ifc"
-"obelisk:types".path = "../../../../wasm-workers/host-wit/deps/types/"
 
 [lints]
 rust.unused_imports = "allow"

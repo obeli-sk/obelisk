@@ -12,23 +12,29 @@ fn to_snake_case(input: &str) -> String {
 }
 
 pub fn build_activity() {
-    build_internal("wasm32-wasip1");
+    build_internal("wasm32-wasip2", Tool::Cargo);
 }
 
 pub fn build_webhook() {
-    build_internal("wasm32-wasip1");
+    build_internal("wasm32-wasip2", Tool::Cargo);
 }
 
 pub fn build_workflow() {
-    build_internal("wasm32-unknown-unknown");
+    build_internal("wasm32-unknown-unknown", Tool::CargoComponent);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tool {
+    Cargo,
+    CargoComponent,
 }
 
 #[expect(clippy::too_many_lines)]
-fn build_internal(tripple: &str) {
+fn build_internal(tripple: &str, tool: Tool) {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
-    let wasm_path = run_cargo_component_build(&out_dir, pkg_name, tripple);
+    let wasm_path = run_cargo_component_build(&out_dir, pkg_name, tripple, tool);
     if std::env::var("RUST_LOG").is_ok() {
         println!("cargo:warning=Built {wasm_path:?}");
     }
@@ -141,11 +147,17 @@ fn add_dependency(file: &Utf8Path) {
     println!("cargo:rerun-if-changed={file}");
 }
 
-fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str) -> PathBuf {
-    // TODO: Switch back to `cargo-component` after https://github.com/bytecodealliance/cargo-component/pull/346
-    let mut cmd = Command::new("cargo");
-    cmd.arg("component")
-        .arg("build")
+fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str, tool: Tool) -> PathBuf {
+    let mut cmd = match tool {
+        Tool::CargoComponent => {
+            // TODO: Switch back to `cargo-component` after https://github.com/bytecodealliance/cargo-component/pull/346
+            let mut cmd = Command::new("cargo");
+            cmd.arg("component");
+            cmd
+        }
+        Tool::Cargo => Command::new("cargo"),
+    };
+    cmd.arg("build")
         .arg("--release")
         .arg(format!("--target={tripple}"))
         .arg(format!("--package={name}"))

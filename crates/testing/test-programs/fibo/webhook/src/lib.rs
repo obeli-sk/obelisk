@@ -1,15 +1,18 @@
-#[allow(warnings)]
-mod bindings;
+use crate::exports::wasi::http::incoming_handler::Guest;
+use crate::obelisk::log::log::info;
+use crate::obelisk::types::time::ScheduleAt;
+use crate::testing::fibo_workflow::workflow;
+use crate::testing::fibo_workflow_obelisk_ext::workflow as workflow_ext;
+use crate::wasi::http::types::Fields;
+use crate::wasi::http::types::IncomingRequest;
+use crate::wasi::http::types::OutgoingBody;
+use crate::wasi::http::types::OutgoingResponse;
+use crate::wasi::http::types::ResponseOutparam;
+use wit_bindgen::generate;
 
-use crate::bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::obelisk::log::log::info;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
-
+generate!({ generate_all });
 struct Component;
-
-bindings::export!(Component with_types_in bindings);
+export!(Component);
 
 impl Guest for Component {
     fn handle(_request: IncomingRequest, outparam: ResponseOutparam) {
@@ -28,17 +31,12 @@ impl Guest for Component {
 
         let fibo_res = if n >= 10 {
             println!("scheduling");
-            let execution_id =
-                bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_schedule(
-                    crate::bindings::obelisk::types::time::ScheduleAt::Now,
-                    n,
-                    iterations,
-                );
+            let execution_id = workflow_ext::fiboa_schedule(ScheduleAt::Now, n, iterations);
             format!("scheduled: {}", execution_id.id)
         } else if n > 1 {
             // Call the execution directly.
             println!("direct call");
-            let fibo_res = bindings::testing::fibo_workflow::workflow::fiboa(n, iterations);
+            let fibo_res = workflow::fiboa(n, iterations);
             format!("direct call: {fibo_res}")
         } else {
             println!("hardcoded");

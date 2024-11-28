@@ -1,13 +1,13 @@
-mod bindings;
-
-use bindings::obelisk::log::log::info;
+use crate::exports::testing::http::http_get::Guest;
+use obelisk::log::log::info;
 use std::time::Duration;
+use wit_bindgen::generate;
 
-bindings::export!(Component with_types_in bindings);
-
+generate!({ generate_all });
 struct Component;
+export!(Component);
 
-impl crate::bindings::exports::testing::http::http_get::Guest for Component {
+impl Guest for Component {
     fn get(url: String) -> Result<String, String> {
         let resp = waki::Client::new()
             .get(&url)

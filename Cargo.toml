@@ -278,7 +278,8 @@ wast = "219.0.1"
 wit-parser = "0.219.1"
 
 # cargo-component
-wit-bindgen-rt = "0.34.0" # TODO: add feature="bitflags"
+wit-bindgen-rt = "0.36.0" # TODO: add feature="bitflags"
+wit-bindgen = "0.36.0"
 
 # otlp
 opentelemetry = "0.23.0"

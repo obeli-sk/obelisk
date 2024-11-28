@@ -11,16 +11,16 @@ version.workspace = true
 [dependencies]
 anyhow.workspace = true
 waki.workspace = true
-wit-bindgen-rt.workspace = true
+wit-bindgen.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
-[package.metadata.component.dependencies]
+# [package.metadata.component.dependencies]
 
-[package.metadata.component.target.dependencies]
-"obelisk:log".path = "../../../../wasm-workers/host-wit/deps/log/"
-"testing:http" = { path = "wit/ifc" }
+# [package.metadata.component.target.dependencies]
+# "obelisk:log".path = "../../../../wasm-workers/host-wit/deps/log/"
+# "testing:http" = { path = "wit/ifc" }
 
 [lints]
 rust.unused_imports = "allow"

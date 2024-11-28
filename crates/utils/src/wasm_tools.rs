@@ -32,7 +32,7 @@ impl WasmComponent {
         let wasmtime_component = {
             let stopwatch = std::time::Instant::now();
             let component = Component::from_file(engine, wasm_path).map_err(|err| {
-                error!("Cannot read component {wasm_path:?} - {err:?}");
+                error!("Cannot read component using wasmtime {wasm_path:?} - {err:?}");
                 DecodeError::CannotReadComponent(err.to_string())
             })?;
             debug!("Parsed with wasmtime in {:?}", stopwatch.elapsed());
@@ -42,7 +42,7 @@ impl WasmComponent {
         let (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta) = {
             let stopwatch = std::time::Instant::now();
             let decoded = wit_parser::decoding::decode_reader(wasm_file).map_err(|err| {
-                error!("Cannot read component {wasm_path:?} - {err:?}");
+                error!("Cannot read component using wit_parser {wasm_path:?} - {err:?}");
                 DecodeError::CannotReadComponent(err.to_string())
             })?;
             let DecodedWasm::Component(resolve, world_id) = decoded else {
@@ -527,12 +527,14 @@ fn enrich_function_params<'a>(
 }
 
 #[cfg_attr(test, derive(serde::Serialize))]
+#[derive(Debug)]
 struct WitParsedFunctionMetadata {
     params: Vec<ParameterNameWitType>,
     return_type: Option<String>,
 }
 
 #[cfg_attr(test, derive(serde::Serialize))]
+#[derive(Debug)]
 struct ParameterNameWitType {
     name: String,
     wit_type: Option<String>,

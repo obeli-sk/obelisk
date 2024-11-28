@@ -1,14 +1,13 @@
+use exports::testing::sleep::sleep::Guest;
+use obelisk::types::time::Duration as DurationEnum;
 use std::time::Duration;
+use wit_bindgen::generate;
 
-use bindings::exports::testing::sleep::sleep::Duration as DurationEnum;
-
-mod bindings;
-
-bindings::export!(Component with_types_in bindings);
-
+generate!({ generate_all });
 struct Component;
+export!(Component);
 
-impl crate::bindings::exports::testing::sleep::sleep::Guest for Component {
+impl Guest for Component {
     fn sleep(duration: DurationEnum) {
         std::thread::sleep(Duration::from(duration));
     }
