@@ -9,22 +9,10 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-wit-bindgen-rt.workspace = true
+wit-bindgen.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
-[package.metadata.component.dependencies]
-
-[package.metadata.component.target.dependencies]
-"obelisk:types".path = "../../../../wasm-workers/host-wit/deps/types/"
-"obelisk:workflow".path = "../../../../wasm-workers/host-wit/deps/workflow/"
-"testing:sleep-workflow-obelisk-ext".path = "wit/ifc-ext"
-"testing:sleep-workflow".path = "wit/ifc"
-"testing:sleep".path = "../activity/wit/ifc"
-"testing:sleep-obelisk-ext".path = "../activity/wit/ext"
-
 [lints]
-rust.unused_imports = "allow"
-clippy.wrong_self_convention = "allow"
-clippy.unnecessary_cast = "allow"
+workspace = true

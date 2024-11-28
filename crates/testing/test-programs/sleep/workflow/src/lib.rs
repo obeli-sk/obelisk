@@ -1,18 +1,18 @@
-mod bindings;
-use std::time::Duration;
+use exports::testing::sleep_workflow::workflow::Guest;
+use obelisk::types::execution::ExecutionId;
+use obelisk::types::time::Duration as DurationEnum;
+use obelisk::types::time::ScheduleAt;
+use obelisk::workflow::host_activities::{self, new_join_set};
+use testing::sleep::sleep as sleep_activity;
+use testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
+use testing::sleep_workflow_obelisk_ext::workflow as workflow_ext;
+use wit_bindgen::generate;
 
-use crate::bindings::testing::sleep::sleep as sleep_activity;
-use crate::bindings::testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
-use bindings::exports::testing::sleep_workflow::workflow::Duration as DurationEnum;
-use bindings::obelisk::types::execution::ExecutionId;
-use bindings::obelisk::workflow::host_activities::{self, new_join_set};
-use bindings::testing::sleep_workflow_obelisk_ext::workflow as workflow_ext;
-bindings::export!(Component with_types_in bindings);
-use crate::bindings::obelisk::types::time::ScheduleAt;
-
+generate!({ generate_all });
 struct Component;
+export!(Component);
 
-impl crate::bindings::exports::testing::sleep_workflow::workflow::Guest for Component {
+impl Guest for Component {
     fn sleep_host_activity(duration: DurationEnum) {
         host_activities::sleep(duration);
     }

@@ -1,37 +1,34 @@
-mod bindings;
+use exports::testing::http_workflow::workflow::Guest;
+use obelisk::workflow::host_activities::new_join_set;
+use testing::{
+    http::http_get,
+    http_obelisk_ext::http_get::{get_successful_await_next, get_successful_submit},
+};
+use wit_bindgen::generate;
 
-bindings::export!(Component with_types_in bindings);
-
+generate!({ generate_all });
 struct Component;
+export!(Component);
 
-impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Component {
+impl Guest for Component {
     fn get(url: String) -> Result<String, String> {
-        crate::bindings::testing::http::http_get::get(&url)
+        http_get::get(&url)
     }
 
     fn get_successful(url: String) -> Result<String, String> {
-        crate::bindings::testing::http::http_get::get_successful(&url)
+        http_get::get_successful(&url)
     }
 
     fn get_successful_concurrently(urls: Vec<String>) -> Result<Vec<String>, String> {
-        let join_set_id = bindings::obelisk::workflow::host_activities::new_join_set();
+        let join_set_id = new_join_set();
         let length = urls.len();
         for url in urls {
-            let _execution_id =
-                crate::bindings::testing::http_obelisk_ext::http_get::get_successful_submit(
-                    &join_set_id,
-                    &url,
-                );
+            let _execution_id = get_successful_submit(&join_set_id, &url);
         }
         let mut list = Vec::with_capacity(length);
         for _ in 0..length {
             // Mark the whole result as failed if any child execution fails.
-            let contents =
-                crate::bindings::testing::http_obelisk_ext::http_get::get_successful_await_next(
-                    &join_set_id,
-                )
-                .unwrap()
-                .1?;
+            let contents = get_successful_await_next(&join_set_id).unwrap().1?;
             list.push(contents);
         }
         Ok(list)
@@ -41,23 +38,14 @@ impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Compo
         url: String,
         concurrency: u32,
     ) -> Result<Vec<String>, String> {
-        let join_set_id = bindings::obelisk::workflow::host_activities::new_join_set();
+        let join_set_id = new_join_set();
         for _ in 0..concurrency {
-            let _execution_id =
-                crate::bindings::testing::http_obelisk_ext::http_get::get_successful_submit(
-                    &join_set_id,
-                    &url,
-                );
+            let _execution_id = get_successful_submit(&join_set_id, &url);
         }
         let mut list = Vec::with_capacity(concurrency as usize);
         for _ in 0..concurrency {
             // Mark the whole result as failed if any child execution fails.
-            let contents =
-                crate::bindings::testing::http_obelisk_ext::http_get::get_successful_await_next(
-                    &join_set_id,
-                )
-                .unwrap()
-                .1?;
+            let contents = get_successful_await_next(&join_set_id).unwrap().1?;
             list.push(contents);
         }
         Ok(list)

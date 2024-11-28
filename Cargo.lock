@@ -4675,7 +4675,7 @@ dependencies = [
 name = "test-programs-fibo-workflow"
 version = "0.8.0"
 dependencies = [
- "wit-bindgen-rt 0.36.0",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]
@@ -4705,7 +4705,7 @@ dependencies = [
 name = "test-programs-http-get-workflow"
 version = "0.8.0"
 dependencies = [
- "wit-bindgen-rt 0.36.0",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]
@@ -4733,7 +4733,7 @@ dependencies = [
 name = "test-programs-sleep-workflow"
 version = "0.8.0"
 dependencies = [
- "wit-bindgen-rt 0.36.0",
+ "wit-bindgen 0.36.0",
 ]
 
 [[package]]

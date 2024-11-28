@@ -15,6 +15,4 @@ wit-bindgen.workspace = true
 crate-type = ["cdylib"]
 
 [lints]
-rust.unused_imports = "allow"
-clippy.wrong_self_convention = "allow"
-clippy.unnecessary_cast = "allow"
+workspace = true
