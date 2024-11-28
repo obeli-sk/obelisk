@@ -20,13 +20,13 @@ pub fn build_webhook() {
 }
 
 pub fn build_workflow() {
-    build_internal("wasm32-unknown-unknown", Tool::CargoComponent);
+    build_internal("wasm32-unknown-unknown", Tool::CargoAndWasmTools);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
     Cargo,
-    CargoComponent,
+    CargoAndWasmTools,
 }
 
 #[expect(clippy::too_many_lines)]
@@ -148,15 +148,7 @@ fn add_dependency(file: &Utf8Path) {
 }
 
 fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str, tool: Tool) -> PathBuf {
-    let mut cmd = match tool {
-        Tool::CargoComponent => {
-            // TODO: Switch back to `cargo-component` after https://github.com/bytecodealliance/cargo-component/pull/346
-            let mut cmd = Command::new("cargo");
-            cmd.arg("component");
-            cmd
-        }
-        Tool::Cargo => Command::new("cargo"),
-    };
+    let mut cmd = Command::new("cargo");
     cmd.arg("build")
         .arg("--release")
         .arg(format!("--target={tripple}"))
@@ -173,5 +165,33 @@ fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str, tool: To
         .join("release")
         .join(format!("{name_snake_case}.wasm",));
     assert!(target.exists(), "Target path must exist: {target:?}");
-    target
+    if tool == Tool::CargoAndWasmTools {
+        let target_transformed = out_dir
+            .join(tripple)
+            .join("release")
+            .join(format!("{name_snake_case}_component.wasm",));
+        let mut cmd = Command::new("wasm-tools");
+        cmd.arg("component")
+            .arg("new")
+            .arg(
+                target
+                    .to_str()
+                    .expect("only utf-8 encoded paths are supported"),
+            )
+            .arg("--output")
+            .arg(
+                target_transformed
+                    .to_str()
+                    .expect("only utf-8 encoded paths are supported"),
+            );
+        let status = cmd.status().unwrap();
+        assert!(status.success());
+        assert!(
+            target_transformed.exists(),
+            "Transformed target path must exist: {target_transformed:?}"
+        );
+        target_transformed
+    } else {
+        target
+    }
 }
