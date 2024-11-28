@@ -80,6 +80,7 @@ impl GuestNesting for Component {
     }
 }
 
+#[must_use]
 pub fn fibo(n: u8) -> u64 {
     if n <= 1 {
         1

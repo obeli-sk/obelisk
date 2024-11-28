@@ -86,7 +86,7 @@ impl Guest for Component {
                 );
                 let target_url = Url::parse(&target_url).unwrap(); // gRPC server
                 executor::run(async move {
-                    match start_outgoing_request(incoming_request, &target_url).await {
+                    match start_outgoing_request(&incoming_request, &target_url) {
                         Ok((request_copy, incoming_response)) => {
                             let response_copy = async move {
                                 let incoming_response = incoming_response.await.unwrap(); // Blocks if more outgoing request body chunks are needed.
@@ -129,7 +129,7 @@ impl Guest for Component {
                             server_error(response_outparam);
                         }
                     }
-                })
+                });
             }
             _ => {
                 let content = get_index();
@@ -141,7 +141,7 @@ impl Guest for Component {
 }
 
 fn server_error(response_out: ResponseOutparam) {
-    respond(500, response_out)
+    respond(500, response_out);
 }
 
 fn respond(status: u16, response_out: ResponseOutparam) {
@@ -154,8 +154,8 @@ fn respond(status: u16, response_out: ResponseOutparam) {
     OutgoingBody::finish(body, None).expect("outgoing-body.finish");
 }
 
-async fn start_outgoing_request(
-    incoming_request: IncomingRequest,
+fn start_outgoing_request(
+    incoming_request: &IncomingRequest,
     url: &Url,
 ) -> anyhow::Result<(
     impl Future<Output = anyhow::Result<()>>,
@@ -231,9 +231,9 @@ fn write_static_response(mut buf: &[u8], content_type: &str, outparam: ResponseO
     while !buf.is_empty() {
         pollable.block();
         let permit = out.check_write().unwrap();
-        let len = buf.len().min(permit as usize);
-        let (chunk, rest) = buf.split_at(len);
-        buf = rest;
+        let len = buf.len().min(usize::try_from(permit).unwrap());
+        let (chunk, remainding) = buf.split_at(len);
+        buf = remainding;
         out.write(chunk).unwrap();
     }
     out.flush().unwrap();
@@ -270,13 +270,12 @@ mod executor {
     static WAKERS: Mutex<Vec<(io::poll::Pollable, Waker)>> = Mutex::new(Vec::new());
 
     pub fn run<T>(future: impl Future<Output = T>) -> T {
-        futures::pin_mut!(future);
-
         struct DummyWaker;
-
         impl Wake for DummyWaker {
             fn wake(self: Arc<Self>) {}
         }
+
+        futures::pin_mut!(future);
 
         let waker = Arc::new(DummyWaker).into();
 
@@ -302,7 +301,7 @@ mod executor {
 
                     for (ready, (pollable, waker)) in ready.into_iter().zip(wakers) {
                         if ready {
-                            waker.wake()
+                            waker.wake();
                         } else {
                             new_wakers.push((pollable, waker));
                         }
@@ -355,10 +354,9 @@ mod executor {
                                     if offset == chunk.len() {
                                         if flushing {
                                             break Poll::Ready(Ok(()));
-                                        } else {
-                                            stream.flush().expect("stream should be flushable");
-                                            flushing = true;
                                         }
+                                        stream.flush().expect("stream should be flushable");
+                                        flushing = true;
                                     } else {
                                         let count = usize::try_from(count)
                                             .unwrap()
