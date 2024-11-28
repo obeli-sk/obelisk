@@ -89,7 +89,7 @@ listening_addr = "127.0.0.1:8080"
 [[webhook_component]]
 name = "obelisk_webui"
 http_server = "webui"
-location.oci = "docker.io/getobelisk/webui:2024-11-25@sha256:33a45d48ba5a1d6ff85d74f9f7b75bb99313e4f7a0e9c80fc42f0aa22e0bc6f5"
+location.oci = "docker.io/getobelisk/webui:2024-11-28@sha256:2016b609dde45bd6702f5f0dbef8a50872e83d5a2164703f94bb4c27ab741378"
 routes = [{ route = "" }]
 forward_stdout = "stderr"
 forward_stderr = "stderr"
@@ -103,38 +103,38 @@ listening_addr = "127.0.0.1:9090"
 
 [[activity_wasm]]
 name = "fibo_activity"
-location.oci = "docker.io/getobelisk/example_activity_fibo:2024-10-15@sha256:22ecc9d23282305c0f1bdd10fb157733f7aaf06d321993554842060e573d1fa7"
+location.oci = "docker.io/getobelisk/example_activity_fibo:2024-11-28@sha256:4b06ecdae0f7c018093c51137f9b11c6aba70c9fbf09957b89be4b441ece256f"
 max_retries = 0
 
 [[workflow]]
 name = "fibo_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-18-2@sha256:9ea595f470bebbc88ebeee69a4e02383331c2f16ffc45dd83c0e5d1f7dd7236a"
+location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-11-28@sha256:840166bccfb84a510c9298eef6fdfd577029ff33324ebcc5727844d1d9bc9a23"
 exec.lock_expiry.secs = 2
 
 [[webhook_component]]
 name = "webhook_fibo"
-location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-18-2@sha256:9933abb506fa6cc9e33b9e46eee3fc193933ce4910ee6b720593546007ecc981"
+location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-11-28@sha256:fb169550e3e8d485f1abd5c078e00da77a8ff9b4f61e30e2502dcd3ba925092b"
 http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 
 [[activity_wasm]]
 name = "http_get_activity"
-location.oci = "docker.io/getobelisk/example_activity_http_get:2024-10-15@sha256:620aeb424f507c227b1b9927b5f5048c28afc0044e04d9362b4599e23ef25f9c"
+location.oci = "docker.io/getobelisk/example_activity_http_get:2024-11-28@sha256:ff531a5ce723842ccf70e414fbcff5bc75fe2eb241eed16fc53e6530f72e63a3"
 forward_stdout = "stderr"
 forward_stderr = "stderr"
 
 [[workflow]]
 name = "http_get_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-10-18-2@sha256:fe49c164b3a843aa63286c3b83ba9254a52b70a5197d68a895316d426da7a61e"
+location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-11-28@sha256:5d4f31406d9e276c5f5c74010a098f76c3fd30828cd0a16de39c48b358ce1026"
 
 [[activity_wasm]]
 name = "sleep_activity"
-location.oci = "docker.io/getobelisk/example_activity_sleep:2024-10-15@sha256:33bcd638ec60951d144c977679f23cb4b389278a6ba92b0ef82a4679834cfd55"
+location.oci = "docker.io/getobelisk/example_activity_sleep:2024-11-28@sha256:9f9861f5e53bdb870f047cd701874401cc88588c875b0da53176a81bd16750a5"
 exec.lock_expiry.secs = 10
 
 [[workflow]]
 name = "sleep_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-10-18-2@sha256:1e8df12a9bb50bc9f9f538858afcd481e21e80e60996df826d562fde559a4c47"
+location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-11-28@sha256:48c52c28f2eb10dc83013b3d1d6dc8847fd9166549f59a2242dee9ffd9d53e5f"
 
 ## Send spans via gRPC to an OTLP collector.
 # [otlp] # Uncomment the table and run `docker run --rm -it  -p 4317:4317 -p 16686:16686 jaegertracing/all-in-one:1.60` to start collecting traces.
