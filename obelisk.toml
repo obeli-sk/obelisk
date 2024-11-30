@@ -62,7 +62,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # listening_addr = "0.0.0.0:8080"
 # max_inflight_requests = "unlimited" # If set to an integer, limits the number of inflight requests
 #
-# [[webhook_component]]
+# [[webhook_wasm]]
 ## Common settings for all components - see above.
 # http_server = "external" # link to a `http_server`'s name
 ### Routes section
@@ -86,7 +86,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 name = "webui"
 listening_addr = "127.0.0.1:8080"
 
-[[webhook_component]]
+[[webhook_wasm]]
 name = "obelisk_webui"
 http_server = "webui"
 location.oci = "docker.io/getobelisk/webui:2024-11-28@sha256:2016b609dde45bd6702f5f0dbef8a50872e83d5a2164703f94bb4c27ab741378"
@@ -111,7 +111,7 @@ name = "fibo_workflow"
 location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-11-28@sha256:840166bccfb84a510c9298eef6fdfd577029ff33324ebcc5727844d1d9bc9a23"
 exec.lock_expiry.secs = 2
 
-[[webhook_component]]
+[[webhook_wasm]]
 name = "webhook_fibo"
 location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-11-28@sha256:fb169550e3e8d485f1abd5c078e00da77a8ff9b4f61e30e2502dcd3ba925092b"
 http_server = "external_webhook"

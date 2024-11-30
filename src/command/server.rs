@@ -788,7 +788,7 @@ impl ServerVerified {
             config.wasm_activities,
             config.workflows,
             config.http_servers,
-            config.webhook_components,
+            config.webhooks,
             wasm_cache_dir,
             metadata_dir,
         )
