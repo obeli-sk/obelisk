@@ -609,9 +609,10 @@ async fn verify_internal(
         .oci
         .get_wasm_directory(config_holder.project_dirs.as_ref())
         .await?;
-    let codegen_cache = if let Some(codegen_cache) = &config.codegen_cache {
+    let codegen_cache = if config.codegen_cache.enabled {
         Some(
-            codegen_cache
+            config
+                .codegen_cache
                 .get_directory(config_holder.project_dirs.as_ref())
                 .await?,
         )

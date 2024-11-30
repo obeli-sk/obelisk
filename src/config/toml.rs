@@ -43,7 +43,7 @@ pub(crate) struct ObeliskConfig {
     #[serde(default)]
     pub(crate) oci: OciConfig,
     #[serde(default)]
-    pub(crate) codegen_cache: Option<CodegenCache>,
+    pub(crate) codegen_cache: CodegenCache,
     #[serde(default, rename = "activity_wasm")]
     pub(crate) wasm_activities: Vec<ActivityWasmConfigToml>,
     #[serde(default, rename = "workflow")]
@@ -116,8 +116,19 @@ impl OciConfig {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CodegenCache {
+    #[serde(default = "default_codegen_enabled")]
+    pub enabled: bool,
     #[serde(default)]
     directory: Option<String>,
+}
+
+impl Default for CodegenCache {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            directory: None,
+        }
+    }
 }
 
 impl CodegenCache {
@@ -827,6 +838,11 @@ mod util {
         Folder,
     }
 }
+
+const fn default_codegen_enabled() -> bool {
+    true
+}
+
 const fn default_retry_on_err() -> bool {
     true
 }
