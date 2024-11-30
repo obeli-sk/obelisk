@@ -86,6 +86,7 @@
                 cargo-dist
                 cargo-edit
                 cargo-expand
+                cargo-generate
                 cargo-insta
                 cargo-nextest
                 dive
