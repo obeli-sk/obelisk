@@ -12,6 +12,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # oci.wasm_directory = "${CACHE_DIR}/wasm" # Path to directory where wasm files downloaded from an OCI registry are stored. Supports path prefixes.
 
 # [codegen_cache]
+## Defaults:
 # enabled = true
 # directory = "${CACHE_DIR}/codegen" # Path to directory where generated code is cached. Supports path prefixes.
 
@@ -145,8 +146,9 @@ location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-11-28@sha256:48
 
 # Stdout configuration, by default logs INFO and above.
 # Comment the table to disable stdout logging.
-[log.stdout]
+# [log.stdout]
 ## Defaults:
+# enabled = true
 # level = "info,app=debug"
 # style = "plain_compact" # One of "plain","plain_compact","json"
 # span = "none" # One of "none","new","enter","exit","close","active","full"

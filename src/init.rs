@@ -79,27 +79,27 @@ pub(crate) fn init(config: &mut ObeliskConfig) -> Guard {
 
     let mut guard = Guard::default();
 
-    let out_layer = if let Some(stdout) = &mut config.log.stdout {
+    let out_layer = if config.log.stdout.enabled {
         // EnvFilter missing Clone
-        let env_filter = std::mem::take(&mut stdout.common.level).0;
+        let env_filter = std::mem::take(&mut config.log.stdout.common.level).0;
 
         // Code repetition because of https://github.com/tokio-rs/tracing/issues/575
-        Some(match stdout.style {
+        Some(match config.log.stdout.style {
             LoggingStyle::Plain => tracing_subscriber::fmt::layer()
-                .with_target(stdout.common.target)
-                .with_span_events(stdout.common.span.into())
+                .with_target(config.log.stdout.common.target)
+                .with_span_events(config.log.stdout.common.span.into())
                 .with_filter(env_filter)
                 .boxed(),
             LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
                 .compact()
-                .with_target(stdout.common.target)
-                .with_span_events(stdout.common.span.into())
+                .with_target(config.log.stdout.common.target)
+                .with_span_events(config.log.stdout.common.span.into())
                 .with_filter(env_filter)
                 .boxed(),
             LoggingStyle::Json => tracing_subscriber::fmt::layer()
                 .json()
-                .with_target(stdout.common.target)
-                .with_span_events(stdout.common.span.into())
+                .with_target(config.log.stdout.common.target)
+                .with_span_events(config.log.stdout.common.span.into())
                 .with_filter(env_filter)
                 .boxed(),
         })
