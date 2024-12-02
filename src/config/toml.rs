@@ -13,6 +13,7 @@ use std::{
 };
 use tracing::instrument;
 use util::{replace_path_prefix_mkdir, FileOrFolder};
+use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
     activity::activity_worker::ActivityConfig,
     envvar::EnvVar,
@@ -305,6 +306,8 @@ pub(crate) struct WorkflowConfigToml {
     pub(crate) non_blocking_event_batching: u32,
     #[serde(default = "default_retry_on_trap")]
     pub(crate) retry_on_trap: bool,
+    #[serde(default = "default_convert_core_module")]
+    pub(crate) convert_core_module: bool,
 }
 
 #[derive(Debug)]
@@ -336,6 +339,15 @@ impl WorkflowConfigToml {
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
+        let wasm_path = if self.convert_core_module {
+            // no need to update the hash here, all inputs (file, `convert_core_module`) capture the config uniquely
+            WasmComponent::convert_core_module_to_component(&wasm_path, &wasm_cache_dir)
+                .await?
+                .unwrap_or(wasm_path)
+        } else {
+            wasm_path
+        };
+
         std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
         let config_id = crate::config::config_id(
             ConfigIdType::Workflow,
@@ -889,6 +901,10 @@ const fn default_non_blocking_event_batching() -> u32 {
 
 const fn default_retry_on_trap() -> bool {
     false
+}
+
+const fn default_convert_core_module() -> bool {
+    true
 }
 
 fn appender_out_enabled() -> bool {
