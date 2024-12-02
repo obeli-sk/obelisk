@@ -10,6 +10,8 @@ use std::{
     time::Duration,
 };
 use tracing::{debug, info, info_span, instrument, warn, Instrument};
+use utils::wasm_tools::WasmComponent;
+use wasmtime::Engine;
 
 const OCI_CLIENT_RETRIES: u8 = 10;
 
@@ -143,12 +145,35 @@ fn get_oci_auth(reference: &Reference) -> Result<oci_client::secrets::RegistryAu
     Ok(oci_client::secrets::RegistryAuth::Anonymous)
 }
 
-pub(crate) async fn push(file: &PathBuf, reference: &Reference) -> Result<(), anyhow::Error> {
+pub(crate) async fn push(
+    wasm_path: PathBuf,
+    reference: &Reference,
+    convert_core_module: bool,
+) -> Result<(), anyhow::Error> {
     if reference.digest().is_some() {
         bail!("cannot push a digest reference");
     }
+    let wasm_path = if convert_core_module {
+        let output_parent = wasm_path
+            .parent()
+            .expect("direct parent of a file is never None");
+        WasmComponent::convert_core_module_to_component(&wasm_path, &output_parent)
+            .await?
+            .unwrap_or(wasm_path)
+    } else {
+        wasm_path
+    };
+    let engine = {
+        let mut wasmtime_config = wasmtime::Config::new();
+        wasmtime_config.wasm_component_model(true);
+        Engine::new(&wasmtime_config).unwrap()
+    };
+    // Sanity check: Is it really a WASM Component?
+    let wasm_component = WasmComponent::new(&wasm_path, &engine)?;
+    debug!("Pushing {wasm_component:?}");
+
     let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
-    let (conf, layer) = WasmConfig::from_component(file, None)
+    let (conf, layer) = WasmConfig::from_component(&wasm_path, None)
         .await
         .context("Unable to parse component")?;
     let auth = get_oci_auth(reference)?;
