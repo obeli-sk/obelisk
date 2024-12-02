@@ -130,6 +130,7 @@ impl WasmComponent {
             debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
             trace!(
                 "Exports: {exported_ffqns_to_wit_meta:?}, imports: {imported_ffqns_to_wit_meta:?}"
+            );
             (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta)
         };
         trace!("Decoding using wasmtime");
