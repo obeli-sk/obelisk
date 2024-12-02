@@ -62,11 +62,16 @@ async fn main() -> Result<(), anyhow::Error> {
                     path,
                     verbosity,
                     extensions,
-                }) => command::component::inspect(
-                    path,
-                    FunctionMetadataVerbosity::from(verbosity),
-                    extensions,
-                ),
+                    convert_core_module,
+                }) => {
+                    command::component::inspect(
+                        path,
+                        FunctionMetadataVerbosity::from(verbosity),
+                        extensions,
+                        convert_core_module,
+                    )
+                    .await
+                }
                 ClientSubcommand::Component(args::Component::List {
                     verbosity,
                     extensions,

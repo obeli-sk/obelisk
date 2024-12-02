@@ -1,3 +1,4 @@
+pub mod sha256sum;
 pub mod wasm_tools;
 mod wit_printer;
 

@@ -1,16 +1,22 @@
-use crate::wit_printer::WitPrinter;
+use crate::{sha256sum::calculate_sha256_file, wit_printer::WitPrinter};
+use anyhow::Context;
 use concepts::{
     FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName, PackageIfcFns,
     ParameterType, ParameterTypes, ReturnType, StrVariant, SUFFIX_PKG_EXT,
 };
 use indexmap::{indexmap, IndexMap};
-use std::{borrow::Cow, path::Path, sync::Arc};
-use tracing::{debug, error, trace, warn};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use tracing::{debug, error, info, trace, warn};
 use val_json::type_wrapper::{TypeConversionError, TypeWrapper};
 use wasmtime::{
     component::{types::ComponentItem, Component, ComponentExportIndex},
     Engine,
 };
+use wit_component::ComponentEncoder;
 use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
 
 #[derive(derivative::Derivative)]
@@ -22,43 +28,121 @@ pub struct WasmComponent {
 }
 
 impl WasmComponent {
+    pub async fn convert_core_module_to_component(
+        wasm_path: &Path,
+        output_parent: &Path,
+    ) -> Result<Option<PathBuf>, anyhow::Error> {
+        use tokio::io::AsyncReadExt;
+
+        let mut wasm_file = tokio::fs::File::open(wasm_path)
+            .await
+            .with_context(|| format!("cannot open {wasm_path:?}"))
+            .inspect_err(|err| {
+                error!("{err:?}");
+            })?;
+
+        let mut header_vec = Vec::new();
+        loop {
+            let mut header = [0_u8; 8];
+            let n = wasm_file.read(&mut header).await?;
+            if n == 0 {
+                break;
+            }
+            header_vec.extend(header[..n].iter());
+            if header_vec.len() >= 8 {
+                // `is_component` and `is_core_wasm` need only first 8 bytes.
+                break;
+            }
+        }
+        if wasmparser::Parser::is_component(&header_vec) {
+            return Ok(None);
+        }
+        if !wasmparser::Parser::is_core_wasm(&header_vec) {
+            error!("Not a WASM Component or a Core WASM Module: {wasm_file:?}");
+            anyhow::bail!("not a WASM Component or a Core WASM Module");
+        }
+        let content_digest = calculate_sha256_file(wasm_path).await?;
+        let output_file = output_parent.join(format!(
+            "{hash_type}_{content_digest}.wasm",
+            hash_type = content_digest.hash_type(),
+            content_digest = content_digest.digest_base16(),
+        ));
+        // already transformed?
+        if output_file.exists() {
+            debug!("Found the transformed WASM Component {output_file:?}");
+            return Ok(Some(output_file));
+        }
+
+        let wasm = tokio::fs::read(wasm_path).await?;
+        let mut encoder = ComponentEncoder::default().validate(true);
+        encoder = encoder.module(&wasm)?;
+        let component_contents = encoder
+            .encode()
+            .with_context(|| {
+                format!(
+                    "failed to transform a WASM Component from the Core WASM Module {wasm_path:?}"
+                )
+            })
+            .inspect_err(|err| error!("{err:?}"))?;
+
+        tokio::fs::write(&output_file, component_contents)
+            .await
+            .with_context(|| {
+                format!("cannot write the transformed WASM Component to {output_file:?}")
+            })
+            .inspect_err(|err| error!("{err:?}"))?;
+        info!("Transformed Core WASM Module to WASM Component {output_file:?}");
+        Ok(Some(output_file))
+    }
+
     pub fn new<P: AsRef<Path>>(wasm_path: P, engine: &Engine) -> Result<Self, DecodeError> {
         let wasm_path = wasm_path.as_ref();
-        let wasm_file = std::fs::File::open(wasm_path).map_err(|err| {
-            error!("Cannot read the file {wasm_path:?} - {err:?}");
-            DecodeError::CannotReadComponent(err.to_string())
-        })?;
-        trace!("Decoding using wasmtime");
-        let wasmtime_component = {
-            let stopwatch = std::time::Instant::now();
-            let component = Component::from_file(engine, wasm_path).map_err(|err| {
-                error!("Cannot read component using wasmtime {wasm_path:?} - {err:?}");
-                DecodeError::CannotReadComponent(err.to_string())
+
+        let wasm_file = std::fs::File::open(wasm_path)
+            .with_context(|| format!("cannot open {wasm_path:?}"))
+            .map_err(|err| {
+                error!("Cannot read the file {wasm_path:?} - {err:?}");
+                DecodeError::CannotReadComponent { source: err }
             })?;
-            debug!("Parsed with wasmtime in {:?}", stopwatch.elapsed());
-            component
-        };
         trace!("Decoding using wit_parser");
         let (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta) = {
             let stopwatch = std::time::Instant::now();
             let decoded = wit_parser::decoding::decode_reader(wasm_file).map_err(|err| {
-                error!("Cannot read component using wit_parser {wasm_path:?} - {err:?}");
-                DecodeError::CannotReadComponent(err.to_string())
+                error!("Cannot read {wasm_path:?} using wit_parser - {err:?}");
+                DecodeError::CannotReadComponent { source: err }
             })?;
-            let DecodedWasm::Component(resolve, world_id) = decoded else {
-                error!("Must be a wasi component");
-                return Err(DecodeError::CannotReadComponent(
-                    "must be a wasi component".to_string(),
-                ));
+
+            let (resolve, world_id) = match &decoded {
+                DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
+                DecodedWasm::WitPackage(..) => {
+                    error!("Input file must not be a WIT package");
+                    return Err(DecodeError::CannotReadComponentWithReason {
+                        reason: "must not be a WIT package".to_string(),
+                    });
+                }
             };
-            let world = resolve.worlds.get(world_id).expect("world must exist");
+
+            let world = resolve.worlds.get(*world_id).expect("world must exist");
             let exported_ffqns_to_wit_meta =
                 wit_parsed_ffqn_to_wit_parsed_fn_metadata(&resolve, world.exports.iter())?;
             let imported_ffqns_to_wit_meta =
                 wit_parsed_ffqn_to_wit_parsed_fn_metadata(&resolve, world.imports.iter())?;
             debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
+            trace!(
+                "Exports: {exported_ffqns_to_wit_meta:?}, imports: {imported_ffqns_to_wit_meta:?}"
             (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta)
         };
+        trace!("Decoding using wasmtime");
+        let wasmtime_component = {
+            let stopwatch = std::time::Instant::now();
+            let component = Component::from_file(engine, wasm_path).map_err(|err| {
+                error!("Cannot parse {wasm_path:?} using wasmtime - {err:?}");
+                DecodeError::CannotReadComponent { source: err }
+            })?;
+            debug!("Parsed with wasmtime in {:?}", stopwatch.elapsed());
+            component
+        };
+
         let exim = ExIm::decode(
             &wasmtime_component,
             engine,
@@ -94,18 +178,18 @@ impl WasmComponent {
                 self.wasmtime_component.export_index(None, &ffqn.ifc_fqn)
             else {
                 error!("Cannot find exported interface `{}`", ffqn.ifc_fqn);
-                return Err(DecodeError::CannotReadComponent(format!(
-                    "cannot find exported interface {ffqn}"
-                )));
+                return Err(DecodeError::CannotReadComponentWithReason {
+                    reason: format!("cannot find exported interface {ffqn}"),
+                });
             };
             let Some((_, fn_export_index)) = self
                 .wasmtime_component
                 .export_index(Some(&ifc_export_index), &ffqn.function_name)
             else {
                 error!("Cannot find exported function {ffqn}");
-                return Err(DecodeError::CannotReadComponent(format!(
-                    "cannot find exported function {ffqn}"
-                )));
+                return Err(DecodeError::CannotReadComponentWithReason {
+                    reason: format!("cannot find exported function {ffqn}"),
+                });
             };
             exported_ffqn_to_index.insert(ffqn.clone(), fn_export_index);
         }
@@ -115,8 +199,13 @@ impl WasmComponent {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DecodeError {
-    #[error("cannot read wasm component - {0}")]
-    CannotReadComponent(String),
+    #[error("cannot read the WASM Component")]
+    CannotReadComponent {
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("cannot read the WASM Component - {reason}")]
+    CannotReadComponentWithReason { reason: String },
     #[error("multi-value result is not supported in {0}")]
     MultiValueResultNotSupported(FunctionFqn),
     #[error("unsupported type in {ffqn} - {err}")]

@@ -270,8 +270,11 @@ web-sys = "=0.3.72"              # Dependent on wasm-bindgen
 wasmtime = { version = "27.0", features = ["memory-protection-keys"] }
 wasmtime-wasi = "27.0"
 wasmtime-wasi-http = "27.0"
+# wasm-tools
 wast = "219.0.1"
 wit-parser = "0.219.1"
+wasmparser = "0.219.1"
+wit-component = "0.219.1"
 
 # testing components
 wit-bindgen = "0.36.0"

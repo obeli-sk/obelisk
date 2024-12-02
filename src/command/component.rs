@@ -3,16 +3,31 @@ use crate::FunctionMetadataVerbosity;
 use crate::{grpc_util::grpc_mapping::TonicClientResultExt, FunctionRepositoryClient};
 use anyhow::Context;
 use concepts::{ConfigId, FunctionFqn, FunctionMetadata};
-use std::path::Path;
+use std::path::PathBuf;
 use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
 
-pub(crate) fn inspect<P: AsRef<Path>>(
-    wasm_path: P,
+pub(crate) async fn inspect(
+    wasm_path: PathBuf,
     verbosity: FunctionMetadataVerbosity,
     extensions: bool,
+    convert_core_module: bool,
 ) -> anyhow::Result<()> {
-    let wasm_path = wasm_path.as_ref();
+    if std::env::var("OBELISK_LOG").is_ok() {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_env("OBELISK_LOG"))
+            .init();
+    }
+    let wasm_path = if convert_core_module {
+        let output_parent = wasm_path
+            .parent()
+            .expect("direct parent of a file is never None");
+        WasmComponent::convert_core_module_to_component(&wasm_path, &output_parent)
+            .await?
+            .unwrap_or(wasm_path)
+    } else {
+        wasm_path
+    };
     let engine = {
         let mut wasmtime_config = wasmtime::Config::new();
         wasmtime_config.wasm_component_model(true);

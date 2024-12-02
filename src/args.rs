@@ -88,6 +88,8 @@ pub(crate) enum Component {
         verbosity: u8,
         #[arg(short, long)]
         extensions: bool,
+        #[arg(short, long)]
+        convert_core_module: bool,
     },
     /// List components.
     List {

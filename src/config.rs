@@ -13,6 +13,7 @@ use concepts::StrVariant;
 use serde_with::serde_as;
 use std::path::{Path, PathBuf};
 use tracing::instrument;
+use utils::sha256sum::calculate_sha256_file;
 
 /// Holds information about components, used for gRPC services like `ListComponents`
 #[derive(Debug, Clone)]
@@ -70,7 +71,7 @@ impl ComponentLocation {
                     .canonicalize()
                     .with_context(|| format!("cannot canonicalize file `{wasm_path:?}`"))?;
                 // Future optimization: If the sha256 is in the config file and wasm is already in the cache dir, do not recalculate it.
-                let content_digest = Self::calculate_sha256_file(&wasm_path)
+                let content_digest = calculate_sha256_file(&wasm_path)
                     .await
                     .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
                 Ok((content_digest, wasm_path))
@@ -81,27 +82,5 @@ impl ComponentLocation {
                     .context("try cleaning the cache directory with `--clean-cache`")
             }
         }
-    }
-
-    #[tracing::instrument(skip_all)]
-    async fn calculate_sha256_file<P: AsRef<Path>>(
-        path: P,
-    ) -> Result<ContentDigest, std::io::Error> {
-        use sha2::Digest;
-        use tokio::io::AsyncReadExt;
-        let mut file = tokio::fs::File::open(path).await?;
-        let mut hasher = sha2::Sha256::default();
-        let mut buf = [0; 4096];
-        loop {
-            let n = file.read(&mut buf).await?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buf[..n]);
-        }
-        Ok(ContentDigest::new(
-            concepts::HashType::Sha256,
-            format!("{:x}", hasher.finalize()),
-        ))
     }
 }

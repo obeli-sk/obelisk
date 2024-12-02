@@ -3051,14 +3051,17 @@ dependencies = [
  "obeli-sk-val-json",
  "rstest",
  "serde",
+ "sha2",
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-workflow-builder",
  "test-utils",
  "thiserror 1.0.69",
  "tracing",
+ "wasmparser 0.219.1",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+ "wit-component 0.219.1",
  "wit-parser 0.219.1",
 ]
 

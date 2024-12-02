@@ -20,12 +20,15 @@ derivative.workspace = true
 hashbrown.workspace = true
 hyper.workspace = true
 indexmap.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+wasmparser.workspace = true
 wasmtime-wasi-http.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
+wit-component.workspace = true
 wit-parser.workspace = true
 
 [dev-dependencies]
