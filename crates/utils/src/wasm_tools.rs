@@ -124,9 +124,9 @@ impl WasmComponent {
 
             let world = resolve.worlds.get(*world_id).expect("world must exist");
             let exported_ffqns_to_wit_meta =
-                wit_parsed_ffqn_to_wit_parsed_fn_metadata(&resolve, world.exports.iter())?;
+                wit_parsed_ffqn_to_wit_parsed_fn_metadata(resolve, world.exports.iter())?;
             let imported_ffqns_to_wit_meta =
-                wit_parsed_ffqn_to_wit_parsed_fn_metadata(&resolve, world.imports.iter())?;
+                wit_parsed_ffqn_to_wit_parsed_fn_metadata(resolve, world.imports.iter())?;
             debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
             trace!(
                 "Exports: {exported_ffqns_to_wit_meta:?}, imports: {imported_ffqns_to_wit_meta:?}"

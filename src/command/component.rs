@@ -22,7 +22,7 @@ pub(crate) async fn inspect(
         let output_parent = wasm_path
             .parent()
             .expect("direct parent of a file is never None");
-        WasmComponent::convert_core_module_to_component(&wasm_path, &output_parent)
+        WasmComponent::convert_core_module_to_component(&wasm_path, output_parent)
             .await?
             .unwrap_or(wasm_path)
     } else {
