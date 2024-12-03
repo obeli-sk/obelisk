@@ -27,9 +27,9 @@ const CONFIG_DIR_PREFIX: &str = "${CONFIG_DIR}/";
 const DEFAULT_SQLITE_FILE_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}obelisk.sqlite", DATA_DIR_PREFIX);
 const DEFAULT_SQLITE_FILE: &str = "obelisk.sqlite";
-const DEFAULT_OCI_CONFIG_WASM_DIRECTORY_IF_PROJECT_DIRS: &str =
+const DEFAULT_WASM_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}wasm", CACHE_DIR_PREFIX);
-const DEFAULT_OCI_CONFIG_WASM_DIRECTORY: &str = "cache/wasm";
+const DEFAULT_WASM_DIRECTORY: &str = "cache/wasm";
 const DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}codegen", CACHE_DIR_PREFIX);
 const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
@@ -44,7 +44,7 @@ pub(crate) struct ObeliskConfig {
     #[serde(default)]
     pub(crate) webui: WebUIConfig,
     #[serde(default)]
-    pub(crate) oci: OciConfig,
+    wasm_cache_directory: Option<String>,
     #[serde(default)]
     pub(crate) codegen_cache: CodegenCache,
     #[serde(default, rename = "activity_wasm")]
@@ -62,6 +62,22 @@ pub(crate) struct ObeliskConfig {
     pub(crate) http_servers: Vec<HttpServer>,
     #[serde(default, rename = "webhook_wasm")]
     pub(crate) webhooks: Vec<WebhookComponent>,
+}
+
+impl ObeliskConfig {
+    pub(crate) async fn get_wasm_cache_directory(
+        &self,
+        project_dirs: Option<&ProjectDirs>,
+    ) -> Result<PathBuf, anyhow::Error> {
+        let wasm_directory = self.wasm_cache_directory.as_deref().unwrap_or_else(|| {
+            if project_dirs.is_some() {
+                DEFAULT_WASM_DIRECTORY_IF_PROJECT_DIRS
+            } else {
+                DEFAULT_WASM_DIRECTORY
+            }
+        });
+        replace_path_prefix_mkdir(wasm_directory, project_dirs, FileOrFolder::Folder).await
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -98,29 +114,6 @@ impl SqliteConfigToml {
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct WebUIConfig {
     pub(crate) listening_addr: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub(crate) struct OciConfig {
-    // FIXME: Used for Component transformation as well. Remove 'oci'
-    #[serde(default)]
-    wasm_directory: Option<String>,
-}
-
-impl OciConfig {
-    pub(crate) async fn get_wasm_directory(
-        &self,
-        project_dirs: Option<&ProjectDirs>,
-    ) -> Result<PathBuf, anyhow::Error> {
-        let wasm_directory = self.wasm_directory.as_deref().unwrap_or_else(|| {
-            if project_dirs.is_some() {
-                DEFAULT_OCI_CONFIG_WASM_DIRECTORY_IF_PROJECT_DIRS
-            } else {
-                DEFAULT_OCI_CONFIG_WASM_DIRECTORY
-            }
-        });
-        replace_path_prefix_mkdir(wasm_directory, project_dirs, FileOrFolder::Folder).await
-    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -5,13 +5,12 @@
 ## | ${CONFIG_DIR}|  ~/.config/obelisk      | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.config_dir
 
 ## Server configuration
-api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server will listen. Must match `obelisk_webui` TARGET_URL
-
-webui.listening_addr = "127.0.0.1:8080"
+api_listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
+webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui webhook component will listen.
 
 # sqlite.file = "${DATA_DIR}/obelisk.sqlite" # Path to sqlite database. Supports path prefixes.
 
-# oci.wasm_directory = "${CACHE_DIR}/wasm" # Path to directory where wasm files downloaded from an OCI registry are stored. Supports path prefixes.
+# wasm_cache_directory = "${CACHE_DIR}/wasm" # Path to directory where downloaded or transformed WASM files are stored. Supports path prefixes.
 
 # [codegen_cache]
 ## Defaults:

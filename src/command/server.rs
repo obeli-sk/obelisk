@@ -613,8 +613,7 @@ async fn verify_internal(
         .get_sqlite_file(config_holder.project_dirs.as_ref())
         .await?;
     let wasm_cache_dir = config
-        .oci
-        .get_wasm_directory(config_holder.project_dirs.as_ref())
+        .get_wasm_cache_directory(config_holder.project_dirs.as_ref())
         .await?;
     let codegen_cache = if config.codegen_cache.enabled {
         Some(
