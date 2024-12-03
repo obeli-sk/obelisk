@@ -215,20 +215,28 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookInstance<C, DB, P> {
 
 pub struct MethodAwareRouter<T> {
     method_map: hashbrown::HashMap<Method, Router<T>>,
-    fallback: Router<T>,
+    fallback: Router<T>, // Routes that do not specify a method. Will be queried only if no match is found in `method_map`.
 }
 
 impl<T: Clone> MethodAwareRouter<T> {
     pub fn add(&mut self, method: Option<Method>, route: &str, dest: T) {
-        if route.is_empty() {
-            // When the route is empty, interpret it as matching all paths:
-            self.add(method.clone(), "/", dest.clone());
-            self.add(method, "/*", dest);
-        } else if let Some(method) = method {
-            self.method_map.entry(method).or_default().add(route, dest);
-        } else {
-            self.fallback.add(route, dest);
+        let route = if route.is_empty() { "/*" } else { route };
+
+        let mut add = |method, route, dest| {
+            if let Some(method) = method {
+                self.method_map.entry(method).or_default().add(route, dest);
+            } else {
+                self.fallback.add(route, dest);
+            }
+        };
+
+        let prefix_with_slash;
+        if let Some(prefix) = route.strip_suffix("/*") {
+            // Add {prefix}/ because the library would not match it otherwise.
+            prefix_with_slash = format!("{prefix}/");
+            add(method.clone(), &prefix_with_slash, dest.clone());
         }
+        add(method, route, dest);
     }
 
     fn find(&self, method: &Method, path: &Uri) -> Option<Match<&T>> {
@@ -1043,8 +1051,6 @@ pub(crate) mod tests {
         }
     }
 
-    // TODO: add timeout test
-
     #[test]
     fn routes() {
         let mut router = MethodAwareRouter::default();
@@ -1059,6 +1065,13 @@ pub(crate) mod tests {
             1,
             **router
                 .find(&Method::GET, &Uri::from_static("/foo"))
+                .unwrap()
+                .handler()
+        );
+        assert_eq!(
+            2,
+            **router
+                .find(&Method::GET, &Uri::from_static("/foo/"))
                 .unwrap()
                 .handler()
         );

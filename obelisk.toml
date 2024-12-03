@@ -70,12 +70,13 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ### Routes section
 ## An array of routes that will be matched against incoming requests.
 ## Only the path portion of a URL is taken into cosideration, the query part
-## ("?a=b") is ignored by the matcher.
+## ("?param_name=value") is ignored by the matcher.
 ## Syntax of a route:
 ## "/path"                                      # All methods are matched, URL path must be exactly '/path'.
+## "/path/*"                                    # All methods are matched, URL path must start with '/path/'.
 ## { methods = ["GET"], route = "/some/path" }  # Method must be GET and path '/some/path'.
 ## "/status/:param1/:param2"                    # When URL matches, `param1` and `param2` values will be exposed as env vars.
-## ""                                           # Fallback pattern.
+## ""                                           # Matches every possible URL, same as `/*`
 ## For details about the matching engine please see https://docs.rs/route-recognizer/latest/route_recognizer/
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]
 ## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".
