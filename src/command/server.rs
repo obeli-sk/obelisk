@@ -707,7 +707,7 @@ async fn run_internal(
     clean_codegen_cache: bool,
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
-    let api_listening_addr = config.api_listening_addr;
+    let api_listening_addr = config.api.listening_addr;
     let verified = Box::pin(verify_internal(
         config,
         clean_db,
@@ -817,7 +817,7 @@ impl ServerVerified {
                 forward_stderr: StdOutput::default(),
                 env_vars: vec![EnvVar {
                     key: "TARGET_URL".to_string(),
-                    val: format!("http://{}", config.api_listening_addr),
+                    val: format!("http://{}", config.api.listening_addr),
                 }],
             });
         }
