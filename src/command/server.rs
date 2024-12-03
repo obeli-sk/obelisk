@@ -2,14 +2,19 @@ use super::grpc;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookComponentVerified;
+use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::config::toml::ActivityWasmConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
+use crate::config::toml::ComponentCommon;
+use crate::config::toml::InflightSemaphore;
 use crate::config::toml::ObeliskConfig;
+use crate::config::toml::StdOutput;
 use crate::config::toml::WorkflowConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::ComponentConfig;
 use crate::config::ComponentConfigImportable;
+use crate::config::ComponentLocation;
 use crate::grpc_util::extractor::accept_trace;
 use crate::grpc_util::grpc_mapping::db_error_to_status;
 use crate::grpc_util::grpc_mapping::from_execution_event_to_grpc;
@@ -84,6 +89,7 @@ use utils::time::ClockFn;
 use utils::time::Now;
 use wasm_workers::activity::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
+use wasm_workers::envvar::EnvVar;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
@@ -92,6 +98,7 @@ use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 
 const EPOCH_MILLIS: u64 = 10;
+const WEBUI_OCI_REFERENCE: &str = "docker.io/getobelisk/webui:2024-11-28@sha256:2016b609dde45bd6702f5f0dbef8a50872e83d5a2164703f94bb4c27ab741378";
 
 #[derive(Debug)]
 struct GrpcServer<DB: DbConnection, P: DbPool<DB>> {
@@ -785,11 +792,41 @@ impl ServerVerified {
             )?
         };
         let sqlite_config = config.sqlite.as_config();
+        let mut http_servers = config.http_servers;
+        let mut webhooks = config.webhooks;
+        if let Some(webui_listening_addr) = config.webui.listening_addr {
+            let http_server_name = "webui";
+            http_servers.push(webhook::HttpServer {
+                name: http_server_name.to_string(),
+                listening_addr: webui_listening_addr
+                    .parse()
+                    .context("error converting `webui.listening_addr` to a socket address")?,
+                max_inflight_requests: InflightSemaphore::default(),
+            });
+            webhooks.push(webhook::WebhookComponent {
+                common: ComponentCommon {
+                    name: "obelisk_webui".to_string(),
+                    location: ComponentLocation::Oci(
+                        WEBUI_OCI_REFERENCE
+                            .parse()
+                            .expect("hard-coded webui reference must be parsed"),
+                    ),
+                },
+                http_server: http_server_name.to_string(),
+                routes: vec![WebhookRoute::default()],
+                forward_stdout: StdOutput::default(),
+                forward_stderr: StdOutput::default(),
+                env_vars: vec![EnvVar {
+                    key: "TARGET_URL".to_string(),
+                    val: format!("http://{}", config.api_listening_addr),
+                }],
+            });
+        }
         let config = fetch_and_verify_all(
             config.wasm_activities,
             config.workflows,
-            config.http_servers,
-            config.webhooks,
+            http_servers,
+            webhooks,
             wasm_cache_dir,
             metadata_dir,
         )

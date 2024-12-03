@@ -42,6 +42,8 @@ pub(crate) struct ObeliskConfig {
     #[serde(default)]
     pub(crate) sqlite: SqliteConfigToml,
     #[serde(default)]
+    pub(crate) webui: WebUIConfig,
+    #[serde(default)]
     pub(crate) oci: OciConfig,
     #[serde(default)]
     pub(crate) codegen_cache: CodegenCache,
@@ -94,7 +96,13 @@ impl SqliteConfigToml {
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub(crate) struct WebUIConfig {
+    pub(crate) listening_addr: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub(crate) struct OciConfig {
+    // FIXME: Used for Component transformation as well. Remove 'oci'
     #[serde(default)]
     wasm_directory: Option<String>,
 }
@@ -738,6 +746,12 @@ pub(crate) mod webhook {
     pub(crate) enum WebhookRoute {
         String(String),
         WebhookRouteDetail(WebhookRouteDetail),
+    }
+
+    impl Default for WebhookRoute {
+        fn default() -> Self {
+            WebhookRoute::String(String::new())
+        }
     }
 
     #[derive(Debug, Deserialize, Hash)]

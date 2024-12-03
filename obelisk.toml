@@ -7,6 +7,8 @@
 ## Server configuration
 api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server will listen. Must match `obelisk_webui` TARGET_URL
 
+webui.listening_addr = "127.0.0.1:8080"
+
 # sqlite.file = "${DATA_DIR}/obelisk.sqlite" # Path to sqlite database. Supports path prefixes.
 
 # oci.wasm_directory = "${CACHE_DIR}/wasm" # Path to directory where wasm files downloaded from an OCI registry are stored. Supports path prefixes.
@@ -84,21 +86,6 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # forward_stderr="stderr" # forwards stderr to host's stderr
 ## Environment variables: Set to a specific value or forward from the host. Default is empty.
 # env_vars = ["ENV1", "ENV2=somevalue"]
-
-[[http_server]]
-name = "webui"
-listening_addr = "127.0.0.1:8080"
-
-[[webhook_wasm]]
-name = "obelisk_webui"
-http_server = "webui"
-location.oci = "docker.io/getobelisk/webui:2024-11-28@sha256:2016b609dde45bd6702f5f0dbef8a50872e83d5a2164703f94bb4c27ab741378"
-routes = [{ route = "" }]
-forward_stdout = "stderr"
-forward_stderr = "stderr"
-env_vars = [
-    "TARGET_URL=http://127.0.0.1:5005",
-] # Must match `api_listening_addr`
 
 [[http_server]]
 name = "external_webhook"
