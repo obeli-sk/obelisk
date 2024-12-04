@@ -68,7 +68,9 @@ jobs:
         run: cargo build --release
 
       - name: Create a tar.gz archive
-        run: tar czf archive.tar.gz --transform='s/^target\/release\///' target/release/obelisk
+        run: |
+          brew install gnu-tar
+          gtar czf archive.tar.gz --transform='s/^target\/release\///' target/release/obelisk
 
       - name: Upload the archive
         run: |
