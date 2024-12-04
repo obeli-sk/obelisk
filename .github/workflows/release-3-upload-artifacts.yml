@@ -52,7 +52,6 @@ jobs:
 
       - id: release-info
         run: |
-          apt install -y jq
           curl --fail -L \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
