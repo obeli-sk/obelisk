@@ -1,4 +1,4 @@
-name: release-3-upload-artifacts
+name: release-3-upload-artifacts-macos
 
 permissions:
   contents: write
@@ -50,12 +50,14 @@ jobs:
 
       - id: release-info
         run: |
+          brew install jq
+
           curl --fail -L \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/obeli-sk/obelisk/releases/tags/${{ steps.git-info.outputs.tag }} > release.json
-          RELEASE_ID=$(cat release.json | grep -oP '^  "id":\s\K\d+')
+          RELEASE_ID=$(jq -r '.id' release.json)
           echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
 
       - name: Install rustc
