@@ -35,8 +35,6 @@ jobs:
         include:
           - target: x86_64-apple-darwin
             os: macos-13
-          - target: aarch64-apple-darwin
-            os: macos-13
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,6 +48,8 @@ jobs:
 
       - id: release-info
         run: |
+          uname -m
+          env
           curl --fail -L \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
