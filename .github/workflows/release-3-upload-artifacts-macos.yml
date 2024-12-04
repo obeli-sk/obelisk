@@ -35,8 +35,8 @@ jobs:
         include:
           - target: x86_64-apple-darwin
             os: macos-13
-          - target: arm64-apple-darwin
-            os: macos-13-arm64
+          - target: aarch64-apple-darwin
+            os: macos-13
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,8 +58,10 @@ jobs:
           RELEASE_ID=$(jq -r '.id' release.json)
           echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
 
-      - name: Install rustc
-        run: brew install rust
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
 
       - name: Install protobuf
         run: brew install protobuf
