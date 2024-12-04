@@ -63,8 +63,8 @@ jobs:
       - name: Install rustc
         run: brew install rust
 
-      - name: Install protoc
-        run: brew install protoc
+      - name: Install protobuf
+        run: brew install protobuf
 
       - name: Build obelisk
         run: cargo build --release
