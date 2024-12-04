@@ -62,7 +62,10 @@ docker exec $CONTAINER_ID obelisk client component list
 ### Pre-built binary
 Download [latest release](https://github.com/obeli-sk/obelisk/releases/latest) from the GitHub Release page.
 
-### Using latest version from crates.io
+### Compiling from source
+The compilation requires `protoc` [Protocol Buffers compiler](https://protobuf.dev/downloads/).
+
+#### Using latest version from crates.io
 Download using [cargo-binstall](https://crates.io/crates/cargo-binstall)
 ```sh
 cargo binstall --locked obelisk
@@ -72,7 +75,7 @@ or build using [cargo](https://rustup.rs/)
 cargo install --locked obelisk
 ```
 
-### Nix flakes
+#### Nix flakes
 ```sh
 nix --extra-experimental-features nix-command --extra-experimental-features flakes run github:obeli-sk/obelisk
 ```
