@@ -7,9 +7,6 @@ This is a **pre-release**.
 This repo contains backend code for local development and testing.
 The software doesn't have backward compatibility guarantees for the CLI, gRPC or database schema.
 
-### Supported platforms
-* Linux x64
-
 ## Core principles
 * Schema first, using [WASM Component model](https://component-model.bytecodealliance.org/)'s [WIT](https://component-model.bytecodealliance.org/design/wit.html) language as the interface between workflows and activities.
 * Backend developer's delight
@@ -48,6 +45,9 @@ The software doesn't have backward compatibility guarantees for the CLI, gRPC or
     * Concurrency control - limit on the number of workers that can run simultaneously.
 
 ## Installation
+### Supported platforms
+* Linux x64
+* Mac OS 13 x64
 
 ### Docker
 ```sh
