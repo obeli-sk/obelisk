@@ -166,7 +166,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 * Allow specifying permanent error variants in as annotations in WIT
 * Support for (distributed) sagas - define rollbacks on activities, call them on failed workflows
 
-# Building from source
+# Local development
 Set up the development dependencies using nix flakes:
 ```sh
 nix develop
