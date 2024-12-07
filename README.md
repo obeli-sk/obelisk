@@ -28,15 +28,16 @@ The software doesn't have backward compatibility guarantees for the CLI, gRPC or
     * Performance option to keep the parent workflow execution hot or unload and replay the event history.
 
 * *Deterministic workflows*
-    * Are replayable: Execution is persisted at every state change, so that it can be replayed after an interrupt or an error.
+    * Replayable: Execution is persisted at every state change, so that it can be replayed after an interrupt or an error.
     * Running in a WASM sandbox, isolated from the environment
     * Automatically retried on failures like database errors, timeouts or even traps(panics).
     * Able to spawn child workflows or activities, either blocking until result arrives or awaiting the result asynchronously.
     * Workflows can be replayed with added log messages and other changes that do not alter the determinism of the execution (planned).
     * Join sets allow for structured concurrency, either blocking until child executions are done, or cancelling those that were not awaited (planned).
 
-* *WASI webhooks*
+* *Webhook Endpoints*
     * Mounted as a URL path, serving HTTP traffic.
+    * Running in a WASM sandbox
     * Able to spawn child workflows or activities.
 
 * *Work stealing executor*
@@ -161,7 +162,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 * Time traveling debugger for workflows, that works accross WASM deployments
 * Ability to hotfix a set of workflows, with an approval system when non determinism is detected
 * Trace strings to their origin accross workflows and activities
-* Webhook mappings: running a single function, translating between HTTP and WIT defined parameters and return value
+* Webhook endpoint mappings: running a single function, translating between HTTP and WIT defined parameters and return value
 * Distributed tracing context forwarding for outgoing HTTP as well as webhooks
 * Allow specifying permanent error variants in as annotations in WIT
 * Support for (distributed) sagas - define rollbacks on activities, call them on failed workflows

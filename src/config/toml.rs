@@ -60,7 +60,7 @@ pub(crate) struct ObeliskConfig {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
-    #[serde(default, rename = "webhook_wasm")]
+    #[serde(default, rename = "webhook_endpoint")]
     pub(crate) webhooks: Vec<WebhookComponent>,
 }
 

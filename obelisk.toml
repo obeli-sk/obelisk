@@ -6,7 +6,7 @@
 
 ## Server configuration
 api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
-webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui webhook component will listen.
+webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
 
 # sqlite.file = "${DATA_DIR}/obelisk.sqlite" # Path to sqlite database. Supports path prefixes.
 
@@ -59,13 +59,13 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui we
 # retry_on_trap = false # If set to true, traps(panics) will be handled as temporary failures and retried until the problem goes away.
 # convert_core_module = true # Transparently convert Core WASM modules to WASM Components during startup.
 
-### Webhook section
+### Webhook Endpoint section
 # [[http_server]]
 # name = "external"
 # listening_addr = "0.0.0.0:9000"
 # max_inflight_requests = "unlimited" # If set to an integer, limits the number of inflight requests
 #
-# [[webhook_wasm]]
+# [[webhook_endpoint]]
 ## Common settings for all components - see above.
 # http_server = "external" # link to a `http_server`'s name
 ### Routes section
@@ -100,7 +100,7 @@ name = "fibo_workflow"
 location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-11-28@sha256:840166bccfb84a510c9298eef6fdfd577029ff33324ebcc5727844d1d9bc9a23"
 exec.lock_expiry.secs = 2
 
-[[webhook_wasm]]
+[[webhook_endpoint]]
 name = "webhook_fibo"
 location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-11-28@sha256:fb169550e3e8d485f1abd5c078e00da77a8ff9b4f61e30e2502dcd3ba925092b"
 http_server = "external_webhook"
