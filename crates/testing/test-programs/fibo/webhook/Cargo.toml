@@ -10,6 +10,8 @@ version.workspace = true
 
 [dependencies]
 wit-bindgen.workspace = true
+waki.workspace = true
+waki-macros.workspace = true
 
 [lib]
 crate-type = ["cdylib"]

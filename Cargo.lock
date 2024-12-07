@@ -4663,6 +4663,8 @@ dependencies = [
 name = "test-programs-fibo-webhook"
 version = "0.8.0"
 dependencies = [
+ "waki",
+ "waki-macros",
  "wit-bindgen 0.36.0",
 ]
 
