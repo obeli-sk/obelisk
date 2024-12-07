@@ -62,7 +62,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui we
 ### Webhook section
 # [[http_server]]
 # name = "external"
-# listening_addr = "0.0.0.0:8080"
+# listening_addr = "0.0.0.0:9000"
 # max_inflight_requests = "unlimited" # If set to an integer, limits the number of inflight requests
 #
 # [[webhook_wasm]]
