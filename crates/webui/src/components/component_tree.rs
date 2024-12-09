@@ -14,7 +14,7 @@ type ComponentIndex = usize;
 
 #[derive(Properties, PartialEq)]
 pub struct ComponentTreeProps {
-    pub components: Vec<(ComponentIndex, grpc_client::Component)>,
+    pub components: IndexMap<ComponentIndex, grpc_client::Component>,
     pub config: ComponentTreeConfig,
 }
 
@@ -113,7 +113,7 @@ impl ComponentTree {
         config: &ComponentTreeConfig,
         label: Html,
         icon: Icon,
-        components: impl Iterator<Item = &'a (ComponentIndex, grpc_client::Component)>,
+        components: impl Iterator<Item = (ComponentIndex, &'a grpc_client::Component)>,
     ) {
         let group_dir_node_id = tree
             .insert(
@@ -135,7 +135,7 @@ impl ComponentTree {
                         icon: icon.clone(),
                         label: component.name.clone().into(),
                         has_caret: with_submittable,
-                        data: Some(*idx),
+                        data: Some(idx),
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(&group_dir_node_id),
@@ -156,7 +156,7 @@ impl ComponentTree {
     }
 
     fn construct_tree(
-        components: &[(ComponentIndex, grpc_client::Component)],
+        components: &IndexMap<ComponentIndex, grpc_client::Component>,
         config: &ComponentTreeConfig,
     ) -> TreeData<NodeDataType> {
         let workflows =
@@ -193,13 +193,13 @@ impl ComponentTree {
             Icon::CodeBlock,
             activities,
         );
-        // Webhooks
+        // Webhook endpoints
         if matches!(config, ComponentTreeConfig::ComponentsOnly { .. }) {
             Self::attach_components_to_tree(
                 &mut tree,
                 &root_id,
                 config,
-                "Webhooks".into(),
+                "Webhook Endpoints".into(),
                 Icon::GlobeNetwork,
                 webhooks,
             );
@@ -268,10 +268,11 @@ impl Component for ComponentTree {
 }
 
 fn filter_component_list_by_type(
-    components: &[(ComponentIndex, grpc_client::Component)],
+    components: &IndexMap<ComponentIndex, grpc_client::Component>,
     r#type: grpc_client::ComponentType,
-) -> impl Iterator<Item = &(ComponentIndex, grpc_client::Component)> {
+) -> impl Iterator<Item = (ComponentIndex, &grpc_client::Component)> {
     components
         .iter()
         .filter(move |(_idx, component)| component.r#type == r#type as i32)
+        .map(|(idx, component)| (*idx, component))
 }

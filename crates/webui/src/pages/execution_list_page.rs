@@ -14,6 +14,7 @@ use crate::{
     },
 };
 use chrono::DateTime;
+use indexmap::IndexMap;
 use log::debug;
 use std::ops::Deref;
 use yew::prelude::*;
@@ -87,7 +88,7 @@ pub struct ExecutionListPageProps {
 pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPageProps) -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
-    let components: Vec<_> = app_state.components.into_iter().enumerate().collect();
+    let components: IndexMap<_, _> = app_state.components.into_iter().enumerate().collect();
     let response_state = use_state(|| None);
     {
         let page_size = 20;

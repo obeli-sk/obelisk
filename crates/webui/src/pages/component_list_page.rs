@@ -8,10 +8,11 @@ use crate::{
     grpc::{
         ffqn::FunctionFqn,
         function_detail::{map_interfaces_to_fn_details, InterfaceFilter},
-        grpc_client::{ComponentType, FunctionDetail},
+        grpc_client::{self, ComponentType, FunctionDetail},
         ifc_fqn::IfcFqn,
     },
 };
+use indexmap::IndexMap;
 use std::ops::Deref;
 use yew::prelude::*;
 
@@ -20,7 +21,47 @@ pub fn component_list_page() -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
     let components: Vec<_> = app_state.components;
+    let components_with_idx = components
+        .clone()
+        .into_iter()
+        .enumerate()
+        .collect::<IndexMap<_, _>>();
     let selected_component_idx_state: UseStateHandle<Option<usize>> = use_state(|| None);
+    let wit_state = use_state(|| None);
+    // Fetch GetWit
+    use_effect_with(*selected_component_idx_state.deref(), {
+        let components_with_idx = components_with_idx.clone();
+        let wit_state = wit_state.clone();
+        move |selected_component_idx| {
+            if let Some(selected_component_idx) = selected_component_idx {
+                let component_id = components_with_idx
+                    .get(selected_component_idx)
+                    .expect("`selected_component_idx` must be valid")
+                    .component_id
+                    .clone()
+                    .expect("`component_id` is sent");
+                wasm_bindgen_futures::spawn_local(async move {
+                    let base_url = "/api";
+                    let mut fn_client =
+                        grpc_client::function_repository_client::FunctionRepositoryClient::new(
+                            tonic_web_wasm_client::Client::new(base_url.to_string()),
+                        );
+                    let wit = fn_client
+                        .get_wit(grpc_client::GetWitRequest {
+                            component_id: Some(component_id),
+                        })
+                        .await
+                        .unwrap()
+                        .into_inner()
+                        .content;
+                    wit_state.set(Some(wit));
+                });
+            } else {
+                wit_state.set(None);
+            }
+        }
+    });
+
     let component_detail = selected_component_idx_state
         .deref()
         .and_then(|idx| components.get(idx))
@@ -60,13 +101,19 @@ pub fn component_list_page() -> Html {
 
                 html! {
                     <section class="types-interface">
-                        <h2>
-                            {ifc_fqn}
+                        <h3>
+                            {format!("{}:{}/", ifc_fqn.namespace, ifc_fqn.package_name)}
+                            <span class="highlight">
+                                {&ifc_fqn.ifc_name}
+                            </span>
+                            if let Some(version) = &ifc_fqn.version {
+                                {format!("@{version}")}
+                            }
                             <span class="label">{"Export"}</span>
                             if is_import {
                                 <span class="label">{"Import"}</span>
                             }
-                        </h2>
+                        </h3>
                         <ul>
                             {fn_details}
                         </ul>
@@ -109,13 +156,20 @@ pub fn component_list_page() -> Html {
             </header>
 
             <section class="component-selection">
-                <ComponentTree components={components.into_iter().enumerate().collect::<Vec<_>>()} config={ComponentTreeConfig::ComponentsOnly {
+                <ComponentTree components={components_with_idx} config={ComponentTreeConfig::ComponentsOnly {
                     selected_component_idx_state: selected_component_idx_state.clone()
                 }
                 } />
             </section>
 
             { component_detail }
+
+            if let Some(wit) = wit_state.deref() {
+                <h3>{"WIT"}</h3>
+                <div class="code-block">
+                    { wit }
+                </div>
+            }
         </div>
 
     </>}

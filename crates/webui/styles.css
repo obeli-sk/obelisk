@@ -38,9 +38,13 @@ header .hash {
     margin-top: 20px;
 }
 
-h2 {
-    color: #ff79c6;
+h3 .highlight {
+    color: #8be9fd;
 }
+
+/* h3 .pink {
+    color: #ff79c6;
+} */
 
 .label {
     background-color: #6272a4;
