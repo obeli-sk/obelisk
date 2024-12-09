@@ -25,6 +25,8 @@ pub struct WasmComponent {
     #[derivative(Debug = "ignore")]
     pub wasmtime_component: Component,
     pub exim: ExIm,
+    #[derivative(Debug = "ignore")]
+    pub decoded: DecodedWasm,
 }
 
 impl WasmComponent {
@@ -105,7 +107,7 @@ impl WasmComponent {
                 DecodeError::CannotReadComponent { source: err }
             })?;
         trace!("Decoding using wit_parser");
-        let (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta) = {
+        let (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta, decoded) = {
             let stopwatch = std::time::Instant::now();
             let decoded = wit_parser::decoding::decode_reader(wasm_file).map_err(|err| {
                 error!("Cannot read {wasm_path:?} using wit_parser - {err:?}");
@@ -131,7 +133,11 @@ impl WasmComponent {
             trace!(
                 "Exports: {exported_ffqns_to_wit_meta:?}, imports: {imported_ffqns_to_wit_meta:?}"
             );
-            (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta)
+            (
+                exported_ffqns_to_wit_meta,
+                imported_ffqns_to_wit_meta,
+                decoded,
+            )
         };
         trace!("Decoding using wasmtime");
         let wasmtime_component = {
@@ -153,7 +159,19 @@ impl WasmComponent {
         Ok(Self {
             wasmtime_component,
             exim,
+            decoded,
         })
+    }
+
+    pub fn wit(&self) -> Result<String, anyhow::Error> {
+        let resolve = self.decoded.resolve();
+        let ids = resolve
+            .packages
+            .iter()
+            .map(|(id, _)| id)
+            .filter(|id| *id != self.decoded.package())
+            .collect::<Vec<_>>();
+        WitPrinter::default().print(resolve, self.decoded.package(), &ids)
     }
 
     #[must_use]
