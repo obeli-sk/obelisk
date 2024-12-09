@@ -273,13 +273,40 @@ pub(crate) mod tests {
 
     pub(crate) async fn compile_activity(wasm_path: &str) -> (WasmComponent, ConfigId) {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
+        compile_activity_with_engine(wasm_path, &engine)
+    }
+
+    pub(crate) fn compile_activity_with_engine(
+        wasm_path: &str,
+        engine: &Engine,
+    ) -> (WasmComponent, ConfigId) {
         let config_id = ConfigId::new(
             ConfigIdType::ActivityWasm,
             wasm_file_name(wasm_path),
             StrVariant::Static("dummy hash"),
         )
         .unwrap();
-        (WasmComponent::new(wasm_path, &engine).unwrap(), config_id)
+        (WasmComponent::new(wasm_path, engine).unwrap(), config_id)
+    }
+
+    fn new_activity_worker(
+        wasm_path: &str,
+        engine: Arc<Engine>,
+        clock_fn: impl ClockFn + 'static,
+    ) -> (Arc<dyn Worker>, ConfigId) {
+        let (wasm_component, config_id) = compile_activity_with_engine(wasm_path, &engine);
+        (
+            Arc::new(
+                ActivityWorker::new_with_config(
+                    wasm_component,
+                    activity_config(config_id.clone()),
+                    engine,
+                    clock_fn,
+                )
+                .unwrap(),
+            ),
+            config_id,
+        )
     }
 
     pub(crate) async fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -288,21 +315,7 @@ pub(crate) mod tests {
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
-        let config_id = ConfigId::new(
-            ConfigIdType::ActivityWasm,
-            wasm_file_name(wasm_path),
-            StrVariant::Static("dummy hash"),
-        )
-        .unwrap();
-        let worker = Arc::new(
-            ActivityWorker::new_with_config(
-                WasmComponent::new(wasm_path, &engine).unwrap(),
-                activity_config(config_id.clone()),
-                engine,
-                clock_fn.clone(),
-            )
-            .unwrap(),
-        );
+        let (worker, config_id) = new_activity_worker(wasm_path, engine, clock_fn.clone());
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -393,17 +406,11 @@ pub(crate) mod tests {
         ))
         .unwrap();
 
-        let fibo_worker = ActivityWorker::new_with_config(
-            WasmComponent::new(
-                test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                &engine,
-            )
-            .unwrap(),
-            activity_config(ConfigId::dummy_activity()),
+        let (fibo_worker, _config_id) = new_activity_worker(
+            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             engine,
             Now,
-        )
-        .unwrap();
+        );
         let execution_deadline = Now.now() + lock_expiry;
         // create executions
         let join_handles = (0..tasks)
@@ -483,18 +490,10 @@ pub(crate) mod tests {
                 Duration::from_millis(EPOCH_MILLIS),
             );
 
-            let worker = Arc::new(
-                ActivityWorker::new_with_config(
-                    WasmComponent::new(
-                        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                        &engine,
-                    )
-                    .unwrap(),
-                    activity_config(ConfigId::dummy_activity()),
-                    engine,
-                    Now,
-                )
-                .unwrap(),
+            let (worker, _config_id) = new_activity_worker(
+                test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                engine,
+                Now,
             );
 
             let exec_config = ExecConfig {
@@ -577,18 +576,10 @@ pub(crate) mod tests {
                 Duration::from_millis(EPOCH_MILLIS),
             );
 
-            let worker = Arc::new(
-                ActivityWorker::new_with_config(
-                    WasmComponent::new(
-                        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                        &engine,
-                    )
-                    .unwrap(),
-                    activity_config(ConfigId::dummy_activity()),
-                    engine,
-                    Now,
-                )
-                .unwrap(),
+            let (worker, _config_id) = new_activity_worker(
+                test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                engine,
+                Now,
             );
 
             let executed_at = Now.now();
@@ -630,18 +621,10 @@ pub(crate) mod tests {
             let (_guard, db_pool) = Database::Memory.set_up().await;
             let engine =
                 Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
-            let worker = Arc::new(
-                ActivityWorker::new_with_config(
-                    WasmComponent::new(
-                        test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                        &engine,
-                    )
-                    .unwrap(),
-                    activity_config(ConfigId::dummy_activity()),
-                    engine,
-                    sim_clock.clone(),
-                )
-                .unwrap(),
+            let (worker, _config_id) = new_activity_worker(
+                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                engine,
+                sim_clock.clone(),
             );
             let exec_config = ExecConfig {
                 batch_size: 1,
@@ -744,18 +727,10 @@ pub(crate) mod tests {
             let (_guard, db_pool) = Database::Memory.set_up().await;
             let engine =
                 Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
-            let worker = Arc::new(
-                ActivityWorker::new_with_config(
-                    WasmComponent::new(
-                        test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                        &engine,
-                    )
-                    .unwrap(),
-                    activity_config(ConfigId::dummy_activity()),
-                    engine,
-                    sim_clock.clone(),
-                )
-                .unwrap(),
+            let (worker, _config_id) = new_activity_worker(
+                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                engine,
+                sim_clock.clone(),
             );
             let exec_config = ExecConfig {
                 batch_size: 1,
