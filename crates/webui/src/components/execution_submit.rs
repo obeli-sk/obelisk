@@ -76,7 +76,7 @@ pub fn execution_submit_form(
                                 type_url: format!("urn:obelisk:json:params:{ffqn}"),
                                 value: serde_json::Value::Array(params).to_string().into_bytes(),
                             }),
-                            function: Some(grpc_client::FunctionName::from(ffqn)),
+                            function_name: Some(grpc_client::FunctionName::from(ffqn)),
                         })
                         .await;
                     trace!("Got gRPC {response:?}");

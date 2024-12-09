@@ -130,7 +130,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let grpc::FunctionName {
             interface_name,
             function_name,
-        } = request.function.argument_must_exist("function")?;
+        } = request.function_name.argument_must_exist("function")?;
         let execution_id = ExecutionId::generate();
         let span = Span::current();
         span.record("execution_id", tracing::field::display(&execution_id));
@@ -540,7 +540,7 @@ fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc
                     wit_type: wit_type.map(|s| s.to_string()),
                 },
             ),
-            function: Some(ffqn.into()),
+            function_name: Some(ffqn.into()),
             extension: extension.map(|it| {
                 match it {
                     FunctionExtension::Submit => grpc::FunctionExtension::Submit,

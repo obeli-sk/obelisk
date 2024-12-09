@@ -24,7 +24,7 @@ pub(crate) async fn submit(
                 type_url: format!("urn:obelisk:json:params:{ffqn}"),
                 value: serde_json::Value::Array(params).to_string().into_bytes(),
             }),
-            function: Some(ffqn.into()),
+            function_name: Some(ffqn.into()),
         }))
         .await
         .to_anyhow()?

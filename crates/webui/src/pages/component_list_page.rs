@@ -46,7 +46,7 @@ pub fn component_list_page() -> Html {
                             if fn_detail.submittable {
                                 <FfqnWithLinks ffqn = {FunctionFqn::from_fn_detail(fn_detail)} />
                             } else {
-                                {fn_detail.function.as_ref().map(|f| &f.function_name)}
+                                {fn_detail.function_name.as_ref().map(|f| &f.function_name)}
                             }
                             {": "}
                             <span>

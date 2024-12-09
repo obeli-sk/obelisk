@@ -56,7 +56,7 @@ pub(crate) async fn list_components(
 ) -> anyhow::Result<()> {
     let components = client
         .list_components(tonic::Request::new(super::grpc::ListComponentsRequest {
-            function: None,
+            function_name: None,
             component_id: None,
             extensions,
         }))
@@ -83,7 +83,7 @@ pub(crate) async fn list_components(
 
 fn print_fn_details(vec: Vec<grpc::FunctionDetail>) -> Result<(), anyhow::Error> {
     for fn_detail in vec {
-        let func = FunctionFqn::try_from(fn_detail.function.context("function must exist")?)
+        let func = FunctionFqn::try_from(fn_detail.function_name.context("function must exist")?)
             .expect("ffqn sent by the server must be valid");
         print!("\t{func} : func(");
         let mut params = fn_detail.params.into_iter().peekable();

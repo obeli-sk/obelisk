@@ -34,7 +34,7 @@ pub fn map_interfaces_to_fn_details(
     let mut extensions: IndexMap<IfcFqn, Vec<FunctionDetail>> = IndexMap::new();
     for function_detail in functions {
         let function_name = function_detail
-            .function
+            .function_name
             .clone()
             .expect("function and its name is sent by the server");
         let ifc_fqn = IfcFqn::from_str(&function_name.interface_name)
@@ -52,10 +52,10 @@ pub fn map_interfaces_to_fn_details(
     // sort functions in each interface
     for (_, fns) in interfaces_to_fn_details.iter_mut() {
         fns.sort_by(|a, b| {
-            a.function
+            a.function_name
                 .as_ref()
                 .map(|f| &f.function_name)
-                .cmp(&b.function.as_ref().map(|f| &f.function_name))
+                .cmp(&b.function_name.as_ref().map(|f| &f.function_name))
         });
     }
     interfaces_to_fn_details
