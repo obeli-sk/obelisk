@@ -107,7 +107,6 @@ impl ComponentTree {
         }
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn attach_components_to_tree<'a>(
         tree: &mut yewprint::id_tree::Tree<NodeData<NodeDataType>>,
         root_id: &NodeId,

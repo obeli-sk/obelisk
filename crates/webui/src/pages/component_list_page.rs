@@ -56,7 +56,7 @@ pub fn component_list_page() -> Html {
                     }
                 };
 
-                let fn_details = fn_details.iter().map(|f| render_fn_detail(f)).collect::<Vec<_>>();
+                let fn_details = fn_details.iter().map(render_fn_detail).collect::<Vec<_>>();
 
                 html! {
                     <section class="types-interface">
@@ -88,11 +88,11 @@ pub fn component_list_page() -> Html {
                     <div class="code-block">
                         <p><strong>{"Exports"}</strong></p>
                         <ul>
-                            {exports.keys().map(|ifc_fqn| render_ifc_li(ifc_fqn)).collect::<Vec<_>>()}
+                            {exports.keys().map(render_ifc_li).collect::<Vec<_>>()}
                         </ul>
                         <p><strong>{"Imports"}</strong></p>
                         <ul>
-                            {imports.keys().map(|ifc_fqn| render_ifc_li(ifc_fqn)).collect::<Vec<_>>()}
+                            {imports.keys().map(render_ifc_li).collect::<Vec<_>>()}
                         </ul>
 
                     </div>

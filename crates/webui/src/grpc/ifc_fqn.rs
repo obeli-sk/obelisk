@@ -2,7 +2,7 @@ use super::{NAMESPACE_OBELISK, SUFFIX_PKG_EXT};
 use anyhow::bail;
 use std::{fmt::Display, str::FromStr};
 
-#[derive(Debug, PartialEq, Eq, Hash, Ord)]
+#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 // TODO: Unify with IfcFqnName
 pub struct IfcFqn {
     pub namespace: String,
@@ -24,18 +24,6 @@ impl Display for IfcFqn {
         } else {
             write!(f, "{namespace}:{package_name}/{ifc_name}")
         }
-    }
-}
-
-impl PartialOrd for IfcFqn {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(
-            self.namespace
-                .cmp(&other.namespace)
-                .then_with(|| self.package_name.cmp(&other.package_name))
-                .then_with(|| self.ifc_name.cmp(&other.ifc_name))
-                .then_with(|| self.version.cmp(&other.version)),
-        )
     }
 }
 
