@@ -12,15 +12,6 @@ use yew::prelude::*;
 
 #[function_component(ComponentListPage)]
 pub fn component_list_page() -> Html {
-    let extensions_state = use_state(|| InterfaceFilter::WithoutExtensions);
-    // Save flipped `extensions_state`.
-    let on_extensions_change = {
-        let extensions_state = extensions_state.clone();
-        Callback::from(move |event: MouseEvent| {
-            event.prevent_default();
-            extensions_state.set(extensions_state.deref().flip());
-        })
-    };
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
     let components: Vec<_> = app_state.components;
@@ -31,7 +22,7 @@ pub fn component_list_page() -> Html {
         .map(|component| {
             let component_type = ComponentType::try_from(component.r#type).unwrap();
             let exports =
-                map_interfaces_to_fn_details(&component.exports, *extensions_state.deref());
+                map_interfaces_to_fn_details(&component.exports, InterfaceFilter::WithExtensions);
             let imports =
                 map_interfaces_to_fn_details(&component.imports, InterfaceFilter::WithExtensions);
             let render_ifc = |ifc_fqn: &IfcFqn| {
@@ -98,10 +89,6 @@ pub fn component_list_page() -> Html {
                     selected_component_idx_state: selected_component_idx_state.clone()
                 }
                 } />
-                <div>
-                    <input type="checkbox" checked={extensions_state.deref().is_with_extensions()} onclick={&on_extensions_change} />
-                    <label onclick={&on_extensions_change}> { "Show -obelisk-ext packages in exports" }</label>
-                </div>
             </section>
 
             { component_detail }
