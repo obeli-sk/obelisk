@@ -2,7 +2,7 @@ use super::grpc;
 use crate::FunctionMetadataVerbosity;
 use crate::{grpc_util::grpc_mapping::TonicClientResultExt, FunctionRepositoryClient};
 use anyhow::Context;
-use concepts::{ConfigId, FunctionFqn, FunctionMetadata};
+use concepts::{FunctionFqn, FunctionMetadata};
 use std::path::PathBuf;
 use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
@@ -51,17 +51,13 @@ fn inspect_fns(functions: &[FunctionMetadata]) {
 
 pub(crate) async fn list_components(
     mut client: FunctionRepositoryClient,
-    config_id: Option<&ConfigId>,
-    ffqn: Option<&FunctionFqn>,
     verbosity: FunctionMetadataVerbosity,
     extensions: bool,
 ) -> anyhow::Result<()> {
     let components = client
         .list_components(tonic::Request::new(super::grpc::ListComponentsRequest {
-            function: ffqn.map(grpc::FunctionName::from),
-            config_id: config_id.map(|config_id| grpc::ConfigId {
-                id: config_id.to_string(),
-            }),
+            function: None,
+            component_id: None,
             extensions,
         }))
         .await
@@ -72,7 +68,7 @@ pub(crate) async fn list_components(
         println!(
             "{name}\t{id}",
             name = component.name,
-            id = component.config_id.map(|id| id.id).unwrap_or_default()
+            id = component.component_id.map(|id| id.id).unwrap_or_default()
         );
         println!("Exports:");
         print_fn_details(component.exports)?;

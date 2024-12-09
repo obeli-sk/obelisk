@@ -79,8 +79,6 @@ async fn main() -> Result<(), anyhow::Error> {
                     let client = get_fn_repository_client(api_url).await?;
                     command::component::list_components(
                         client,
-                        None,
-                        None,
                         FunctionMetadataVerbosity::from(verbosity),
                         extensions,
                     )

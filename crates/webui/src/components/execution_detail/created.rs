@@ -26,7 +26,7 @@ impl CreatedEventProps {
             function_name: Some(function_name),
             params: Some(params),
             scheduled_at,
-            config_id: _,
+            component_id: _,
             scheduled_by,
         } = &self.created
         else {

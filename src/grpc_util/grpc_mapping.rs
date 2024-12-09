@@ -45,7 +45,7 @@ impl From<RunId> for grpc::RunId {
     }
 }
 
-impl From<ConfigId> for grpc::ConfigId {
+impl From<ConfigId> for grpc::ComponentId {
     fn from(value: ConfigId) -> Self {
         Self {
             id: value.to_string(),
@@ -364,7 +364,7 @@ pub(crate) fn from_execution_event_to_grpc(
                     ),
                     function_name: Some(grpc::FunctionName::from(ffqn)),
                     scheduled_at: Some(prost_wkt_types::Timestamp::from(scheduled_at)),
-                    config_id: config_id.to_string(),
+                    component_id: Some(config_id.into()),
                     scheduled_by: scheduled_by.map(|id| grpc::ExecutionId { id: id.to_string() }),
                 }),
                 ExecutionEventInner::Locked {
@@ -373,7 +373,7 @@ pub(crate) fn from_execution_event_to_grpc(
                     run_id,
                     lock_expires_at,
                 } => grpc::execution_event::Event::Locked(grpc::execution_event::Locked {
-                    config_id: config_id.to_string(),
+                    component_id: Some(config_id.into()),
                     run_id: run_id.to_string(),
                     lock_expires_at: Some(prost_wkt_types::Timestamp::from(lock_expires_at)),
                 }),
