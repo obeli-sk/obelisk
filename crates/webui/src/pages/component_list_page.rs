@@ -1,9 +1,14 @@
 use crate::{
     app::AppState,
-    components::component_tree::{ComponentTree, ComponentTreeConfig},
+    components::{
+        component_tree::{ComponentTree, ComponentTreeConfig},
+        ffqn_with_links::FfqnWithLinks,
+        function_signature::FunctionSignature,
+    },
     grpc::{
+        ffqn::FunctionFqn,
         function_detail::{map_interfaces_to_fn_details, InterfaceFilter},
-        grpc_client::ComponentType,
+        grpc_client::{ComponentType, FunctionDetail},
         ifc_fqn::IfcFqn,
     },
 };
@@ -25,7 +30,7 @@ pub fn component_list_page() -> Html {
                 map_interfaces_to_fn_details(&component.exports, InterfaceFilter::WithExtensions);
             let imports =
                 map_interfaces_to_fn_details(&component.imports, InterfaceFilter::WithExtensions);
-            let render_ifc = |ifc_fqn: &IfcFqn| {
+            let render_ifc_li = |ifc_fqn: &IfcFqn| {
                 html! {
                     <li>
                         {format!("{}:{}/",ifc_fqn.namespace, ifc_fqn.package_name)}
@@ -33,8 +38,49 @@ pub fn component_list_page() -> Html {
                     </li>
                 }
             };
-            let exports: Vec<_> = exports.keys().map(|ifc_fqn| render_ifc(ifc_fqn)).collect();
-            let imports: Vec<_> = imports.keys().map(|ifc_fqn| render_ifc(ifc_fqn)).collect();
+
+            let render_ifc_with_fns = |ifc_fqn: &IfcFqn, fn_details: &[FunctionDetail], is_import: bool | {
+                let render_fn_detail = |fn_detail: &FunctionDetail| {
+                    html! {
+                        <li>
+                            if fn_detail.submittable {
+                                <FfqnWithLinks ffqn = {FunctionFqn::from_fn_detail(fn_detail)} />
+                            } else {
+                                {fn_detail.function.as_ref().map(|f| &f.function_name)}
+                            }
+                            {": "}
+                            <span>
+                                <FunctionSignature params = {fn_detail.params.clone()} return_type={fn_detail.return_type.clone()} />
+                            </span>
+                        </li>
+                    }
+                };
+
+                let fn_details = fn_details.iter().map(|f| render_fn_detail(f)).collect::<Vec<_>>();
+
+                html! {
+                    <section class="types-interface">
+                        <h2>
+                            {ifc_fqn}
+                            <span class="label">{"Export"}</span>
+                            if is_import {
+                                <span class="label">{"Import"}</span>
+                            }
+                        </h2>
+                        <ul>
+                            {fn_details}
+                        </ul>
+                    </section>
+                }
+            };
+
+            let submittable_ifcs_fns = exports.iter()
+                .filter(|(_, fn_details)| fn_details.iter().any(|f_d| f_d.submittable))
+                .map(|(ifc_fqn, fn_details)| {
+                render_ifc_with_fns(ifc_fqn, fn_details, imports.contains_key(ifc_fqn))
+            }).collect::<Vec<_>>();
+
+
             html! { <>
 
                 <section class="world-definition">
@@ -42,42 +88,20 @@ pub fn component_list_page() -> Html {
                     <div class="code-block">
                         <p><strong>{"Exports"}</strong></p>
                         <ul>
-                            {exports}
+                            {exports.keys().map(|ifc_fqn| render_ifc_li(ifc_fqn)).collect::<Vec<_>>()}
                         </ul>
                         <p><strong>{"Imports"}</strong></p>
                         <ul>
-                            {imports}
+                            {imports.keys().map(|ifc_fqn| render_ifc_li(ifc_fqn)).collect::<Vec<_>>()}
                         </ul>
 
                     </div>
                 </section>
 
-
-
+                {submittable_ifcs_fns}
             </>}
         });
 
-    /*
-    <section class="types-interface">
-        <h2><span class="label">{"types"}</span>{"interface"}</h2>
-        <p>{"
-            This interface defines all of the types and methods for
-            implementing HTTP Requests and Responses, both incoming and
-            outgoing, as well as their headers, trailers, and bodies.
-            "}
-        </p>
-        <h3>{"Imported Types"}</h3>
-        <ul>
-            <li>{"wasi:clocks/monotonic-clock."}<span>{"duration"}</span></li>
-            <li>{"wasi:io/streams."}<span>{"input-stream"}</span></li>
-        </ul>
-    </section>
-    */
-    let components = components
-        .clone()
-        .into_iter()
-        .enumerate()
-        .collect::<Vec<_>>();
     html! {<>
         <div class="container">
             <header>
@@ -85,7 +109,7 @@ pub fn component_list_page() -> Html {
             </header>
 
             <section class="component-selection">
-                <ComponentTree {components} config={ComponentTreeConfig::ComponentsOnly {
+                <ComponentTree components={components.into_iter().enumerate().collect::<Vec<_>>()} config={ComponentTreeConfig::ComponentsOnly {
                     selected_component_idx_state: selected_component_idx_state.clone()
                 }
                 } />
