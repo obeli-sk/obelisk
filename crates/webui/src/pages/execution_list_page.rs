@@ -1,8 +1,8 @@
 use crate::{
     app::{AppState, ExecutionsCursor, Route},
     components::{
-        component_tree::ComponentTree, execution_status::ExecutionStatus,
-        ffqn_with_links::FfqnWithLinks,
+        component_tree::{ComponentTree, ComponentTreeConfig},
+        execution_status::ExecutionStatus,
     },
     grpc::{
         ffqn::FunctionFqn,
@@ -87,6 +87,7 @@ pub struct ExecutionListPageProps {
 pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPageProps) -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
+    let components: Vec<_> = app_state.components.into_iter().enumerate().collect();
     let response_state = use_state(|| None);
     {
         let page_size = 20;
@@ -194,9 +195,6 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
         let cursor_later = response.executions.first().map(to_executions_cursor);
         let cursor_prev = response.executions.last().map(to_executions_cursor);
 
-        let submittable_link_fn =
-            Callback::from(|ffqn: FunctionFqn| html! { <FfqnWithLinks {ffqn} /> });
-
         html! {<>
             <h3>{"Executions"}</h3>
             if let ExecutionFilter::Ffqn{ffqn} = filter {
@@ -204,7 +202,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                 <p><Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.clone() }}>{"Submit new execution"}</Link<Route>></p>
                 <p><Link<Route> to={Route::ExecutionList}>{"Remove filter"}</Link<Route>></p>
             }
-            <ComponentTree components={app_state.components} show_extensions={ false } {submittable_link_fn} show_submittable_only={true}/>
+            <ComponentTree {components} config={ComponentTreeConfig::ComponentsWithSubmittableFns} />
             <table>
                 <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
                 { rows }

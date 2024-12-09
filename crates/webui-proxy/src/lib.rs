@@ -35,6 +35,11 @@ fn get_blueprint_css() -> &'static [u8] {
     include_bytes!("../../webui/dist/blueprint.css")
 }
 
+#[cfg(not(debug_assertions))]
+fn get_styles_css() -> &'static [u8] {
+    include_bytes!("../../webui/dist/styles.css")
+}
+
 // debug: Include dummy file content
 #[cfg(debug_assertions)]
 fn get_index() -> &'static [u8] {
@@ -56,6 +61,11 @@ fn get_blueprint_css() -> &'static [u8] {
     unreachable!("embedding is skipped in debug mode")
 }
 
+#[cfg(debug_assertions)]
+fn get_styles_css() -> &'static [u8] {
+    unreachable!("embedding is skipped in debug mode")
+}
+
 impl Guest for Component {
     fn handle(incoming_request: IncomingRequest, response_outparam: ResponseOutparam) {
         match incoming_request.path_with_query().as_deref() {
@@ -71,6 +81,11 @@ impl Guest for Component {
             }
             Some("/blueprint.css") => {
                 let content = get_blueprint_css();
+                let content_type = "text/css";
+                write_static_response(content, content_type, response_outparam);
+            }
+            Some("/styles.css") => {
+                let content = get_styles_css();
                 let content_type = "text/css";
                 write_static_response(content, content_type, response_outparam);
             }

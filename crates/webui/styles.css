@@ -1,0 +1,88 @@
+body {
+    font-family: "Arial", sans-serif;
+    background-color: #1e1e2e;
+    color: #e4e4e7;
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    max-width: 800px;
+    margin: 20px auto;
+    padding: 20px;
+    background-color: #282a36;
+    border-radius: 8px;
+}
+
+header h1 {
+    font-size: 24px;
+    color: #ffffff;
+}
+
+header .badge {
+    background-color: #ffcc00;
+    color: #000000;
+    padding: 2px 8px;
+    margin-left: 10px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+header .hash {
+    font-size: 14px;
+    color: #8a8d93;
+}
+
+.world-definition,
+.types-interface {
+    margin-top: 20px;
+}
+
+h2 {
+    color: #ff79c6;
+}
+
+.label {
+    background-color: #6272a4;
+    color: #ffffff;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.code-block {
+    background-color: #1e1e2e;
+    padding: 15px;
+    border: 1px solid #44475a;
+    border-radius: 8px;
+    font-family: monospace;
+    font-size: 14px;
+}
+
+.code-block p {
+    margin: 0 0 10px;
+    font-weight: bold;
+}
+
+ul {
+    list-style-type: none;
+    padding-left: 20px;
+}
+
+ul li {
+    margin-bottom: 8px;
+}
+
+ul li span {
+    color: #8be9fd;
+}
+
+.types-interface p {
+    margin: 10px 0;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.types-interface ul li span {
+    color: #50fa7b;
+}
