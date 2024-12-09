@@ -87,6 +87,7 @@ use tracing::{debug, info, trace};
 use utils::time::now_tokio_instant;
 use utils::time::ClockFn;
 use utils::time::Now;
+use utils::wasm_tools::WasmComponent;
 use wasm_workers::activity::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::envvar::EnvVar;
@@ -508,6 +509,22 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         }
         Ok(tonic::Response::new(grpc::ListComponentsResponse {
             components: res_components,
+        }))
+    }
+
+    async fn get_wit(
+        &self,
+        request: tonic::Request<grpc::GetWitRequest>,
+    ) -> TonicRespResult<grpc::GetWitResponse> {
+        let request = request.into_inner();
+        let component_id =
+            ConfigId::try_from(request.component_id.argument_must_exist("component_id")?)?;
+        let wit = self
+            .component_registry_ro
+            .get_wit(&component_id)
+            .entity_must_exist()?;
+        Ok(tonic::Response::new(grpc::GetWitResponse {
+            content: wit.to_string(),
         }))
     }
 }
@@ -1234,7 +1251,14 @@ async fn compile_and_verify(
                         workers_compiled.push(worker_compiled);
                     },
                     Either::Right((webhook_name, (webhook_compiled, routes, content_digest))) => {
-                        let component = ComponentConfig { config_id: webhook_compiled.config_id.clone(), imports: webhook_compiled.imports().to_vec(), content_digest, importable: None };
+                        let component = ComponentConfig {
+                            config_id: webhook_compiled.config_id.clone(),
+                            imports: webhook_compiled.imports().to_vec(),
+                            content_digest, importable: None,
+                            wit: webhook_compiled.wasm_component.wit()
+                                .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
+                                .ok()
+                        };
                         component_registry.insert(component)?;
                         let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
                         assert!(old.is_none());
@@ -1273,18 +1297,21 @@ fn prespawn_activity(
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     debug!("Instantiating activity");
     trace!(?activity, "Full configuration");
-    let worker = ActivityWorker::new_with_config(
-        activity.wasm_path,
-        activity.activity_config,
-        engines.activity_engine.clone(),
-        Now,
-    )?;
+    let engine = engines.activity_engine.clone();
+    let wasm_component = WasmComponent::new(activity.wasm_path, &engine)?;
+    let wit = wasm_component
+        .wit()
+        .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
+        .ok();
+    let worker =
+        ActivityWorker::new_with_config(wasm_component, activity.activity_config, engine, Now)?;
     Ok(WorkerCompiled::new_activity(
         worker,
         activity.content_digest,
         activity.exec_config,
         activity.retry_config,
         executor_id,
+        wit,
     ))
 }
 
@@ -1300,18 +1327,26 @@ fn prespawn_workflow(
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     debug!("Instantiating workflow");
     trace!(?workflow, "Full configuration");
+    let engine = engines.workflow_engine.clone();
+    let wasm_component = WasmComponent::new(&workflow.wasm_path, &engine)
+        .with_context(|| format!("Error decoding {:?}", workflow.wasm_path))?;
+    let wit = wasm_component
+        .wit()
+        .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
+        .ok();
     let worker = WorkflowWorkerCompiled::new_with_config(
-        workflow.wasm_path,
+        wasm_component,
         workflow.workflow_config,
-        engines.workflow_engine.clone(),
+        engine,
         Now,
-    )?;
+    );
     Ok(WorkerCompiled::new_workflow(
         worker,
         workflow.content_digest,
         workflow.exec_config,
         workflow.retry_config,
         executor_id,
+        wit,
     ))
 }
 
@@ -1328,6 +1363,7 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         retry_config: ComponentRetryConfig,
         executor_id: ExecutorId,
+        wit: Option<String>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             config_id: exec_config.config_id.clone(),
@@ -1338,6 +1374,7 @@ impl WorkerCompiled {
                 retry_config,
             }),
             imports: worker.imported_functions().to_vec(),
+            wit,
         };
         (
             WorkerCompiled {
@@ -1355,6 +1392,7 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         retry_config: ComponentRetryConfig,
         executor_id: ExecutorId,
+        wit: Option<String>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             config_id: exec_config.config_id.clone(),
@@ -1365,6 +1403,7 @@ impl WorkerCompiled {
                 retry_config,
             }),
             imports: worker.imported_functions().to_vec(),
+            wit,
         };
         (
             WorkerCompiled {
@@ -1548,6 +1587,13 @@ struct ComponentConfigRegistryRO {
 }
 
 impl ComponentConfigRegistryRO {
+    fn get_wit(&self, id: &ConfigId) -> Option<&str> {
+        self.inner
+            .ids_to_components
+            .get(id)
+            .and_then(|component_config| component_config.wit.as_deref())
+    }
+
     fn find_by_exported_ffqn_noext(
         &self,
         ffqn: &FunctionFqn,

@@ -53,6 +53,17 @@ impl From<ConfigId> for grpc::ComponentId {
     }
 }
 
+impl TryFrom<grpc::ComponentId> for ConfigId {
+    type Error = tonic::Status;
+
+    fn try_from(value: grpc::ComponentId) -> Result<Self, Self::Error> {
+        value.id.parse().map_err(|parse_err| {
+            error!("{parse_err:?}");
+            tonic::Status::invalid_argument(format!("ComponentId cannot be parsed - {parse_err}"))
+        })
+    }
+}
+
 impl TryFrom<grpc::ExecutionId> for ExecutionId {
     type Error = tonic::Status;
 
@@ -65,6 +76,8 @@ impl TryFrom<grpc::ExecutionId> for ExecutionId {
 
 pub trait TonicServerOptionExt<T> {
     fn argument_must_exist(self, argument: &str) -> Result<T, tonic::Status>;
+
+    fn entity_must_exist(self) -> Result<T, tonic::Status>;
 }
 
 impl<T> TonicServerOptionExt<T> for Option<T> {
@@ -72,6 +85,10 @@ impl<T> TonicServerOptionExt<T> for Option<T> {
         self.ok_or_else(|| {
             tonic::Status::invalid_argument(format!("argument `{argument}` must exist"))
         })
+    }
+
+    fn entity_must_exist(self) -> Result<T, tonic::Status> {
+        self.ok_or_else(|| tonic::Status::not_found("entity not found"))
     }
 }
 
@@ -126,6 +143,7 @@ impl TryFrom<grpc::FunctionName> for FunctionFqn {
     fn try_from(value: grpc::FunctionName) -> Result<Self, Self::Error> {
         FunctionFqn::try_from_tuple(&value.interface_name, &value.function_name).map_err(
             |parse_err| {
+                error!("{parse_err:?}");
                 tonic::Status::invalid_argument(format!(
                     "FunctionName cannot be parsed - {parse_err}"
                 ))

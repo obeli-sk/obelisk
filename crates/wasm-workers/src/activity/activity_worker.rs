@@ -8,7 +8,6 @@ use concepts::{ConfigId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValu
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
-use std::path::Path;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
@@ -39,14 +38,11 @@ pub struct ActivityWorker<C: ClockFn> {
 impl<C: ClockFn> ActivityWorker<C> {
     #[tracing::instrument(skip_all, fields(%config.config_id), err)]
     pub fn new_with_config(
-        wasm_path: impl AsRef<Path>,
+        wasm_component: WasmComponent,
         config: ActivityConfig,
         engine: Arc<Engine>,
         clock_fn: C,
     ) -> Result<Self, WasmFileError> {
-        let wasm_path = wasm_path.as_ref();
-        let wasm_component =
-            WasmComponent::new(wasm_path, &engine).map_err(WasmFileError::DecodeError)?;
         let linking_err = |err: wasmtime::Error| WasmFileError::LinkingError {
             context: StrVariant::Static("linking error"),
             err: err.into(),
@@ -243,7 +239,7 @@ pub(crate) mod tests {
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use serde_json::json;
-    use std::time::Duration;
+    use std::{path::Path, time::Duration};
     use test_utils::{env_or_default, sim_clock::SimClock};
     use tracing::info_span;
     use utils::time::Now;
@@ -300,7 +296,7 @@ pub(crate) mod tests {
         .unwrap();
         let worker = Arc::new(
             ActivityWorker::new_with_config(
-                wasm_path,
+                WasmComponent::new(wasm_path, &engine).unwrap(),
                 activity_config(config_id.clone()),
                 engine,
                 clock_fn.clone(),
@@ -398,7 +394,11 @@ pub(crate) mod tests {
         .unwrap();
 
         let fibo_worker = ActivityWorker::new_with_config(
-            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+            WasmComponent::new(
+                test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+                &engine,
+            )
+            .unwrap(),
             activity_config(ConfigId::dummy_activity()),
             engine,
             Now,
@@ -485,7 +485,11 @@ pub(crate) mod tests {
 
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
-                    test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                    WasmComponent::new(
+                        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                        &engine,
+                    )
+                    .unwrap(),
                     activity_config(ConfigId::dummy_activity()),
                     engine,
                     Now,
@@ -575,7 +579,11 @@ pub(crate) mod tests {
 
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
-                    test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                    WasmComponent::new(
+                        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                        &engine,
+                    )
+                    .unwrap(),
                     activity_config(ConfigId::dummy_activity()),
                     engine,
                     Now,
@@ -624,7 +632,11 @@ pub(crate) mod tests {
                 Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
-                    test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                    WasmComponent::new(
+                        test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                        &engine,
+                    )
+                    .unwrap(),
                     activity_config(ConfigId::dummy_activity()),
                     engine,
                     sim_clock.clone(),
@@ -734,7 +746,11 @@ pub(crate) mod tests {
                 Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
-                    test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                    WasmComponent::new(
+                        test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                        &engine,
+                    )
+                    .unwrap(),
                     activity_config(ConfigId::dummy_activity()),
                     engine,
                     sim_clock.clone(),

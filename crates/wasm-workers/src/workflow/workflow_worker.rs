@@ -16,7 +16,6 @@ use executor::worker::{Worker, WorkerError};
 use std::error::Error;
 use std::future;
 use std::ops::Deref;
-use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{error, info, instrument, trace, warn, Span};
@@ -76,22 +75,19 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 }
 
 impl<C: ClockFn> WorkflowWorkerCompiled<C> {
-    #[tracing::instrument(skip_all, fields(%config.config_id), err)]
+    #[tracing::instrument(skip_all, fields(%config.config_id))]
     pub fn new_with_config(
-        wasm_path: impl AsRef<Path>,
+        wasm_component: WasmComponent,
         config: WorkflowConfig,
         engine: Arc<Engine>,
         clock_fn: C,
-    ) -> Result<Self, WasmFileError> {
-        let wasm_path = wasm_path.as_ref();
-        let wasm_component =
-            WasmComponent::new(wasm_path, &engine).map_err(WasmFileError::DecodeError)?;
-        Ok(Self {
+    ) -> Self {
+        Self {
             config,
             engine,
             clock_fn,
             wasm_component,
-        })
+        }
     }
 
     #[instrument(skip_all, fields(config_id = %self.config.config_id))]
@@ -659,7 +655,7 @@ pub(crate) mod tests {
         .unwrap();
         let worker = Arc::new(
             WorkflowWorkerCompiled::new_with_config(
-                wasm_path,
+                WasmComponent::new(wasm_path, &workflow_engine).unwrap(),
                 WorkflowConfig {
                     config_id: config_id.clone(),
                     join_next_blocking_strategy,
@@ -669,7 +665,6 @@ pub(crate) mod tests {
                 workflow_engine,
                 clock_fn.clone(),
             )
-            .unwrap()
             .link(fn_registry)
             .unwrap()
             .into_worker(db_pool.clone()),
@@ -850,26 +845,27 @@ pub(crate) mod tests {
         DB: DbConnection + 'static,
         P: DbPool<DB> + 'static,
     >(
-        path: &str,
+        wasm_path: &str,
         db_pool: P,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: u32,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Arc<WorkflowWorker<C, DB, P>> {
+        let workflow_engine =
+            Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
         Arc::new(
             WorkflowWorkerCompiled::new_with_config(
-                path,
+                WasmComponent::new(wasm_path, &workflow_engine).unwrap(),
                 WorkflowConfig {
                     config_id: ConfigId::dummy_activity(),
                     join_next_blocking_strategy,
                     non_blocking_event_batching,
                     retry_on_trap: false,
                 },
-                Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap(),
+                workflow_engine,
                 clock_fn,
             )
-            .unwrap()
             .link(fn_registry)
             .unwrap()
             .into_worker(db_pool),

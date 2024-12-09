@@ -62,7 +62,7 @@ pub struct WebhookCompiled {
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
 
-    wasm_component: WasmComponent,
+    pub wasm_component: WasmComponent,
 }
 
 impl WebhookCompiled {

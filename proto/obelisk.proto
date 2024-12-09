@@ -16,6 +16,7 @@ service ExecutionRepository {
 
 service FunctionRepository {
     rpc ListComponents(ListComponentsRequest) returns (ListComponentsResponse);
+    rpc GetWit(GetWitRequest) returns (GetWitResponse);
 }
 
 message ListExecutionsRequest {
@@ -379,4 +380,12 @@ message ListResponsesRequest {
 
 message ListResponsesResponse {
     repeated ResponseWithCursor responses = 1;
+}
+
+message GetWitRequest {
+    ComponentId component_id = 1;
+}
+
+message GetWitResponse {
+    string content = 1;
 }
