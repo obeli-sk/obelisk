@@ -169,7 +169,7 @@ pub fn execution_status(
                 .expect("must be non-negative");
             html! {<>
                 <p>{result}</p>
-                <p>{format!("Execution finished after {since_scheduled:?} after it was scheduled")}</p>
+                <p>{format!("Execution finished in {since_scheduled:?} after it was scheduled")}</p>
             </>}
         }
         Some(unknown) => unreachable!("unexpected {unknown:?}"),

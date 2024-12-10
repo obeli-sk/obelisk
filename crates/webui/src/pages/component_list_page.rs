@@ -80,7 +80,7 @@ pub fn component_list_page() -> Html {
                 }
             };
 
-            let render_ifc_with_fns = |ifc_fqn: &IfcFqn, fn_details: &[FunctionDetail], is_import: bool | {
+            let render_ifc_with_fns = |ifc_fqn: &IfcFqn, fn_details: &[FunctionDetail] | {
                 let render_fn_detail = |fn_detail: &FunctionDetail| {
                     html! {
                         <li>
@@ -109,10 +109,6 @@ pub fn component_list_page() -> Html {
                             if let Some(version) = &ifc_fqn.version {
                                 {format!("@{version}")}
                             }
-                            <span class="label">{"Export"}</span>
-                            if is_import {
-                                <span class="label">{"Import"}</span>
-                            }
                         </h3>
                         <ul>
                             {fn_details}
@@ -124,7 +120,7 @@ pub fn component_list_page() -> Html {
             let submittable_ifcs_fns = exports.iter()
                 .filter(|(_, fn_details)| fn_details.iter().any(|f_d| f_d.submittable))
                 .map(|(ifc_fqn, fn_details)| {
-                render_ifc_with_fns(ifc_fqn, fn_details, imports.contains_key(ifc_fqn))
+                render_ifc_with_fns(ifc_fqn, fn_details)
             }).collect::<Vec<_>>();
 
 
