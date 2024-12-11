@@ -68,6 +68,24 @@ h3 .highlight {
     font-weight: bold;
 }
 
+.code-block pre {
+    white-space: pre-wrap;
+    /* Preserve whitespace and enable wrapping */
+    word-wrap: break-word;
+    /* Break long words if needed */
+    word-break: break-word;
+    /* Fallback for some browsers */
+}
+
+.code-block pre .keyword {
+    color: blue;
+    font-weight: bold;
+}
+
+.code-block pre .string {
+    color: green;
+}
+
 ul {
     list-style-type: none;
     padding-left: 20px;

@@ -1,3 +1,4 @@
+use crate::pages::wit_printer::WitPrinter;
 use crate::{
     app::AppState,
     components::{
@@ -13,7 +14,8 @@ use crate::{
     },
 };
 use indexmap::IndexMap;
-use std::ops::Deref;
+use std::{ops::Deref, path::PathBuf};
+use wit_parser::{Resolve, UnresolvedPackageGroup};
 use yew::prelude::*;
 
 #[function_component(ComponentListPage)]
@@ -129,11 +131,11 @@ pub fn component_list_page() -> Html {
                 <section class="world-definition">
                     <h2>{&component.name}<span class="label">{component_type}</span></h2>
                     <div class="code-block">
-                        <p><strong>{"Exports"}</strong></p>
+                        <p>{"Exports"}</p>
                         <ul>
                             {exports.keys().map(render_ifc_li).collect::<Vec<_>>()}
                         </ul>
-                        <p><strong>{"Imports"}</strong></p>
+                        <p>{"Imports"}</p>
                         <ul>
                             {imports.keys().map(render_ifc_li).collect::<Vec<_>>()}
                         </ul>
@@ -144,6 +146,24 @@ pub fn component_list_page() -> Html {
                 {submittable_ifcs_fns}
             </>}
         });
+
+    let wit = wit_state.deref().as_ref().map(|wit| {
+        let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit).expect("FIXME");
+        let mut resolve = Resolve::new();
+        let main_id = resolve.push_group(group).expect("FIXME");
+        let ids = resolve
+            .packages
+            .iter()
+            .map(|(id, _)| id)
+            .filter(|id| *id != main_id) // TODO Remove the first package ..; world {} instead.
+            .collect::<Vec<_>>();
+        let wit = WitPrinter::default()
+            .print(&resolve, main_id, &ids)
+            .expect("FIXME")
+            .to_string();
+
+        Html::from_html_unchecked(wit.into())
+    });
 
     html! {<>
         <div class="container">
@@ -160,10 +180,12 @@ pub fn component_list_page() -> Html {
 
             { component_detail }
 
-            if let Some(wit) = wit_state.deref() {
+            if let Some(wit) = wit {
                 <h3>{"WIT"}</h3>
                 <div class="code-block">
+                    <pre>
                     { wit }
+                    </pre>
                 </div>
             }
         </div>
