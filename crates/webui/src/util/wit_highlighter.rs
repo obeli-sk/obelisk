@@ -57,7 +57,7 @@ fn print_interface_with_imported_types(
         }
 
         printer
-            .print_package_line(package)
+            .print_package_outer(package)
             .with_context(|| format!("error in `print_package_line` when printing {ifc_fqn}"))?;
         if is_root_package {
             printer.output.semicolon();
@@ -75,14 +75,30 @@ fn print_interface_with_imported_types(
         printer
             .print_interface_outer(resolve, ifc_id, ifc_name)
             .with_context(|| format!("cannot print {ifc_name}"))?;
+        printer.output.indent_start();
+        let interface = &resolve.interfaces[ifc_id];
+        if is_root_package {
+            printer.print_interface(resolve, ifc_id)?;
+        } else {
+            // just print the types
+            printer.print_types(
+                resolve,
+                TypeOwner::Interface(ifc_id),
+                interface
+                    .types
+                    .iter()
+                    .map(|(name, id)| (name.as_str(), *id)),
+                &Default::default(), // ignore resource funcs
+            )?;
+        }
+
+        printer.output.indent_end();
 
         if !is_root_package {
             printer.output.indent_end();
         }
 
         // Look up imported types and print their intefaces recursively,
-
-        let interface = &resolve.interfaces[ifc_id];
 
         let requested_pkg_owner = TypeOwner::Interface(ifc_id);
         for (_name, ty_id) in interface.types.iter() {
