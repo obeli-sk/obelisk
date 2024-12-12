@@ -68,7 +68,7 @@ pub fn component_list_page(
             let exports =
                 map_interfaces_to_fn_details(&component.exports, InterfaceFilter::WithExtensions);
 
-             let render_ifc_with_fns = |ifc_fqn: &IfcFqn, fn_details: &[FunctionDetail] | {
+            let render_exported_ifc_with_fns = |ifc_fqn: &IfcFqn, fn_details: &[FunctionDetail] | {
                 let submittable_fn_details = fn_details
                     .iter()
                     .filter(|fn_detail| fn_detail.submittable)
@@ -88,7 +88,7 @@ pub fn component_list_page(
 
                 html! {
                     <section class="types-interface">
-                        <h3>
+                        <h4>
                             {format!("{}:{}/", ifc_fqn.pkg_fqn.namespace, ifc_fqn.pkg_fqn.package_name)}
                             <span class="highlight">
                                 {&ifc_fqn.ifc_name}
@@ -96,23 +96,33 @@ pub fn component_list_page(
                             if let Some(version) = &ifc_fqn.pkg_fqn.version {
                                 {format!("@{version}")}
                             }
-                        </h3>
+                        </h4>
                         <ul>
                             {submittable_fn_details}
                         </ul>
                     </section>
                 }
-             };
+            };
 
             let submittable_ifcs_fns = exports
                 .iter()
                 .filter(|(_, fn_details)| fn_details.iter().any(|f_d| f_d.submittable))
-                .map(|(ifc_fqn, fn_details)| render_ifc_with_fns(ifc_fqn, fn_details))
+                .map(|(ifc_fqn, fn_details)| render_exported_ifc_with_fns(ifc_fqn, fn_details))
                 .collect::<Vec<_>>();
+
+            // imports:
+            let imports =
+                map_interfaces_to_fn_details(&component.imports, InterfaceFilter::WithExtensions);
+            let imports: Vec<_> = imports.keys().map(|ifc| html!{ <>
+                <h4>{ifc.to_string()}</h4>
+            </>}).collect();
 
             html! { <>
                 <h2>{&component.name}<span class="label">{component_type}</span></h2>
+                <h3>{"Exported interfaces"}</h3>
                 {submittable_ifcs_fns}
+                <h3>{"Imported interfaces"}</h3>
+                {imports}
             </>}
         });
 
