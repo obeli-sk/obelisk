@@ -6,6 +6,7 @@ pub mod function_detail;
 pub mod grpc_client;
 pub mod ifc_fqn;
 pub mod join_set_id;
+pub mod pkg_fqn;
 
 pub const NAMESPACE_OBELISK: &str = "obelisk"; // TODO: unify with concepts
 pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext"; // TODO: unify with concepts

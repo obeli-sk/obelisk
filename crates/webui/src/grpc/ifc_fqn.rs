@@ -1,46 +1,29 @@
-use super::{NAMESPACE_OBELISK, SUFFIX_PKG_EXT};
+use super::pkg_fqn::PkgFqn;
 use anyhow::bail;
 use std::{fmt::Display, str::FromStr};
 
-#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-// TODO: Unify with IfcFqnName
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct IfcFqn {
-    pub namespace: String,
-    pub package_name: String,
+    pub pkg_fqn: PkgFqn,
     pub ifc_name: String,
-    pub version: Option<String>,
 }
 
 impl Display for IfcFqn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let IfcFqn {
-            namespace,
-            package_name,
+            pkg_fqn:
+                PkgFqn {
+                    namespace,
+                    package_name,
+                    version,
+                },
             ifc_name,
-            version,
         } = self;
         if let Some(version) = version {
             write!(f, "{namespace}:{package_name}/{ifc_name}@{version}")
         } else {
             write!(f, "{namespace}:{package_name}/{ifc_name}")
         }
-    }
-}
-
-impl IfcFqn {
-    #[must_use]
-    pub fn is_extension(&self) -> bool {
-        self.package_name.ends_with(SUFFIX_PKG_EXT)
-    }
-
-    #[must_use]
-    pub fn package_strip_extension_suffix(&self) -> Option<&str> {
-        self.package_name.as_str().strip_suffix(SUFFIX_PKG_EXT)
-    }
-
-    #[must_use]
-    pub fn is_namespace_obelisk(&self) -> bool {
-        self.namespace == NAMESPACE_OBELISK
     }
 }
 
@@ -61,10 +44,12 @@ impl FromStr for IfcFqn {
         };
 
         Ok(Self {
-            namespace: namespace.to_string(),
-            package_name: package_name.to_string(),
+            pkg_fqn: PkgFqn {
+                namespace: namespace.to_string(),
+                package_name: package_name.to_string(),
+                version,
+            },
             ifc_name: ifc_name.to_string(),
-            version,
         })
     }
 }

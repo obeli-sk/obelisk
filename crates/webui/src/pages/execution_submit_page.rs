@@ -55,18 +55,18 @@ pub fn execution_submit_page(ExecutionSubmitPageProps { ffqn }: &ExecutionSubmit
         let wit = wit_state
             .deref()
             .as_ref()
-            .map(|wit| wit_highlighter::to_html(wit));
+            .map(|wit| wit_highlighter::print_interface(wit, &ffqn.ifc_fqn));
 
         html! {<>
             <header>
                 <h1>{"Execution submit"}</h1>
-                <h2><FfqnWithLinks ffqn={ffqn.clone()} hide_submit={true}  />
+                <h2><FfqnWithLinks ffqn={ffqn.clone()} fully_qualified={true} hide_submit={true}  />
                 </h2>
             </header>
 
             <h4><FunctionSignature params = {function_detail.params.clone()} return_type = {function_detail.return_type.clone()} /></h4>
             <ExecutionSubmitForm {function_detail} />
-            if let Some(wit) = wit {
+            if let Some(Ok(wit)) = wit {
                 <h3>{"WIT"}</h3>
                 <CodeBlock source={wit.clone()} />
             }

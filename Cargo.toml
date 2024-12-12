@@ -278,10 +278,10 @@ wasmtime-wasi-http = "27.0"
 # wit-parser.path = "../wasm-tools/crates/wit-parser"
 # wasmparser.path = "../wasm-tools/crates/wasmparser"
 # wit-component.path = "../wasm-tools/crates/wit-component"
-wast = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "ce06f4d67c9e5aed84f4746c272c46f15bc75a4a" }
-wit-parser = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "ce06f4d67c9e5aed84f4746c272c46f15bc75a4a" }
-wasmparser = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "ce06f4d67c9e5aed84f4746c272c46f15bc75a4a" }
-wit-component = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "ce06f4d67c9e5aed84f4746c272c46f15bc75a4a" }
+wast = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "5d7059a14c3a66d084148397400f57938b3e8b83" }
+wit-parser = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "5d7059a14c3a66d084148397400f57938b3e8b83" }
+wasmparser = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "5d7059a14c3a66d084148397400f57938b3e8b83" }
+wit-component = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "5d7059a14c3a66d084148397400f57938b3e8b83" }
 
 # testing components
 wit-bindgen = "0.36.0"

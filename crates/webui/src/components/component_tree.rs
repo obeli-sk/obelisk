@@ -77,8 +77,9 @@ impl ComponentTree {
                     InsertBehavior::UnderNode(parent_node_id),
                 )
                 .unwrap();
-            for function_detail in function_detail_vec {
-                let ffqn = FunctionFqn::from_fn_detail(&function_detail);
+            for fn_detail in function_detail_vec {
+                let ffqn =
+                    FunctionFqn::from_fn_detail(&fn_detail).expect("ffqn should be parseable");
                 let fn_node_id = tree
                     .insert(
                         Node::new(NodeData {
@@ -95,7 +96,7 @@ impl ComponentTree {
                 Node::new(NodeData {
                     icon: Icon::Blank,
                     label: html! {
-                        <FunctionSignature params = {function_detail.params} return_type = {function_detail.return_type} />
+                        <FunctionSignature params = {fn_detail.params} return_type = {fn_detail.return_type} />
                     },
                     disabled: true,
                     ..Default::default()

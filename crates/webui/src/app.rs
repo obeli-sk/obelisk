@@ -130,7 +130,8 @@ pub fn app(AppProps { components }: &AppProps) -> Html {
             .iter()
             .filter(|fn_detail| fn_detail.submittable)
         {
-            let ffqn = FunctionFqn::from_fn_detail(exported_fn_detail);
+            let ffqn =
+                FunctionFqn::from_fn_detail(exported_fn_detail).expect("ffqn should be parseable");
             submittable_ffqns_to_details
                 .insert(ffqn, (exported_fn_detail.clone(), component_id.clone()));
         }

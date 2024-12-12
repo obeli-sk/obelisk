@@ -1,10 +1,10 @@
 use std::str::FromStr;
 
-use super::{grpc_client::FunctionDetail, ifc_fqn::IfcFqn, SUFFIX_PKG_EXT};
+use super::{grpc_client::FunctionDetail, ifc_fqn::IfcFqn};
 use indexmap::IndexMap;
 
 pub fn is_extension_interface(ifc: &IfcFqn) -> bool {
-    ifc.namespace.ends_with(SUFFIX_PKG_EXT)
+    ifc.pkg_fqn.is_extension()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,7 @@ pub fn map_interfaces_to_fn_details(
             .expect("function and its name is sent by the server");
         let ifc_fqn = IfcFqn::from_str(&function_name.interface_name)
             .expect("received interface must be well-formed");
-        if filter == InterfaceFilter::WithExtensions || !ifc_fqn.is_extension() {
+        if filter == InterfaceFilter::WithExtensions || !ifc_fqn.pkg_fqn.is_extension() {
             interfaces_to_fn_details
                 .entry(ifc_fqn)
                 .or_default()

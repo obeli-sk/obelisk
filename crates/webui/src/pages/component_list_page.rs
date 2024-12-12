@@ -77,9 +77,10 @@ pub fn component_list_page() -> Html {
                     .iter()
                     .filter(|fn_detail| fn_detail.submittable)
                     .map(|fn_detail| {
+                        let ffqn = FunctionFqn::from_fn_detail(fn_detail).expect("ffqn should be parseable");
                         html! {
                             <li>
-                                <FfqnWithLinks ffqn = {FunctionFqn::from_fn_detail(fn_detail)} />
+                                <FfqnWithLinks {ffqn} />
                                 {": "}
                                 <span>
                                     <FunctionSignature params = {fn_detail.params.clone()} return_type={fn_detail.return_type.clone()} />
@@ -92,11 +93,11 @@ pub fn component_list_page() -> Html {
                 html! {
                     <section class="types-interface">
                         <h3>
-                            {format!("{}:{}/", ifc_fqn.namespace, ifc_fqn.package_name)}
+                            {format!("{}:{}/", ifc_fqn.pkg_fqn.namespace, ifc_fqn.pkg_fqn.package_name)}
                             <span class="highlight">
                                 {&ifc_fqn.ifc_name}
                             </span>
-                            if let Some(version) = &ifc_fqn.version {
+                            if let Some(version) = &ifc_fqn.pkg_fqn.version {
                                 {format!("@{version}")}
                             }
                         </h3>
@@ -122,7 +123,7 @@ pub fn component_list_page() -> Html {
     let wit = wit_state
         .deref()
         .as_ref()
-        .map(|wit| wit_highlighter::to_html(wit));
+        .map(|wit| wit_highlighter::print_all(wit));
 
     html! {<>
         <header>

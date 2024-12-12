@@ -1,40 +1,45 @@
+use anyhow::bail;
 use yew::ToHtml;
 
 use crate::grpc::grpc_client;
 use std::{fmt::Display, str::FromStr};
 
+use super::ifc_fqn::IfcFqn;
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct FunctionFqn {
-    pub ifc_fqn: String,
+    pub ifc_fqn: IfcFqn,
     pub function_name: String,
 }
 impl FunctionFqn {
-    pub fn from_fn_detail(fn_detail: &grpc_client::FunctionDetail) -> FunctionFqn {
+    pub fn from_fn_detail(
+        fn_detail: &grpc_client::FunctionDetail,
+    ) -> Result<FunctionFqn, anyhow::Error> {
         let Some(function) = &fn_detail.function_name else {
             unreachable!("FunctionDetails.function is sent by the server");
         };
-        FunctionFqn {
-            ifc_fqn: function.interface_name.clone(),
+        Ok(FunctionFqn {
+            ifc_fqn: IfcFqn::from_str(&function.interface_name)?,
             function_name: function.function_name.clone(),
-        }
+        })
     }
 }
 
 impl FromStr for FunctionFqn {
-    type Err = &'static str;
+    type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((ifc_fqn, function_name)) = s.split_once('.') {
             if function_name.contains(".") {
-                Err("delimiter `.` found more than once")
+                bail!("delimiter `.` found more than once")
             } else {
                 Ok(FunctionFqn {
-                    ifc_fqn: ifc_fqn.to_string(),
+                    ifc_fqn: IfcFqn::from_str(ifc_fqn)?,
                     function_name: function_name.to_string(),
                 })
             }
         } else {
-            Err("delimiter `.` not found")
+            bail!("delimiter `.` not found")
         }
     }
 }
@@ -48,7 +53,7 @@ impl Display for FunctionFqn {
 impl From<FunctionFqn> for grpc_client::FunctionName {
     fn from(value: FunctionFqn) -> Self {
         Self {
-            interface_name: value.ifc_fqn,
+            interface_name: value.ifc_fqn.to_string(),
             function_name: value.function_name,
         }
     }
@@ -57,7 +62,7 @@ impl From<FunctionFqn> for grpc_client::FunctionName {
 impl From<grpc_client::FunctionName> for FunctionFqn {
     fn from(value: grpc_client::FunctionName) -> Self {
         Self {
-            ifc_fqn: value.interface_name,
+            ifc_fqn: IfcFqn::from_str(&value.interface_name).expect("TODO"),
             function_name: value.function_name,
         }
     }

@@ -1,9 +1,13 @@
 use std::path::PathBuf;
 
+use anyhow::Context;
+use hashbrown::HashSet;
 use wit_component::{Output, WitPrinter};
-use wit_parser::{Resolve, UnresolvedPackageGroup};
+use wit_parser::{Resolve, Type, TypeDefKind, TypeOwner, UnresolvedPackageGroup};
 
-pub fn to_html(wit: &str) -> String {
+use crate::grpc::{ifc_fqn::IfcFqn, pkg_fqn::PkgFqn};
+
+pub fn print_all(wit: &str) -> String {
     let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit).expect("FIXME");
     let mut resolve = Resolve::new();
     let main_id = resolve.push_group(group).expect("FIXME");
@@ -14,11 +18,105 @@ pub fn to_html(wit: &str) -> String {
         // The main package would show as a nested package as well
         .filter(|id| *id != main_id)
         .collect::<Vec<_>>();
-    let output = WitPrinter::<OutputToHtml>::new()
+    let output_to_html = WitPrinter::<OutputToHtml>::new()
         .print_all(&resolve, main_id, &ids)
         .expect("FIXME");
+    output_to_html.into()
+}
 
-    output.output.to_string()
+pub fn print_interface(wit: &str, ifc_fqn: &IfcFqn) -> Result<String, anyhow::Error> {
+    let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit).expect("FIXME");
+    let mut resolve = Resolve::new();
+    let _main_id = resolve.push_group(group).expect("FIXME");
+    let mut printer = WitPrinter::<OutputToHtml>::new();
+
+    print_interface_with_imported_types(
+        &mut printer,
+        &resolve,
+        ifc_fqn,
+        &mut HashSet::new(),
+        true,
+    )?;
+    Ok(printer.output.into())
+}
+
+fn print_interface_with_imported_types(
+    printer: &mut WitPrinter<OutputToHtml>,
+    resolve: &Resolve,
+    ifc_fqn: &IfcFqn,
+    additional_ifc_fqn: &mut HashSet<IfcFqn>,
+    is_root_package: bool,
+) -> Result<(), anyhow::Error> {
+    if let Some((_pkg_id, package)) = &resolve
+        .packages
+        .iter()
+        .find(|(_, package)| PkgFqn::from(&package.name) == ifc_fqn.pkg_fqn)
+    {
+        if !is_root_package {
+            printer.output.newline();
+        }
+
+        printer
+            .print_package_line(package)
+            .with_context(|| format!("error in `print_package_line` when printing {ifc_fqn}"))?;
+        if is_root_package {
+            printer.output.semicolon();
+            printer.output.newline();
+        } else {
+            printer.output.indent_start();
+        }
+        let (ifc_name, ifc_id) = package
+            .interfaces
+            .iter()
+            .find(|(name, _id)| ifc_fqn.ifc_name == **name)
+            .with_context(|| format!("interface not found - {ifc_fqn}"))?;
+
+        let ifc_id = *ifc_id;
+        printer
+            .print_interface_outer(resolve, ifc_id, ifc_name)
+            .with_context(|| format!("cannot print {ifc_name}"))?;
+
+        if !is_root_package {
+            printer.output.indent_end();
+        }
+
+        // Look up imported types and print their intefaces recursively,
+
+        let interface = &resolve.interfaces[ifc_id];
+
+        let requested_pkg_owner = TypeOwner::Interface(ifc_id);
+        for (_name, ty_id) in interface.types.iter() {
+            let ty = &resolve.types[*ty_id];
+            if let TypeDefKind::Type(Type::Id(other)) = ty.kind {
+                let other = &resolve.types[other];
+
+                if requested_pkg_owner != other.owner {
+                    let ifc_id = match other.owner {
+                        TypeOwner::Interface(id) => id,
+                        // it's only possible to import types from interfaces at
+                        // this time.
+                        _ => unreachable!(),
+                    };
+                    let iface = &resolve.interfaces[ifc_id];
+                    if let Some(imported_pkg_id) = iface.package {
+                        let imported_pkg = &resolve.packages[imported_pkg_id];
+                        if let Ok(ifc_fqn) = PkgFqn::from(&imported_pkg.name).ifc_fqn(iface) {
+                            if additional_ifc_fqn.insert(ifc_fqn.clone()) {
+                                print_interface_with_imported_types(
+                                    printer,
+                                    resolve,
+                                    &ifc_fqn,
+                                    additional_ifc_fqn,
+                                    false,
+                                )?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -135,5 +233,11 @@ impl Output for OutputToHtml {
 
     fn str(&mut self, src: &str) {
         self.indent_and_print_escaped(src);
+    }
+}
+
+impl From<OutputToHtml> for String {
+    fn from(value: OutputToHtml) -> Self {
+        value.output
     }
 }

@@ -11,9 +11,11 @@ pub struct ExecutionSubmitFormProps {
 }
 #[function_component(ExecutionSubmitForm)]
 pub fn execution_submit_form(
-    ExecutionSubmitFormProps { function_detail }: &ExecutionSubmitFormProps,
+    ExecutionSubmitFormProps {
+        function_detail: fn_detail,
+    }: &ExecutionSubmitFormProps,
 ) -> Html {
-    let ffqn = FunctionFqn::from_fn_detail(function_detail);
+    let ffqn = FunctionFqn::from_fn_detail(fn_detail).expect("ffqn should be parseable");
 
     #[derive(Debug, Clone, PartialEq)]
     struct FormData {
@@ -24,7 +26,7 @@ pub fn execution_submit_form(
     // Initialize form state with default values
     let form_data_handle = use_state(|| FormData {
         param_refs: std::iter::repeat_with(NodeRef::default)
-            .take(function_detail.params.len())
+            .take(fn_detail.params.len())
             .collect(),
         request_processing: false,
     });
@@ -102,7 +104,7 @@ pub fn execution_submit_form(
         })
     };
 
-    let params_html: Vec<_> = function_detail
+    let params_html: Vec<_> = fn_detail
         .params
         .iter()
         .enumerate()

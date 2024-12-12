@@ -5608,7 +5608,7 @@ dependencies = [
 [[package]]
 name = "wasm-encoder"
 version = "0.221.2"
-source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=ce06f4d67c9e5aed84f4746c272c46f15bc75a4a#ce06f4d67c9e5aed84f4746c272c46f15bc75a4a"
+source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=5d7059a14c3a66d084148397400f57938b3e8b83#5d7059a14c3a66d084148397400f57938b3e8b83"
 dependencies = [
  "leb128",
  "wasmparser 0.221.2",
@@ -5660,7 +5660,7 @@ dependencies = [
 [[package]]
 name = "wasm-metadata"
 version = "0.221.2"
-source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=ce06f4d67c9e5aed84f4746c272c46f15bc75a4a#ce06f4d67c9e5aed84f4746c272c46f15bc75a4a"
+source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=5d7059a14c3a66d084148397400f57938b3e8b83#5d7059a14c3a66d084148397400f57938b3e8b83"
 dependencies = [
  "anyhow",
  "indexmap 2.6.0",
@@ -5716,7 +5716,7 @@ dependencies = [
 [[package]]
 name = "wasmparser"
 version = "0.221.2"
-source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=ce06f4d67c9e5aed84f4746c272c46f15bc75a4a#ce06f4d67c9e5aed84f4746c272c46f15bc75a4a"
+source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=5d7059a14c3a66d084148397400f57938b3e8b83#5d7059a14c3a66d084148397400f57938b3e8b83"
 dependencies = [
  "bitflags 2.6.0",
  "hashbrown 0.15.1",
@@ -6057,7 +6057,7 @@ dependencies = [
 [[package]]
 name = "wast"
 version = "221.0.2"
-source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=ce06f4d67c9e5aed84f4746c272c46f15bc75a4a#ce06f4d67c9e5aed84f4746c272c46f15bc75a4a"
+source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=5d7059a14c3a66d084148397400f57938b3e8b83#5d7059a14c3a66d084148397400f57938b3e8b83"
 dependencies = [
  "bumpalo",
  "leb128",
@@ -6645,7 +6645,7 @@ dependencies = [
 [[package]]
 name = "wit-component"
 version = "0.221.2"
-source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=ce06f4d67c9e5aed84f4746c272c46f15bc75a4a#ce06f4d67c9e5aed84f4746c272c46f15bc75a4a"
+source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=5d7059a14c3a66d084148397400f57938b3e8b83#5d7059a14c3a66d084148397400f57938b3e8b83"
 dependencies = [
  "anyhow",
  "bitflags 2.6.0",
@@ -6699,7 +6699,7 @@ dependencies = [
 [[package]]
 name = "wit-parser"
 version = "0.221.2"
-source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=ce06f4d67c9e5aed84f4746c272c46f15bc75a4a#ce06f4d67c9e5aed84f4746c272c46f15bc75a4a"
+source = "git+https://github.com/obeli-sk/wasm-tools.git?rev=5d7059a14c3a66d084148397400f57938b3e8b83#5d7059a14c3a66d084148397400f57938b3e8b83"
 dependencies = [
  "anyhow",
  "id-arena",
