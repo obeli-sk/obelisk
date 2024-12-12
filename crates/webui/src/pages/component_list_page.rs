@@ -9,12 +9,11 @@ use crate::{
     grpc::{
         ffqn::FunctionFqn,
         function_detail::{map_interfaces_to_fn_details, InterfaceFilter},
-        grpc_client::{self, ComponentType, FunctionDetail},
+        grpc_client::{self, ComponentId, ComponentType, FunctionDetail},
         ifc_fqn::IfcFqn,
     },
     util::wit_highlighter,
 };
-use indexmap::IndexMap;
 use std::ops::Deref;
 use yew::prelude::*;
 
@@ -22,22 +21,18 @@ use yew::prelude::*;
 pub fn component_list_page() -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
-    let components: Vec<_> = app_state.components;
-    let components_with_idx = components
-        .clone()
-        .into_iter()
-        .enumerate()
-        .collect::<IndexMap<_, _>>();
-    let selected_component_idx_state: UseStateHandle<Option<usize>> = use_state(|| None);
+    let components = app_state.components;
+
+    let selected_component_id_state: UseStateHandle<Option<ComponentId>> = use_state(|| None);
     let wit_state = use_state(|| None);
     // Fetch GetWit
-    use_effect_with(*selected_component_idx_state.deref(), {
-        let components_with_idx = components_with_idx.clone();
+    use_effect_with(selected_component_id_state.deref().clone(), {
+        let id_to_component_map = components.clone();
         let wit_state = wit_state.clone();
-        move |selected_component_idx| {
-            if let Some(selected_component_idx) = selected_component_idx {
-                let component_id = components_with_idx
-                    .get(selected_component_idx)
+        move |selected_component_id| {
+            if let Some(selected_component_id) = selected_component_id {
+                let component_id = id_to_component_map
+                    .get(selected_component_id)
                     .expect("`selected_component_idx` must be valid")
                     .component_id
                     .clone()
@@ -64,9 +59,10 @@ pub fn component_list_page() -> Html {
         }
     });
 
-    let component_detail = selected_component_idx_state
+    let component_detail = selected_component_id_state
         .deref()
-        .and_then(|idx| components.get(idx))
+        .as_ref()
+        .and_then(|id| components.get(id))
         .map(|component| {
             let component_type = ComponentType::try_from(component.r#type).unwrap();
             let exports =
@@ -131,8 +127,8 @@ pub fn component_list_page() -> Html {
         </header>
 
         <section class="component-selection">
-            <ComponentTree components={components_with_idx} config={ComponentTreeConfig::ComponentsOnly {
-                selected_component_idx_state: selected_component_idx_state.clone()
+            <ComponentTree config={ComponentTreeConfig::ComponentsOnly {
+                selected_component_id_state: selected_component_id_state.clone()
             }
             } />
         </section>

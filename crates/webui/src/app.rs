@@ -1,7 +1,7 @@
 use crate::{
     grpc::{
         ffqn::FunctionFqn,
-        grpc_client::{self, ExecutionId},
+        grpc_client::{self, ComponentId, ExecutionId},
     },
     pages::{
         component_list_page::ComponentListPage,
@@ -12,13 +12,14 @@ use crate::{
     },
 };
 use chrono::{DateTime, Utc};
-use std::{ops::Deref, str::FromStr};
+use hashbrown::HashMap;
+use std::{ops::Deref, rc::Rc, str::FromStr};
 use yew::prelude::*;
 use yew_router::prelude::*;
 
 #[derive(Clone, PartialEq)]
 pub struct AppState {
-    pub components: Vec<grpc_client::Component>, // TODO: Rc<[Component]>
+    pub components: HashMap<ComponentId, Rc<grpc_client::Component>>,
     pub submittable_ffqns_to_details:
         hashbrown::HashMap<FunctionFqn, (grpc_client::FunctionDetail, grpc_client::ComponentId)>,
 }
@@ -49,16 +50,14 @@ impl FromStr for ExecutionsCursor {
 
 #[derive(Clone, Routable, PartialEq)]
 pub enum Route {
-    /// Dashboard showing stats like number of components, executions grouped by their pending state. Server stats like version, uptime, etc.
     #[at("/")]
     Home,
-    /// List all components (workflows, activities, webhooks), show their exports and possibly imports. Allow filtering by name. Show redirect to execution submission.
-    #[at("/component/list")]
+    #[at("/components")]
     ComponentList,
-    /// Show the parameters inputs with their WIT schemas. Allow submitting new execution.
+    #[at("/component/:id")]
+    Component { id: grpc_client::ComponentId },
     #[at("/execution/submit/:ffqn")]
     ExecutionSubmit { ffqn: FunctionFqn },
-    /// Show paginated table of executions, fiterable by component, interface, ffqn, pending state etc.
     #[at("/execution/list")]
     ExecutionList,
     #[at("/execution/list/older/:cursor")]
@@ -71,8 +70,6 @@ pub enum Route {
     ExecutionListNewerIncluding { cursor: ExecutionsCursor },
     #[at("/execution/list/ffqn/:ffqn")]
     ExecutionListByFfqn { ffqn: FunctionFqn },
-
-    /// Show details including pending state, event history
     #[at("/execution/:execution_id")]
     ExecutionDetail {
         execution_id: grpc_client::ExecutionId,
@@ -87,6 +84,7 @@ impl Route {
         match route {
             Route::Home | Route::ExecutionList => html! { <ExecutionListPage /> },
             Route::ComponentList => html! { <ComponentListPage /> },
+            Route::Component { id } => html! { <ComponentListPage /> },
             Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
             Route::ExecutionDetail { execution_id } => {
                 html! { <ExecutionDetailPage {execution_id} /> }
@@ -114,17 +112,13 @@ impl Route {
 
 #[derive(PartialEq, Properties)]
 pub struct AppProps {
-    pub components: Vec<grpc_client::Component>,
+    pub components: HashMap<ComponentId, Rc<grpc_client::Component>>,
 }
 
 #[function_component(App)]
 pub fn app(AppProps { components }: &AppProps) -> Html {
     let mut submittable_ffqns_to_details = hashbrown::HashMap::new();
-    for component in components {
-        let component_id = component
-            .component_id
-            .as_ref()
-            .expect("`component_id` is sent");
+    for (component_id, component) in components {
         for exported_fn_detail in component
             .exports
             .iter()

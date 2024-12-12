@@ -65,7 +65,7 @@ pub fn execution_submit_page(ExecutionSubmitPageProps { ffqn }: &ExecutionSubmit
             </header>
 
             <h4><FunctionSignature params = {function_detail.params.clone()} return_type = {function_detail.return_type.clone()} /></h4>
-            <ExecutionSubmitForm {function_detail} />
+            <ExecutionSubmitForm function_detail={function_detail.clone()} />
             if let Some(Ok(wit)) = wit {
                 <h3>{"WIT"}</h3>
                 <CodeBlock source={wit.clone()} />

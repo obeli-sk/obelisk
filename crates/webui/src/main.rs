@@ -1,4 +1,5 @@
 use log::debug;
+use std::rc::Rc;
 use webui::{
     app::{App, AppProps},
     grpc::grpc_client,
@@ -23,7 +24,19 @@ fn main() {
         debug!("Got gRPC ListComponentsResponse");
         response.components.sort_by(|a, b| a.name.cmp(&b.name));
         yew::Renderer::<App>::with_props(AppProps {
-            components: response.components,
+            components: response
+                .components
+                .into_iter()
+                .map(|component| {
+                    (
+                        component
+                            .component_id
+                            .clone()
+                            .expect("`component_id` is sent"),
+                        Rc::new(component),
+                    )
+                })
+                .collect(),
         })
         .render();
     });

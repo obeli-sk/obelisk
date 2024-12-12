@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, ExecutionsCursor, Route},
+    app::{ExecutionsCursor, Route},
     components::{
         component_tree::{ComponentTree, ComponentTreeConfig},
         execution_status::ExecutionStatus,
@@ -14,7 +14,6 @@ use crate::{
     },
 };
 use chrono::DateTime;
-use indexmap::IndexMap;
 use log::debug;
 use std::ops::Deref;
 use yew::prelude::*;
@@ -86,9 +85,6 @@ pub struct ExecutionListPageProps {
 }
 #[function_component(ExecutionListPage)]
 pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPageProps) -> Html {
-    let app_state =
-        use_context::<AppState>().expect("AppState context is set when starting the App");
-    let components: IndexMap<_, _> = app_state.components.into_iter().enumerate().collect();
     let response_state = use_state(|| None);
     {
         let page_size = 20;
@@ -203,7 +199,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                 <p><Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.clone() }}>{"Submit new execution"}</Link<Route>></p>
                 <p><Link<Route> to={Route::ExecutionList}>{"Remove filter"}</Link<Route>></p>
             }
-            <ComponentTree {components} config={ComponentTreeConfig::ComponentsWithSubmittableFns} />
+            <ComponentTree config={ComponentTreeConfig::ComponentsWithSubmittableFns} />
             <table>
                 <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
                 { rows }

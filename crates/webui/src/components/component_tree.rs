@@ -1,27 +1,27 @@
 use super::function_signature::FunctionSignature;
+use crate::app::AppState;
 use crate::components::ffqn_with_links::FfqnWithLinks;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::function_detail::{map_interfaces_to_fn_details, InterfaceFilter};
 use crate::grpc::grpc_client;
 use crate::grpc::ifc_fqn::IfcFqn;
+use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::fmt::Debug;
+use std::rc::Rc;
 use yew::prelude::*;
 use yewprint::id_tree::{InsertBehavior, Node, NodeId, TreeBuilder};
 use yewprint::{Icon, NodeData, TreeData};
 
-type ComponentIndex = usize;
-
 #[derive(Properties, PartialEq)]
 pub struct ComponentTreeProps {
-    pub components: IndexMap<ComponentIndex, grpc_client::Component>,
     pub config: ComponentTreeConfig,
 }
 
 #[derive(Clone)]
 pub enum ComponentTreeConfig {
     ComponentsOnly {
-        selected_component_idx_state: UseStateHandle<Option<ComponentIndex>>,
+        selected_component_id_state: UseStateHandle<Option<grpc_client::ComponentId>>,
     },
     ComponentsWithSubmittableFns, // No extensions, no imports
 }
@@ -33,10 +33,10 @@ impl PartialEq for ComponentTreeConfig {
             // Ignore the fact that `selected_component` is differrent
             (
                 Self::ComponentsOnly {
-                    selected_component_idx_state: _
+                    selected_component_id_state: _
                 },
                 Self::ComponentsOnly {
-                    selected_component_idx_state: _
+                    selected_component_id_state: _
                 }
             ) | (
                 Self::ComponentsWithSubmittableFns,
@@ -57,7 +57,7 @@ pub enum Msg {
     ExpandNode(NodeId),
 }
 
-type NodeDataType = Option<ComponentIndex>;
+type NodeDataType = Option<grpc_client::ComponentId>;
 
 impl ComponentTree {
     fn fill_interfaces_and_fns(
@@ -114,7 +114,7 @@ impl ComponentTree {
         config: &ComponentTreeConfig,
         label: Html,
         icon: Icon,
-        components: impl Iterator<Item = (ComponentIndex, &'a grpc_client::Component)>,
+        components: impl Iterator<Item = (&'a grpc_client::ComponentId, Rc<grpc_client::Component>)>,
     ) {
         let group_dir_node_id = tree
             .insert(
@@ -127,7 +127,7 @@ impl ComponentTree {
                 InsertBehavior::UnderNode(root_id),
             )
             .unwrap();
-        for (idx, component) in components {
+        for (id, component) in components {
             let with_submittable =
                 matches!(config, ComponentTreeConfig::ComponentsWithSubmittableFns);
             let component_node_id = tree
@@ -136,7 +136,7 @@ impl ComponentTree {
                         icon: icon.clone(),
                         label: component.name.clone().into(),
                         has_caret: with_submittable,
-                        data: Some(idx),
+                        data: Some(id.clone()),
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(&group_dir_node_id),
@@ -157,7 +157,7 @@ impl ComponentTree {
     }
 
     fn construct_tree(
-        components: &IndexMap<ComponentIndex, grpc_client::Component>,
+        components: &HashMap<grpc_client::ComponentId, Rc<grpc_client::Component>>,
         config: &ComponentTreeConfig,
     ) -> TreeData<NodeDataType> {
         let workflows =
@@ -215,8 +215,12 @@ impl Component for ComponentTree {
 
     fn create(ctx: &Context<Self>) -> Self {
         log::debug!("<ComponentTree /> create");
-        let ComponentTreeProps { components, config } = ctx.props();
-        let tree = Self::construct_tree(components, config);
+        let ComponentTreeProps { config } = ctx.props();
+        let (app_state, _) = ctx
+            .link()
+            .context::<AppState>(Callback::noop())
+            .expect("AppState context must be set");
+        let tree = Self::construct_tree(&app_state.components, config);
 
         Self {
             tree,
@@ -235,12 +239,12 @@ impl Component for ComponentTree {
                 data.is_expanded ^= true;
                 if let (
                     ComponentTreeConfig::ComponentsOnly {
-                        selected_component_idx_state,
+                        selected_component_id_state,
                     },
                     Some(data),
-                ) = (&self.config, data.data)
+                ) = (&self.config, &data.data)
                 {
-                    selected_component_idx_state.set(Some(data));
+                    selected_component_id_state.set(Some(data.clone()));
                 }
             }
         }
@@ -249,8 +253,13 @@ impl Component for ComponentTree {
 
     fn changed(&mut self, ctx: &Context<Self>, _old_props: &Self::Properties) -> bool {
         log::debug!("<ComponentTree /> changed");
-        let ComponentTreeProps { components, config } = ctx.props();
-        let tree = Self::construct_tree(components, config);
+        let ComponentTreeProps { config } = ctx.props();
+        let (app_state, _) = ctx
+            .link()
+            .context::<AppState>(Callback::noop())
+            .expect("AppState context must be set");
+
+        let tree = Self::construct_tree(&app_state.components, config);
         self.tree = tree;
         true
     }
@@ -269,11 +278,11 @@ impl Component for ComponentTree {
 }
 
 fn filter_component_list_by_type(
-    components: &IndexMap<ComponentIndex, grpc_client::Component>,
+    components: &HashMap<grpc_client::ComponentId, Rc<grpc_client::Component>>,
     r#type: grpc_client::ComponentType,
-) -> impl Iterator<Item = (ComponentIndex, &grpc_client::Component)> {
+) -> impl Iterator<Item = (&grpc_client::ComponentId, Rc<grpc_client::Component>)> {
     components
         .iter()
         .filter(move |(_idx, component)| component.r#type == r#type as i32)
-        .map(|(idx, component)| (*idx, component))
+        .map(|(id, component)| (id, component.clone()))
 }
