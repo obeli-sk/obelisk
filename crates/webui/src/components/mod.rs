@@ -5,3 +5,4 @@ pub mod execution_submit;
 pub mod ffqn_with_links;
 pub mod function_signature;
 pub mod json_tree;
+pub mod code_block;

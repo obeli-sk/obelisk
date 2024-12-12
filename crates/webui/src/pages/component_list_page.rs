@@ -1,6 +1,7 @@
 use crate::{
     app::AppState,
     components::{
+        code_block::CodeBlock,
         component_tree::{ComponentTree, ComponentTreeConfig},
         ffqn_with_links::FfqnWithLinks,
         function_signature::FunctionSignature,
@@ -134,7 +135,7 @@ pub fn component_list_page() -> Html {
             .print_all(&resolve, main_id, &ids)
             .expect("FIXME");
 
-        Html::from_html_unchecked(output.output.into())
+        output.output.to_string()
     });
 
     html! {<>
@@ -153,11 +154,7 @@ pub fn component_list_page() -> Html {
 
         if let Some(wit) = wit {
             <h3>{"WIT"}</h3>
-            <div class="code-block">
-                <pre>
-                { wit }
-                </pre>
-            </div>
+            <CodeBlock source={wit} />
         }
     </>}
 }
