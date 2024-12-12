@@ -138,30 +138,27 @@ pub fn component_list_page() -> Html {
     });
 
     html! {<>
-        <div class="container">
-            <header>
-                <h1>{"Components"}</h1>
-            </header>
+        <header>
+            <h1>{"Components"}</h1>
+        </header>
 
-            <section class="component-selection">
-                <ComponentTree components={components_with_idx} config={ComponentTreeConfig::ComponentsOnly {
-                    selected_component_idx_state: selected_component_idx_state.clone()
-                }
-                } />
-            </section>
-
-            { component_detail }
-
-            if let Some(wit) = wit {
-                <h3>{"WIT"}</h3>
-                <div class="code-block">
-                    <pre>
-                    { wit }
-                    </pre>
-                </div>
+        <section class="component-selection">
+            <ComponentTree components={components_with_idx} config={ComponentTreeConfig::ComponentsOnly {
+                selected_component_idx_state: selected_component_idx_state.clone()
             }
-        </div>
+            } />
+        </section>
 
+        { component_detail }
+
+        if let Some(wit) = wit {
+            <h3>{"WIT"}</h3>
+            <div class="code-block">
+                <pre>
+                { wit }
+                </pre>
+            </div>
+        }
     </>}
 }
 

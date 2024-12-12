@@ -135,18 +135,20 @@ pub fn app(AppProps { components }: &AppProps) -> Html {
     });
     html! {
         <ContextProvider<AppState> context={app_state.deref().clone()}>
-            <BrowserRouter>
-                <nav>
-                    <Link<Route> to={Route::ExecutionList }>
-                        {"Execution List"}
-                    </Link<Route>>
-                    <Link<Route> to={Route::ComponentList }>
-                        {"Component list"}
-                    </Link<Route>>
+            <div class="container">
+                <BrowserRouter>
+                    <nav>
+                        <Link<Route> to={Route::ExecutionList }>
+                            {"Execution List"}
+                        </Link<Route>>
+                        <Link<Route> to={Route::ComponentList }>
+                            {"Component list"}
+                        </Link<Route>>
 
-                </nav>
-                <Switch<Route> render={Route::render} />
-            </BrowserRouter>
+                    </nav>
+                    <Switch<Route> render={Route::render} />
+                </BrowserRouter>
+            </div>
         </ContextProvider<AppState>>
     }
 }
