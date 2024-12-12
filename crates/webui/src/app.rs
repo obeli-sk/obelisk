@@ -19,7 +19,8 @@ use yew_router::prelude::*;
 #[derive(Clone, PartialEq)]
 pub struct AppState {
     pub components: Vec<grpc_client::Component>, // TODO: Rc<[Component]>
-    pub submittable_ffqns_to_details: hashbrown::HashMap<FunctionFqn, grpc_client::FunctionDetail>,
+    pub submittable_ffqns_to_details:
+        hashbrown::HashMap<FunctionFqn, (grpc_client::FunctionDetail, grpc_client::ComponentId)>,
 }
 
 #[derive(Clone, PartialEq, derive_more::Display)]
@@ -120,13 +121,18 @@ pub struct AppProps {
 pub fn app(AppProps { components }: &AppProps) -> Html {
     let mut submittable_ffqns_to_details = hashbrown::HashMap::new();
     for component in components {
+        let component_id = component
+            .component_id
+            .as_ref()
+            .expect("`component_id` is sent");
         for exported_fn_detail in component
             .exports
             .iter()
             .filter(|fn_detail| fn_detail.submittable)
         {
             let ffqn = FunctionFqn::from_fn_detail(exported_fn_detail);
-            submittable_ffqns_to_details.insert(ffqn, exported_fn_detail.clone());
+            submittable_ffqns_to_details
+                .insert(ffqn, (exported_fn_detail.clone(), component_id.clone()));
         }
     }
     let app_state = use_state(|| AppState {
