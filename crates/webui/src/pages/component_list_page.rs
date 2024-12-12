@@ -1,4 +1,3 @@
-use crate::pages::wit_printer::WitPrinter;
 use crate::{
     app::AppState,
     components::{
@@ -15,6 +14,7 @@ use crate::{
 };
 use indexmap::IndexMap;
 use std::{ops::Deref, path::PathBuf};
+use wit_component::{Output, WitPrinter};
 use wit_parser::{Resolve, UnresolvedPackageGroup};
 use yew::prelude::*;
 
@@ -71,35 +71,23 @@ pub fn component_list_page() -> Html {
             let component_type = ComponentType::try_from(component.r#type).unwrap();
             let exports =
                 map_interfaces_to_fn_details(&component.exports, InterfaceFilter::WithExtensions);
-            let imports =
-                map_interfaces_to_fn_details(&component.imports, InterfaceFilter::WithExtensions);
-            let render_ifc_li = |ifc_fqn: &IfcFqn| {
-                html! {
-                    <li>
-                        {format!("{}:{}/",ifc_fqn.namespace, ifc_fqn.package_name)}
-                        <span>{&ifc_fqn.ifc_name}</span>
-                    </li>
-                }
-            };
 
-            let render_ifc_with_fns = |ifc_fqn: &IfcFqn, fn_details: &[FunctionDetail] | {
-                let render_fn_detail = |fn_detail: &FunctionDetail| {
-                    html! {
-                        <li>
-                            if fn_detail.submittable {
+             let render_ifc_with_fns = |ifc_fqn: &IfcFqn, fn_details: &[FunctionDetail] | {
+                let submittable_fn_details = fn_details
+                    .iter()
+                    .filter(|fn_detail| fn_detail.submittable)
+                    .map(|fn_detail| {
+                        html! {
+                            <li>
                                 <FfqnWithLinks ffqn = {FunctionFqn::from_fn_detail(fn_detail)} />
-                            } else {
-                                {fn_detail.function_name.as_ref().map(|f| &f.function_name)}
-                            }
-                            {": "}
-                            <span>
-                                <FunctionSignature params = {fn_detail.params.clone()} return_type={fn_detail.return_type.clone()} />
-                            </span>
-                        </li>
-                    }
-                };
-
-                let fn_details = fn_details.iter().map(render_fn_detail).collect::<Vec<_>>();
+                                {": "}
+                                <span>
+                                    <FunctionSignature params = {fn_detail.params.clone()} return_type={fn_detail.return_type.clone()} />
+                                </span>
+                            </li>
+                        }
+                    })
+                    .collect::<Vec<_>>();
 
                 html! {
                     <section class="types-interface">
@@ -113,36 +101,20 @@ pub fn component_list_page() -> Html {
                             }
                         </h3>
                         <ul>
-                            {fn_details}
+                            {submittable_fn_details}
                         </ul>
                     </section>
                 }
-            };
+             };
 
-            let submittable_ifcs_fns = exports.iter()
+            let submittable_ifcs_fns = exports
+                .iter()
                 .filter(|(_, fn_details)| fn_details.iter().any(|f_d| f_d.submittable))
-                .map(|(ifc_fqn, fn_details)| {
-                render_ifc_with_fns(ifc_fqn, fn_details)
-            }).collect::<Vec<_>>();
-
+                .map(|(ifc_fqn, fn_details)| render_ifc_with_fns(ifc_fqn, fn_details))
+                .collect::<Vec<_>>();
 
             html! { <>
-
-                <section class="world-definition">
-                    <h2>{&component.name}<span class="label">{component_type}</span></h2>
-                    <div class="code-block">
-                        <p>{"Exports"}</p>
-                        <ul>
-                            {exports.keys().map(render_ifc_li).collect::<Vec<_>>()}
-                        </ul>
-                        <p>{"Imports"}</p>
-                        <ul>
-                            {imports.keys().map(render_ifc_li).collect::<Vec<_>>()}
-                        </ul>
-
-                    </div>
-                </section>
-
+                <h2>{&component.name}<span class="label">{component_type}</span></h2>
                 {submittable_ifcs_fns}
             </>}
         });
@@ -155,14 +127,14 @@ pub fn component_list_page() -> Html {
             .packages
             .iter()
             .map(|(id, _)| id)
-            .filter(|id| *id != main_id) // TODO Remove the first package ..; world {} instead.
+            // The main package would show as a nested package as well
+            .filter(|id| *id != main_id)
             .collect::<Vec<_>>();
-        let wit = WitPrinter::default()
-            .print(&resolve, main_id, &ids)
-            .expect("FIXME")
-            .to_string();
+        let output = WitPrinter::<OutputToHtml>::new()
+            .print_all(&resolve, main_id, &ids)
+            .expect("FIXME");
 
-        Html::from_html_unchecked(wit.into())
+        Html::from_html_unchecked(output.output.into())
     });
 
     html! {<>
@@ -191,4 +163,121 @@ pub fn component_list_page() -> Html {
         </div>
 
     </>}
+}
+
+#[derive(Default)]
+pub struct OutputToHtml {
+    indent: usize,
+    output: String,
+    // set to true after newline, then to false after first item is indented.
+    needs_indent: bool,
+}
+
+impl OutputToHtml {
+    fn indent_if_needed(&mut self) {
+        if self.needs_indent {
+            for _ in 0..self.indent {
+                // Indenting by two spaces.
+                self.output.push_str("  ");
+            }
+            self.needs_indent = false;
+        }
+    }
+
+    fn indent_and_print_escaped(&mut self, src: &str) {
+        self.indent_if_needed();
+        html_escape::encode_text_to_string(src, &mut self.output);
+    }
+
+    fn indent_and_print_in_span(&mut self, src: &str, class: &str) {
+        self.indent_if_needed();
+        self.output.push_str("<span class=\"");
+        self.output.push_str(class);
+        self.output.push_str("\">");
+        html_escape::encode_text_to_string(src, &mut self.output);
+        self.output.push_str("</span>");
+    }
+}
+
+impl Output for OutputToHtml {
+    fn newline(&mut self) {
+        self.output.push('\n');
+        self.needs_indent = true;
+    }
+
+    fn keyword(&mut self, src: &str) {
+        self.indent_and_print_in_span(src, "keyword");
+    }
+
+    fn r#type(&mut self, src: &str) {
+        self.indent_and_print_in_span(src, "type");
+    }
+
+    fn param(&mut self, src: &str) {
+        self.indent_and_print_in_span(src, "param");
+    }
+
+    fn case(&mut self, src: &str) {
+        self.indent_and_print_in_span(src, "case");
+    }
+
+    fn generic_args_start(&mut self) {
+        html_escape::encode_text_to_string("<", &mut self.output);
+    }
+
+    fn generic_args_end(&mut self) {
+        html_escape::encode_text_to_string(">", &mut self.output);
+    }
+
+    fn doc(&mut self, doc: &str) {
+        assert!(!doc.contains('\n'));
+        self.indent_if_needed();
+        self.output.push_str("///");
+        if !doc.is_empty() {
+            self.output.push(' ');
+            html_escape::encode_text_to_string(doc, &mut self.output);
+        }
+        self.newline();
+    }
+
+    fn version(&mut self, src: &str, at_sign: bool) {
+        if at_sign {
+            self.output.push('@');
+        }
+        self.indent_and_print_in_span(src, "version");
+    }
+
+    fn semicolon(&mut self) {
+        assert!(
+            !self.needs_indent,
+            "`semicolon` is never called after newline"
+        );
+        self.output.push(';');
+        self.newline();
+    }
+
+    fn indent_start(&mut self) {
+        assert!(
+            !self.needs_indent,
+            "`indent_start` is never called after newline"
+        );
+        self.output.push_str(" {");
+        self.indent += 1;
+        self.newline();
+    }
+
+    fn indent_end(&mut self) {
+        // Note that a `saturating_sub` is used here to prevent a panic
+        // here in the case of invalid code being generated in debug
+        // mode. It's typically easier to debug those issues through
+        // looking at the source code rather than getting a panic.
+        self.indent = self.indent.saturating_sub(1);
+        self.indent_if_needed();
+        self.output.push('}');
+        self.newline();
+    }
+
+    fn str(&mut self, src: &str) {
+        self.indent_and_print_escaped(src);
+    }
 }

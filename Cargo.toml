@@ -264,6 +264,7 @@ yewprint = "0.5.0"
 yewprint-css = "0.4.0"
 
 # webui
+html-escape = "0.2"
 wasm-bindgen = "=0.2.95"         # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml and wasm-bindgen-futures on version change.
 wasm-bindgen-futures = "=0.4.45" # Dependent on wasm-bindgen
 web-sys = "=0.3.72"              # Dependent on wasm-bindgen
@@ -273,10 +274,14 @@ wasmtime = { version = "27.0", features = ["memory-protection-keys"] }
 wasmtime-wasi = "27.0"
 wasmtime-wasi-http = "27.0"
 # wasm-tools
-wast = "219.0.1"
-wit-parser = "0.219.1"
-wasmparser = "0.219.1"
-wit-component = "0.219.1"
+# wast.path = "../wasm-tools/crates/wast"
+# wit-parser.path = "../wasm-tools/crates/wit-parser"
+# wasmparser.path = "../wasm-tools/crates/wasmparser"
+# wit-component.path = "../wasm-tools/crates/wit-component"
+wast = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "ce06f4d67c9e5aed84f4746c272c46f15bc75a4a" }
+wit-parser = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "ce06f4d67c9e5aed84f4746c272c46f15bc75a4a" }
+wasmparser = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "ce06f4d67c9e5aed84f4746c272c46f15bc75a4a" }
+wit-component = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "ce06f4d67c9e5aed84f4746c272c46f15bc75a4a" }
 
 # testing components
 wit-bindgen = "0.36.0"

@@ -1,4 +1,4 @@
-use crate::{sha256sum::calculate_sha256_file, wit_printer::WitPrinter};
+use crate::sha256sum::calculate_sha256_file;
 use anyhow::Context;
 use concepts::{
     FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName, PackageIfcFns,
@@ -16,7 +16,7 @@ use wasmtime::{
     component::{types::ComponentItem, Component, ComponentExportIndex},
     Engine,
 };
-use wit_component::ComponentEncoder;
+use wit_component::{ComponentEncoder, WitPrinter};
 use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
 
 #[derive(derivative::Derivative)]
@@ -169,6 +169,7 @@ impl WasmComponent {
             .packages
             .iter()
             .map(|(id, _)| id)
+            // The main package would show as a nested package as well
             .filter(|id| *id != self.decoded.package())
             .collect::<Vec<_>>();
         WitPrinter::default().print(resolve, self.decoded.package(), &ids)
@@ -696,7 +697,7 @@ fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
                             wit_type: printer
                                 .print_type_name(resolve, param_ty)
                                 .ok()
-                                .map(|()| String::from(printer)),
+                                .map(|()| String::from(printer.output)),
                         }
                     })
                     .collect();
@@ -705,7 +706,7 @@ fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
                     printer
                         .print_type_name(resolve, &return_type)
                         .ok()
-                        .map(|()| String::from(printer))
+                        .map(|()| String::from(printer.output))
                 } else {
                     None
                 };

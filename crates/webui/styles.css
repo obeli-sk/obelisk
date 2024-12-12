@@ -70,20 +70,34 @@ h3 .highlight {
 
 .code-block pre {
     white-space: pre-wrap;
-    /* Preserve whitespace and enable wrapping */
     word-wrap: break-word;
-    /* Break long words if needed */
     word-break: break-word;
-    /* Fallback for some browsers */
 }
 
 .code-block pre .keyword {
-    color: blue;
+    color: #0077b6;
+    /* Blue */
     font-weight: bold;
 }
 
-.code-block pre .string {
-    color: green;
+.code-block pre .type {
+    color: #9b59b6;
+    /* Purple */
+}
+
+.code-block pre .version {
+    color: #6fa5c9;
+    /* Light Blue */
+}
+
+.code-block pre .param {
+    color: #7f8c8d;
+    /* Subtle Gray */
+}
+
+.code-block pre .case {
+    color: #2980b9;
+    /* Darker Blue */
 }
 
 ul {

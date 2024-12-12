@@ -16,6 +16,7 @@ assert_matches.workspace = true
 chrono.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
+html-escape.workspace = true
 implicit-clone.workspace = true
 indexmap.workspace = true
 log.workspace = true
@@ -30,12 +31,13 @@ tonic-web-wasm-client.workspace = true
 wasm-bindgen-futures.workspace = true
 wasm-bindgen.workspace = true
 wasm-logger.workspace = true
+web-sys.workspace = true
+wit-component.workspace = true
+wit-parser.workspace = true
+yew_icons.workspace = true
 yew-router.workspace = true
 yew.workspace = true
 yewprint.workspace = true
-yew_icons.workspace = true
-web-sys.workspace = true
-wit-parser.workspace = true
 
 [build-dependencies]
 tonic-build = { workspace = true, default-features = false, features = [

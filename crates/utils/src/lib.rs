@@ -1,6 +1,5 @@
 pub mod sha256sum;
 pub mod wasm_tools;
-mod wit_printer;
 
 pub mod time {
     pub trait ClockFn: Send + Sync + Clone {
