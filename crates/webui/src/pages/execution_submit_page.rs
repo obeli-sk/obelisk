@@ -1,10 +1,12 @@
 use crate::{
-    app::{AppState, Route},
-    components::{execution_submit::ExecutionSubmitForm, function_signature::FunctionSignature},
+    app::AppState,
+    components::{
+        execution_submit::ExecutionSubmitForm, ffqn_with_links::FfqnWithLinks,
+        function_signature::FunctionSignature,
+    },
     grpc::ffqn::FunctionFqn,
 };
 use yew::prelude::*;
-use yew_router::prelude::Link;
 
 #[derive(Properties, PartialEq)]
 pub struct ExecutionSubmitPageProps {
@@ -17,8 +19,12 @@ pub fn execution_submit_page(ExecutionSubmitPageProps { ffqn }: &ExecutionSubmit
 
     if let Some(function_detail) = app_state.submittable_ffqns_to_details.get(ffqn) {
         html! {<>
-            <h3>{ ffqn.to_string() }</h3>
-            <p><Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() }}>{"Go to execution list"}</Link<Route>></p>
+            <header>
+                <h1>{"Execution submit"}</h1>
+                <h2><FfqnWithLinks ffqn={ffqn.clone()} hide_submit={true}  />
+                </h2>
+            </header>
+
             <h4><FunctionSignature params = {function_detail.params.clone()} return_type = {function_detail.return_type.clone()} /></h4>
             <ExecutionSubmitForm {function_detail} />
         </>}
