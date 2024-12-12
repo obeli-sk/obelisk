@@ -54,8 +54,10 @@ pub enum Route {
     Home,
     #[at("/components")]
     ComponentList,
-    #[at("/component/:id")]
-    Component { id: grpc_client::ComponentId },
+    #[at("/component/:component_id")]
+    Component {
+        component_id: grpc_client::ComponentId,
+    },
     #[at("/execution/submit/:ffqn")]
     ExecutionSubmit { ffqn: FunctionFqn },
     #[at("/execution/list")]
@@ -84,7 +86,9 @@ impl Route {
         match route {
             Route::Home | Route::ExecutionList => html! { <ExecutionListPage /> },
             Route::ComponentList => html! { <ComponentListPage /> },
-            Route::Component { id } => html! { <ComponentListPage /> },
+            Route::Component { component_id } => {
+                html! { <ComponentListPage component_id={Some(component_id)}/> }
+            }
             Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
             Route::ExecutionDetail { execution_id } => {
                 html! { <ExecutionDetailPage {execution_id} /> }

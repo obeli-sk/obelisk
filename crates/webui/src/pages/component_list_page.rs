@@ -1,5 +1,5 @@
 use crate::{
-    app::AppState,
+    app::{AppState, Route},
     components::{
         code_block::CodeBlock,
         component_tree::{ComponentTree, ComponentTreeConfig},
@@ -16,27 +16,29 @@ use crate::{
 };
 use std::ops::Deref;
 use yew::prelude::*;
+use yew_router::hooks::use_navigator;
+
+#[derive(Properties, PartialEq)]
+pub struct ComponentListPageProps {
+    #[prop_or_default]
+    pub component_id: Option<ComponentId>,
+}
 
 #[function_component(ComponentListPage)]
-pub fn component_list_page() -> Html {
+pub fn component_list_page(
+    ComponentListPageProps { component_id }: &ComponentListPageProps,
+) -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
     let components = app_state.components;
 
-    let selected_component_id_state: UseStateHandle<Option<ComponentId>> = use_state(|| None);
     let wit_state = use_state(|| None);
     // Fetch GetWit
-    use_effect_with(selected_component_id_state.deref().clone(), {
-        let id_to_component_map = components.clone();
+    use_effect_with(component_id.clone(), {
         let wit_state = wit_state.clone();
-        move |selected_component_id| {
-            if let Some(selected_component_id) = selected_component_id {
-                let component_id = id_to_component_map
-                    .get(selected_component_id)
-                    .expect("`selected_component_idx` must be valid")
-                    .component_id
-                    .clone()
-                    .expect("`component_id` is sent");
+        move |component_id| {
+            if let Some(component_id) = component_id {
+                let component_id = component_id.clone();
                 wasm_bindgen_futures::spawn_local(async move {
                     let base_url = "/api";
                     let mut fn_client =
@@ -59,9 +61,7 @@ pub fn component_list_page() -> Html {
         }
     });
 
-    let component_detail = selected_component_id_state
-        .deref()
-        .as_ref()
+    let component_detail = component_id.as_ref()
         .and_then(|id| components.get(id))
         .map(|component| {
             let component_type = ComponentType::try_from(component.r#type).unwrap();
@@ -121,6 +121,10 @@ pub fn component_list_page() -> Html {
         .as_ref()
         .map(|wit| wit_highlighter::print_all(wit));
 
+    let navigator = use_navigator().unwrap();
+    let on_component_selected =
+        Callback::from(move |component_id| navigator.push(&Route::Component { component_id }));
+
     html! {<>
         <header>
             <h1>{"Components"}</h1>
@@ -128,7 +132,7 @@ pub fn component_list_page() -> Html {
 
         <section class="component-selection">
             <ComponentTree config={ComponentTreeConfig::ComponentsOnly {
-                selected_component_id_state: selected_component_id_state.clone()
+                on_component_selected
             }
             } />
         </section>

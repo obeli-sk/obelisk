@@ -3,7 +3,7 @@ use crate::app::AppState;
 use crate::components::ffqn_with_links::FfqnWithLinks;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::function_detail::{map_interfaces_to_fn_details, InterfaceFilter};
-use crate::grpc::grpc_client;
+use crate::grpc::grpc_client::{self, ComponentId};
 use crate::grpc::ifc_fqn::IfcFqn;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
@@ -21,7 +21,7 @@ pub struct ComponentTreeProps {
 #[derive(Clone)]
 pub enum ComponentTreeConfig {
     ComponentsOnly {
-        selected_component_id_state: UseStateHandle<Option<grpc_client::ComponentId>>,
+        on_component_selected: Callback<ComponentId>,
     },
     ComponentsWithSubmittableFns, // No extensions, no imports
 }
@@ -30,13 +30,13 @@ impl PartialEq for ComponentTreeConfig {
     fn eq(&self, other: &Self) -> bool {
         matches!(
             (self, other),
-            // Ignore the fact that `selected_component` is differrent
+            // Ignore the fact that `on_component_selected` is differrent
             (
                 Self::ComponentsOnly {
-                    selected_component_id_state: _
+                    on_component_selected: _
                 },
                 Self::ComponentsOnly {
-                    selected_component_id_state: _
+                    on_component_selected: _
                 }
             ) | (
                 Self::ComponentsWithSubmittableFns,
@@ -239,12 +239,12 @@ impl Component for ComponentTree {
                 data.is_expanded ^= true;
                 if let (
                     ComponentTreeConfig::ComponentsOnly {
-                        selected_component_id_state,
+                        on_component_selected,
                     },
                     Some(data),
                 ) = (&self.config, &data.data)
                 {
-                    selected_component_id_state.set(Some(data.clone()));
+                    on_component_selected.emit(data.clone());
                 }
             }
         }
