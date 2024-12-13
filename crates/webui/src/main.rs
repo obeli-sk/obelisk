@@ -45,13 +45,12 @@ fn main() {
         let comopnents_by_exported_ifc: HashMap<IfcFqn, Rc<grpc_client::Component>> =
             components_by_id
                 .values()
-                .map(|component| {
+                .flat_map(|component| {
                     map_interfaces_to_fn_details(&component.exports, InterfaceFilter::default())
                         .keys()
                         .map(|ifc| (ifc.clone(), component.clone()))
                         .collect::<Vec<_>>()
                 })
-                .flatten()
                 .collect();
 
         yew::Renderer::<App>::with_props(AppProps {

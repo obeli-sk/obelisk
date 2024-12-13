@@ -27,6 +27,8 @@ pub struct ComponentListPageProps {
     pub maybe_component_id: Option<ComponentId>,
 }
 
+type EffectsCallback = Box<dyn FnOnce(&Option<ComponentId>)>;
+
 #[function_component(ComponentListPage)]
 pub fn component_list_page(
     ComponentListPageProps { maybe_component_id }: &ComponentListPageProps,
@@ -57,7 +59,7 @@ pub fn component_list_page(
                     }
                 })
                 .collect::<HashSet<_>>();
-            let boxed_closure: Box<dyn FnOnce(&Option<ComponentId>)> =
+            let boxed_closure: EffectsCallback =
                 Box::new(move |component_id: &Option<ComponentId>| {
                     let component_id = component_id.clone().expect("checked above");
                     wasm_bindgen_futures::spawn_local(async move {
@@ -84,7 +86,7 @@ pub fn component_list_page(
                 });
             boxed_closure
         } else {
-            let boxed_closure: Box<dyn FnOnce(&Option<ComponentId>)> = Box::new(|_| {});
+            let boxed_closure: EffectsCallback = Box::new(|_| {});
             boxed_closure
         }
     });
