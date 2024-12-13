@@ -165,7 +165,7 @@ impl ComponentTree {
         let activities =
             filter_component_list_by_type(components, grpc_client::ComponentType::ActivityWasm);
         let webhooks =
-            filter_component_list_by_type(components, grpc_client::ComponentType::WebhookWasm);
+            filter_component_list_by_type(components, grpc_client::ComponentType::WebhookEndpoint);
         let mut tree = TreeBuilder::new().build();
         let root_id = tree
             .insert(
@@ -201,7 +201,7 @@ impl ComponentTree {
                 &root_id,
                 config,
                 "Webhook Endpoints".into(),
-                ComponentType::WebhookWasm.as_icon(),
+                ComponentType::WebhookEndpoint.as_icon(),
                 webhooks,
             );
         }

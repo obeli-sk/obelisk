@@ -79,7 +79,7 @@ message Component {
 enum ComponentType {
     WORKFLOW = 0;
     ACTIVITY_WASM = 1;
-    WEBHOOK_WASM = 2;
+    WEBHOOK_ENDPOINT = 2;
 }
 
 message FunctionDetail {
