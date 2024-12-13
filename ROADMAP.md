@@ -26,7 +26,7 @@
 - [x] Server verification - downloads components, checks the TOML configuration and matches component imports with exports.
 - [x] Structured concurrency for join sets - blocking parent until all child executions are finished
 - [x] HTML based UI for showing executions, event history and relations
-- [ ] WIT Explorer
+- [x] WIT Explorer
 - [ ] Heterogenous join sets, allowing one join set to combine multiple function signatures and delays
 - [ ] Expose network configuration for activities, webhooks
 - [ ] Keepalives for activities, extending the lock until completion
