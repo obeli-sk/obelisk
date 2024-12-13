@@ -1,5 +1,5 @@
 use crate::{
-    app::AppState,
+    app::{AppState, Route},
     components::{
         code_block::CodeBlock, execution_submit::ExecutionSubmitForm,
         ffqn_with_links::FfqnWithLinks,
@@ -9,6 +9,8 @@ use crate::{
 };
 use std::ops::Deref;
 use yew::prelude::*;
+use yew_router::prelude::Link;
+use yewprint::Icon;
 
 #[derive(Properties, PartialEq)]
 pub struct ExecutionSubmitPageProps {
@@ -18,6 +20,9 @@ pub struct ExecutionSubmitPageProps {
 pub fn execution_submit_page(ExecutionSubmitPageProps { ffqn }: &ExecutionSubmitPageProps) -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
+
+    let provided_by = app_state.comopnents_by_exported_ifc.get(&ffqn.ifc_fqn);
+
     let (maybe_function_detail, maybe_component_id) =
         match app_state.submittable_ffqns_to_details.get(ffqn) {
             Some((detail, id)) => (Some(detail), Some(id.clone())),
@@ -63,6 +68,17 @@ pub fn execution_submit_page(ExecutionSubmitPageProps { ffqn }: &ExecutionSubmit
                 <h2>
                     <FfqnWithLinks ffqn={ffqn.clone()} fully_qualified={false} hide_submit={true}  />
                 </h2>
+                if let Some(found) = provided_by {
+                    <h3>
+                        {"Provided by "}
+                        <Link<Route> to={Route::Component { component_id: found.component_id.clone().expect("`component_id` is sent") } }>
+                            <Icon icon = { found.as_type().as_icon() }/>
+                            {" "}
+                            {&found.name}
+                        </Link<Route>>
+
+                    </h3>
+                }
             </header>
 
             <ExecutionSubmitForm function_detail={function_detail.clone()} />
