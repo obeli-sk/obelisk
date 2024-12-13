@@ -39,6 +39,22 @@ pub fn component_list_page(
     use_effect_with(maybe_component_id.clone(), {
         if let Some(component_id) = maybe_component_id {
             let wit_state = wit_state.clone();
+            let render_ffqn_with_links = components
+                .get(component_id)
+                .expect("selected component must be found")
+                .exports
+                .iter()
+                .filter_map(|fn_detail| {
+                    if fn_detail.submittable {
+                        Some(
+                            FunctionFqn::from_fn_detail(fn_detail)
+                                .expect("fn_detail must be parseable"),
+                        )
+                    } else {
+                        None
+                    }
+                })
+                .collect::<HashSet<_>>();
             let boxed_closure: Box<dyn FnOnce(&Option<ComponentId>)> =
                 Box::new(move |component_id: &Option<ComponentId>| {
                     let component_id = component_id.clone().expect("checked above");
@@ -57,7 +73,7 @@ pub fn component_list_page(
                             .into_inner()
                             .content;
 
-                        let wit = wit_highlighter::print_all(&wit)
+                        let wit = wit_highlighter::print_all(&wit, render_ffqn_with_links)
                             .inspect_err(|err| warn!("Cannot render WIT - {err:?}"))
                             .ok();
 

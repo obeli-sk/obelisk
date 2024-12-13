@@ -5,7 +5,10 @@ use std::path::PathBuf;
 use wit_component::{Output, TypeKind, WitPrinter};
 use wit_parser::{Resolve, Type, TypeDefKind, TypeOwner, UnresolvedPackageGroup};
 
-pub fn print_all(wit: &str) -> Result<String, anyhow::Error> {
+pub fn print_all(
+    wit: &str,
+    render_ffqn_with_links: HashSet<FunctionFqn>,
+) -> Result<String, anyhow::Error> {
     let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
     let mut resolve = Resolve::new();
     let main_id = resolve.push_group(group)?;
@@ -17,6 +20,7 @@ pub fn print_all(wit: &str) -> Result<String, anyhow::Error> {
         .filter(|id| *id != main_id)
         .collect::<Vec<_>>();
     let mut printer = WitPrinter::<OutputToHtml>::new();
+    printer.output.render_ffqn_with_links = render_ffqn_with_links;
     let output_to_html = printer.print_all(&resolve, main_id, &ids)?;
     Ok(output_to_html.into())
 }
@@ -151,6 +155,11 @@ pub struct OutputToHtml {
     needs_indent: bool,
     filter: PrintFilter,
     ignore_until_end_of_line: usize,
+    render_ffqn_with_links: HashSet<FunctionFqn>,
+    current_namespace: Option<String>,
+    current_package_name: Option<String>,
+    current_version: Option<String>,
+    current_interface: Option<String>,
 }
 
 impl OutputToHtml {
@@ -210,6 +219,24 @@ impl Output for OutputToHtml {
     }
 
     fn r#type(&mut self, src: &str, kind: TypeKind) {
+        match kind {
+            TypeKind::NamespaceDeclaration => {
+                self.current_namespace = Some(src.to_string());
+                self.current_package_name = None;
+                self.current_version = None;
+                self.current_interface = None;
+            }
+            TypeKind::PackageNameDeclaration => {
+                self.current_package_name = Some(src.to_string());
+                self.current_version = None;
+                self.current_interface = None;
+            }
+            TypeKind::InterfaceDeclaration => {
+                self.current_interface = Some(src.to_string());
+            }
+            _ => {}
+        }
+
         let css_class = match kind {
             TypeKind::FunctionFreestanding
             | TypeKind::FunctionMethod
@@ -220,8 +247,35 @@ impl Output for OutputToHtml {
                 }
                 "func"
             }
+            TypeKind::VersionDeclaration | TypeKind::VersionPath | TypeKind::VersionAnnotation => {
+                "version"
+            }
             _ => "type",
         };
+
+        if let (Some(ns), Some(p), v, Some(ifc), TypeKind::FunctionFreestanding) = (
+            &self.current_namespace,
+            &self.current_package_name,
+            &self.current_version,
+            &self.current_interface,
+            &kind,
+        ) {
+            let ffqn = FunctionFqn {
+                ifc_fqn: IfcFqn {
+                    pkg_fqn: PkgFqn {
+                        namespace: ns.clone(),
+                        package_name: p.clone(),
+                        version: v.clone(),
+                    },
+                    ifc_name: ifc.clone(),
+                },
+                function_name: src.to_string(),
+            };
+            if self.render_ffqn_with_links.contains(&ffqn) {
+                self.indent_and_print_in_span(&format!("!!!{src}"), css_class);
+                return;
+            }
+        }
 
         self.indent_and_print_in_span(src, css_class);
     }
@@ -251,13 +305,6 @@ impl Output for OutputToHtml {
             self.push_escaped_str(src);
         }
         self.newline();
-    }
-
-    fn version(&mut self, src: &str, at_sign: bool) {
-        if at_sign {
-            self.push('@');
-        }
-        self.indent_and_print_in_span(src, "version");
     }
 
     fn semicolon(&mut self) {
