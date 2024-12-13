@@ -1,16 +1,14 @@
-use std::path::PathBuf;
-
+use crate::grpc::{ffqn::FunctionFqn, ifc_fqn::IfcFqn, pkg_fqn::PkgFqn};
 use anyhow::Context;
 use hashbrown::HashSet;
-use wit_component::{Output, WitPrinter};
+use std::path::PathBuf;
+use wit_component::{Output, TypeKind, WitPrinter};
 use wit_parser::{Resolve, Type, TypeDefKind, TypeOwner, UnresolvedPackageGroup};
 
-use crate::grpc::{ifc_fqn::IfcFqn, pkg_fqn::PkgFqn};
-
-pub fn print_all(wit: &str) -> String {
-    let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit).expect("FIXME");
+pub fn print_all(wit: &str) -> Result<String, anyhow::Error> {
+    let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
     let mut resolve = Resolve::new();
-    let main_id = resolve.push_group(group).expect("FIXME");
+    let main_id = resolve.push_group(group)?;
     let ids = resolve
         .packages
         .iter()
@@ -18,22 +16,25 @@ pub fn print_all(wit: &str) -> String {
         // The main package would show as a nested package as well
         .filter(|id| *id != main_id)
         .collect::<Vec<_>>();
-    let output_to_html = WitPrinter::<OutputToHtml>::new()
-        .print_all(&resolve, main_id, &ids)
-        .expect("FIXME");
-    output_to_html.into()
+    let mut printer = WitPrinter::<OutputToHtml>::new();
+    let output_to_html = printer.print_all(&resolve, main_id, &ids)?;
+    Ok(output_to_html.into())
 }
 
-pub fn print_interface(wit: &str, ifc_fqn: &IfcFqn) -> Result<String, anyhow::Error> {
-    let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit).expect("FIXME");
+pub fn print_interface_with_single_fn(
+    wit: &str,
+    ffqn: &FunctionFqn,
+) -> Result<String, anyhow::Error> {
+    let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
     let mut resolve = Resolve::new();
-    let _main_id = resolve.push_group(group).expect("FIXME");
+    let _main_id = resolve.push_group(group)?;
     let mut printer = WitPrinter::<OutputToHtml>::new();
+    printer.output.filter = PrintFilter::SubmitPage(ffqn.clone());
 
     print_interface_with_imported_types(
         &mut printer,
         &resolve,
-        ifc_fqn,
+        &ffqn.ifc_fqn,
         &mut HashSet::new(),
         true,
     )?;
@@ -136,19 +137,47 @@ fn print_interface_with_imported_types(
 }
 
 #[derive(Default)]
+enum PrintFilter {
+    #[default]
+    ShowAll,
+    SubmitPage(FunctionFqn),
+}
+
+#[derive(Default)]
 pub struct OutputToHtml {
     indent: usize,
     output: String,
     // set to true after newline, then to false after first item is indented.
     needs_indent: bool,
+    filter: PrintFilter,
+    ignore_until_end_of_line: usize,
 }
 
 impl OutputToHtml {
+    fn push(&mut self, src: char) {
+        if self.ignore_until_end_of_line == 0 {
+            self.output.push(src);
+        }
+    }
+
+    fn push_str(&mut self, src: &str) {
+        assert!(!src.contains('\n'));
+        if self.ignore_until_end_of_line == 0 {
+            self.output.push_str(src);
+        }
+    }
+
+    fn push_escaped_str(&mut self, src: &str) {
+        if self.ignore_until_end_of_line == 0 {
+            html_escape::encode_text_to_string(src, &mut self.output);
+        }
+    }
+
     fn indent_if_needed(&mut self) {
         if self.needs_indent {
             for _ in 0..self.indent {
                 // Indenting by two spaces.
-                self.output.push_str("  ");
+                self.push_str("  ");
             }
             self.needs_indent = false;
         }
@@ -156,31 +185,45 @@ impl OutputToHtml {
 
     fn indent_and_print_escaped(&mut self, src: &str) {
         self.indent_if_needed();
-        html_escape::encode_text_to_string(src, &mut self.output);
+        self.push_escaped_str(src);
     }
 
     fn indent_and_print_in_span(&mut self, src: &str, class: &str) {
         self.indent_if_needed();
-        self.output.push_str("<span class=\"");
-        self.output.push_str(class);
-        self.output.push_str("\">");
-        html_escape::encode_text_to_string(src, &mut self.output);
-        self.output.push_str("</span>");
+        self.push_str("<span class=\"");
+        self.push_str(class);
+        self.push_str("\">");
+        self.push_escaped_str(src);
+        self.push_str("</span>");
     }
 }
 
 impl Output for OutputToHtml {
     fn newline(&mut self) {
-        self.output.push('\n');
+        self.push('\n'); // ignore when muted
         self.needs_indent = true;
+        self.ignore_until_end_of_line = self.ignore_until_end_of_line.saturating_sub(1);
     }
 
     fn keyword(&mut self, src: &str) {
         self.indent_and_print_in_span(src, "keyword");
     }
 
-    fn r#type(&mut self, src: &str) {
-        self.indent_and_print_in_span(src, "type");
+    fn r#type(&mut self, src: &str, kind: TypeKind) {
+        let css_class = match kind {
+            TypeKind::FunctionFreestanding
+            | TypeKind::FunctionMethod
+            | TypeKind::FunctionStatic => {
+                if matches!(&self.filter, PrintFilter::SubmitPage(ffqn) if ffqn.function_name != src)
+                {
+                    self.ignore_until_end_of_line = 2; // after the function is printed an empty line is added.
+                }
+                "func"
+            }
+            _ => "type",
+        };
+
+        self.indent_and_print_in_span(src, css_class);
     }
 
     fn param(&mut self, src: &str) {
@@ -192,27 +235,27 @@ impl Output for OutputToHtml {
     }
 
     fn generic_args_start(&mut self) {
-        html_escape::encode_text_to_string("<", &mut self.output);
+        self.push_escaped_str("<");
     }
 
     fn generic_args_end(&mut self) {
-        html_escape::encode_text_to_string(">", &mut self.output);
+        self.push_escaped_str(">");
     }
 
-    fn doc(&mut self, doc: &str) {
-        assert!(!doc.contains('\n'));
+    fn doc(&mut self, src: &str) {
+        assert!(!src.contains('\n'));
         self.indent_if_needed();
-        self.output.push_str("///");
-        if !doc.is_empty() {
-            self.output.push(' ');
-            html_escape::encode_text_to_string(doc, &mut self.output);
+        self.push_str("///");
+        if !src.is_empty() {
+            self.push(' ');
+            self.push_escaped_str(src);
         }
         self.newline();
     }
 
     fn version(&mut self, src: &str, at_sign: bool) {
         if at_sign {
-            self.output.push('@');
+            self.push('@');
         }
         self.indent_and_print_in_span(src, "version");
     }
@@ -222,7 +265,7 @@ impl Output for OutputToHtml {
             !self.needs_indent,
             "`semicolon` is never called after newline"
         );
-        self.output.push(';');
+        self.push(';');
         self.newline();
     }
 
@@ -231,7 +274,7 @@ impl Output for OutputToHtml {
             !self.needs_indent,
             "`indent_start` is never called after newline"
         );
-        self.output.push_str(" {");
+        self.push_str(" {");
         self.indent += 1;
         self.newline();
     }
@@ -243,7 +286,7 @@ impl Output for OutputToHtml {
         // looking at the source code rather than getting a panic.
         self.indent = self.indent.saturating_sub(1);
         self.indent_if_needed();
-        self.output.push('}');
+        self.push('}');
         self.newline();
     }
 

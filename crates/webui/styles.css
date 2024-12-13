@@ -85,6 +85,11 @@ h3 .highlight {
     /* Purple */
 }
 
+.code-block pre .func {
+    color: #ac9a40;
+    /* Yellow */
+}
+
 .code-block pre .version {
     color: #6fa5c9;
     /* Light Blue */

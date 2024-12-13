@@ -14,6 +14,8 @@ use crate::{
     },
     util::wit_highlighter,
 };
+use hashbrown::HashSet;
+use log::warn;
 use std::ops::Deref;
 use yew::prelude::*;
 use yew_router::hooks::use_navigator;
@@ -21,12 +23,12 @@ use yew_router::hooks::use_navigator;
 #[derive(Properties, PartialEq)]
 pub struct ComponentListPageProps {
     #[prop_or_default]
-    pub component_id: Option<ComponentId>,
+    pub maybe_component_id: Option<ComponentId>,
 }
 
 #[function_component(ComponentListPage)]
 pub fn component_list_page(
-    ComponentListPageProps { component_id }: &ComponentListPageProps,
+    ComponentListPageProps { maybe_component_id }: &ComponentListPageProps,
 ) -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
@@ -34,34 +36,42 @@ pub fn component_list_page(
 
     let wit_state = use_state(|| None);
     // Fetch GetWit
-    use_effect_with(component_id.clone(), {
-        let wit_state = wit_state.clone();
-        move |component_id| {
-            if let Some(component_id) = component_id {
-                let component_id = component_id.clone();
-                wasm_bindgen_futures::spawn_local(async move {
-                    let base_url = "/api";
-                    let mut fn_client =
-                        grpc_client::function_repository_client::FunctionRepositoryClient::new(
-                            tonic_web_wasm_client::Client::new(base_url.to_string()),
-                        );
-                    let wit = fn_client
-                        .get_wit(grpc_client::GetWitRequest {
-                            component_id: Some(component_id),
-                        })
-                        .await
-                        .unwrap()
-                        .into_inner()
-                        .content;
-                    wit_state.set(Some(wit));
+    use_effect_with(maybe_component_id.clone(), {
+        if let Some(component_id) = maybe_component_id {
+            let wit_state = wit_state.clone();
+            let boxed_closure: Box<dyn FnOnce(&Option<ComponentId>)> =
+                Box::new(move |component_id: &Option<ComponentId>| {
+                    let component_id = component_id.clone().expect("checked above");
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let base_url = "/api";
+                        let mut fn_client =
+                            grpc_client::function_repository_client::FunctionRepositoryClient::new(
+                                tonic_web_wasm_client::Client::new(base_url.to_string()),
+                            );
+                        let wit = fn_client
+                            .get_wit(grpc_client::GetWitRequest {
+                                component_id: Some(component_id),
+                            })
+                            .await
+                            .unwrap()
+                            .into_inner()
+                            .content;
+
+                        let wit = wit_highlighter::print_all(&wit)
+                            .inspect_err(|err| warn!("Cannot render WIT - {err:?}"))
+                            .ok();
+
+                        wit_state.set(wit);
+                    });
                 });
-            } else {
-                wit_state.set(None);
-            }
+            boxed_closure
+        } else {
+            let boxed_closure: Box<dyn FnOnce(&Option<ComponentId>)> = Box::new(|_| {});
+            boxed_closure
         }
     });
 
-    let component_detail = component_id.as_ref()
+    let component_detail = maybe_component_id.as_ref()
         .and_then(|id| components.get(id))
         .map(|component| {
             let component_type = ComponentType::try_from(component.r#type).unwrap();
@@ -126,11 +136,6 @@ pub fn component_list_page(
             </>}
         });
 
-    let wit = wit_state
-        .deref()
-        .as_ref()
-        .map(|wit| wit_highlighter::print_all(wit));
-
     let navigator = use_navigator().unwrap();
     let on_component_selected =
         Callback::from(move |component_id| navigator.push(&Route::Component { component_id }));
@@ -149,9 +154,9 @@ pub fn component_list_page(
 
         { component_detail }
 
-        if let Some(wit) = wit {
+        if let Some(wit) = wit_state.deref() {
             <h3>{"WIT"}</h3>
-            <CodeBlock source={wit} />
+            <CodeBlock source={wit.clone()} />
         }
     </>}
 }

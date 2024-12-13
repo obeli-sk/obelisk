@@ -2,7 +2,7 @@ use crate::{
     app::AppState,
     components::{
         code_block::CodeBlock, execution_submit::ExecutionSubmitForm,
-        ffqn_with_links::FfqnWithLinks, function_signature::FunctionSignature,
+        ffqn_with_links::FfqnWithLinks,
     },
     grpc::{ffqn::FunctionFqn, grpc_client},
     util::wit_highlighter,
@@ -55,16 +55,16 @@ pub fn execution_submit_page(ExecutionSubmitPageProps { ffqn }: &ExecutionSubmit
         let wit = wit_state
             .deref()
             .as_ref()
-            .map(|wit| wit_highlighter::print_interface(wit, &ffqn.ifc_fqn));
+            .map(|wit| wit_highlighter::print_interface_with_single_fn(wit, ffqn));
 
         html! {<>
             <header>
                 <h1>{"Execution submit"}</h1>
-                <h2><FfqnWithLinks ffqn={ffqn.clone()} fully_qualified={true} hide_submit={true}  />
+                <h2>
+                    <FfqnWithLinks ffqn={ffqn.clone()} fully_qualified={false} hide_submit={true}  />
                 </h2>
             </header>
 
-            <h4><FunctionSignature params = {function_detail.params.clone()} return_type = {function_detail.return_type.clone()} /></h4>
             <ExecutionSubmitForm function_detail={function_detail.clone()} />
             if let Some(Ok(wit)) = wit {
                 <h3>{"WIT"}</h3>

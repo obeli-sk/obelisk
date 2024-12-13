@@ -87,7 +87,7 @@ impl Route {
             Route::Home | Route::ExecutionList => html! { <ExecutionListPage /> },
             Route::ComponentList => html! { <ComponentListPage /> },
             Route::Component { component_id } => {
-                html! { <ComponentListPage component_id={Some(component_id)}/> }
+                html! { <ComponentListPage maybe_component_id={Some(component_id)}/> }
             }
             Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
             Route::ExecutionDetail { execution_id } => {
