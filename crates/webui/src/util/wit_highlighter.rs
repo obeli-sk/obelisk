@@ -220,7 +220,7 @@ impl Output for OutputToHtml {
         self.indent_and_print_in_span(src, "keyword");
     }
 
-    fn r#type(&mut self, src: &str, kind: TypeKind) {
+    fn r#type(&mut self, mut src: &str, kind: TypeKind) {
         match kind {
             TypeKind::NamespaceDeclaration => {
                 self.current_namespace = Some(src.to_string());
@@ -250,6 +250,10 @@ impl Output for OutputToHtml {
                 "func"
             }
             TypeKind::VersionDeclaration | TypeKind::VersionPath | TypeKind::VersionAnnotation => {
+                if let Some(suffix) = src.strip_prefix('@') {
+                    self.indent_and_print("@");
+                    src = suffix;
+                }
                 "version"
             }
             _ => "type",
