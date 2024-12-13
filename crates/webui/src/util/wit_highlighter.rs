@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Context;
 use hashbrown::HashSet;
 use std::path::PathBuf;
-use wit_component::{Output, TypeKind, WitPrinter};
+use wit_component::{Output, TypeKind, WitPrinterExt};
 use wit_parser::{Resolve, Type, TypeDefKind, TypeOwner, UnresolvedPackageGroup};
 use yew::{html, Html, ToHtml};
 
@@ -23,7 +23,7 @@ pub fn print_all(
         // The main package would show as a nested package as well
         .filter(|id| *id != main_id)
         .collect::<Vec<_>>();
-    let mut printer = WitPrinter::<OutputToHtml>::new();
+    let mut printer = WitPrinterExt::new(OutputToHtml::default());
     printer.output.render_ffqn_with_links = render_ffqn_with_links;
     let output_to_html = printer.print_all(&resolve, main_id, &ids)?;
     Ok(output_to_html.output)
@@ -36,7 +36,7 @@ pub fn print_interface_with_single_fn(
     let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
     let mut resolve = Resolve::new();
     let _main_id = resolve.push_group(group)?;
-    let mut printer = WitPrinter::<OutputToHtml>::new();
+    let mut printer = WitPrinterExt::new(OutputToHtml::default());
     printer.output.filter = PrintFilter::SubmitPage(ffqn.clone());
 
     print_interface_with_imported_types(
@@ -50,7 +50,7 @@ pub fn print_interface_with_single_fn(
 }
 
 fn print_interface_with_imported_types(
-    printer: &mut WitPrinter<OutputToHtml>,
+    printer: &mut WitPrinterExt<OutputToHtml>,
     resolve: &Resolve,
     ifc_fqn: &IfcFqn,
     additional_ifc_fqn: &mut HashSet<IfcFqn>,
