@@ -233,6 +233,10 @@ impl Output for OutputToHtml {
                 self.current_version = None;
                 self.current_interface = None;
             }
+            TypeKind::VersionDeclaration => {
+                self.current_version = Some(src.to_string());
+                self.current_interface = None;
+            }
             TypeKind::InterfaceDeclaration => {
                 self.current_interface = Some(src.to_string());
             }
@@ -259,7 +263,7 @@ impl Output for OutputToHtml {
             _ => "type",
         };
 
-        if let (Some(ns), Some(p), v, Some(ifc), TypeKind::FunctionFreestanding) = (
+        if let (Some(namespace), Some(package_name), version, Some(ifc), TypeKind::FunctionFreestanding) = (
             &self.current_namespace,
             &self.current_package_name,
             &self.current_version,
@@ -269,9 +273,9 @@ impl Output for OutputToHtml {
             let ffqn = FunctionFqn {
                 ifc_fqn: IfcFqn {
                     pkg_fqn: PkgFqn {
-                        namespace: ns.clone(),
-                        package_name: p.clone(),
-                        version: v.clone(),
+                        namespace: namespace.clone(),
+                        package_name: package_name.clone(),
+                        version: version.clone(),
                     },
                     ifc_name: ifc.clone(),
                 },

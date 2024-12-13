@@ -155,6 +155,7 @@ pub fn app(
                         <Link<Route> to={Route::ExecutionList }>
                             {"Execution List"}
                         </Link<Route>>
+                        {" "}
                         <Link<Route> to={Route::ComponentList }>
                             {"Component list"}
                         </Link<Route>>
