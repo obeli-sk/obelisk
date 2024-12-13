@@ -7,20 +7,14 @@ pub fn is_extension_interface(ifc: &IfcFqn) -> bool {
     ifc.pkg_fqn.is_extension()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum InterfaceFilter {
-    WithoutExtensions,
+    #[default]
     WithExtensions,
+    WithoutExtensions,
 }
 
 impl InterfaceFilter {
-    pub fn flip(&self) -> Self {
-        match self {
-            InterfaceFilter::WithoutExtensions => InterfaceFilter::WithExtensions,
-            InterfaceFilter::WithExtensions => InterfaceFilter::WithoutExtensions,
-        }
-    }
-
     pub fn is_with_extensions(&self) -> bool {
         matches!(self, InterfaceFilter::WithExtensions)
     }

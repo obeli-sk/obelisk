@@ -3,7 +3,7 @@ use crate::app::AppState;
 use crate::components::ffqn_with_links::FfqnWithLinks;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::function_detail::{map_interfaces_to_fn_details, InterfaceFilter};
-use crate::grpc::grpc_client::{self, ComponentId};
+use crate::grpc::grpc_client::{self, ComponentId, ComponentType};
 use crate::grpc::ifc_fqn::IfcFqn;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
@@ -182,7 +182,7 @@ impl ComponentTree {
             &root_id,
             config,
             "Workflows".into(),
-            Icon::GanttChart,
+            ComponentType::Workflow.as_icon(),
             workflows,
         );
         // Activities
@@ -191,7 +191,7 @@ impl ComponentTree {
             &root_id,
             config,
             "Activities".into(),
-            Icon::CodeBlock,
+            ComponentType::ActivityWasm.as_icon(),
             activities,
         );
         // Webhook endpoints
@@ -201,7 +201,7 @@ impl ComponentTree {
                 &root_id,
                 config,
                 "Webhook Endpoints".into(),
-                Icon::GlobeNetwork,
+                ComponentType::WebhookWasm.as_icon(),
                 webhooks,
             );
         }
@@ -220,7 +220,7 @@ impl Component for ComponentTree {
             .link()
             .context::<AppState>(Callback::noop())
             .expect("AppState context must be set");
-        let tree = Self::construct_tree(&app_state.components, config);
+        let tree = Self::construct_tree(&app_state.components_by_id, config);
 
         Self {
             tree,
@@ -259,7 +259,7 @@ impl Component for ComponentTree {
             .context::<AppState>(Callback::noop())
             .expect("AppState context must be set");
 
-        let tree = Self::construct_tree(&app_state.components, config);
+        let tree = Self::construct_tree(&app_state.components_by_id, config);
         self.tree = tree;
         true
     }
@@ -283,6 +283,6 @@ fn filter_component_list_by_type(
 ) -> impl Iterator<Item = (&grpc_client::ComponentId, Rc<grpc_client::Component>)> {
     components
         .iter()
-        .filter(move |(_idx, component)| component.r#type == r#type as i32)
+        .filter(move |(_idx, component)| component.as_type() == r#type)
         .map(|(id, component)| (id, component.clone()))
 }

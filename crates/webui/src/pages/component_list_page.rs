@@ -9,7 +9,7 @@ use crate::{
     grpc::{
         ffqn::FunctionFqn,
         function_detail::{map_interfaces_to_fn_details, InterfaceFilter},
-        grpc_client::{self, ComponentId, ComponentType, FunctionDetail},
+        grpc_client::{self, ComponentId, FunctionDetail},
         ifc_fqn::IfcFqn,
     },
     util::wit_highlighter,
@@ -18,7 +18,8 @@ use hashbrown::HashSet;
 use log::warn;
 use std::ops::Deref;
 use yew::prelude::*;
-use yew_router::hooks::use_navigator;
+use yew_router::{hooks::use_navigator, prelude::Link};
+use yewprint::Icon;
 
 #[derive(Properties, PartialEq)]
 pub struct ComponentListPageProps {
@@ -32,14 +33,15 @@ pub fn component_list_page(
 ) -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
-    let components = app_state.components;
+    let components_by_id = app_state.components_by_id;
+    let components_by_exported_ifc = app_state.comopnents_by_exported_ifc;
 
     let wit_state = use_state(|| None);
     // Fetch GetWit
     use_effect_with(maybe_component_id.clone(), {
         if let Some(component_id) = maybe_component_id {
             let wit_state = wit_state.clone();
-            let render_ffqn_with_links = components
+            let render_ffqn_with_links = components_by_id
                 .get(component_id)
                 .expect("selected component must be found")
                 .exports
@@ -88,9 +90,8 @@ pub fn component_list_page(
     });
 
     let component_detail = maybe_component_id.as_ref()
-        .and_then(|id| components.get(id))
+        .and_then(|id| components_by_id.get(id))
         .map(|component| {
-            let component_type = ComponentType::try_from(component.r#type).unwrap();
             let exports =
                 map_interfaces_to_fn_details(&component.exports, InterfaceFilter::WithExtensions);
 
@@ -140,11 +141,26 @@ pub fn component_list_page(
             let imports =
                 map_interfaces_to_fn_details(&component.imports, InterfaceFilter::WithExtensions);
             let imports: Vec<_> = imports.keys().map(|ifc| html!{ <>
-                <h4>{ifc.to_string()}</h4>
+                <h4>{ifc.to_string()}
+                if let Some(found) = components_by_exported_ifc.get(ifc) {
+                    {" "}
+                    <Link<Route> to={Route::Component { component_id: found.component_id.clone().expect("`component_id` is sent") } }>
+                        <Icon icon = { found.as_type().as_icon() }/>
+                        {" "}
+                        {&found.name}
+                    </Link<Route>>
+                }
+                </h4>
             </>}).collect();
 
             html! { <>
-                <h2>{&component.name}<span class="label">{component_type}</span></h2>
+                <h2>
+                    {&component.name}
+                    <span class="label">
+                        <Icon icon = { component.as_type().as_icon() }/>
+                        {component.as_type().to_html()}
+                    </span>
+                </h2>
                 <h3>{"Exported interfaces"}</h3>
                 {submittable_ifcs_fns}
                 <h3>{"Imported interfaces"}</h3>

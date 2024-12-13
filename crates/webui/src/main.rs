@@ -1,8 +1,13 @@
+use hashbrown::HashMap;
 use log::debug;
 use std::rc::Rc;
 use webui::{
     app::{App, AppProps},
-    grpc::grpc_client,
+    grpc::{
+        function_detail::{map_interfaces_to_fn_details, InterfaceFilter},
+        grpc_client,
+        ifc_fqn::IfcFqn,
+    },
 };
 
 fn main() {
@@ -23,20 +28,35 @@ fn main() {
             .into_inner();
         debug!("Got gRPC ListComponentsResponse");
         response.components.sort_by(|a, b| a.name.cmp(&b.name));
-        yew::Renderer::<App>::with_props(AppProps {
-            components: response
-                .components
-                .into_iter()
+        let components_by_id: HashMap<_, _> = response
+            .components
+            .into_iter()
+            .map(|component| {
+                (
+                    component
+                        .component_id
+                        .clone()
+                        .expect("`component_id` is sent"),
+                    Rc::new(component),
+                )
+            })
+            .collect();
+
+        let comopnents_by_exported_ifc: HashMap<IfcFqn, Rc<grpc_client::Component>> =
+            components_by_id
+                .values()
                 .map(|component| {
-                    (
-                        component
-                            .component_id
-                            .clone()
-                            .expect("`component_id` is sent"),
-                        Rc::new(component),
-                    )
+                    map_interfaces_to_fn_details(&component.exports, InterfaceFilter::default())
+                        .keys()
+                        .map(|ifc| (ifc.clone(), component.clone()))
+                        .collect::<Vec<_>>()
                 })
-                .collect(),
+                .flatten()
+                .collect();
+
+        yew::Renderer::<App>::with_props(AppProps {
+            components_by_id,
+            comopnents_by_exported_ifc,
         })
         .render();
     });

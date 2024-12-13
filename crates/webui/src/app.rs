@@ -2,6 +2,7 @@ use crate::{
     grpc::{
         ffqn::FunctionFqn,
         grpc_client::{self, ComponentId, ExecutionId},
+        ifc_fqn::IfcFqn,
     },
     pages::{
         component_list_page::ComponentListPage,
@@ -19,7 +20,8 @@ use yew_router::prelude::*;
 
 #[derive(Clone, PartialEq)]
 pub struct AppState {
-    pub components: HashMap<ComponentId, Rc<grpc_client::Component>>,
+    pub components_by_id: HashMap<ComponentId, Rc<grpc_client::Component>>,
+    pub comopnents_by_exported_ifc: HashMap<IfcFqn, Rc<grpc_client::Component>>,
     pub submittable_ffqns_to_details:
         hashbrown::HashMap<FunctionFqn, (grpc_client::FunctionDetail, grpc_client::ComponentId)>,
 }
@@ -116,13 +118,19 @@ impl Route {
 
 #[derive(PartialEq, Properties)]
 pub struct AppProps {
-    pub components: HashMap<ComponentId, Rc<grpc_client::Component>>,
+    pub components_by_id: HashMap<ComponentId, Rc<grpc_client::Component>>,
+    pub comopnents_by_exported_ifc: HashMap<IfcFqn, Rc<grpc_client::Component>>,
 }
 
 #[function_component(App)]
-pub fn app(AppProps { components }: &AppProps) -> Html {
+pub fn app(
+    AppProps {
+        components_by_id,
+        comopnents_by_exported_ifc,
+    }: &AppProps,
+) -> Html {
     let mut submittable_ffqns_to_details = hashbrown::HashMap::new();
-    for (component_id, component) in components {
+    for (component_id, component) in components_by_id {
         for exported_fn_detail in component
             .exports
             .iter()
@@ -135,8 +143,9 @@ pub fn app(AppProps { components }: &AppProps) -> Html {
         }
     }
     let app_state = use_state(|| AppState {
-        components: components.clone(),
+        components_by_id: components_by_id.clone(),
         submittable_ffqns_to_details,
+        comopnents_by_exported_ifc: comopnents_by_exported_ifc.clone(),
     });
     html! {
         <ContextProvider<AppState> context={app_state.deref().clone()}>

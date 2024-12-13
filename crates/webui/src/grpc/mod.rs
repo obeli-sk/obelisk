@@ -26,6 +26,13 @@ impl ResultValueExt for result_detail::Value {
     }
 }
 
+impl grpc_client::Component {
+    pub fn as_type(&self) -> ComponentType {
+        ComponentType::try_from(self.r#type)
+            .expect("generated ComponentType must contain all types")
+    }
+}
+
 impl yew::ToHtml for ComponentType {
     fn to_html(&self) -> yew::Html {
         match self {
@@ -34,5 +41,15 @@ impl yew::ToHtml for ComponentType {
             ComponentType::WebhookWasm => "Webhook",
         }
         .to_html()
+    }
+}
+
+impl ComponentType {
+    pub fn as_icon(&self) -> yewprint::Icon {
+        match self {
+            ComponentType::Workflow => yewprint::Icon::GanttChart,
+            ComponentType::ActivityWasm => yewprint::Icon::CodeBlock,
+            ComponentType::WebhookWasm => yewprint::Icon::GlobeNetwork,
+        }
     }
 }
