@@ -1,14 +1,18 @@
-use crate::grpc::{ffqn::FunctionFqn, ifc_fqn::IfcFqn, pkg_fqn::PkgFqn};
+use crate::{
+    components::ffqn_with_links::FfqnWithLinks,
+    grpc::{ffqn::FunctionFqn, ifc_fqn::IfcFqn, pkg_fqn::PkgFqn},
+};
 use anyhow::Context;
 use hashbrown::HashSet;
 use std::path::PathBuf;
 use wit_component::{Output, TypeKind, WitPrinter};
 use wit_parser::{Resolve, Type, TypeDefKind, TypeOwner, UnresolvedPackageGroup};
+use yew::{html, Html, ToHtml};
 
 pub fn print_all(
     wit: &str,
     render_ffqn_with_links: HashSet<FunctionFqn>,
-) -> Result<String, anyhow::Error> {
+) -> Result<Vec<Html>, anyhow::Error> {
     let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
     let mut resolve = Resolve::new();
     let main_id = resolve.push_group(group)?;
@@ -22,13 +26,13 @@ pub fn print_all(
     let mut printer = WitPrinter::<OutputToHtml>::new();
     printer.output.render_ffqn_with_links = render_ffqn_with_links;
     let output_to_html = printer.print_all(&resolve, main_id, &ids)?;
-    Ok(output_to_html.into())
+    Ok(output_to_html.output)
 }
 
 pub fn print_interface_with_single_fn(
     wit: &str,
     ffqn: &FunctionFqn,
-) -> Result<String, anyhow::Error> {
+) -> Result<Vec<Html>, anyhow::Error> {
     let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
     let mut resolve = Resolve::new();
     let _main_id = resolve.push_group(group)?;
@@ -42,7 +46,7 @@ pub fn print_interface_with_single_fn(
         &mut HashSet::new(),
         true,
     )?;
-    Ok(printer.output.into())
+    Ok(printer.output.output)
 }
 
 fn print_interface_with_imported_types(
@@ -150,7 +154,7 @@ enum PrintFilter {
 #[derive(Default)]
 pub struct OutputToHtml {
     indent: usize,
-    output: String,
+    output: Vec<Html>,
     // set to true after newline, then to false after first item is indented.
     needs_indent: bool,
     filter: PrintFilter,
@@ -165,25 +169,25 @@ pub struct OutputToHtml {
 impl OutputToHtml {
     fn push(&mut self, src: char) {
         if self.ignore_until_end_of_line == 0 {
-            self.output.push(src);
+            self.output.push(src.to_html());
         }
     }
 
     fn push_str(&mut self, src: &str) {
         assert!(!src.contains('\n'));
         if self.ignore_until_end_of_line == 0 {
-            self.output.push_str(src);
+            self.output.push(src.to_html());
         }
     }
 
-    fn push_escaped_str(&mut self, src: &str) {
+    fn push_html(&mut self, html: Html) {
         if self.ignore_until_end_of_line == 0 {
-            html_escape::encode_text_to_string(src, &mut self.output);
+            self.output.push(html);
         }
     }
 
     fn indent_if_needed(&mut self) {
-        if self.needs_indent {
+        if self.ignore_until_end_of_line == 0 && self.needs_indent {
             for _ in 0..self.indent {
                 // Indenting by two spaces.
                 self.push_str("  ");
@@ -192,18 +196,16 @@ impl OutputToHtml {
         }
     }
 
-    fn indent_and_print_escaped(&mut self, src: &str) {
+    fn indent_and_print(&mut self, src: &str) {
         self.indent_if_needed();
-        self.push_escaped_str(src);
+        self.push_str(src);
     }
 
-    fn indent_and_print_in_span(&mut self, src: &str, class: &str) {
+    fn indent_and_print_in_span(&mut self, src: &str, class: &'static str) {
         self.indent_if_needed();
-        self.push_str("<span class=\"");
-        self.push_str(class);
-        self.push_str("\">");
-        self.push_escaped_str(src);
-        self.push_str("</span>");
+        self.push_html(html! {
+            <span class={class}>{src}</span>
+        });
     }
 }
 
@@ -272,7 +274,12 @@ impl Output for OutputToHtml {
                 function_name: src.to_string(),
             };
             if self.render_ffqn_with_links.contains(&ffqn) {
-                self.indent_and_print_in_span(&format!("!!!{src}"), css_class);
+                self.indent_if_needed();
+                self.push_html(html! {<>
+                    <span class={"func"}>
+                        <FfqnWithLinks {ffqn} />
+                    </span>
+                </>});
                 return;
             }
         }
@@ -289,11 +296,11 @@ impl Output for OutputToHtml {
     }
 
     fn generic_args_start(&mut self) {
-        self.push_escaped_str("<");
+        self.push_str("<");
     }
 
     fn generic_args_end(&mut self) {
-        self.push_escaped_str(">");
+        self.push_str(">");
     }
 
     fn doc(&mut self, src: &str) {
@@ -302,14 +309,14 @@ impl Output for OutputToHtml {
         self.push_str("///");
         if !src.is_empty() {
             self.push(' ');
-            self.push_escaped_str(src);
+            self.push_str(src);
         }
         self.newline();
     }
 
     fn semicolon(&mut self) {
         assert!(
-            !self.needs_indent,
+            self.ignore_until_end_of_line > 0 || !self.needs_indent,
             "`semicolon` is never called after newline"
         );
         self.push(';');
@@ -318,7 +325,7 @@ impl Output for OutputToHtml {
 
     fn indent_start(&mut self) {
         assert!(
-            !self.needs_indent,
+            self.ignore_until_end_of_line > 0 || !self.needs_indent,
             "`indent_start` is never called after newline"
         );
         self.push_str(" {");
@@ -327,6 +334,7 @@ impl Output for OutputToHtml {
     }
 
     fn indent_end(&mut self) {
+        self.ignore_until_end_of_line = 0;
         // Note that a `saturating_sub` is used here to prevent a panic
         // here in the case of invalid code being generated in debug
         // mode. It's typically easier to debug those issues through
@@ -338,12 +346,6 @@ impl Output for OutputToHtml {
     }
 
     fn str(&mut self, src: &str) {
-        self.indent_and_print_escaped(src);
-    }
-}
-
-impl From<OutputToHtml> for String {
-    fn from(value: OutputToHtml) -> Self {
-        value.output
+        self.indent_and_print(src);
     }
 }
