@@ -99,7 +99,7 @@ use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 
 const EPOCH_MILLIS: u64 = 10;
-const WEBUI_OCI_REFERENCE: &str = "docker.io/getobelisk/webui:2024-11-28@sha256:2016b609dde45bd6702f5f0dbef8a50872e83d5a2164703f94bb4c27ab741378";
+const WEBUI_OCI_REFERENCE: &str = "docker.io/getobelisk/webui:2024-12-14@sha256:81b9bcfb1cce669bcb3eca1d02b1777bf463bd531531d9bdc2259e5dccdaf7cf";
 
 #[derive(Debug)]
 struct GrpcServer<DB: DbConnection, P: DbPool<DB>> {
