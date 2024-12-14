@@ -1080,7 +1080,7 @@ pub mod prefixed_ulid {
 pub enum ConfigIdType {
     ActivityWasm,
     Workflow,
-    WebhookWasm,
+    WebhookEndpoint,
 }
 
 #[derive(

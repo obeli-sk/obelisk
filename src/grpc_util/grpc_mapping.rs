@@ -167,7 +167,7 @@ impl From<ConfigIdType> for grpc::ComponentType {
         match value {
             ConfigIdType::ActivityWasm => grpc::ComponentType::ActivityWasm,
             ConfigIdType::Workflow => grpc::ComponentType::Workflow,
-            ConfigIdType::WebhookWasm => grpc::ComponentType::WebhookEndpoint,
+            ConfigIdType::WebhookEndpoint => grpc::ComponentType::WebhookEndpoint,
         }
     }
 }

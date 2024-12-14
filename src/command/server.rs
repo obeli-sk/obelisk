@@ -1536,7 +1536,7 @@ impl ComponentConfigRegistry {
                 import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
                     || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/host-activities"
             }
-            ConfigIdType::WebhookWasm => {
+            ConfigIdType::WebhookEndpoint => {
                 // wasi + host activities + log
                 import.ffqn.ifc_fqn.namespace() == "wasi"
                     || import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
