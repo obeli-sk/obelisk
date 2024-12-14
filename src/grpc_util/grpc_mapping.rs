@@ -164,7 +164,11 @@ impl<T: Borrow<FunctionFqn>> From<T> for grpc::FunctionName {
 
 impl From<ConfigIdType> for grpc::ComponentType {
     fn from(value: ConfigIdType) -> Self {
-        grpc::ComponentType::from_str_name(&value.to_string().to_uppercase()).unwrap()
+        match value {
+            ConfigIdType::ActivityWasm => grpc::ComponentType::ActivityWasm,
+            ConfigIdType::Workflow => grpc::ComponentType::Workflow,
+            ConfigIdType::WebhookWasm => grpc::ComponentType::WebhookEndpoint,
+        }
     }
 }
 
