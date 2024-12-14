@@ -263,7 +263,13 @@ impl Output for OutputToHtml {
             _ => "type",
         };
 
-        if let (Some(namespace), Some(package_name), version, Some(ifc), TypeKind::FunctionFreestanding) = (
+        if let (
+            Some(namespace),
+            Some(package_name),
+            version,
+            Some(ifc),
+            TypeKind::FunctionFreestanding,
+        ) = (
             &self.current_namespace,
             &self.current_package_name,
             &self.current_version,
