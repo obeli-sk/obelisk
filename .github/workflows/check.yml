@@ -54,8 +54,8 @@ jobs:
               echo "$(git diff -- dev-deps.txt)"
               exit 1
           fi
-  clippy-nosim:
-    name: clippy - nosim
+  clippy:
+    name: clippy
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -71,7 +71,7 @@ jobs:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
       - name: Populate the nix store
         run: nix develop --command echo
-      - name: cargo clippy (nosim)
+      - name: cargo clippy
         run: nix develop --command cargo clippy --workspace --all-targets -- -D warnings
   clippy-madsim:
     name: clippy - madsim

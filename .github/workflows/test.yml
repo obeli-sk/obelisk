@@ -24,7 +24,7 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  ci-test-nosim:
+  ci-test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -55,7 +55,7 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
-          check_name: Test results - nosim
+          check_name: Test results
           files: |
             target/nextest/${{ github.job }}/junit.xml
 
