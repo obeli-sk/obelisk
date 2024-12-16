@@ -12,6 +12,7 @@ use crate::{
 use anyhow::Context;
 use hashbrown::{HashMap, HashSet};
 use id_arena::Arena;
+use log::warn;
 use std::{path::PathBuf, str::FromStr};
 use wit_component::{Output, TypeKind, WitPrinterExt};
 use wit_parser::{
@@ -32,22 +33,18 @@ fn find_interface<'a>(
     interfaces.get(ifc_id).map(|ifc| (ifc_id, ifc))
 }
 
-pub fn print_all(
-    wit: &str,
-    render_ffqn_with_links: HashSet<FunctionFqn>,
+fn get_exported_pkg_to_ifc_to_details_map(
     component: &grpc_client::Component,
-) -> Result<Vec<Html>, anyhow::Error> {
-    let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
-    let mut resolve = Resolve::new();
-    let main_id = resolve.push_group(group)?;
-
+) -> HashMap<PkgFqn, HashMap<IfcFqn, Vec<FunctionDetail>>> {
     let mut exported_pkg_to_ifc_to_details_map: HashMap<
         PkgFqn,
         HashMap<IfcFqn, Vec<FunctionDetail>>,
     > = HashMap::new();
+
     for (exported_ifc, fn_details) in
-        map_interfaces_to_fn_details(&component.exports, InterfaceFilter::default())
+        map_interfaces_to_fn_details(&component.exports, InterfaceFilter::WithoutExtensions)
     {
+        // InterfaceFilter does not matter as the WIT comes from the WASM component.
         if !exported_ifc.pkg_fqn.is_extension() {
             let ifc_to_details = exported_pkg_to_ifc_to_details_map
                 .entry(exported_ifc.pkg_fqn.clone())
@@ -55,16 +52,133 @@ pub fn print_all(
             ifc_to_details.insert(exported_ifc, fn_details);
         }
     }
+    exported_pkg_to_ifc_to_details_map
+}
+
+fn remove_nested_package(wit_string: &str, nested_package_to_remove: &str) -> String {
+    // Find the start of the namespace
+    let Some(nested_package_start) = wit_string.find(nested_package_to_remove) else {
+        return wit_string.to_string();
+    };
+
+    // Find the opening brace after the namespace
+    let Some(open_brace_index) = wit_string[nested_package_start..]
+        .find('{')
+        .map(|idx| nested_package_start + idx)
+    else {
+        panic!("nested namespace must contain '{{'");
+    };
+
+    // Track brace nesting to find the matching closing brace
+    let mut brace_count = 1;
+    let mut current_index = open_brace_index + 1;
+
+    while current_index < wit_string.len() && brace_count > 0 {
+        match wit_string.chars().nth(current_index) {
+            Some('{') => brace_count += 1,
+            Some('}') => brace_count -= 1,
+            _ => {}
+        }
+        current_index += 1;
+    }
+
+    // If we didn't find the matching brace, return the original string
+    if brace_count != 0 {
+        warn!("Cannot remove the nested package {nested_package_to_remove}");
+        return wit_string.to_string();
+    }
+
+    // Remove the namespace and its contents
+    format!(
+        "{}\n{}",
+        wit_string[..nested_package_start].trim(),
+        wit_string[current_index..].trim()
+    )
+}
+
+pub fn print_all(
+    wit: &str,
+    render_ffqn_with_links: HashSet<FunctionFqn>,
+    component: &grpc_client::Component,
+) -> Result<Vec<Html>, anyhow::Error> {
+    let obelisk_package = "
+        package obelisk:types {
+          interface time {
+            variant duration {
+              milliseconds(u64),
+              seconds(u64),
+              minutes(u32),
+              hours(u32),
+              days(u32),
+            }
+            record datetime {
+              seconds: u64,
+              nanoseconds: u32,
+            }
+            variant schedule-at {
+              now,
+              at(datetime),
+              in(duration),
+            }
+          }
+          interface execution {
+              resource join-set-id {
+              }
+              record execution-id {
+                  id: string,
+              }
+
+              record delay-id {
+                  id: string,
+              }
+
+              variant execution-error {
+                  permanent-failure(string),
+                  permanent-timeout,
+                  nondeterminism,
+              }
+          }
+        }
+        ";
+    let wit = remove_nested_package(wit, "package obelisk:types {");
+    let wit = format!("{wit}\n{obelisk_package}");
+
+    let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit)?;
+    let mut resolve = Resolve::new();
+    let main_id = resolve.push_group(group)?;
+    let exported_pkg_to_ifc_to_details_map = get_exported_pkg_to_ifc_to_details_map(component);
 
     // Find necessary handles
+    // Get obelisk:types
+    let obelisk_types_package_name = PackageName {
+        namespace: "obelisk".to_string(),
+        name: "types".to_string(),
+        version: None,
+    };
+    let obelisk_types_pkg_id =
+        if let Some(id) = resolve.package_names.get(&obelisk_types_package_name) {
+            *id
+        } else {
+            let pkg = wit_parser::Package {
+                name: obelisk_types_package_name,
+                docs: Default::default(),
+                interfaces: Default::default(),
+                worlds: Default::default(),
+            };
+            let package_name = pkg.name.clone();
+            let ext_pkg_id = resolve.packages.alloc(pkg);
+            resolve.package_names.insert(package_name, ext_pkg_id);
+            ext_pkg_id
+        };
+    // // Get obelisk:types/time
+    let time_ifc_id = *resolve.packages[obelisk_types_pkg_id]
+        .interfaces
+        .get("time")
+        .expect("`time` interface was added");
+    let time_ifc = &resolve.interfaces[time_ifc_id];
+
     let (execution_ifc_id, execution_ifc) = find_interface(
         IfcFqn::from_str("obelisk:types/execution").unwrap(),
-        &resolve,
-        &resolve.interfaces,
-    )
-    .expect("TODO");
-    let (time_ifc_id, time_ifc) = find_interface(
-        IfcFqn::from_str("obelisk:types/time").unwrap(),
         &resolve,
         &resolve.interfaces,
     )
@@ -183,8 +297,33 @@ pub fn print_all(
                     };
                     ext_ifc.functions.insert(fn_name, fn_ext);
                 }
-                // -await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, <return-type>>, tuple<execution-id, execution-error>>;
-
+                // -await-next: func(join-set-id: borrow<join-set-id>) ->
+                //  result<tuple<execution-id, <return-type>>, tuple<execution-id, execution-error>>;
+                {
+                    let fn_name = format!("{}-await-next", ffqn.function_name);
+                    let params = vec![(
+                        "join-set-id".to_string(),
+                        Type::Id(type_id_join_set_id_borrow_handle),
+                    )];
+                    let results = match &original_fn.results {
+                        // FIXME: Finish
+                        Results::Anon(id) => Results::Anon(*id),
+                        Results::Named(vec) if vec.is_empty() => Results::Named(vec![]),
+                        _ => {
+                            log::error!("named results are unsupported {ffqn} - {:?}", original_fn);
+                            continue;
+                        }
+                    };
+                    let fn_ext = Function {
+                        name: fn_name.clone(),
+                        kind: FunctionKind::Freestanding,
+                        params,
+                        results,
+                        docs: Default::default(),
+                        stability: Default::default(),
+                    };
+                    ext_ifc.functions.insert(fn_name, fn_ext);
+                }
                 // -schedule  -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
                 {
                     let fn_name = format!("{}-schedule", ffqn.function_name);
