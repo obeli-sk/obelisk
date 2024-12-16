@@ -12,7 +12,7 @@ use crate::{
 use anyhow::Context;
 use hashbrown::{HashMap, HashSet};
 use id_arena::Arena;
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 use wit_component::{Output, TypeKind, WitPrinterExt};
 use wit_parser::{
     Function, FunctionKind, Handle, Interface, InterfaceId, PackageName, Resolve, Results, Type,
@@ -56,6 +56,65 @@ pub fn print_all(
         }
     }
 
+    // Find necessary handles
+    let (execution_ifc_id, execution_ifc) = find_interface(
+        IfcFqn::from_str("obelisk:types/execution").unwrap(),
+        &resolve,
+        &resolve.interfaces,
+    )
+    .expect("TODO");
+    let (time_ifc_id, time_ifc) = find_interface(
+        IfcFqn::from_str("obelisk:types/time").unwrap(),
+        &resolve,
+        &resolve.interfaces,
+    )
+    .expect("TODO");
+    let type_id_execution_id = {
+        // obelisk:types/execution.{execution-id}
+        let actual_type_id = *execution_ifc.types.get("execution-id").expect("TODO4");
+        // Create a reference to the type.
+        resolve.types.alloc(TypeDef {
+            name: None,
+            kind: TypeDefKind::Type(Type::Id(actual_type_id)),
+            owner: TypeOwner::Interface(execution_ifc_id),
+            docs: Default::default(),
+            stability: Default::default(),
+        })
+    };
+    let (type_id_join_set_id, type_id_join_set_id_borrow_handle) = {
+        // obelisk:types/execution.{join-set-id}
+        let actual_type_id = *execution_ifc.types.get("join-set-id").expect("TODO4");
+        // Create a reference to the type.
+        let type_id_join_set_id = resolve.types.alloc(TypeDef {
+            name: Some("join-set-id".to_string()),
+            kind: TypeDefKind::Type(Type::Id(actual_type_id)),
+            owner: TypeOwner::Interface(execution_ifc_id),
+            docs: Default::default(),
+            stability: Default::default(),
+        });
+        // Create a Handle::Borrow to the reference.
+        let type_id_join_set_id_borrow_handle = resolve.types.alloc(TypeDef {
+            name: None,
+            kind: TypeDefKind::Handle(Handle::Borrow(type_id_join_set_id)),
+            owner: TypeOwner::Interface(execution_ifc_id),
+            docs: Default::default(),
+            stability: Default::default(),
+        });
+        (type_id_join_set_id, type_id_join_set_id_borrow_handle)
+    };
+    let type_id_schedule_at = {
+        // obelisk:types/time.{schedule-at}
+        let actual_type_id = *time_ifc.types.get("schedule-at").expect("TODO-schedule-at");
+        // Create a reference to the type.
+        resolve.types.alloc(TypeDef {
+            name: None,
+            kind: TypeDefKind::Type(Type::Id(actual_type_id)),
+            owner: TypeOwner::Interface(execution_ifc_id),
+            docs: Default::default(),
+            stability: Default::default(),
+        })
+    };
+
     for (pkg_fqn, ifc_to_details) in exported_pkg_to_ifc_to_details_map {
         let pkg_ext_fqn = PkgFqn {
             namespace: pkg_fqn.namespace.clone(),
@@ -63,6 +122,7 @@ pub fn print_all(
             version: pkg_fqn.version.clone(),
         };
 
+        // Get or create the -obelisk-ext variant of the exported package.
         let ext_pkg_id = match resolve
             .packages
             .iter()
@@ -83,56 +143,13 @@ pub fn print_all(
             }
         };
 
-        let (execution_ifc_id, execution_ifc) = {
-            let obelisk_types_execution_ifc = IfcFqn {
-                pkg_fqn: PkgFqn {
-                    namespace: "obelisk".to_string(),
-                    package_name: "types".to_string(),
-                    version: None,
-                },
-                ifc_name: "execution".to_string(),
-            };
-
-            find_interface(obelisk_types_execution_ifc, &resolve, &resolve.interfaces)
-                .expect("TODO: create2")
-        };
-        let type_id_execution_id = {
-            let actual_type_id = *execution_ifc.types.get("execution-id").expect("TODO4");
-            resolve.types.alloc(TypeDef {
-                name: None,
-                kind: TypeDefKind::Type(Type::Id(actual_type_id)),
-                owner: TypeOwner::Interface(execution_ifc_id),
-                docs: Default::default(),
-                stability: Default::default(),
-            })
-        };
-        let (type_id_join_set_id, type_id_join_set_id_borrow_handle) = {
-            let actual_type_id = *execution_ifc.types.get("join-set-id").expect("TODO4");
-            log::debug!("actual join set id = {actual_type_id:?}");
-            let type_id_join_set_id = resolve.types.alloc(TypeDef {
-                name: Some("join-set-id".to_string()),
-                kind: TypeDefKind::Type(Type::Id(actual_type_id)),
-                owner: TypeOwner::Interface(execution_ifc_id),
-                docs: Default::default(),
-                stability: Default::default(),
-            });
-            let type_id_join_set_id_borrow_handle = resolve.types.alloc(TypeDef {
-                name: None,
-                kind: TypeDefKind::Handle(Handle::Borrow(type_id_join_set_id)),
-                owner: TypeOwner::Interface(execution_ifc_id),
-                docs: Default::default(),
-                stability: Default::default(),
-            });
-
-            (type_id_join_set_id, type_id_join_set_id_borrow_handle)
-        };
-
         for (ifc_fqn, fn_details) in ifc_to_details {
             let (_, original_ifc) =
                 find_interface(ifc_fqn.clone(), &resolve, &resolve.interfaces).expect("TODO");
             let mut types = original_ifc.types.clone();
             types.insert("execution-id".to_string(), type_id_execution_id);
             types.insert("join-set-id".to_string(), type_id_join_set_id);
+            types.insert("schedule-at".to_string(), type_id_schedule_at);
 
             let mut ext_ifc = Interface {
                 name: Some(ifc_fqn.ifc_name.clone()),
@@ -143,41 +160,47 @@ pub fn print_all(
                 package: Some(ext_pkg_id),
             };
             for fn_detail in fn_details {
+                let ffqn = FunctionFqn::from_fn_detail(&fn_detail).expect("TODO");
                 let original_fn = original_ifc
                     .functions
-                    .get(
-                        &fn_detail
-                            .function_name
-                            .as_ref()
-                            .expect("`function_name` is sent")
-                            .function_name,
-                    )
+                    .get(&ffqn.function_name)
                     .expect("TODO");
                 // -submit: func(join-set-id: borrow<join-set-id>, <params>) -> execution-id;
-                let fn_name = format!(
-                    "{}-submit",
-                    fn_detail
-                        .function_name
-                        .expect("`function_name` is sent")
-                        .function_name
-                );
-                let mut params = vec![(
-                    "join-set-id".to_string(),
-                    Type::Id(type_id_join_set_id_borrow_handle),
-                )];
-                params.extend_from_slice(&original_fn.params);
-                let fn_ext = Function {
-                    name: fn_name.clone(),
-                    kind: FunctionKind::Freestanding,
-                    params,
-                    results: Results::Anon(Type::Id(type_id_execution_id)),
-                    docs: Default::default(),
-                    stability: Default::default(),
-                };
-                ext_ifc.functions.insert(fn_name, fn_ext);
-
+                {
+                    let fn_name = format!("{}-submit", ffqn.function_name);
+                    let mut params = vec![(
+                        "join-set-id".to_string(),
+                        Type::Id(type_id_join_set_id_borrow_handle),
+                    )];
+                    params.extend_from_slice(&original_fn.params);
+                    let fn_ext = Function {
+                        name: fn_name.clone(),
+                        kind: FunctionKind::Freestanding,
+                        params,
+                        results: Results::Anon(Type::Id(type_id_execution_id)),
+                        docs: Default::default(),
+                        stability: Default::default(),
+                    };
+                    ext_ifc.functions.insert(fn_name, fn_ext);
+                }
                 // -await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, <return-type>>, tuple<execution-id, execution-error>>;
+
                 // -schedule  -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
+                {
+                    let fn_name = format!("{}-schedule", ffqn.function_name);
+                    let mut params =
+                        vec![("schedule-at".to_string(), Type::Id(type_id_schedule_at))];
+                    params.extend_from_slice(&original_fn.params);
+                    let fn_ext = Function {
+                        name: fn_name.clone(),
+                        kind: FunctionKind::Freestanding,
+                        params,
+                        results: Results::Anon(Type::Id(type_id_execution_id)),
+                        docs: Default::default(),
+                        stability: Default::default(),
+                    };
+                    ext_ifc.functions.insert(fn_name, fn_ext);
+                }
             }
             let ext_ifc_id = resolve.interfaces.alloc(ext_ifc);
             resolve
