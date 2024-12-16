@@ -25,7 +25,6 @@ pub fn map_interfaces_to_fn_details(
     filter: InterfaceFilter,
 ) -> IndexMap<IfcFqn, Vec<FunctionDetail>> {
     let mut interfaces_to_fn_details: IndexMap<IfcFqn, Vec<FunctionDetail>> = IndexMap::new();
-    let mut extensions: IndexMap<IfcFqn, Vec<FunctionDetail>> = IndexMap::new();
     for function_detail in functions {
         let function_name = function_detail
             .function_name
@@ -41,8 +40,6 @@ pub fn map_interfaces_to_fn_details(
         }
     }
     interfaces_to_fn_details.sort_keys();
-    extensions.sort_keys();
-    interfaces_to_fn_details.append(&mut extensions);
     // sort functions in each interface
     for (_, fns) in interfaces_to_fn_details.iter_mut() {
         fns.sort_by(|a, b| {

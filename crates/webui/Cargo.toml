@@ -16,11 +16,13 @@ assert_matches.workspace = true
 chrono.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
+id-arena.workspace = true
 implicit-clone.workspace = true
 indexmap.workspace = true
 log.workspace = true
 prost-wkt-types.workspace = true
 prost.workspace = true
+semver.workspace = true
 serde_json.workspace = true
 tonic = { workspace = true, default-features = false, features = [
     "codegen",
@@ -33,9 +35,9 @@ wasm-logger.workspace = true
 web-sys.workspace = true
 wit-component.workspace = true
 wit-parser.workspace = true
-yew_icons.workspace = true
 yew-router.workspace = true
 yew.workspace = true
+yew_icons.workspace = true
 yewprint.workspace = true
 
 [build-dependencies]

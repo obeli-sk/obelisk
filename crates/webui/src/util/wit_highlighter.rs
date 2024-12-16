@@ -1,21 +1,194 @@
 use crate::{
     components::ffqn_with_links::FfqnWithLinks,
-    grpc::{ffqn::FunctionFqn, ifc_fqn::IfcFqn, pkg_fqn::PkgFqn},
+    grpc::{
+        ffqn::FunctionFqn,
+        function_detail::{map_interfaces_to_fn_details, InterfaceFilter},
+        grpc_client::{self, FunctionDetail},
+        ifc_fqn::IfcFqn,
+        pkg_fqn::PkgFqn,
+        SUFFIX_PKG_EXT,
+    },
 };
 use anyhow::Context;
-use hashbrown::HashSet;
+use hashbrown::{HashMap, HashSet};
+use id_arena::Arena;
 use std::path::PathBuf;
 use wit_component::{Output, TypeKind, WitPrinterExt};
-use wit_parser::{Resolve, Type, TypeDefKind, TypeOwner, UnresolvedPackageGroup};
+use wit_parser::{
+    Function, FunctionKind, Handle, Interface, InterfaceId, PackageName, Resolve, Results, Type,
+    TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup,
+};
 use yew::{html, Html, ToHtml};
+
+fn find_interface<'a>(
+    ifc_fqn: IfcFqn,
+    resolve: &'_ Resolve,
+    interfaces: &'a Arena<Interface>,
+) -> Option<(InterfaceId, &'a Interface)> {
+    let pkg_id = *resolve
+        .package_names
+        .get(&PackageName::try_from(ifc_fqn.pkg_fqn).ok()?)?;
+    let ifc_id = *resolve.packages[pkg_id].interfaces.get(&ifc_fqn.ifc_name)?;
+    interfaces.get(ifc_id).map(|ifc| (ifc_id, ifc))
+}
 
 pub fn print_all(
     wit: &str,
     render_ffqn_with_links: HashSet<FunctionFqn>,
+    component: &grpc_client::Component,
 ) -> Result<Vec<Html>, anyhow::Error> {
     let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
     let mut resolve = Resolve::new();
     let main_id = resolve.push_group(group)?;
+
+    let mut exported_pkg_to_ifc_to_details_map: HashMap<
+        PkgFqn,
+        HashMap<IfcFqn, Vec<FunctionDetail>>,
+    > = HashMap::new();
+    for (exported_ifc, fn_details) in
+        map_interfaces_to_fn_details(&component.exports, InterfaceFilter::default())
+    {
+        if !exported_ifc.pkg_fqn.is_extension() {
+            let ifc_to_details = exported_pkg_to_ifc_to_details_map
+                .entry(exported_ifc.pkg_fqn.clone())
+                .or_default();
+            ifc_to_details.insert(exported_ifc, fn_details);
+        }
+    }
+
+    for (pkg_fqn, ifc_to_details) in exported_pkg_to_ifc_to_details_map {
+        let pkg_ext_fqn = PkgFqn {
+            namespace: pkg_fqn.namespace.clone(),
+            package_name: format!("{}{SUFFIX_PKG_EXT}", pkg_fqn.package_name),
+            version: pkg_fqn.version.clone(),
+        };
+
+        let ext_pkg_id = match resolve
+            .packages
+            .iter()
+            .find(|(_, found_pkg)| PkgFqn::from(&found_pkg.name) == pkg_ext_fqn)
+        {
+            Some((pkg_ext_id, _)) => pkg_ext_id,
+            None => {
+                let pkg_ext = wit_parser::Package {
+                    name: pkg_ext_fqn.try_into()?,
+                    docs: Default::default(),
+                    interfaces: Default::default(),
+                    worlds: Default::default(),
+                };
+                let package_name = pkg_ext.name.clone();
+                let ext_pkg_id = resolve.packages.alloc(pkg_ext);
+                resolve.package_names.insert(package_name, ext_pkg_id);
+                ext_pkg_id
+            }
+        };
+
+        let (execution_ifc_id, execution_ifc) = {
+            let obelisk_types_execution_ifc = IfcFqn {
+                pkg_fqn: PkgFqn {
+                    namespace: "obelisk".to_string(),
+                    package_name: "types".to_string(),
+                    version: None,
+                },
+                ifc_name: "execution".to_string(),
+            };
+
+            find_interface(obelisk_types_execution_ifc, &resolve, &resolve.interfaces)
+                .expect("TODO: create2")
+        };
+        let type_id_execution_id = {
+            let actual_type_id = *execution_ifc.types.get("execution-id").expect("TODO4");
+            resolve.types.alloc(TypeDef {
+                name: None,
+                kind: TypeDefKind::Type(Type::Id(actual_type_id)),
+                owner: TypeOwner::Interface(execution_ifc_id),
+                docs: Default::default(),
+                stability: Default::default(),
+            })
+        };
+        let (type_id_join_set_id, type_id_join_set_id_borrow_handle) = {
+            let actual_type_id = *execution_ifc.types.get("join-set-id").expect("TODO4");
+            log::debug!("actual join set id = {actual_type_id:?}");
+            let type_id_join_set_id = resolve.types.alloc(TypeDef {
+                name: Some("join-set-id".to_string()),
+                kind: TypeDefKind::Type(Type::Id(actual_type_id)),
+                owner: TypeOwner::Interface(execution_ifc_id),
+                docs: Default::default(),
+                stability: Default::default(),
+            });
+            let type_id_join_set_id_borrow_handle = resolve.types.alloc(TypeDef {
+                name: None,
+                kind: TypeDefKind::Handle(Handle::Borrow(type_id_join_set_id)),
+                owner: TypeOwner::Interface(execution_ifc_id),
+                docs: Default::default(),
+                stability: Default::default(),
+            });
+
+            (type_id_join_set_id, type_id_join_set_id_borrow_handle)
+        };
+
+        for (ifc_fqn, fn_details) in ifc_to_details {
+            let (_, original_ifc) =
+                find_interface(ifc_fqn.clone(), &resolve, &resolve.interfaces).expect("TODO");
+            let mut types = original_ifc.types.clone();
+            types.insert("execution-id".to_string(), type_id_execution_id);
+            types.insert("join-set-id".to_string(), type_id_join_set_id);
+
+            let mut ext_ifc = Interface {
+                name: Some(ifc_fqn.ifc_name.clone()),
+                types,
+                functions: Default::default(),
+                docs: Default::default(),
+                stability: Default::default(),
+                package: Some(ext_pkg_id),
+            };
+            for fn_detail in fn_details {
+                let original_fn = original_ifc
+                    .functions
+                    .get(
+                        &fn_detail
+                            .function_name
+                            .as_ref()
+                            .expect("`function_name` is sent")
+                            .function_name,
+                    )
+                    .expect("TODO");
+                // -submit: func(join-set-id: borrow<join-set-id>, <params>) -> execution-id;
+                let fn_name = format!(
+                    "{}-submit",
+                    fn_detail
+                        .function_name
+                        .expect("`function_name` is sent")
+                        .function_name
+                );
+                let mut params = vec![(
+                    "join-set-id".to_string(),
+                    Type::Id(type_id_join_set_id_borrow_handle),
+                )];
+                params.extend_from_slice(&original_fn.params);
+                let fn_ext = Function {
+                    name: fn_name.clone(),
+                    kind: FunctionKind::Freestanding,
+                    params,
+                    results: Results::Anon(Type::Id(type_id_execution_id)),
+                    docs: Default::default(),
+                    stability: Default::default(),
+                };
+                ext_ifc.functions.insert(fn_name, fn_ext);
+
+                // -await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, <return-type>>, tuple<execution-id, execution-error>>;
+                // -schedule  -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
+            }
+            let ext_ifc_id = resolve.interfaces.alloc(ext_ifc);
+            resolve
+                .packages
+                .get_mut(ext_pkg_id)
+                .expect("found or inserted already")
+                .interfaces
+                .insert(ifc_fqn.ifc_name, ext_ifc_id);
+        }
+    }
+
     let ids = resolve
         .packages
         .iter()

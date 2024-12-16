@@ -43,9 +43,11 @@ pub fn component_list_page(
     use_effect_with(maybe_component_id.clone(), {
         if let Some(component_id) = maybe_component_id {
             let wit_state = wit_state.clone();
-            let render_ffqn_with_links = components_by_id
+            let component = components_by_id
                 .get(component_id)
                 .expect("selected component must be found")
+                .clone();
+            let render_ffqn_with_links = component
                 .exports
                 .iter()
                 .filter_map(|fn_detail| {
@@ -77,9 +79,10 @@ pub fn component_list_page(
                             .into_inner()
                             .content;
 
-                        let wit = wit_highlighter::print_all(&wit, render_ffqn_with_links)
-                            .inspect_err(|err| warn!("Cannot render WIT - {err:?}"))
-                            .ok();
+                        let wit =
+                            wit_highlighter::print_all(&wit, render_ffqn_with_links, &component)
+                                .inspect_err(|err| warn!("Cannot render WIT - {err:?}"))
+                                .ok();
 
                         wit_state.set(wit);
                     });
