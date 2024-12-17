@@ -9,7 +9,7 @@ use crate::{
         SUFFIX_PKG_EXT,
     },
 };
-use anyhow::Context;
+use anyhow::{bail, Context};
 use hashbrown::{HashMap, HashSet};
 use id_arena::Arena;
 use log::warn;
@@ -88,7 +88,7 @@ fn remove_nested_package(wit_string: &str, nested_package_to_remove: &str) -> St
         return wit_string.to_string();
     }
 
-    // Remove the namespace and its contents
+    // Remove the package and its contents
     format!(
         "{}\n{}",
         wit_string[..nested_package_start].trim(),
@@ -178,14 +178,18 @@ pub fn print_all(
     let time_ifc = &resolve.interfaces[time_ifc_id];
 
     let (execution_ifc_id, execution_ifc) = find_interface(
-        IfcFqn::from_str("obelisk:types/execution").unwrap(),
+        IfcFqn::from_str("obelisk:types/execution")
+            .expect("`obelisk:types/execution` must be parseable"),
         &resolve,
         &resolve.interfaces,
     )
-    .expect("TODO");
+    .expect("`obelisk:types/execution` must be found");
     let type_id_execution_id = {
         // obelisk:types/execution.{execution-id}
-        let actual_type_id = *execution_ifc.types.get("execution-id").expect("TODO4");
+        let actual_type_id = *execution_ifc
+            .types
+            .get("execution-id")
+            .expect("`execution-id` must exist");
         // Create a reference to the type.
         resolve.types.alloc(TypeDef {
             name: None,
@@ -197,7 +201,10 @@ pub fn print_all(
     };
     let (type_id_join_set_id, type_id_join_set_id_borrow_handle) = {
         // obelisk:types/execution.{join-set-id}
-        let actual_type_id = *execution_ifc.types.get("join-set-id").expect("TODO4");
+        let actual_type_id = *execution_ifc
+            .types
+            .get("join-set-id")
+            .expect("`join-set-id` must exist");
         // Create a reference to the type.
         let type_id_join_set_id = resolve.types.alloc(TypeDef {
             name: Some("join-set-id".to_string()),
@@ -216,9 +223,38 @@ pub fn print_all(
         });
         (type_id_join_set_id, type_id_join_set_id_borrow_handle)
     };
+    let type_id_execution_error = {
+        // obelisk:types/execution.{execution-error}
+        let actual_type_id = *execution_ifc
+            .types
+            .get("execution-error")
+            .expect("`execution-error` must exist");
+        resolve.types.alloc(TypeDef {
+            name: None,
+            kind: TypeDefKind::Type(Type::Id(actual_type_id)),
+            owner: TypeOwner::Interface(execution_ifc_id),
+            docs: Default::default(),
+            stability: Default::default(),
+        })
+    };
+    let type_id_await_next_err_part = resolve.types.alloc(TypeDef {
+        name: None,
+        kind: TypeDefKind::Tuple(wit_parser::Tuple {
+            types: vec![
+                Type::Id(type_id_execution_id),
+                Type::Id(type_id_execution_error),
+            ],
+        }),
+        owner: TypeOwner::None,
+        docs: Default::default(),
+        stability: Default::default(),
+    });
     let type_id_schedule_at = {
         // obelisk:types/time.{schedule-at}
-        let actual_type_id = *time_ifc.types.get("schedule-at").expect("TODO-schedule-at");
+        let actual_type_id = *time_ifc
+            .types
+            .get("schedule-at")
+            .expect("`schedule-at` must exist");
         // Create a reference to the type.
         resolve.types.alloc(TypeDef {
             name: None,
@@ -299,6 +335,8 @@ pub fn print_all(
                 }
                 // -await-next: func(join-set-id: borrow<join-set-id>) ->
                 //  result<tuple<execution-id, <return-type>>, tuple<execution-id, execution-error>>;
+                // or if the function does not return anything:
+                //  result<execution-id, tuple<execution-id, execution-error>>;
                 {
                     let fn_name = format!("{}-await-next", ffqn.function_name);
                     let params = vec![(
@@ -306,12 +344,46 @@ pub fn print_all(
                         Type::Id(type_id_join_set_id_borrow_handle),
                     )];
                     let results = match &original_fn.results {
-                        // FIXME: Finish
-                        Results::Anon(id) => Results::Anon(*id),
-                        Results::Named(vec) if vec.is_empty() => Results::Named(vec![]),
+                        Results::Anon(actual_return_type_id) => {
+                            let type_id_await_next_ok_part_tuple = resolve.types.alloc(TypeDef {
+                                name: None,
+                                kind: TypeDefKind::Tuple(wit_parser::Tuple {
+                                    types: vec![
+                                        Type::Id(type_id_execution_id),
+                                        *actual_return_type_id,
+                                    ],
+                                }),
+                                owner: TypeOwner::None,
+                                docs: Default::default(),
+                                stability: Default::default(),
+                            });
+                            let type_id_result = resolve.types.alloc(TypeDef {
+                                name: None,
+                                kind: TypeDefKind::Result(wit_parser::Result_ {
+                                    ok: Some(Type::Id(type_id_await_next_ok_part_tuple)),
+                                    err: Some(Type::Id(type_id_await_next_err_part)),
+                                }),
+                                owner: TypeOwner::None,
+                                docs: Default::default(),
+                                stability: Default::default(),
+                            });
+                            Results::Anon(Type::Id(type_id_result))
+                        }
+                        Results::Named(vec) if vec.is_empty() => {
+                            let type_id_result = resolve.types.alloc(TypeDef {
+                                name: None,
+                                kind: TypeDefKind::Result(wit_parser::Result_ {
+                                    ok: Some(Type::Id(type_id_execution_id)),
+                                    err: Some(Type::Id(type_id_await_next_err_part)),
+                                }),
+                                owner: TypeOwner::None,
+                                docs: Default::default(),
+                                stability: Default::default(),
+                            });
+                            Results::Anon(Type::Id(type_id_result))
+                        }
                         _ => {
-                            log::error!("named results are unsupported {ffqn} - {:?}", original_fn);
-                            continue;
+                            bail!("named results are unsupported {ffqn} - {:?}", original_fn)
                         }
                     };
                     let fn_ext = Function {
