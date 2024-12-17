@@ -2,7 +2,7 @@ use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::JoinSetId;
 use crate::prefixed_ulid::RunId;
-use crate::ConfigId;
+use crate::ComponentId;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
 use crate::FinishedExecutionResult;
@@ -219,7 +219,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     scheduled_at: DateTime::from_timestamp_nanos(0),
     retry_exp_backoff: Duration::ZERO,
     max_retries: 0,
-    config_id: ConfigId::dummy_activity(),
+    component_id: ComponentId::dummy_activity(),
     metadata: ExecutionMetadata::empty(),
     scheduled_by: None,
 };
@@ -262,8 +262,8 @@ pub enum ExecutionEventInner {
         scheduled_at: DateTime<Utc>,
         retry_exp_backoff: Duration,
         max_retries: u32,
-        #[arbitrary(value = ConfigId::dummy_activity())]
-        config_id: ConfigId,
+        #[arbitrary(value = ComponentId::dummy_activity())]
+        component_id: ComponentId,
         #[arbitrary(default)]
         metadata: ExecutionMetadata,
         scheduled_by: Option<ExecutionId>,
@@ -271,10 +271,10 @@ pub enum ExecutionEventInner {
     // Created by an executor.
     // Either immediately followed by an execution request by an executor or
     // after expiry immediately followed by WaitingForExecutor by a scheduler.
-    #[display("Locked(`{lock_expires_at}`, {config_id})")]
+    #[display("Locked(`{lock_expires_at}`, {component_id})")]
     Locked {
-        #[arbitrary(value = ConfigId::dummy_activity())]
-        config_id: ConfigId,
+        #[arbitrary(value = ComponentId::dummy_activity())]
+        component_id: ComponentId,
         executor_id: ExecutorId,
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
@@ -559,7 +559,7 @@ pub struct CreateRequest {
     pub scheduled_at: DateTime<Utc>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
-    pub config_id: ConfigId,
+    pub component_id: ComponentId,
     pub metadata: ExecutionMetadata,
     pub scheduled_by: Option<ExecutionId>,
 }
@@ -573,7 +573,7 @@ impl From<CreateRequest> for ExecutionEventInner {
             scheduled_at: value.scheduled_at,
             retry_exp_backoff: value.retry_exp_backoff,
             max_retries: value.max_retries,
-            config_id: value.config_id,
+            component_id: value.component_id,
             metadata: value.metadata,
             scheduled_by: value.scheduled_by,
         }
@@ -604,7 +604,7 @@ pub trait DbConnection: Send + Sync {
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
-        config_id: ConfigId,
+        component_id: ComponentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError>;
@@ -614,7 +614,7 @@ pub trait DbConnection: Send + Sync {
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
-        config_id: ConfigId,
+        component_id: ComponentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
@@ -697,7 +697,7 @@ pub trait DbConnection: Send + Sync {
             scheduled_at,
             retry_exp_backoff,
             max_retries,
-            config_id,
+            component_id,
             metadata,
             scheduled_by,
         } = execution_event.event
@@ -711,7 +711,7 @@ pub trait DbConnection: Send + Sync {
                 scheduled_at,
                 retry_exp_backoff,
                 max_retries,
-                config_id,
+                component_id,
                 metadata,
                 scheduled_by,
             })
@@ -1008,7 +1008,7 @@ impl PendingState {
                 run_id: current_pending_state_run_id,
                 ..
             } => {
-                if executor_id == *current_pending_state_executor_id // if the executor_id is same, config_id must be same as well
+                if executor_id == *current_pending_state_executor_id // if the executor_id is same, component_id must be same as well
                     && run_id == *current_pending_state_run_id
                 {
                     // Original executor is extending the lock.

@@ -3,9 +3,9 @@ pub(crate) mod toml;
 
 use crate::oci;
 use anyhow::Context;
+use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
-use concepts::ConfigId;
-use concepts::ConfigIdType;
+use concepts::ComponentType;
 use concepts::ContentDigest;
 use concepts::FunctionMetadata;
 use concepts::PackageIfcFns;
@@ -18,7 +18,7 @@ use utils::sha256sum::calculate_sha256_file;
 /// Holds information about components, used for gRPC services like `ListComponents`
 #[derive(Debug, Clone)]
 pub(crate) struct ComponentConfig {
-    pub(crate) config_id: ConfigId,
+    pub(crate) component_id: ComponentId,
     pub(crate) imports: Vec<FunctionMetadata>,
     pub(crate) importable: Option<ComponentConfigImportable>,
     pub(crate) content_digest: ContentDigest,
@@ -40,15 +40,14 @@ pub(crate) struct ConfigStoreCommon {
     pub(crate) content_digest: ContentDigest,
 }
 
-/// Create an identifier for given configuration.
-/// Uniqueness of the hash part may not
-pub(crate) fn config_id(
-    config_id_type: ConfigIdType,
+/// Create an identifier for given component configuration.
+pub(crate) fn component_id(
+    component_type: ComponentType,
     hash: u64,
     name: StrVariant,
-) -> Result<ConfigId, anyhow::Error> {
+) -> Result<ComponentId, anyhow::Error> {
     let hash = StrVariant::from(format!("{hash:x}"));
-    Ok(ConfigId::new(config_id_type, name, hash)?)
+    Ok(ComponentId::new(component_type, name, hash)?)
 }
 
 #[serde_as]

@@ -13,8 +13,8 @@ use concepts::storage::{
     JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
+use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
-use concepts::ConfigId;
 use concepts::ExecutionMetadata;
 use concepts::FinishedExecutionError;
 use concepts::FunctionMetadata;
@@ -649,15 +649,15 @@ impl<C: ClockFn> EventHistory<C> {
         &self,
         fn_registry: &dyn FunctionRegistry,
         ffqn: &FunctionFqn,
-    ) -> (FunctionMetadata, ConfigId, ComponentRetryConfig) {
-        let (fn_metadata, config_id, child_component_retry_config) = fn_registry
+    ) -> (FunctionMetadata, ComponentId, ComponentRetryConfig) {
+        let (fn_metadata, component_id, child_component_retry_config) = fn_registry
             .get_by_exported_function(ffqn)
             .await
             .unwrap_or_else(|| {
                 panic!("imported function must be found during verification: {ffqn}")
             });
         let resolved_retry_config = child_component_retry_config;
-        (fn_metadata, config_id, resolved_retry_config)
+        (fn_metadata, component_id, resolved_retry_config)
     }
 
     #[instrument(level = Level::DEBUG, skip_all, fields(%version))]
@@ -711,7 +711,7 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type: _,
                         extension,
                     },
-                    config_id,
+                    component_id,
                     resolved_retry_config,
                 ) = self.get_called_function_metadata(fn_registry, &ffqn).await;
                 assert!(extension.is_none());
@@ -725,7 +725,7 @@ impl<C: ClockFn> EventHistory<C> {
                     scheduled_at: called_at,
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
-                    config_id,
+                    component_id,
                     scheduled_by: None,
                 };
                 *version =
@@ -776,7 +776,7 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type: _,
                         extension,
                     },
-                    config_id,
+                    component_id,
                     resolved_retry_config,
                 ) = self.get_called_function_metadata(fn_registry, &ffqn).await;
                 assert!(extension.is_none());
@@ -790,7 +790,7 @@ impl<C: ClockFn> EventHistory<C> {
                     scheduled_at,
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
-                    config_id,
+                    component_id,
                     scheduled_by: Some(self.execution_id.clone()),
                 };
                 *version =
@@ -884,7 +884,7 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type: _,
                         extension,
                     },
-                    config_id,
+                    component_id,
                     resolved_retry_config,
                 ) = self.get_called_function_metadata(fn_registry, &ffqn).await;
                 assert!(extension.is_none());
@@ -898,7 +898,7 @@ impl<C: ClockFn> EventHistory<C> {
                     scheduled_at: called_at,
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
-                    config_id,
+                    component_id,
                     scheduled_by: None,
                 };
                 *version = db_connection
@@ -1167,7 +1167,8 @@ mod tests {
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::{
-        ConfigId, ExecutionId, FunctionFqn, FunctionRegistry, Params, SupportedFunctionReturnValue,
+        ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params,
+        SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use rstest::rstest;
@@ -1235,7 +1236,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -1404,7 +1405,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -1593,7 +1594,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await

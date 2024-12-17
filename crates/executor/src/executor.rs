@@ -10,7 +10,7 @@ use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
     FinishedExecutionError,
 };
-use concepts::{ConfigId, FinishedExecutionResult, FunctionMetadata};
+use concepts::{ComponentId, FinishedExecutionResult, FunctionMetadata};
 use derivative::Derivative;
 use std::marker::PhantomData;
 use std::{
@@ -29,7 +29,7 @@ pub struct ExecConfig {
     pub lock_expiry: Duration,
     pub tick_sleep: Duration,
     pub batch_size: u32,
-    pub config_id: ConfigId,
+    pub component_id: ComponentId,
     pub task_limiter: Option<Arc<tokio::sync::Semaphore>>,
 }
 
@@ -65,12 +65,12 @@ impl ExecutionProgress {
 pub struct ExecutorTaskHandle {
     is_closing: Arc<AtomicBool>,
     abort_handle: AbortHandle,
-    config_id: ConfigId,
+    component_id: ComponentId,
     executor_id: ExecutorId,
 }
 
 impl ExecutorTaskHandle {
-    #[instrument(level = Level::DEBUG, name = "executor.close", skip_all, fields(executor_id= %self.executor_id, config_id=%self.config_id))]
+    #[instrument(level = Level::DEBUG, name = "executor.close", skip_all, fields(executor_id= %self.executor_id, component_id=%self.component_id))]
     pub async fn close(&self) {
         trace!("Gracefully closing");
         self.is_closing.store(true, Ordering::Relaxed);
@@ -82,12 +82,12 @@ impl ExecutorTaskHandle {
 }
 
 impl Drop for ExecutorTaskHandle {
-    #[instrument(level = Level::DEBUG, name = "executor.drop", skip_all, fields(executor_id= %self.executor_id, config_id=%self.config_id))]
+    #[instrument(level = Level::DEBUG, name = "executor.drop", skip_all, fields(executor_id= %self.executor_id, component_id=%self.component_id))]
     fn drop(&mut self) {
         if self.abort_handle.is_finished() {
             return;
         }
-        warn!(executor_id= %self.executor_id, config_id=%self.config_id, "Aborting the executor task");
+        warn!(executor_id= %self.executor_id, component_id=%self.component_id, "Aborting the executor task");
         self.abort_handle.abort();
     }
 }
@@ -130,9 +130,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let ffqns = extract_ffqns(worker.as_ref());
-        let config_id = config.config_id.clone();
+        let component_id = config.component_id.clone();
         let abort_handle = tokio::spawn(async move {
-            debug!(%executor_id, config_id = %config.config_id, "Spawned executor");
+            debug!(%executor_id, component_id = %config.component_id, "Spawned executor");
             let task = Self {
                 worker,
                 config,
@@ -158,7 +158,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         ExecutorTaskHandle {
             is_closing,
             abort_handle,
-            config_id,
+            component_id,
             executor_id,
         }
     }
@@ -188,7 +188,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         self.tick(executed_at).await
     }
 
-    #[instrument(level = Level::TRACE, name = "executor.tick" skip_all, fields(executor_id = %self.executor_id, config_id = %self.config.config_id))]
+    #[instrument(level = Level::TRACE, name = "executor.tick" skip_all, fields(executor_id = %self.executor_id, component_id = %self.config.component_id))]
     async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
         let locked_executions = {
             let mut permits = self.acquire_task_permits();
@@ -203,13 +203,13 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     executed_at,   // fetch expiring before now
                     self.ffqns.clone(),
                     executed_at, // created at
-                    self.config.config_id.clone(),
+                    self.config.component_id.clone(),
                     self.executor_id,
                     lock_expires_at,
                 )
                 .await
                 .map_err(|err| {
-                    warn!(executor_id = %self.executor_id, config_id = %self.config.config_id, "lock_pending error {err:?}");
+                    warn!(executor_id = %self.executor_id, component_id = %self.config.component_id, "lock_pending error {err:?}");
                 })?;
             // Drop permits if too many were allocated.
             while permits.len() > locked_executions.len() {
@@ -229,7 +229,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 let clock_fn = self.clock_fn.clone();
                 let run_id = locked_execution.run_id;
                 let worker_span = info_span!(parent: None, "worker",
-                    %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.executor_id, config_id = %self.config.config_id);
+                    %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.executor_id, component_id = %self.config.component_id);
                 locked_execution.metadata.enrich(&worker_span);
                 tokio::spawn({
                     let worker_span2 = worker_span.clone();
@@ -646,7 +646,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             task_limiter: None,
         };
 
@@ -689,7 +689,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             task_limiter: None,
         };
 
@@ -772,7 +772,7 @@ mod tests {
                 scheduled_at: config.created_at,
                 retry_exp_backoff: config.retry_exp_backoff,
                 max_retries: config.max_retries,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -815,7 +815,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             task_limiter: None,
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
@@ -926,7 +926,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             task_limiter: None,
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
@@ -1001,7 +1001,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -1011,7 +1011,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
             },
             sim_clock.clone(),
@@ -1035,7 +1035,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             };
             let current_time = sim_clock.now();
@@ -1098,7 +1098,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
             },
             sim_clock.clone(),
@@ -1190,7 +1190,7 @@ mod tests {
             batch_size: 1,
             lock_expiry,
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             task_limiter: None,
         };
 
@@ -1219,7 +1219,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: timeout_duration,
                 max_retries: 1,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await

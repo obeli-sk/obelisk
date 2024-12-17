@@ -1,6 +1,6 @@
 use super::{ComponentLocation, ConfigStoreCommon};
 use anyhow::bail;
-use concepts::{ComponentRetryConfig, ConfigId, ConfigIdType, ContentDigest, StrVariant};
+use concepts::{ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, StrVariant};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use directories::ProjectDirs;
 use log::{LoggingConfig, LoggingStyle};
@@ -212,13 +212,13 @@ impl Default for ExecConfigToml {
 impl ExecConfigToml {
     pub(crate) fn into_exec_exec_config(
         self,
-        config_id: ConfigId,
+        component_id: ComponentId,
     ) -> executor::executor::ExecConfig {
         executor::executor::ExecConfig {
             lock_expiry: self.lock_expiry.into(),
             tick_sleep: self.tick_sleep.into(),
             batch_size: self.batch_size,
-            config_id,
+            component_id,
             task_limiter: self.max_inflight_instances.into(),
         }
     }
@@ -255,7 +255,7 @@ pub(crate) struct ActivityWasmConfigVerified {
 }
 
 impl ActivityWasmConfigToml {
-    #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
+    #[instrument(skip_all, fields(component_name = self.common.name, component_id))]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
@@ -268,17 +268,17 @@ impl ActivityWasmConfigToml {
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
         std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
-        let config_id = crate::config::config_id(
-            ConfigIdType::ActivityWasm,
+        let component_id = crate::config::component_id(
+            ComponentType::ActivityWasm,
             std::hash::Hasher::finish(&hasher),
             StrVariant::from(common.name.clone()),
         )?;
 
         let content_digest = common.content_digest.clone();
         let env_vars: Arc<[EnvVar]> = Arc::from(self.env_vars);
-        tracing::Span::current().record("config_id", tracing::field::display(&config_id));
+        tracing::Span::current().record("component_id", tracing::field::display(&component_id));
         let activity_config = ActivityConfig {
-            config_id: config_id.clone(),
+            component_id: component_id.clone(),
             forward_stdout: self.forward_stdout.into(),
             forward_stderr: self.forward_stderr.into(),
             env_vars,
@@ -288,7 +288,7 @@ impl ActivityWasmConfigToml {
             content_digest,
             wasm_path,
             activity_config,
-            exec_config: self.exec.into_exec_exec_config(config_id),
+            exec_config: self.exec.into_exec_exec_config(component_id),
             retry_config: ComponentRetryConfig {
                 max_retries: self.max_retries,
                 retry_exp_backoff: self.retry_exp_backoff.into(),
@@ -326,7 +326,7 @@ pub(crate) struct WorkflowConfigVerified {
 }
 
 impl WorkflowConfigToml {
-    #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
+    #[instrument(skip_all, fields(component_name = self.common.name, component_id))]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
@@ -355,15 +355,15 @@ impl WorkflowConfigToml {
         };
 
         std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
-        let config_id = crate::config::config_id(
-            ConfigIdType::Workflow,
+        let component_id = crate::config::component_id(
+            ComponentType::Workflow,
             std::hash::Hasher::finish(&hasher),
             StrVariant::from(common.name.clone()),
         )?;
         let content_digest = common.content_digest.clone();
-        tracing::Span::current().record("config_id", tracing::field::display(&config_id));
+        tracing::Span::current().record("component_id", tracing::field::display(&component_id));
         let workflow_config = WorkflowConfig {
-            config_id: config_id.clone(),
+            component_id: component_id.clone(),
             join_next_blocking_strategy: self.join_next_blocking_strategy,
             non_blocking_event_batching: self.non_blocking_event_batching,
             retry_on_trap: self.retry_on_trap,
@@ -372,7 +372,7 @@ impl WorkflowConfigToml {
             content_digest,
             wasm_path,
             workflow_config,
-            exec_config: self.exec.into_exec_exec_config(config_id),
+            exec_config: self.exec.into_exec_exec_config(component_id),
             retry_config: ComponentRetryConfig {
                 max_retries: u32::MAX,
                 retry_exp_backoff,
@@ -665,7 +665,7 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 pub(crate) mod webhook {
     use super::{ComponentCommon, InflightSemaphore, StdOutput};
     use anyhow::Context;
-    use concepts::{ConfigId, ConfigIdType, ContentDigest, StrVariant};
+    use concepts::{ComponentId, ComponentType, ContentDigest, StrVariant};
     use serde::Deserialize;
     use std::{
         net::SocketAddr,
@@ -701,7 +701,7 @@ pub(crate) mod webhook {
     }
 
     impl WebhookComponent {
-        #[instrument(skip_all, fields(component_name = self.common.name, config_id), err)]
+        #[instrument(skip_all, fields(component_name = self.common.name, component_id), err)]
         pub(crate) async fn fetch_and_verify(
             self,
             wasm_cache_dir: Arc<Path>,
@@ -714,17 +714,17 @@ pub(crate) mod webhook {
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
                 .await?;
             std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
-            let config_id = crate::config::config_id(
-                ConfigIdType::WebhookEndpoint,
+            let component_id = crate::config::component_id(
+                ComponentType::WebhookEndpoint,
                 std::hash::Hasher::finish(&hasher),
                 StrVariant::from(common.name.clone()),
             )?;
 
             let content_digest = common.content_digest.clone();
-            tracing::Span::current().record("config_id", tracing::field::display(&config_id));
+            tracing::Span::current().record("component_id", tracing::field::display(&component_id));
 
             Ok(WebhookComponentVerified {
-                config_id,
+                component_id,
                 wasm_path,
                 routes: self
                     .routes
@@ -764,7 +764,7 @@ pub(crate) mod webhook {
     #[derive(Debug)]
     pub(crate) struct WebhookComponentVerified {
         // TODO: WebhookComponentConfigVerified
-        pub(crate) config_id: ConfigId,
+        pub(crate) component_id: ComponentId,
         pub(crate) wasm_path: PathBuf,
         pub(crate) routes: Vec<WebhookRouteVerified>,
         pub(crate) forward_stdout: Option<wasm_workers::std_output_stream::StdOutput>,

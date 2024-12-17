@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::storage::{DbConnection, DbPool};
 use concepts::{
-    ConfigId, FunctionFqn, FunctionMetadata, PackageIfcFns, ResultParsingError, StrVariant,
+    ComponentId, FunctionFqn, FunctionMetadata, PackageIfcFns, ResultParsingError, StrVariant,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
@@ -39,7 +39,7 @@ pub enum JoinNextBlockingStrategy {
 
 #[derive(Clone, Debug)]
 pub struct WorkflowConfig {
-    pub config_id: ConfigId,
+    pub component_id: ComponentId,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub non_blocking_event_batching: u32,
     pub retry_on_trap: bool,
@@ -75,7 +75,7 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 }
 
 impl<C: ClockFn> WorkflowWorkerCompiled<C> {
-    #[tracing::instrument(skip_all, fields(%config.config_id))]
+    #[tracing::instrument(skip_all, fields(%config.component_id))]
     pub fn new_with_config(
         wasm_component: WasmComponent,
         config: WorkflowConfig,
@@ -90,7 +90,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
         }
     }
 
-    #[instrument(skip_all, fields(config_id = %self.config.config_id))]
+    #[instrument(skip_all, fields(component_id = %self.config.component_id))]
     pub fn link<DB: DbConnection, P: DbPool<DB>>(
         self,
         fn_registry: Arc<dyn FunctionRegistry>,
@@ -598,7 +598,7 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::ExecutorId,
         storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState},
-        ConfigIdType,
+        ComponentType,
     };
     use concepts::{ExecutionId, Params};
     use db_tests::Database;
@@ -626,17 +626,18 @@ pub(crate) mod tests {
     #[cfg(not(madsim))]
     const HTTP_GET_SUCCESSFUL_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
 
-    pub(crate) async fn compile_workflow(wasm_path: &str) -> (WasmComponent, ConfigId) {
+    pub(crate) async fn compile_workflow(wasm_path: &str) -> (WasmComponent, ComponentId) {
         let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
-        let config_id = ConfigId::new(
-            ConfigIdType::Workflow,
+        let component_id = ComponentId::new(
+            ComponentType::Workflow,
             wasm_file_name(wasm_path),
             StrVariant::Static("dummy hash"),
         )
         .unwrap();
         (
-            WasmComponent::new(wasm_path, &engine, Some(config_id.config_id_type.into())).unwrap(),
-            config_id,
+            WasmComponent::new(wasm_path, &engine, Some(component_id.component_type.into()))
+                .unwrap(),
+            component_id,
         )
     }
 
@@ -650,8 +651,8 @@ pub(crate) mod tests {
     ) -> ExecutorTaskHandle {
         let workflow_engine =
             Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
-        let config_id = ConfigId::new(
-            ConfigIdType::Workflow,
+        let component_id = ComponentId::new(
+            ComponentType::Workflow,
             wasm_file_name(wasm_path),
             StrVariant::Static("dummy hash"),
         )
@@ -661,11 +662,11 @@ pub(crate) mod tests {
                 WasmComponent::new(
                     wasm_path,
                     &workflow_engine,
-                    Some(config_id.config_id_type.into()),
+                    Some(component_id.component_type.into()),
                 )
                 .unwrap(),
                 WorkflowConfig {
-                    config_id: config_id.clone(),
+                    component_id: component_id.clone(),
                     join_next_blocking_strategy,
                     non_blocking_event_batching,
                     retry_on_trap: false,
@@ -682,7 +683,7 @@ pub(crate) mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
-            config_id,
+            component_id,
             task_limiter: None,
         };
         ExecTask::spawn_new(
@@ -793,7 +794,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
-                config_id: ConfigId::dummy_workflow(),
+                component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
             .await
@@ -867,11 +868,11 @@ pub(crate) mod tests {
                 WasmComponent::new(
                     wasm_path,
                     &workflow_engine,
-                    Some(ConfigIdType::Workflow.into()),
+                    Some(ComponentType::Workflow.into()),
                 )
                 .unwrap(),
                 WorkflowConfig {
-                    config_id: ConfigId::dummy_workflow(),
+                    component_id: ComponentId::dummy_workflow(),
                     join_next_blocking_strategy,
                     non_blocking_event_batching,
                     retry_on_trap: false,
@@ -908,7 +909,7 @@ pub(crate) mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             task_limiter: None,
         };
         ExecTask::spawn_new(
@@ -969,7 +970,7 @@ pub(crate) mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -1087,7 +1088,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -1192,7 +1193,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::from_millis(0),
                 max_retries: u32::MAX,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -1270,7 +1271,7 @@ pub(crate) mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -1281,7 +1282,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
             },
             sim_clock.clone(),
@@ -1313,7 +1314,7 @@ pub(crate) mod tests {
                 sim_clock.now(),
                 Arc::from([RESCHEDULE_FFQN]),
                 sim_clock.now(),
-                ConfigId::dummy_activity(),
+                ComponentId::dummy_activity(),
                 ExecutorId::generate(),
                 sim_clock.now() + Duration::from_secs(1),
             )
@@ -1394,7 +1395,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await

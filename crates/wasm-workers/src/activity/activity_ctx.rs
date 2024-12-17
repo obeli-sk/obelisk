@@ -45,8 +45,8 @@ pub fn store(
     if let Some(stdout) = config.forward_stdout {
         let stdout = LogStream::new(
             format!(
-                "[{config_id} {execution_id} stdout]",
-                config_id = config.config_id
+                "[{component_id} {execution_id} stdout]",
+                component_id = config.component_id
             ),
             stdout,
         );
@@ -55,8 +55,8 @@ pub fn store(
     if let Some(stderr) = config.forward_stderr {
         let stderr = LogStream::new(
             format!(
-                "[{config_id} {execution_id} stderr]",
-                config_id = config.config_id
+                "[{component_id} {execution_id} stderr]",
+                component_id = config.component_id
             ),
             stderr,
         );

@@ -89,21 +89,21 @@ pub(crate) mod tests {
 
     use async_trait::async_trait;
     use concepts::{
-        ComponentRetryConfig, ConfigId, FnName, FunctionExtension, FunctionFqn, FunctionMetadata,
-        FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterTypes, ReturnType,
+        ComponentId, ComponentRetryConfig, FnName, FunctionExtension, FunctionFqn,
+        FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterTypes, ReturnType,
     };
     use indexmap::IndexMap;
     use utils::wasm_tools::WasmComponent;
 
     pub(crate) struct TestingFnRegistry {
         ffqn_to_fn_details:
-            hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ConfigId, ComponentRetryConfig)>,
+            hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ComponentId, ComponentRetryConfig)>,
         export_hierarchy: Vec<PackageIfcFns>,
     }
 
     impl TestingFnRegistry {
         pub(crate) fn new_from_components(
-            wasm_components: Vec<(WasmComponent, ConfigId)>,
+            wasm_components: Vec<(WasmComponent, ComponentId)>,
         ) -> Arc<dyn FunctionRegistry> {
             let mut ffqn_to_fn_details = hashbrown::HashMap::new();
             #[expect(clippy::type_complexity)]
@@ -118,14 +118,14 @@ pub(crate) mod tests {
                     ),
                 >,
             > = hashbrown::HashMap::new();
-            for (wasm_component, config_id) in wasm_components {
+            for (wasm_component, component_id) in wasm_components {
                 for exported_function in wasm_component.exim.get_exports(true) {
                     let ffqn = exported_function.ffqn.clone();
                     ffqn_to_fn_details.insert(
                         ffqn.clone(),
                         (
                             exported_function.clone(),
-                            config_id.clone(),
+                            component_id.clone(),
                             ComponentRetryConfig {
                                 max_retries: 0,
                                 retry_exp_backoff: Duration::ZERO,
@@ -164,7 +164,7 @@ pub(crate) mod tests {
         async fn get_by_exported_function(
             &self,
             ffqn: &FunctionFqn,
-        ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)> {
+        ) -> Option<(FunctionMetadata, ComponentId, ComponentRetryConfig)> {
             self.ffqn_to_fn_details.get(ffqn).cloned()
         }
 
@@ -174,7 +174,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn fn_registry_dummy(ffqns: &[FunctionFqn]) -> Arc<dyn FunctionRegistry> {
-        let component_id = ConfigId::dummy_activity();
+        let component_id = ComponentId::dummy_activity();
         let mut ffqn_to_fn_details = hashbrown::HashMap::new();
         #[expect(clippy::type_complexity)]
         let mut export_hierarchy: hashbrown::HashMap<

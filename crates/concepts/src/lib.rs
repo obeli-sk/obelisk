@@ -1138,7 +1138,7 @@ pub mod prefixed_ulid {
     serde_with::DeserializeFromStr,
 )]
 #[strum(serialize_all = "snake_case")]
-pub enum ConfigIdType {
+pub enum ComponentType {
     ActivityWasm,
     Workflow,
     WebhookEndpoint,
@@ -1154,22 +1154,22 @@ pub enum ConfigIdType {
     serde_with::DeserializeFromStr,
     derive_more::Display,
 )]
-#[display("{config_id_type}:{name}:{hash}")]
+#[display("{component_type}:{name}:{hash}")]
 #[debug("{}", self)]
 #[non_exhaustive] // force using the constructor as much as possible due to validation
-pub struct ConfigId {
-    pub config_id_type: ConfigIdType,
+pub struct ComponentId {
+    pub component_type: ComponentType,
     pub name: StrVariant,
     pub hash: StrVariant,
 }
-impl ConfigId {
+impl ComponentId {
     pub fn new(
-        config_id_type: ConfigIdType,
+        component_type: ComponentType,
         name: StrVariant,
         hash: StrVariant,
     ) -> Result<Self, ConfigIdError> {
         Ok(Self {
-            config_id_type,
+            component_type,
             name: check_name(name)?,
             hash,
         })
@@ -1178,16 +1178,16 @@ impl ConfigId {
     #[must_use]
     pub const fn dummy_activity() -> Self {
         Self {
-            config_id_type: ConfigIdType::ActivityWasm,
+            component_type: ComponentType::ActivityWasm,
             name: StrVariant::empty(),
             hash: StrVariant::empty(),
         }
     }
 
     #[must_use]
-    pub const fn dummy_workflow() -> ConfigId {
-        ConfigId {
-            config_id_type: ConfigIdType::Workflow,
+    pub const fn dummy_workflow() -> ComponentId {
+        ComponentId {
+            component_type: ComponentType::Workflow,
             name: StrVariant::empty(),
             hash: StrVariant::empty(),
         }
@@ -1231,15 +1231,15 @@ pub enum ConfigIdParseError {
     ContentDigestParseErrror(#[from] DigestParseErrror),
 }
 
-impl FromStr for ConfigId {
+impl FromStr for ComponentId {
     type Err = ConfigIdParseError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let (config_id_type, input) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
+        let (component_type, input) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
         let (name, hash) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
-        let config_id_type = config_id_type.parse()?;
+        let component_type = component_type.parse()?;
         Ok(Self {
-            config_id_type,
+            component_type,
             name: StrVariant::from(name.to_string()),
             hash: StrVariant::from(hash.to_string()),
         })
@@ -1453,7 +1453,7 @@ pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)>;
+    ) -> Option<(FunctionMetadata, ComponentId, ComponentRetryConfig)>;
 
     fn all_exports(&self) -> &[PackageIfcFns];
 }

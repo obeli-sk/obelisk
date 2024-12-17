@@ -16,7 +16,7 @@ use concepts::storage::{
     ResponseWithCursor, SpecificError, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
-use concepts::{ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant};
+use concepts::{ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
 use std::collections::BTreeMap;
@@ -43,7 +43,7 @@ impl DbConnection for InMemoryDbConnection {
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
-        config_id: ConfigId,
+        component_id: ComponentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError> {
@@ -52,7 +52,7 @@ impl DbConnection for InMemoryDbConnection {
             pending_at_or_sooner,
             &ffqns,
             created_at,
-            &config_id,
+            &component_id,
             executor_id,
             lock_expires_at,
         ))
@@ -67,7 +67,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
-        config_id: ConfigId,
+        component_id: ComponentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
@@ -79,7 +79,7 @@ impl DbConnection for InMemoryDbConnection {
             .await
             .lock(
                 created_at,
-                config_id,
+                component_id,
                 execution_id,
                 run_id,
                 version,
@@ -506,7 +506,7 @@ impl DbHolder {
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: &[FunctionFqn],
         created_at: DateTime<Utc>,
-        config_id: &ConfigId,
+        component_id: &ComponentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> LockPendingResponse {
@@ -537,7 +537,7 @@ impl DbHolder {
             let (new_event_history, new_version) = self
                 .lock(
                     created_at,
-                    config_id.clone(),
+                    component_id.clone(),
                     &row.execution_id,
                     row.run_id,
                     row.version.clone(),
@@ -580,7 +580,7 @@ impl DbHolder {
     fn lock(
         &mut self,
         created_at: DateTime<Utc>,
-        config_id: ConfigId,
+        component_id: ComponentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
@@ -588,7 +588,7 @@ impl DbHolder {
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse, SpecificError> {
         let event = ExecutionEventInner::Locked {
-            config_id,
+            component_id,
             executor_id,
             lock_expires_at,
             run_id,

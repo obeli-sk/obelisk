@@ -7,7 +7,7 @@ use concepts::{
         HistoryEventScheduledAt, JoinSetRequest, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedError, PendingStateFinishedResultKind, SpecificError, VersionType,
     },
-    ConfigId, ConfigIdType, ExecutionId, FinishedExecutionError, FinishedExecutionResult,
+    ComponentId, ComponentType, ExecutionId, FinishedExecutionError, FinishedExecutionResult,
     FunctionFqn, SupportedFunctionReturnValue,
 };
 use std::borrow::Borrow;
@@ -45,15 +45,15 @@ impl From<RunId> for grpc::RunId {
     }
 }
 
-impl From<ConfigId> for grpc::ComponentId {
-    fn from(value: ConfigId) -> Self {
+impl From<ComponentId> for grpc::ComponentId {
+    fn from(value: ComponentId) -> Self {
         Self {
             id: value.to_string(),
         }
     }
 }
 
-impl TryFrom<grpc::ComponentId> for ConfigId {
+impl TryFrom<grpc::ComponentId> for ComponentId {
     type Error = tonic::Status;
 
     fn try_from(value: grpc::ComponentId) -> Result<Self, Self::Error> {
@@ -162,12 +162,12 @@ impl<T: Borrow<FunctionFqn>> From<T> for grpc::FunctionName {
     }
 }
 
-impl From<ConfigIdType> for grpc::ComponentType {
-    fn from(value: ConfigIdType) -> Self {
+impl From<ComponentType> for grpc::ComponentType {
+    fn from(value: ComponentType) -> Self {
         match value {
-            ConfigIdType::ActivityWasm => grpc::ComponentType::ActivityWasm,
-            ConfigIdType::Workflow => grpc::ComponentType::Workflow,
-            ConfigIdType::WebhookEndpoint => grpc::ComponentType::WebhookEndpoint,
+            ComponentType::ActivityWasm => grpc::ComponentType::ActivityWasm,
+            ComponentType::Workflow => grpc::ComponentType::Workflow,
+            ComponentType::WebhookEndpoint => grpc::ComponentType::WebhookEndpoint,
         }
     }
 }
@@ -376,7 +376,7 @@ pub(crate) fn from_execution_event_to_grpc(
                     scheduled_at,
                     retry_exp_backoff: _,
                     max_retries: _,
-                    config_id,
+                    component_id,
                     metadata: _,
                     scheduled_by,
                 } => grpc::execution_event::Event::Created(grpc::execution_event::Created {
@@ -386,16 +386,16 @@ pub(crate) fn from_execution_event_to_grpc(
                     ),
                     function_name: Some(grpc::FunctionName::from(ffqn)),
                     scheduled_at: Some(prost_wkt_types::Timestamp::from(scheduled_at)),
-                    component_id: Some(config_id.into()),
+                    component_id: Some(component_id.into()),
                     scheduled_by: scheduled_by.map(|id| grpc::ExecutionId { id: id.to_string() }),
                 }),
                 ExecutionEventInner::Locked {
-                    config_id,
+                    component_id,
                     executor_id: _,
                     run_id,
                     lock_expires_at,
                 } => grpc::execution_event::Event::Locked(grpc::execution_event::Locked {
-                    component_id: Some(config_id.into()),
+                    component_id: Some(component_id.into()),
                     run_id: run_id.to_string(),
                     lock_expires_at: Some(prost_wkt_types::Timestamp::from(lock_expires_at)),
                 }),

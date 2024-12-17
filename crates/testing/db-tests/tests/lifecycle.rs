@@ -8,7 +8,7 @@ use concepts::storage::{
 use concepts::storage::{DbPool, JoinSetResponseEvent};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
 use concepts::{storage::HistoryEvent, FinishedExecutionResult};
-use concepts::{ConfigId, Params, StrVariant};
+use concepts::{ComponentId, Params, StrVariant};
 use db_tests::Database;
 use db_tests::SOME_FFQN;
 use std::sync::Arc;
@@ -193,7 +193,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             sim_clock.now(),
             Arc::from([SOME_FFQN]),
             sim_clock.now(),
-            ConfigId::dummy_activity(),
+            ComponentId::dummy_activity(),
             exec1,
             sim_clock.now() + lock_expiry,
         )
@@ -203,7 +203,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
 
     let mut version;
     // Create
-    let config_id = ConfigId::dummy_activity();
+    let component_id = ComponentId::dummy_activity();
     db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
@@ -215,7 +215,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: config_id.clone(),
+            component_id: component_id.clone(),
             scheduled_by: None,
         })
         .await
@@ -233,7 +233,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -249,7 +249,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
                 created_at,
                 Arc::from([SOME_FFQN]),
                 created_at,
-                config_id.clone(),
+                component_id.clone(),
                 exec1,
                 created_at + lock_expiry,
             )
@@ -291,7 +291,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         let not_yet_pending = db_connection
             .lock(
                 created_at,
-                config_id.clone(),
+                component_id.clone(),
                 &execution_id,
                 RunId::generate(),
                 version.clone(),
@@ -318,7 +318,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         let (event_history, current_version) = db_connection
             .lock(
                 created_at,
-                config_id.clone(),
+                component_id.clone(),
                 &execution_id,
                 run_id,
                 version,
@@ -339,7 +339,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         assert!(db_connection
             .lock(
                 created_at,
-                config_id.clone(),
+                component_id.clone(),
                 &execution_id,
                 RunId::generate(),
                 version.clone(),
@@ -357,7 +357,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         let (event_history, current_version) = db_connection
             .lock(
                 created_at,
-                config_id.clone(),
+                component_id.clone(),
                 &execution_id,
                 run_id,
                 version,
@@ -378,7 +378,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         assert!(db_connection
             .lock(
                 created_at,
-                config_id.clone(),
+                component_id.clone(),
                 &execution_id,
                 RunId::generate(),
                 version.clone(),
@@ -421,7 +421,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         let (event_history, current_version) = db_connection
             .lock(
                 created_at,
-                config_id.clone(),
+                component_id.clone(),
                 &execution_id,
                 RunId::generate(),
                 version,
@@ -500,7 +500,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: RETRY_EXP_BACKOFF,
                 max_retries: MAX_RETRIES,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -515,7 +515,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
                 sim_clock.now(),
                 Arc::from([SOME_FFQN]),
                 sim_clock.now(),
-                ConfigId::dummy_activity(),
+                ComponentId::dummy_activity(),
                 exec1,
                 sim_clock.now() + lock_duration,
             )
@@ -572,7 +572,7 @@ pub async fn append_batch_respond_to_parent(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -614,7 +614,7 @@ pub async fn append_batch_respond_to_parent(
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -691,7 +691,7 @@ pub async fn append_batch_respond_to_parent(
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -795,7 +795,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -814,7 +814,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -833,7 +833,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -845,7 +845,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             sim_clock.now(),
             Arc::from([SOME_FFQN]),
             sim_clock.now(),
-            ConfigId::dummy_activity(),
+            ComponentId::dummy_activity(),
             ExecutorId::generate(),
             sim_clock.now() + Duration::from_secs(1),
         )
@@ -873,7 +873,7 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -902,7 +902,7 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
     let (_, _version) = db_connection
         .lock(
             locked_at,
-            ConfigId::dummy_activity(),
+            ComponentId::dummy_activity(),
             &execution_id,
             RunId::generate(),
             version,
@@ -928,7 +928,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -937,7 +937,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
     let (_, version) = db_connection
         .lock(
             sim_clock.now(),
-            ConfigId::dummy_activity(),
+            ComponentId::dummy_activity(),
             &execution_id,
             RunId::generate(),
             version,
@@ -987,7 +987,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy_activity(),
+            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -996,7 +996,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
     let (_, version) = db_connection
         .lock(
             sim_clock.now(),
-            ConfigId::dummy_activity(),
+            ComponentId::dummy_activity(),
             &execution_id,
             RunId::generate(),
             version,

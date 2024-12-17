@@ -3,7 +3,7 @@ use concepts::storage::DbPool;
 use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
 use concepts::storage::{AppendRequest, CreateRequest};
-use concepts::ConfigId;
+use concepts::ComponentId;
 use concepts::ExecutionId;
 use concepts::Params;
 use db_tests::Database;
@@ -30,7 +30,7 @@ async fn diff_proptest() {
         scheduled_at: Now.now(),
         retry_exp_backoff: Duration::ZERO,
         max_retries: 0,
-        config_id: ConfigId::dummy_activity(),
+        component_id: ComponentId::dummy_activity(),
         scheduled_by: None,
     };
     let mut append_requests = vec![];

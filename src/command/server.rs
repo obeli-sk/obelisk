@@ -37,9 +37,9 @@ use concepts::storage::ExecutionWithState;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
 use concepts::storage::VersionType;
+use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
-use concepts::ConfigId;
-use concepts::ConfigIdType;
+use concepts::ComponentType;
 use concepts::ContentDigest;
 use concepts::ExecutionId;
 use concepts::FinishedExecutionResult;
@@ -122,7 +122,7 @@ impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
 impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     grpc::execution_repository_server::ExecutionRepository for GrpcServer<DB, P>
 {
-    #[instrument(skip_all, fields(execution_id, ffqn, params, config_id))]
+    #[instrument(skip_all, fields(execution_id, ffqn, params, component_id))]
     async fn submit(
         &self,
         request: tonic::Request<grpc::SubmitRequest>,
@@ -155,7 +155,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         };
 
         // Check that ffqn exists
-        let Some((config_id, retry_config, fn_metadata)) = self
+        let Some((component_id, retry_config, fn_metadata)) = self
             .component_registry_ro
             .find_by_exported_ffqn_noext(&ffqn)
         else {
@@ -174,7 +174,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         }
         let db_connection = self.db_pool.connection();
         let created_at = Now.now();
-        span.record("config_id", tracing::field::display(config_id));
+        span.record("component_id", tracing::field::display(component_id));
         // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
         let metadata = concepts::ExecutionMetadata::from_parent_span(&span);
         db_connection
@@ -188,7 +188,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 scheduled_at: created_at,
                 retry_exp_backoff: retry_config.retry_exp_backoff,
                 max_retries: retry_config.max_retries,
-                config_id: config_id.clone(),
+                component_id: component_id.clone(),
                 scheduled_by: None,
             })
             .await
@@ -494,9 +494,9 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let mut res_components = Vec::with_capacity(components.len());
         for component in components {
             let res_component = grpc::Component {
-                name: component.config_id.name.to_string(),
-                r#type: grpc::ComponentType::from(component.config_id.config_id_type).into(),
-                component_id: Some(component.config_id.into()),
+                name: component.component_id.name.to_string(),
+                r#type: grpc::ComponentType::from(component.component_id.component_type).into(),
+                component_id: Some(component.component_id.into()),
                 digest: component.content_digest.to_string(),
                 exports: if let Some(exports) = component.importable {
                     list_fns(exports.exports_ext, true)
@@ -518,7 +518,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     ) -> TonicRespResult<grpc::GetWitResponse> {
         let request = request.into_inner();
         let component_id =
-            ConfigId::try_from(request.component_id.argument_must_exist("component_id")?)?;
+            ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
         let wit = self
             .component_registry_ro
             .get_wit(&component_id)
@@ -1219,11 +1219,11 @@ async fn compile_and_verify(
             #[cfg_attr(madsim, allow(deprecated))]
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
-                    let config_id = webhook.config_id;
+                    let component_id = webhook.component_id;
                     let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                         webhook.wasm_path,
                         &engines.webhook_engine,
-                        config_id.clone(),
+                        component_id.clone(),
                         webhook.forward_stdout,
                         webhook.forward_stderr,
                         Arc::from(webhook.env_vars),
@@ -1252,7 +1252,7 @@ async fn compile_and_verify(
                     },
                     Either::Right((webhook_name, (webhook_compiled, routes, content_digest))) => {
                         let component = ComponentConfig {
-                            config_id: webhook_compiled.config_id.clone(),
+                            component_id: webhook_compiled.component_id.clone(),
                             imports: webhook_compiled.imports().to_vec(),
                             content_digest, importable: None,
                             wit: webhook_compiled.wasm_component.wit()
@@ -1287,7 +1287,7 @@ async fn compile_and_verify(
 
 #[instrument(skip_all, fields(
     %executor_id,
-    config_id = %activity.exec_config.config_id,
+    component_id = %activity.exec_config.component_id,
     wasm_path = ?activity.wasm_path,
 ))]
 fn prespawn_activity(
@@ -1301,7 +1301,7 @@ fn prespawn_activity(
     let wasm_component = WasmComponent::new(
         activity.wasm_path,
         &engine,
-        Some(ConfigIdType::ActivityWasm.into()),
+        Some(ComponentType::ActivityWasm.into()),
     )?;
     let wit = wasm_component
         .wit()
@@ -1321,7 +1321,7 @@ fn prespawn_activity(
 
 #[instrument(skip_all, fields(
     %executor_id,
-    config_id = %workflow.exec_config.config_id,
+    component_id = %workflow.exec_config.component_id,
     wasm_path = ?workflow.wasm_path,
 ))]
 fn prespawn_workflow(
@@ -1335,7 +1335,7 @@ fn prespawn_workflow(
     let wasm_component = WasmComponent::new(
         &workflow.wasm_path,
         &engine,
-        Some(ConfigIdType::Workflow.into()),
+        Some(ComponentType::Workflow.into()),
     )
     .with_context(|| format!("Error decoding {:?}", workflow.wasm_path))?;
     let wit = wasm_component
@@ -1374,7 +1374,7 @@ impl WorkerCompiled {
         wit: Option<String>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
-            config_id: exec_config.config_id.clone(),
+            component_id: exec_config.component_id.clone(),
             content_digest,
             importable: Some(ComponentConfigImportable {
                 exports_ext: worker.exported_functions_ext().to_vec(),
@@ -1403,7 +1403,7 @@ impl WorkerCompiled {
         wit: Option<String>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
-            config_id: exec_config.config_id.clone(),
+            component_id: exec_config.component_id.clone(),
             content_digest,
             importable: Some(ComponentConfigImportable {
                 exports_ext: worker.exported_functions_ext().to_vec(),
@@ -1423,7 +1423,7 @@ impl WorkerCompiled {
         )
     }
 
-    #[instrument(skip_all, fields(config_id = %self.exec_config.config_id), err)]
+    #[instrument(skip_all, fields(component_id = %self.exec_config.component_id), err)]
     fn link(self, fn_registry: &Arc<dyn FunctionRegistry>) -> Result<WorkerLinked, anyhow::Error> {
         Ok(WorkerLinked {
             worker: match self.worker {
@@ -1463,9 +1463,9 @@ struct ComponentConfigRegistry {
 #[derive(Default, Debug)]
 struct ComponentConfigRegistryInner {
     exported_ffqns_ext:
-        hashbrown::HashMap<FunctionFqn, (ConfigId, FunctionMetadata, ComponentRetryConfig)>,
+        hashbrown::HashMap<FunctionFqn, (ComponentId, FunctionMetadata, ComponentRetryConfig)>,
     export_hierarchy: Vec<PackageIfcFns>,
-    ids_to_components: hashbrown::HashMap<ConfigId, ComponentConfig>,
+    ids_to_components: hashbrown::HashMap<ComponentId, ComponentConfig>,
 }
 
 impl ComponentConfigRegistry {
@@ -1474,15 +1474,15 @@ impl ComponentConfigRegistry {
         if self
             .inner
             .ids_to_components
-            .contains_key(&component.config_id)
+            .contains_key(&component.component_id)
         {
-            bail!("component {} is already inserted", component.config_id);
+            bail!("component {} is already inserted", component.component_id);
         }
         if let Some(importable) = &component.importable {
             for exported_ffqn in importable.exports_ext.iter().map(|f| &f.ffqn) {
                 if let Some((offending_id, _, _)) = self.inner.exported_ffqns_ext.get(exported_ffqn)
                 {
-                    bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
+                    bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.component_id);
                 }
             }
 
@@ -1491,7 +1491,7 @@ impl ComponentConfigRegistry {
                 let old = self.inner.exported_ffqns_ext.insert(
                     exported_fn_metadata.ffqn.clone(),
                     (
-                        component.config_id.clone(),
+                        component.component_id.clone(),
                         exported_fn_metadata.clone(),
                         importable.retry_config,
                     ),
@@ -1507,7 +1507,7 @@ impl ComponentConfigRegistry {
         let old = self
             .inner
             .ids_to_components
-            .insert(component.config_id.clone(), component);
+            .insert(component.component_id.clone(), component);
         assert!(old.is_none());
 
         Ok(())
@@ -1519,8 +1519,8 @@ impl ComponentConfigRegistry {
     /// are caught by wasmtime while pre-instantiation with a message containing the missing interface.
     fn verify_imports(self) -> Result<ComponentConfigRegistryRO, anyhow::Error> {
         let mut errors = Vec::new();
-        for (config_id, examined_component) in &self.inner.ids_to_components {
-            self.verify_imports_component(config_id, &examined_component.imports, &mut errors);
+        for (component_id, examined_component) in &self.inner.ids_to_components {
+            self.verify_imports_component(component_id, &examined_component.imports, &mut errors);
         }
         if errors.is_empty() {
             Ok(ComponentConfigRegistryRO {
@@ -1532,19 +1532,19 @@ impl ComponentConfigRegistry {
         }
     }
 
-    fn additional_import_whitelist(import: &FunctionMetadata, config_id: &ConfigId) -> bool {
-        match config_id.config_id_type {
-            ConfigIdType::ActivityWasm => {
+    fn additional_import_whitelist(import: &FunctionMetadata, component_id: &ComponentId) -> bool {
+        match component_id.component_type {
+            ComponentType::ActivityWasm => {
                 // wasi + log
                 import.ffqn.ifc_fqn.namespace() == "wasi"
                     || import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
             }
-            ConfigIdType::Workflow => {
+            ComponentType::Workflow => {
                 // host activities + log
                 import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
                     || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/host-activities"
             }
-            ConfigIdType::WebhookEndpoint => {
+            ComponentType::WebhookEndpoint => {
                 // wasi + host activities + log
                 import.ffqn.ifc_fqn.namespace() == "wasi"
                     || import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
@@ -1555,34 +1555,34 @@ impl ComponentConfigRegistry {
 
     fn verify_imports_component(
         &self,
-        config_id: &ConfigId,
+        component_id: &ComponentId,
         imports: &[FunctionMetadata],
         errors: &mut Vec<String>,
     ) {
         for imported_fn_metadata in imports {
-            if let Some((exported_config_id, exported_fn_metadata, _)) = self
+            if let Some((exported_component_id, exported_fn_metadata, _)) = self
                 .inner
                 .exported_ffqns_ext
                 .get(&imported_fn_metadata.ffqn)
             {
                 // check parameters
                 if imported_fn_metadata.parameter_types != exported_fn_metadata.parameter_types {
-                    error!("Parameter types do not match: {config_id} imports {import} , {exported_config_id} exports {export}",
+                    error!("Parameter types do not match: {component_id} imports {import} , {exported_component_id} exports {export}",
                         import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format
                         export = serde_json::to_string(exported_fn_metadata).unwrap(),
                     );
-                    errors.push(format!("parameter types do not match: {config_id} imports {imported_fn_metadata} , {exported_config_id} exports {exported_fn_metadata}"));
+                    errors.push(format!("parameter types do not match: {component_id} imports {imported_fn_metadata} , {exported_component_id} exports {exported_fn_metadata}"));
                 }
                 if imported_fn_metadata.return_type != exported_fn_metadata.return_type {
-                    error!("Return types do not match: {config_id} imports {import} , {exported_config_id} exports {export}",
+                    error!("Return types do not match: {component_id} imports {import} , {exported_component_id} exports {export}",
                         import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format
                         export = serde_json::to_string(exported_fn_metadata).unwrap(),
                     );
-                    errors.push(format!("return types do not match: {config_id} imports {imported_fn_metadata} , {exported_config_id} exports {exported_fn_metadata}"));
+                    errors.push(format!("return types do not match: {component_id} imports {imported_fn_metadata} , {exported_component_id} exports {exported_fn_metadata}"));
                 }
-            } else if !Self::additional_import_whitelist(imported_fn_metadata, config_id) {
+            } else if !Self::additional_import_whitelist(imported_fn_metadata, component_id) {
                 errors.push(format!(
-                    "function imported by {config_id} not found: {imported_fn_metadata}"
+                    "function imported by {component_id} not found: {imported_fn_metadata}"
                 ));
             }
         }
@@ -1595,7 +1595,7 @@ struct ComponentConfigRegistryRO {
 }
 
 impl ComponentConfigRegistryRO {
-    fn get_wit(&self, id: &ConfigId) -> Option<&str> {
+    fn get_wit(&self, id: &ComponentId) -> Option<&str> {
         self.inner
             .ids_to_components
             .get(id)
@@ -1605,16 +1605,15 @@ impl ComponentConfigRegistryRO {
     fn find_by_exported_ffqn_noext(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(&ConfigId, ComponentRetryConfig, &FunctionMetadata)> {
+    ) -> Option<(&ComponentId, ComponentRetryConfig, &FunctionMetadata)> {
         if ffqn.ifc_fqn.is_extension() {
             None
         } else {
-            self.inner
-                .exported_ffqns_ext
-                .get(ffqn)
-                .map(|(config_id, fn_metadata, retry_config)| {
-                    (config_id, *retry_config, fn_metadata)
-                })
+            self.inner.exported_ffqns_ext.get(ffqn).map(
+                |(component_id, fn_metadata, retry_config)| {
+                    (component_id, *retry_config, fn_metadata)
+                },
+            )
         }
     }
 
@@ -1641,7 +1640,7 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)> {
+    ) -> Option<(FunctionMetadata, ComponentId, ComponentRetryConfig)> {
         if ffqn.ifc_fqn.is_extension() {
             None
         } else {

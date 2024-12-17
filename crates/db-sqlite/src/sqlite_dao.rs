@@ -12,7 +12,7 @@ use concepts::{
         PendingStateFinishedResultKind, ResponseWithCursor, SpecificError, Version, VersionType,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_TEMPORARILY_FAILED, DUMMY_TEMPORARILY_TIMED_OUT,
     },
-    ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
+    ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
 };
 use derivative::Derivative;
 use hdrhistogram::{Counter, Histogram};
@@ -750,7 +750,7 @@ impl SqlitePool {
             scheduled_at,
             retry_exp_backoff,
             max_retries,
-            config_id,
+            component_id,
             metadata,
             scheduled_by,
         } = event
@@ -764,7 +764,7 @@ impl SqlitePool {
                 scheduled_at,
                 retry_exp_backoff,
                 max_retries,
-                config_id,
+                component_id,
                 metadata,
                 scheduled_by,
             })
@@ -1298,7 +1298,7 @@ impl SqlitePool {
     fn lock_inner(
         tx: &Transaction,
         created_at: DateTime<Utc>,
-        config_id: ConfigId,
+        component_id: ComponentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         appending_version: Version,
@@ -1318,7 +1318,7 @@ impl SqlitePool {
 
         // Append to `execution_log` table.
         let event = ExecutionEventInner::Locked {
-            config_id,
+            component_id,
             executor_id,
             lock_expires_at,
             run_id,
@@ -1474,7 +1474,7 @@ impl SqlitePool {
     ) -> Result<(AppendResponse, Option<PendingAt>), DbError> {
         assert!(!matches!(req.event, ExecutionEventInner::Created { .. }));
         if let ExecutionEventInner::Locked {
-            config_id,
+            component_id,
             executor_id,
             run_id,
             lock_expires_at,
@@ -1483,7 +1483,7 @@ impl SqlitePool {
             let locked = Self::lock_inner(
                 tx,
                 req.created_at,
-                config_id.clone(),
+                component_id.clone(),
                 execution_id,
                 *run_id,
                 appending_version,
@@ -2087,7 +2087,7 @@ impl DbConnection for SqlitePool {
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
-        config_id: ConfigId,
+        component_id: ComponentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError> {
@@ -2110,7 +2110,7 @@ impl DbConnection for SqlitePool {
                         match Self::lock_inner(
                             tx,
                             created_at,
-                            config_id.clone(),
+                            component_id.clone(),
                             &execution_id,
                             RunId::generate(),
                             version,
@@ -2136,7 +2136,7 @@ impl DbConnection for SqlitePool {
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
-        config_id: ConfigId,
+        component_id: ComponentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
@@ -2150,7 +2150,7 @@ impl DbConnection for SqlitePool {
                 let locked = Self::lock_inner(
                     tx,
                     created_at,
-                    config_id,
+                    component_id,
                     &execution_id,
                     run_id,
                     version,

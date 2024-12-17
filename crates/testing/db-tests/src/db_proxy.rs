@@ -11,7 +11,7 @@ use concepts::{
         LockPendingResponse, LockResponse, Pagination, PendingState, ResponseWithCursor, Version,
         VersionType,
     },
-    ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn,
+    ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn,
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -59,7 +59,7 @@ impl DbConnection for DbConnectionProxy {
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
-        config_id: ConfigId,
+        component_id: ComponentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError> {
@@ -69,7 +69,7 @@ impl DbConnection for DbConnectionProxy {
                 pending_at_or_sooner,
                 ffqns,
                 created_at,
-                config_id,
+                component_id,
                 executor_id,
                 lock_expires_at,
             )
@@ -83,7 +83,7 @@ impl DbConnection for DbConnectionProxy {
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
-        config_id: ConfigId,
+        component_id: ComponentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
@@ -93,7 +93,7 @@ impl DbConnection for DbConnectionProxy {
         self.0
             .lock(
                 created_at,
-                config_id,
+                component_id,
                 execution_id,
                 run_id,
                 version,

@@ -446,7 +446,7 @@ pub(crate) mod tests {
         },
         FinishedExecutionResult,
     };
-    use concepts::{ConfigId, FunctionRegistry};
+    use concepts::{ComponentId, FunctionRegistry};
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
@@ -660,7 +660,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
             };
             ExecTask::spawn_new(
@@ -684,7 +684,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -745,7 +745,7 @@ pub(crate) mod tests {
                             batch_size: 1,
                             lock_expiry: Duration::from_secs(1),
                             tick_sleep: TICK_SLEEP,
-                            config_id: ConfigId::dummy_activity(),
+                            component_id: ComponentId::dummy_activity(),
                             task_limiter: None,
                         };
                         let exec_task = ExecTask::new(

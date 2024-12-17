@@ -11,8 +11,8 @@ use concepts::storage::{
     HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
 };
 use concepts::{
-    ConfigId, ConfigIdType, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
-    FunctionMetadata, FunctionRegistry, IfcFqnName, Params, StrVariant,
+    ComponentId, ComponentType, ExecutionId, ExecutionMetadata, FinishedExecutionError,
+    FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, Params, StrVariant,
 };
 use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
@@ -43,7 +43,7 @@ const WASI_NAMESPACE_WITH_COLON: &str = "wasi:";
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HttpTriggerConfig {
-    pub config_id: ConfigId,
+    pub component_id: ComponentId,
 }
 type StdError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -54,7 +54,7 @@ pub enum WebhookServerError {
 }
 
 pub struct WebhookEndpointCompiled {
-    pub config_id: ConfigId,
+    pub component_id: ComponentId,
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
@@ -66,7 +66,7 @@ impl WebhookEndpointCompiled {
     pub fn new(
         wasm_path: impl AsRef<Path>,
         engine: &Engine,
-        config_id: ConfigId,
+        component_id: ComponentId,
         forward_stdout: Option<StdOutput>,
         forward_stderr: Option<StdOutput>,
         env_vars: Arc<[EnvVar]>,
@@ -74,10 +74,10 @@ impl WebhookEndpointCompiled {
         let wasm_component = WasmComponent::new(
             wasm_path,
             engine,
-            Some(ConfigIdType::WebhookEndpoint.into()),
+            Some(ComponentType::WebhookEndpoint.into()),
         )?;
         Ok(Self {
-            config_id,
+            component_id,
             forward_stdout,
             forward_stderr,
             env_vars,
@@ -90,7 +90,7 @@ impl WebhookEndpointCompiled {
         &self.wasm_component.exim.imports_flat
     }
 
-    #[instrument(skip_all, fields(config_id = %self.config_id), err)]
+    #[instrument(skip_all, fields(component_id = %self.component_id), err)]
     pub fn link<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
         self,
         engine: &Engine,
@@ -187,7 +187,7 @@ impl WebhookEndpointCompiled {
         })?);
 
         Ok(WebhookEndpointInstance {
-            config_id: self.config_id,
+            component_id: self.component_id,
             forward_stdout: self.forward_stdout,
             forward_stderr: self.forward_stderr,
             env_vars: self.env_vars,
@@ -203,7 +203,7 @@ impl WebhookEndpointCompiled {
 pub struct WebhookEndpointInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     #[derivative(Debug = "ignore")]
     proxy_pre: Arc<ProxyPre<WebhookEndpointCtx<C, DB, P>>>,
-    pub config_id: ConfigId,
+    pub component_id: ComponentId,
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
@@ -338,7 +338,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
 }
 
 struct WebhookEndpointCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
-    config_id: ConfigId,
+    component_id: ComponentId,
     clock_fn: C,
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
@@ -389,7 +389,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             scheduled_at: created_at,
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
-            config_id: self.config_id.clone(),
+            component_id: self.component_id.clone(),
             scheduled_by: None,
         };
         let conn = self.db_pool.connection();
@@ -456,7 +456,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let new_execution_id = ExecutionId::generate();
-                let Some((_function_metadata, config_id, import_retry_config)) =
+                let Some((_function_metadata, component_id, import_retry_config)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
                 else {
                     return Err(WebhookEndpointFunctionError::FunctionMetadataNotFound { ffqn });
@@ -483,7 +483,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                     scheduled_at,
                     max_retries: import_retry_config.max_retries,
                     retry_exp_backoff: import_retry_config.retry_exp_backoff,
-                    config_id,
+                    component_id,
                     scheduled_by: Some(self.execution_id.clone()),
                 };
                 let db_connection = self.db_pool.connection();
@@ -512,7 +512,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             span.record("version", tracing::field::display(&version));
             let child_execution_id = self.get_and_increment_child_id();
             let created_at = self.clock_fn.now();
-            let Some((_function_metadata, config_id, import_retry_config)) =
+            let Some((_function_metadata, component_id, import_retry_config)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
             else {
                 return Err(WebhookEndpointFunctionError::FunctionMetadataNotFound { ffqn });
@@ -539,7 +539,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 scheduled_at: created_at,
                 max_retries: import_retry_config.max_retries,
                 retry_exp_backoff: import_retry_config.retry_exp_backoff,
-                config_id,
+                component_id,
                 scheduled_by: None,
             };
             let db_connection = self.db_pool.connection();
@@ -594,7 +594,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
     #[must_use]
     #[expect(clippy::too_many_arguments)]
     fn new<'a>(
-        config_id: ConfigId,
+        component_id: ComponentId,
         engine: &Engine,
         clock_fn: C,
         db_pool: P,
@@ -608,11 +608,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
     ) -> Store<WebhookEndpointCtx<C, DB, P>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
         if let Some(stdout) = forward_stdout {
-            let stdout = LogStream::new(format!("[{config_id} {execution_id} stdout]"), stdout);
+            let stdout = LogStream::new(format!("[{component_id} {execution_id} stdout]"), stdout);
             wasi_ctx.stdout(stdout);
         }
         if let Some(stderr) = forward_stderr {
-            let stderr = LogStream::new(format!("[{config_id} {execution_id} stderr]"), stderr);
+            let stderr = LogStream::new(format!("[{component_id} {execution_id} stderr]"), stderr);
             wasi_ctx.stderr(stderr);
         }
         for env_var in env_vars {
@@ -630,7 +630,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             wasi_ctx,
             http_ctx: WasiHttpCtx::new(),
             version: None,
-            config_id,
+            component_id,
             next_child_execution_id: execution_id.next_level(),
             execution_id,
             component_logger: ComponentLogger { span: request_span },
@@ -759,7 +759,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             let found_instance = matched.handler();
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let mut store = WebhookEndpointCtx::new(
-                found_instance.config_id.clone(),
+                found_instance.component_id.clone(),
                 &self.engine,
                 self.clock_fn,
                 self.db_pool,
@@ -871,7 +871,7 @@ pub(crate) mod tests {
             storage::{DbConnection, DbPool},
             ExecutionId,
         };
-        use concepts::{ConfigId, ConfigIdType, SupportedFunctionReturnValue};
+        use concepts::{ComponentId, ComponentType, SupportedFunctionReturnValue};
         use db_tests::{Database, DbGuard, DbPoolEnum};
         use executor::executor::ExecutorTaskHandle;
         use std::net::SocketAddr;
@@ -897,7 +897,7 @@ pub(crate) mod tests {
             WasmComponent::new(
                 wasm_path,
                 &engine,
-                Some(ConfigIdType::WebhookEndpoint.into()),
+                Some(ComponentType::WebhookEndpoint.into()),
             )
             .unwrap()
         }
@@ -944,7 +944,7 @@ pub(crate) mod tests {
                     let instance = WebhookEndpointCompiled::new(
                         test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
                         &engine,
-                        ConfigId::dummy_activity(),
+                        ComponentId::dummy_activity(),
                         None,
                         None,
                         Arc::from([]),

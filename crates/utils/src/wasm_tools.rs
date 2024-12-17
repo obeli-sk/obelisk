@@ -1,7 +1,7 @@
 use crate::sha256sum::calculate_sha256_file;
 use anyhow::Context;
 use concepts::{
-    ConfigIdType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
+    ComponentType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
     PackageIfcFns, ParameterType, ParameterTypes, ReturnType, StrVariant, SUFFIX_PKG_EXT,
 };
 use indexmap::{indexmap, IndexMap};
@@ -28,11 +28,13 @@ pub enum ComponentExportsType {
     Plain,
 }
 
-impl From<ConfigIdType> for ComponentExportsType {
-    fn from(value: ConfigIdType) -> Self {
+impl From<ComponentType> for ComponentExportsType {
+    fn from(value: ComponentType) -> Self {
         match value {
-            ConfigIdType::ActivityWasm | ConfigIdType::Workflow => ComponentExportsType::Enrichable,
-            ConfigIdType::WebhookEndpoint => ComponentExportsType::Plain,
+            ComponentType::ActivityWasm | ComponentType::Workflow => {
+                ComponentExportsType::Enrichable
+            }
+            ComponentType::WebhookEndpoint => ComponentExportsType::Plain,
         }
     }
 }
@@ -758,7 +760,7 @@ fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
 mod tests {
     use super::wit_parsed_ffqn_to_wit_parsed_fn_metadata;
     use crate::wasm_tools::{ComponentExportsType, WasmComponent};
-    use concepts::{ConfigIdType, FunctionMetadata};
+    use concepts::{ComponentType, FunctionMetadata};
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
     use wasmtime::Engine;
@@ -781,7 +783,7 @@ mod tests {
         test_utils::set_up();
         let engine = engine();
         let component =
-            WasmComponent::new(&wasm_path, &engine, Some(ConfigIdType::Workflow.into())).unwrap();
+            WasmComponent::new(&wasm_path, &engine, Some(ComponentType::Workflow.into())).unwrap();
         let exports = component
             .exported_functions(false)
             .iter()

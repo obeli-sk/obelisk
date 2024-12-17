@@ -4,7 +4,7 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
 use crate::WasmFileError;
 use async_trait::async_trait;
-use concepts::{ConfigId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue};
+use concepts::{ComponentId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue};
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
@@ -18,7 +18,7 @@ use wasmtime::{component::Val, Engine};
 
 #[derive(Clone, Debug)]
 pub struct ActivityConfig {
-    pub config_id: ConfigId,
+    pub component_id: ComponentId,
     pub forward_stdout: Option<StdOutput>,
     pub forward_stderr: Option<StdOutput>,
     pub env_vars: Arc<[EnvVar]>,
@@ -36,7 +36,7 @@ pub struct ActivityWorker<C: ClockFn> {
 }
 
 impl<C: ClockFn> ActivityWorker<C> {
-    #[tracing::instrument(skip_all, fields(%config.config_id), err)]
+    #[tracing::instrument(skip_all, fields(%config.component_id), err)]
     pub fn new_with_config(
         wasm_component: WasmComponent,
         config: ActivityConfig,
@@ -234,7 +234,7 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::{ExecutorId, RunId},
         storage::{CreateRequest, DbConnection, DbPool, Version},
-        ConfigIdType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
+        ComponentType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -261,9 +261,9 @@ pub(crate) mod tests {
         StrVariant::from(input)
     }
 
-    fn activity_config(config_id: ConfigId) -> ActivityConfig {
+    fn activity_config(component_id: ComponentId) -> ActivityConfig {
         ActivityConfig {
-            config_id,
+            component_id,
             forward_stdout: None,
             forward_stderr: None,
             env_vars: Arc::from([]),
@@ -271,7 +271,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) async fn compile_activity(wasm_path: &str) -> (WasmComponent, ConfigId) {
+    pub(crate) async fn compile_activity(wasm_path: &str) -> (WasmComponent, ComponentId) {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
         compile_activity_with_engine(wasm_path, &engine)
     }
@@ -279,16 +279,17 @@ pub(crate) mod tests {
     pub(crate) fn compile_activity_with_engine(
         wasm_path: &str,
         engine: &Engine,
-    ) -> (WasmComponent, ConfigId) {
-        let config_id = ConfigId::new(
-            ConfigIdType::ActivityWasm,
+    ) -> (WasmComponent, ComponentId) {
+        let component_id = ComponentId::new(
+            ComponentType::ActivityWasm,
             wasm_file_name(wasm_path),
             StrVariant::Static("dummy hash"),
         )
         .unwrap();
         (
-            WasmComponent::new(wasm_path, engine, Some(config_id.config_id_type.into())).unwrap(),
-            config_id,
+            WasmComponent::new(wasm_path, engine, Some(component_id.component_type.into()))
+                .unwrap(),
+            component_id,
         )
     }
 
@@ -296,19 +297,19 @@ pub(crate) mod tests {
         wasm_path: &str,
         engine: Arc<Engine>,
         clock_fn: impl ClockFn + 'static,
-    ) -> (Arc<dyn Worker>, ConfigId) {
-        let (wasm_component, config_id) = compile_activity_with_engine(wasm_path, &engine);
+    ) -> (Arc<dyn Worker>, ComponentId) {
+        let (wasm_component, component_id) = compile_activity_with_engine(wasm_path, &engine);
         (
             Arc::new(
                 ActivityWorker::new_with_config(
                     wasm_component,
-                    activity_config(config_id.clone()),
+                    activity_config(component_id.clone()),
                     engine,
                     clock_fn,
                 )
                 .unwrap(),
             ),
-            config_id,
+            component_id,
         )
     }
 
@@ -318,12 +319,12 @@ pub(crate) mod tests {
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
-        let (worker, config_id) = new_activity_worker(wasm_path, engine, clock_fn.clone());
+        let (worker, component_id) = new_activity_worker(wasm_path, engine, clock_fn.clone());
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id,
+            component_id,
             task_limiter: None,
         };
         ExecTask::spawn_new(
@@ -369,7 +370,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -409,7 +410,7 @@ pub(crate) mod tests {
         ))
         .unwrap();
 
-        let (fibo_worker, _config_id) = new_activity_worker(
+        let (fibo_worker, _) = new_activity_worker(
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             engine,
             Now,
@@ -493,7 +494,7 @@ pub(crate) mod tests {
                 Duration::from_millis(EPOCH_MILLIS),
             );
 
-            let (worker, _config_id) = new_activity_worker(
+            let (worker, _) = new_activity_worker(
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 engine,
                 Now,
@@ -503,7 +504,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: TICK_SLEEP,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
             };
             let exec_task = ExecTask::spawn_new(
@@ -535,7 +536,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: Duration::ZERO,
                     max_retries: 0,
-                    config_id: ConfigId::dummy_activity(),
+                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
@@ -579,7 +580,7 @@ pub(crate) mod tests {
                 Duration::from_millis(EPOCH_MILLIS),
             );
 
-            let (worker, _config_id) = new_activity_worker(
+            let (worker, _) = new_activity_worker(
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 engine,
                 Now,
@@ -624,7 +625,7 @@ pub(crate) mod tests {
             let (_guard, db_pool) = Database::Memory.set_up().await;
             let engine =
                 Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
-            let (worker, _config_id) = new_activity_worker(
+            let (worker, _) = new_activity_worker(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                 engine,
                 sim_clock.clone(),
@@ -633,7 +634,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
@@ -671,7 +672,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
-                    config_id: ConfigId::dummy_activity(),
+                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
@@ -730,7 +731,7 @@ pub(crate) mod tests {
             let (_guard, db_pool) = Database::Memory.set_up().await;
             let engine =
                 Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
-            let (worker, _config_id) = new_activity_worker(
+            let (worker, _) = new_activity_worker(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                 engine,
                 sim_clock.clone(),
@@ -739,7 +740,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
-                config_id: ConfigId::dummy_activity(),
+                component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
@@ -775,7 +776,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
-                    config_id: ConfigId::dummy_activity(),
+                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
