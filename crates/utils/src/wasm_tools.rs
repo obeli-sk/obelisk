@@ -19,6 +19,9 @@ use wasmtime::{
 use wit_component::{ComponentEncoder, OutputToString, WitPrinterExt};
 use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
 
+pub const HTTP_HANDLER_FFQN: FunctionFqn =
+    FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ComponentExportsType {
     Enrichable,
@@ -189,9 +192,9 @@ impl WasmComponent {
     fn auto_detect_type(exim: &ExIm) -> ComponentExportsType {
         // If the component exports wasi:http/incoming-handler, it is a WebhookEndpoint, thus `ComponentExportsType::Plain`
         for pkg_ifc_fns in exim.get_exports_hierarchy_noext() {
-            if pkg_ifc_fns.ifc_fqn.namespace() == "wasi"
-                && pkg_ifc_fns.ifc_fqn.package_name() == "http"
-                && pkg_ifc_fns.ifc_fqn.ifc_name() == "incoming-handler"
+            if pkg_ifc_fns.ifc_fqn.namespace() == HTTP_HANDLER_FFQN.ifc_fqn.namespace()
+                && pkg_ifc_fns.ifc_fqn.package_name() == HTTP_HANDLER_FFQN.ifc_fqn.package_name()
+                && pkg_ifc_fns.ifc_fqn.ifc_name() == HTTP_HANDLER_FFQN.ifc_fqn.ifc_name()
             {
                 return ComponentExportsType::Plain;
             }

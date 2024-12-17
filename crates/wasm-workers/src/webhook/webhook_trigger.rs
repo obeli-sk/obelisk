@@ -1,6 +1,3 @@
-// TODO: simplify - remove host activities to get rid of join set creation,
-// effectively leaving only direct call and -schedule.
-// Investigate wrapping join sets in a Result, otherwise -submit and -await-next are still callable.
 use crate::component_logger::{log_activities, ComponentLogger};
 use crate::envvar::EnvVar;
 use crate::host_exports::{
@@ -32,7 +29,7 @@ use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, instrument, trace, warn, Instrument, Level, Span};
 use utils::time::ClockFn;
-use utils::wasm_tools::{ExIm, WasmComponent};
+use utils::wasm_tools::{ExIm, WasmComponent, HTTP_HANDLER_FFQN};
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};
@@ -56,7 +53,7 @@ pub enum WebhookServerError {
     SocketError(std::io::Error),
 }
 
-pub struct WebhookCompiled {
+pub struct WebhookEndpointCompiled {
     pub config_id: ConfigId,
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
@@ -65,7 +62,7 @@ pub struct WebhookCompiled {
     pub wasm_component: WasmComponent,
 }
 
-impl WebhookCompiled {
+impl WebhookEndpointCompiled {
     pub fn new(
         wasm_path: impl AsRef<Path>,
         engine: &Engine,
@@ -98,7 +95,7 @@ impl WebhookCompiled {
         self,
         engine: &Engine,
         fn_registry: &dyn FunctionRegistry,
-    ) -> Result<WebhookInstance<C, DB, P>, WasmFileError> {
+    ) -> Result<WebhookEndpointInstance<C, DB, P>, WasmFileError> {
         let mut linker = Linker::new(engine);
         // Link wasi
         wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| {
@@ -115,7 +112,7 @@ impl WebhookCompiled {
             }
         })?;
         // Link obelisk:log
-        WebhookCtx::add_to_linker(&mut linker)?;
+        WebhookEndpointCtx::add_to_linker(&mut linker)?;
 
         // Mock imported functions
         for import in fn_registry.all_exports() {
@@ -141,7 +138,10 @@ impl WebhookCompiled {
                     trace!("Adding mock for imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(function_name.deref(), {
                         let ffqn = ffqn.clone();
-                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WebhookCtx<C, DB, P>>,
+                        move |mut store_ctx: wasmtime::StoreContextMut<
+                            '_,
+                            WebhookEndpointCtx<C, DB, P>,
+                        >,
                               params: &[Val],
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
@@ -186,7 +186,7 @@ impl WebhookCompiled {
             }
         })?);
 
-        Ok(WebhookInstance {
+        Ok(WebhookEndpointInstance {
             config_id: self.config_id,
             forward_stdout: self.forward_stdout,
             forward_stderr: self.forward_stderr,
@@ -200,9 +200,9 @@ impl WebhookCompiled {
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))] // Clone only because of potentially registering 2 paths via `route-recognizer`
 #[derivative(Debug)]
-pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+pub struct WebhookEndpointInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     #[derivative(Debug = "ignore")]
-    proxy_pre: Arc<ProxyPre<WebhookCtx<C, DB, P>>>,
+    proxy_pre: Arc<ProxyPre<WebhookEndpointCtx<C, DB, P>>>,
     pub config_id: ConfigId,
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
@@ -210,7 +210,7 @@ pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     exim: ExIm,
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookInstance<C, DB, P> {
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointInstance<C, DB, P> {
     #[must_use]
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         &self.exim.imports_flat
@@ -267,7 +267,7 @@ impl<T> Default for MethodAwareRouter<T> {
 pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     listener: TcpListener,
     engine: Arc<Engine>,
-    router: MethodAwareRouter<WebhookInstance<C, DB, P>>,
+    router: MethodAwareRouter<WebhookEndpointInstance<C, DB, P>>,
     db_pool: P,
     clock_fn: C,
     fn_registry: Arc<dyn FunctionRegistry>,
@@ -337,7 +337,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
     }
 }
 
-struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+struct WebhookEndpointCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     config_id: ConfigId,
     clock_fn: C,
     db_pool: P,
@@ -353,7 +353,7 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 }
 
 #[derive(thiserror::Error, Debug, Clone)]
-enum WebhookFunctionError {
+enum WebhookEndpointFunctionError {
     #[error("sumbitting failed, metadata for {ffqn} not found")]
     FunctionMetadataNotFound { ffqn: FunctionFqn },
     #[error(transparent)]
@@ -364,10 +364,7 @@ enum WebhookFunctionError {
     UncategorizedError(&'static str),
 }
 
-const HTTP_HANDLER_FFQN: FunctionFqn =
-    FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
-
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
     fn get_and_increment_child_id(&mut self) -> ExecutionId {
         let mut incremented = self.next_child_execution_id.increment();
         std::mem::swap(&mut self.next_child_execution_id, &mut incremented);
@@ -407,7 +404,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         ffqn: FunctionFqn,
         params: &[Val],
         results: &mut [Val],
-    ) -> Result<(), WebhookFunctionError> {
+    ) -> Result<(), WebhookEndpointFunctionError> {
         debug!(?params, "call_imported_fn start");
         if let Some(package_name) = ffqn.ifc_fqn.package_strip_extension_suffix() {
             let ifc_fqn = IfcFqnName::from_parts(
@@ -418,7 +415,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             );
             if ffqn.function_name.ends_with(SUFFIX_FN_SUBMIT) {
                 error!(%ffqn, "Webhooks do not support extension function {SUFFIX_FN_SUBMIT}");
-                return Err(WebhookFunctionError::UncategorizedError(
+                return Err(WebhookEndpointFunctionError::UncategorizedError(
                     const_format::formatcp!(
                         "webhooks do not support extension function {}",
                         SUFFIX_FN_SUBMIT
@@ -428,7 +425,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 error!(%ffqn,
                     "Webhooks do not support extension function {SUFFIX_FN_AWAIT_NEXT}"
                 );
-                return Err(WebhookFunctionError::UncategorizedError(
+                return Err(WebhookEndpointFunctionError::UncategorizedError(
                     const_format::formatcp!(
                         "webhooks do not support extension function {}",
                         SUFFIX_FN_AWAIT_NEXT
@@ -441,7 +438,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 debug!("Got `-schedule` extension for {ffqn}");
                 let Some((scheduled_at, params)) = params.split_first() else {
                     error!("Error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list");
-                    return Err(WebhookFunctionError::UncategorizedError(
+                    return Err(WebhookEndpointFunctionError::UncategorizedError(
                         "error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list",
                     ));
                 };
@@ -449,7 +446,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     Ok(scheduled_at) => scheduled_at,
                     Err(err) => {
                         error!("Wrong type for the first `-scheduled-at` parameter, expected `scheduled-at`, got `{scheduled_at:?}` - {err:?}");
-                        return Err(WebhookFunctionError::UncategorizedError(
+                        return Err(WebhookEndpointFunctionError::UncategorizedError(
                             "error running `-schedule` extension function: wrong first parameter type"
                         ));
                     }
@@ -462,7 +459,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let Some((_function_metadata, config_id, import_retry_config)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
                 else {
-                    return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
+                    return Err(WebhookEndpointFunctionError::FunctionMetadataNotFound { ffqn });
                 };
                 let created_at = self.clock_fn.now();
 
@@ -504,7 +501,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 Ok(())
             } else {
                 error!("unrecognized extension function {ffqn}");
-                return Err(WebhookFunctionError::UncategorizedError(
+                return Err(WebhookEndpointFunctionError::UncategorizedError(
                     "unrecognized extension function",
                 ));
             }
@@ -518,7 +515,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             let Some((_function_metadata, config_id, import_retry_config)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
             else {
-                return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
+                return Err(WebhookEndpointFunctionError::FunctionMetadataNotFound { ffqn });
             };
             let join_set_id = JoinSetId::generate();
             let child_exec_req = AppendRequest {
@@ -562,12 +559,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 .await
             {
                 Ok(res) => res?,
-                Err(ClientError::DbError(err)) => return Err(WebhookFunctionError::DbError(err)),
+                Err(ClientError::DbError(err)) => {
+                    return Err(WebhookEndpointFunctionError::DbError(err))
+                }
                 Err(ClientError::Timeout) => unreachable!("timeout was not set"),
             };
             if results.len() != res.len() {
                 error!("Unexpected results length");
-                return Err(WebhookFunctionError::UncategorizedError(
+                return Err(WebhookEndpointFunctionError::UncategorizedError(
                     "Unexpected results length",
                 ));
             }
@@ -579,7 +578,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         }
     }
 
-    fn add_to_linker(linker: &mut Linker<WebhookCtx<C, DB, P>>) -> Result<(), WasmFileError> {
+    fn add_to_linker(
+        linker: &mut Linker<WebhookEndpointCtx<C, DB, P>>,
+    ) -> Result<(), WasmFileError> {
         log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
             .map_err(|err| WasmFileError::LinkingError {
                 context: StrVariant::Static("linking log activities"),
@@ -589,7 +590,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
     #[must_use]
     #[expect(clippy::too_many_arguments)]
     fn new<'a>(
@@ -604,7 +605,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         forward_stderr: Option<StdOutput>,
         env_vars: &[EnvVar],
         request_span: Span,
-    ) -> Store<WebhookCtx<C, DB, P>> {
+    ) -> Store<WebhookEndpointCtx<C, DB, P>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
         if let Some(stdout) = forward_stdout {
             let stdout = LogStream::new(format!("[{config_id} {execution_id} stdout]"), stdout);
@@ -621,7 +622,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             wasi_ctx.env(key, val);
         }
         let wasi_ctx = wasi_ctx.build();
-        let ctx = WebhookCtx {
+        let ctx = WebhookEndpointCtx {
             clock_fn,
             db_pool,
             fn_registry,
@@ -642,7 +643,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::log::Host
-    for WebhookCtx<C, DB, P>
+    for WebhookEndpointCtx<C, DB, P>
 {
     fn trace(&mut self, message: String) {
         self.component_logger.trace(&message);
@@ -665,7 +666,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiView for WebhookCtx<C, DB, P> {
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiView for WebhookEndpointCtx<C, DB, P> {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
@@ -674,7 +675,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiView for WebhookCtx<C, DB,
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiHttpView for WebhookCtx<C, DB, P> {
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiHttpView for WebhookEndpointCtx<C, DB, P> {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http_ctx
     }
@@ -690,7 +691,7 @@ struct RequestHandler<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPoo
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
     execution_id: ExecutionId,
-    router: Arc<MethodAwareRouter<WebhookInstance<C, DB, P>>>,
+    router: Arc<MethodAwareRouter<WebhookEndpointInstance<C, DB, P>>>,
     phantom_data: PhantomData<DB>,
 }
 
@@ -757,7 +758,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         if let Some(matched) = self.router.find(req.method(), req.uri()) {
             let found_instance = matched.handler();
             let (sender, receiver) = tokio::sync::oneshot::channel();
-            let mut store = WebhookCtx::new(
+            let mut store = WebhookEndpointCtx::new(
                 found_instance.config_id.clone(),
                 &self.engine,
                 self.clock_fn,
@@ -859,7 +860,7 @@ pub(crate) mod tests {
         use crate::activity::activity_worker::tests::{compile_activity, FIBO_10_OUTPUT};
         use crate::engines::{EngineConfig, Engines};
         use crate::tests::TestingFnRegistry;
-        use crate::webhook::webhook_trigger::{self, WebhookCompiled};
+        use crate::webhook::webhook_trigger::{self, WebhookEndpointCompiled};
         use crate::workflow::workflow_worker::tests::compile_workflow;
         use crate::{
             activity::activity_worker::tests::spawn_activity_fibo,
@@ -940,7 +941,7 @@ pub(crate) mod tests {
                 .await;
 
                 let router = {
-                    let instance = WebhookCompiled::new(
+                    let instance = WebhookEndpointCompiled::new(
                         test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
                         &engine,
                         ConfigId::dummy_activity(),

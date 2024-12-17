@@ -16,7 +16,7 @@ pub fn build_activity() {
     build_internal("wasm32-wasip2", Tool::Cargo, ConfigIdType::ActivityWasm);
 }
 
-pub fn build_webhook() {
+pub fn build_webhook_endpoint() {
     build_internal("wasm32-wasip2", Tool::Cargo, ConfigIdType::WebhookEndpoint);
 }
 

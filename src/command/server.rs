@@ -94,7 +94,7 @@ use wasm_workers::envvar::EnvVar;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
-use wasm_workers::webhook::webhook_trigger::WebhookInstance;
+use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstance;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 
@@ -959,7 +959,7 @@ impl ServerInit {
 }
 
 type WebhookInstancesAndRoutes = (
-    WebhookInstance<Now, SqlitePool, SqlitePool>,
+    WebhookEndpointInstance<Now, SqlitePool, SqlitePool>,
     Vec<WebhookRouteVerified>,
 );
 
@@ -1220,7 +1220,7 @@ async fn compile_and_verify(
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     let config_id = webhook.config_id;
-                    let webhook_compiled = webhook_trigger::WebhookCompiled::new(
+                    let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                         webhook.wasm_path,
                         &engines.webhook_engine,
                         config_id.clone(),
