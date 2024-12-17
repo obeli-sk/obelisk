@@ -33,7 +33,8 @@ pub(crate) async fn inspect(
         wasmtime_config.wasm_component_model(true);
         Engine::new(&wasmtime_config).unwrap()
     };
-    let wasm_component = WasmComponent::new(wasm_path, &engine)?;
+    let wasm_component = WasmComponent::new(wasm_path, &engine, None)?;
+
     println!("Exports:");
     inspect_fns(wasm_component.exported_functions(extensions));
     if verbosity > FunctionMetadataVerbosity::ExportsOnly {

@@ -169,7 +169,7 @@ pub(crate) async fn push(
         Engine::new(&wasmtime_config).unwrap()
     };
     // Sanity check: Is it really a WASM Component?
-    let wasm_component = WasmComponent::new(&wasm_path, &engine)?;
+    let wasm_component = WasmComponent::new(&wasm_path, &engine, None)?;
     debug!("Pushing {wasm_component:?}");
 
     let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);

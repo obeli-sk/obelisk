@@ -1,4 +1,5 @@
 use cargo_metadata::camino::Utf8Path;
+use concepts::ConfigIdType;
 use indexmap::IndexMap;
 use std::{
     path::{Path, PathBuf},
@@ -12,15 +13,19 @@ fn to_snake_case(input: &str) -> String {
 }
 
 pub fn build_activity() {
-    build_internal("wasm32-wasip2", Tool::Cargo);
+    build_internal("wasm32-wasip2", Tool::Cargo, ConfigIdType::ActivityWasm);
 }
 
 pub fn build_webhook() {
-    build_internal("wasm32-wasip2", Tool::Cargo);
+    build_internal("wasm32-wasip2", Tool::Cargo, ConfigIdType::WebhookEndpoint);
 }
 
 pub fn build_workflow() {
-    build_internal("wasm32-unknown-unknown", Tool::CargoAndWasmTools);
+    build_internal(
+        "wasm32-unknown-unknown",
+        Tool::CargoAndWasmTools,
+        ConfigIdType::Workflow,
+    );
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -30,7 +35,7 @@ enum Tool {
 }
 
 #[expect(clippy::too_many_lines)]
-fn build_internal(tripple: &str, tool: Tool) {
+fn build_internal(tripple: &str, tool: Tool, component_type: ConfigIdType) {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
@@ -72,8 +77,8 @@ fn build_internal(tripple: &str, tool: Tool) {
             }
         }
 
-        let component =
-            WasmComponent::new(wasm_path, &engine).expect("cannot decode wasm component");
+        let component = WasmComponent::new(wasm_path, &engine, Some(component_type.into()))
+            .expect("cannot decode wasm component");
         generated_code += "pub mod exports {\n";
         let mut outer_map: IndexMap<String, Value> = IndexMap::new();
         for export in component.exim.get_exports_hierarchy_noext() {

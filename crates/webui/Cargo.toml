@@ -16,13 +16,11 @@ assert_matches.workspace = true
 chrono.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
-id-arena.workspace = true
 implicit-clone.workspace = true
 indexmap.workspace = true
 log.workspace = true
 prost-wkt-types.workspace = true
 prost.workspace = true
-semver.workspace = true
 serde_json.workspace = true
 tonic = { workspace = true, default-features = false, features = [
     "codegen",

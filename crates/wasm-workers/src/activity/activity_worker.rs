@@ -286,7 +286,10 @@ pub(crate) mod tests {
             StrVariant::Static("dummy hash"),
         )
         .unwrap();
-        (WasmComponent::new(wasm_path, engine).unwrap(), config_id)
+        (
+            WasmComponent::new(wasm_path, engine, Some(config_id.config_id_type.into())).unwrap(),
+            config_id,
+        )
     }
 
     fn new_activity_worker(

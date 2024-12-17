@@ -9,6 +9,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+concepts.workspace = true
 utils.workspace = true
 
 cargo_metadata.workspace = true

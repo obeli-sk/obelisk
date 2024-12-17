@@ -1,6 +1,5 @@
 use super::{ifc_fqn::IfcFqn, NAMESPACE_OBELISK, SUFFIX_PKG_EXT};
 use anyhow::Context;
-use log::error;
 use std::fmt::Display;
 use wit_parser::{Interface, PackageName};
 
@@ -59,24 +58,5 @@ impl From<&PackageName> for PkgFqn {
             package_name: value.name.clone(),
             version: value.version.as_ref().map(|v| v.to_string()),
         }
-    }
-}
-
-impl TryFrom<PkgFqn> for PackageName {
-    type Error = anyhow::Error;
-
-    fn try_from(pkg_fqn: PkgFqn) -> Result<Self, Self::Error> {
-        Ok(PackageName {
-            namespace: pkg_fqn.namespace,
-            name: pkg_fqn.package_name,
-            version: pkg_fqn
-                .version
-                .as_ref()
-                .map(|v| semver::Version::parse(v))
-                .transpose()
-                .inspect_err(|err| {
-                    error!("cannot parse the version `{:?}` - {err:?}", pkg_fqn.version)
-                })?,
-        })
     }
 }

@@ -79,10 +79,9 @@ pub fn component_list_page(
                             .into_inner()
                             .content;
 
-                        let wit =
-                            wit_highlighter::print_all(&wit, render_ffqn_with_links, &component)
-                                .inspect_err(|err| warn!("Cannot render WIT - {err:?}"))
-                                .ok();
+                        let wit = wit_highlighter::print_all(&wit, render_ffqn_with_links)
+                            .inspect_err(|err| warn!("Cannot render WIT - {err:?}"))
+                            .ok();
 
                         wit_state.set(wit);
                     });

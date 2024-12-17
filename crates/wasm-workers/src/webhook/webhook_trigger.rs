@@ -14,7 +14,7 @@ use concepts::storage::{
     HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
 };
 use concepts::{
-    ConfigId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
+    ConfigId, ConfigIdType, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
     FunctionMetadata, FunctionRegistry, IfcFqnName, Params, StrVariant,
 };
 use derivative::Derivative;
@@ -74,7 +74,11 @@ impl WebhookCompiled {
         forward_stderr: Option<StdOutput>,
         env_vars: Arc<[EnvVar]>,
     ) -> Result<Self, WasmFileError> {
-        let wasm_component = WasmComponent::new(wasm_path, engine)?;
+        let wasm_component = WasmComponent::new(
+            wasm_path,
+            engine,
+            Some(ConfigIdType::WebhookEndpoint.into()),
+        )?;
         Ok(Self {
             config_id,
             forward_stdout,
@@ -866,7 +870,7 @@ pub(crate) mod tests {
             storage::{DbConnection, DbPool},
             ExecutionId,
         };
-        use concepts::{ConfigId, SupportedFunctionReturnValue};
+        use concepts::{ConfigId, ConfigIdType, SupportedFunctionReturnValue};
         use db_tests::{Database, DbGuard, DbPoolEnum};
         use executor::executor::ExecutorTaskHandle;
         use std::net::SocketAddr;
@@ -889,7 +893,12 @@ pub(crate) mod tests {
         pub(crate) async fn compile_webhook(wasm_path: &str) -> WasmComponent {
             let engine =
                 Engines::get_webhook_engine(EngineConfig::on_demand_testing().await).unwrap();
-            WasmComponent::new(wasm_path, &engine).unwrap()
+            WasmComponent::new(
+                wasm_path,
+                &engine,
+                Some(ConfigIdType::WebhookEndpoint.into()),
+            )
+            .unwrap()
         }
 
         struct SetUpFiboWebhook {

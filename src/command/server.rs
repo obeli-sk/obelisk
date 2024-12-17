@@ -1298,7 +1298,11 @@ fn prespawn_activity(
     debug!("Instantiating activity");
     trace!(?activity, "Full configuration");
     let engine = engines.activity_engine.clone();
-    let wasm_component = WasmComponent::new(activity.wasm_path, &engine)?;
+    let wasm_component = WasmComponent::new(
+        activity.wasm_path,
+        &engine,
+        Some(ConfigIdType::ActivityWasm.into()),
+    )?;
     let wit = wasm_component
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
@@ -1328,8 +1332,12 @@ fn prespawn_workflow(
     debug!("Instantiating workflow");
     trace!(?workflow, "Full configuration");
     let engine = engines.workflow_engine.clone();
-    let wasm_component = WasmComponent::new(&workflow.wasm_path, &engine)
-        .with_context(|| format!("Error decoding {:?}", workflow.wasm_path))?;
+    let wasm_component = WasmComponent::new(
+        &workflow.wasm_path,
+        &engine,
+        Some(ConfigIdType::Workflow.into()),
+    )
+    .with_context(|| format!("Error decoding {:?}", workflow.wasm_path))?;
     let wit = wasm_component
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))

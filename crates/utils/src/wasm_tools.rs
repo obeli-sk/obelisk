@@ -1,8 +1,8 @@
 use crate::sha256sum::calculate_sha256_file;
 use anyhow::Context;
 use concepts::{
-    FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName, PackageIfcFns,
-    ParameterType, ParameterTypes, ReturnType, StrVariant, SUFFIX_PKG_EXT,
+    ConfigIdType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
+    PackageIfcFns, ParameterType, ParameterTypes, ReturnType, StrVariant, SUFFIX_PKG_EXT,
 };
 use indexmap::{indexmap, IndexMap};
 use std::{
@@ -16,8 +16,23 @@ use wasmtime::{
     component::{types::ComponentItem, Component, ComponentExportIndex},
     Engine,
 };
-use wit_component::{ComponentEncoder, OutputToString, WitPrinter, WitPrinterExt};
+use wit_component::{ComponentEncoder, OutputToString, WitPrinterExt};
 use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ComponentExportsType {
+    Enrichable,
+    Plain,
+}
+
+impl From<ConfigIdType> for ComponentExportsType {
+    fn from(value: ConfigIdType) -> Self {
+        match value {
+            ConfigIdType::ActivityWasm | ConfigIdType::Workflow => ComponentExportsType::Enrichable,
+            ConfigIdType::WebhookEndpoint => ComponentExportsType::Plain,
+        }
+    }
+}
 
 #[derive(derivative::Derivative)]
 #[derivative(Debug)]
@@ -27,6 +42,7 @@ pub struct WasmComponent {
     pub exim: ExIm,
     #[derivative(Debug = "ignore")]
     pub decoded: DecodedWasm,
+    exports_type: ComponentExportsType,
 }
 
 impl WasmComponent {
@@ -97,7 +113,11 @@ impl WasmComponent {
         Ok(Some(output_file))
     }
 
-    pub fn new<P: AsRef<Path>>(wasm_path: P, engine: &Engine) -> Result<Self, DecodeError> {
+    pub fn new<P: AsRef<Path>>(
+        wasm_path: P,
+        engine: &Engine,
+        component_exports_type_or_auto_detect: Option<ComponentExportsType>,
+    ) -> Result<Self, DecodeError> {
         let wasm_path = wasm_path.as_ref();
 
         let wasm_file = std::fs::File::open(wasm_path)
@@ -156,23 +176,31 @@ impl WasmComponent {
             exported_ffqns_to_wit_meta,
             imported_ffqns_to_wit_meta,
         )?;
+
         Ok(Self {
             wasmtime_component,
-            exim,
             decoded,
+            exports_type: component_exports_type_or_auto_detect
+                .unwrap_or_else(|| Self::auto_detect_type(&exim)),
+            exim,
         })
     }
 
+    fn auto_detect_type(exim: &ExIm) -> ComponentExportsType {
+        // If the component exports wasi:http/incoming-handler, it is a WebhookEndpoint, thus `ComponentExportsType::Plain`
+        for pkg_ifc_fns in exim.get_exports_hierarchy_noext() {
+            if pkg_ifc_fns.ifc_fqn.namespace() == "wasi"
+                && pkg_ifc_fns.ifc_fqn.package_name() == "http"
+                && pkg_ifc_fns.ifc_fqn.ifc_name() == "incoming-handler"
+            {
+                return ComponentExportsType::Plain;
+            }
+        }
+        ComponentExportsType::Enrichable
+    }
+
     pub fn wit(&self) -> Result<String, anyhow::Error> {
-        let resolve = self.decoded.resolve();
-        let ids = resolve
-            .packages
-            .iter()
-            .map(|(id, _)| id)
-            // The main package would show as a nested package as well
-            .filter(|id| *id != self.decoded.package())
-            .collect::<Vec<_>>();
-        WitPrinter::default().print(resolve, self.decoded.package(), &ids)
+        crate::wit::wit(self.exports_type, &self.decoded, &self.exim)
     }
 
     #[must_use]
@@ -409,7 +437,7 @@ impl ExIm {
                 let fn_submit = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_extended_ifc.clone(),
-                        function_name: FnName::new_string(format!(
+                        function_name: FnName::from(format!(
                             "{}-submit",
                             exported_fn_metadata.ffqn.function_name
                         )),
@@ -430,7 +458,7 @@ impl ExIm {
                 let fn_await_next = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_extended_ifc.clone(),
-                        function_name: FnName::new_string(format!(
+                        function_name: FnName::from(format!(
                             "{}-await-next",
                             exported_fn_metadata.ffqn.function_name
                         )),
@@ -482,7 +510,7 @@ impl ExIm {
                 let fn_schedule = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_extended_ifc.clone(),
-                        function_name: FnName::new_string(format!(
+                        function_name: FnName::from(format!(
                             "{}-schedule",
                             exported_fn_metadata.ffqn.function_name
                         )),
@@ -726,8 +754,8 @@ fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
 #[cfg(test)]
 mod tests {
     use super::wit_parsed_ffqn_to_wit_parsed_fn_metadata;
-    use crate::wasm_tools::WasmComponent;
-    use concepts::FunctionMetadata;
+    use crate::wasm_tools::{ComponentExportsType, WasmComponent};
+    use concepts::{ConfigIdType, FunctionMetadata};
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
     use wasmtime::Engine;
@@ -749,7 +777,8 @@ mod tests {
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
         test_utils::set_up();
         let engine = engine();
-        let component = WasmComponent::new(&wasm_path, &engine).unwrap();
+        let component =
+            WasmComponent::new(&wasm_path, &engine, Some(ConfigIdType::Workflow.into())).unwrap();
         let exports = component
             .exported_functions(false)
             .iter()
@@ -819,5 +848,26 @@ mod tests {
             .map(|(ffqn, val)| (ffqn.to_string(), (val, ffqn.ifc_fqn, ffqn.function_name)))
             .collect::<hashbrown::HashMap<_, _>>();
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
+    }
+
+    #[rstest]
+    #[test]
+    #[case(
+        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+        ComponentExportsType::Enrichable
+    )]
+    #[case(
+        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+        ComponentExportsType::Enrichable
+    )]
+    #[case(
+        test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
+        ComponentExportsType::Plain
+    )]
+    fn auto_detection(#[case] wasm_path: &str, #[case] exports_type: ComponentExportsType) {
+        test_utils::set_up();
+        let engine = engine();
+        let component = WasmComponent::new(wasm_path, &engine, None).unwrap();
+        assert_eq!(exports_type, component.exports_type);
     }
 }

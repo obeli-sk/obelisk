@@ -189,11 +189,6 @@ impl<T> Name<T> {
     }
 
     #[must_use]
-    pub fn new_string(value: String) -> Self {
-        Self::new_arc(Arc::from(value))
-    }
-
-    #[must_use]
     pub const fn new_static(value: &'static str) -> Self {
         Self {
             value: StrVariant::Static(value),
@@ -222,10 +217,64 @@ impl<T> Borrow<str> for Name<T> {
     }
 }
 
+impl<T> From<String> for Name<T> {
+    fn from(value: String) -> Self {
+        Self::new_arc(Arc::from(value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PkgFqn {
+    pub namespace: String,
+    pub package_name: String,
+    pub version: Option<String>,
+}
+impl Display for PkgFqn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let PkgFqn {
+            namespace,
+            package_name,
+            version,
+        } = self;
+        if let Some(version) = version {
+            write!(f, "{namespace}:{package_name}@{version}")
+        } else {
+            write!(f, "{namespace}:{package_name}")
+        }
+    }
+}
+
+impl PkgFqn {
+    #[must_use]
+    pub fn is_extension(&self) -> bool {
+        self.package_name.ends_with(SUFFIX_PKG_EXT)
+    }
+
+    #[must_use]
+    pub fn package_strip_extension_suffix(&self) -> Option<&str> {
+        self.package_name.as_str().strip_suffix(SUFFIX_PKG_EXT)
+    }
+
+    #[must_use]
+    pub fn is_namespace_obelisk(&self) -> bool {
+        self.namespace == NAMESPACE_OBELISK
+    }
+
+    #[must_use]
+    pub fn ifc_fqn_name(&self, ifc_name: &str) -> IfcFqnName {
+        IfcFqnName::from_parts(
+            &self.namespace,
+            &self.package_name,
+            ifc_name,
+            self.version.as_deref(),
+        )
+    }
+}
+
 #[derive(Hash, Clone, PartialEq, Eq)]
 pub struct IfcFqnMarker;
 
-pub type IfcFqnName = Name<IfcFqnMarker>; // namespace:name/ifc_name@version
+pub type IfcFqnName = Name<IfcFqnMarker>; // namespace:name/ifc_name OR namespace:name/ifc_name@version
 
 impl IfcFqnName {
     #[must_use]
@@ -242,6 +291,18 @@ impl IfcFqnName {
     #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.deref().split_once('@').map(|(_, version)| version)
+    }
+
+    #[must_use]
+    pub fn pkg_fqn_name(&self) -> PkgFqn {
+        let (namespace, rest) = self.deref().split_once(':').unwrap();
+        let (package_name, rest) = rest.split_once('/').unwrap();
+        let version = rest.split_once('@').map(|(_, version)| version);
+        PkgFqn {
+            namespace: namespace.to_string(),
+            package_name: package_name.to_string(),
+            version: version.map(std::string::ToString::to_string),
+        }
     }
 
     #[must_use]
@@ -1118,6 +1179,15 @@ impl ConfigId {
     pub const fn dummy_activity() -> Self {
         Self {
             config_id_type: ConfigIdType::ActivityWasm,
+            name: StrVariant::empty(),
+            hash: StrVariant::empty(),
+        }
+    }
+
+    #[must_use]
+    pub const fn dummy_workflow() -> ConfigId {
+        ConfigId {
+            config_id_type: ConfigIdType::Workflow,
             name: StrVariant::empty(),
             hash: StrVariant::empty(),
         }

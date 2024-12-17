@@ -634,7 +634,10 @@ pub(crate) mod tests {
             StrVariant::Static("dummy hash"),
         )
         .unwrap();
-        (WasmComponent::new(wasm_path, &engine).unwrap(), config_id)
+        (
+            WasmComponent::new(wasm_path, &engine, Some(config_id.config_id_type.into())).unwrap(),
+            config_id,
+        )
     }
 
     async fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -655,7 +658,12 @@ pub(crate) mod tests {
         .unwrap();
         let worker = Arc::new(
             WorkflowWorkerCompiled::new_with_config(
-                WasmComponent::new(wasm_path, &workflow_engine).unwrap(),
+                WasmComponent::new(
+                    wasm_path,
+                    &workflow_engine,
+                    Some(config_id.config_id_type.into()),
+                )
+                .unwrap(),
                 WorkflowConfig {
                     config_id: config_id.clone(),
                     join_next_blocking_strategy,
@@ -785,7 +793,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
-                config_id: ConfigId::dummy_activity(),
+                config_id: ConfigId::dummy_workflow(),
                 scheduled_by: None,
             })
             .await
@@ -856,9 +864,14 @@ pub(crate) mod tests {
             Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
         Arc::new(
             WorkflowWorkerCompiled::new_with_config(
-                WasmComponent::new(wasm_path, &workflow_engine).unwrap(),
+                WasmComponent::new(
+                    wasm_path,
+                    &workflow_engine,
+                    Some(ConfigIdType::Workflow.into()),
+                )
+                .unwrap(),
                 WorkflowConfig {
-                    config_id: ConfigId::dummy_activity(),
+                    config_id: ConfigId::dummy_workflow(),
                     join_next_blocking_strategy,
                     non_blocking_event_batching,
                     retry_on_trap: false,
