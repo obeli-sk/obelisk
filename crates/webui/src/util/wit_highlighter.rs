@@ -25,8 +25,8 @@ pub fn print_all(
         .collect::<Vec<_>>();
     let mut printer = WitPrinter::new(OutputToHtml::default());
     printer.output.render_ffqn_with_links = render_ffqn_with_links;
-    let output_to_html = printer.print_all(&resolve, main_id, &ids)?;
-    Ok(output_to_html.output)
+    printer.print(&resolve, main_id, &ids)?;
+    Ok(printer.output.output)
 }
 
 pub fn print_interface_with_single_fn(

@@ -67,7 +67,9 @@ pub(crate) fn wit(
         // The main package would show as a nested package as well
         .filter(|id| *id != decoded.package())
         .collect::<Vec<_>>();
-    let wit = WitPrinter::default().print(resolve, decoded.package(), &ids)?;
+    let mut printer = WitPrinter::default();
+    printer.print(resolve, decoded.package(), &ids)?;
+    let wit = printer.output.to_string();
     match enrich {
         ComponentExportsType::Enrichable => add_ext_exports(&wit, exim),
         ComponentExportsType::Plain => Ok(wit),
@@ -364,7 +366,10 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
         // The main package would show as a nested package as well
         .filter(|id| *id != main_id)
         .collect::<Vec<_>>();
-    WitPrinter::default().print(&resolve, main_id, &ids)
+
+    let mut printer = WitPrinter::default();
+    printer.print(&resolve, main_id, &ids)?;
+    Ok(printer.output.to_string())
 }
 
 fn get_exported_pkg_to_ifc_to_details_map(
