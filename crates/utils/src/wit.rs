@@ -7,7 +7,7 @@ use hashbrown::HashMap;
 use id_arena::Arena;
 use indexmap::IndexMap;
 use tracing::{error, warn};
-use wit_component::{DecodedWasm, OutputToString, WitPrinter, WitPrinterExt};
+use wit_component::{DecodedWasm, WitPrinter};
 use wit_parser::{
     Function, FunctionKind, Handle, Interface, InterfaceId, PackageName, Resolve, Results, Type,
     TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup,
@@ -364,9 +364,7 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
         // The main package would show as a nested package as well
         .filter(|id| *id != main_id)
         .collect::<Vec<_>>();
-    let printer = WitPrinterExt::new(OutputToString::default());
-    let output_to_string = printer.print_all(&resolve, main_id, &ids)?;
-    Ok(output_to_string.into())
+    WitPrinter::default().print(&resolve, main_id, &ids)
 }
 
 fn get_exported_pkg_to_ifc_to_details_map(

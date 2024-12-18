@@ -16,7 +16,7 @@ use wasmtime::{
     component::{types::ComponentItem, Component, ComponentExportIndex},
     Engine,
 };
-use wit_component::{ComponentEncoder, OutputToString, WitPrinterExt};
+use wit_component::{ComponentEncoder, WitPrinter};
 use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
 
 pub const HTTP_HANDLER_FFQN: FunctionFqn =
@@ -724,7 +724,7 @@ fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
                     .params
                     .iter()
                     .map(|(param_name, param_ty)| {
-                        let mut printer = WitPrinterExt::new(OutputToString::default());
+                        let mut printer = WitPrinter::default();
                         ParameterNameWitType {
                             name: param_name.to_string(),
                             wit_type: printer
@@ -735,7 +735,7 @@ fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
                     })
                     .collect();
                 let return_type = if let Results::Anon(return_type) = function.results {
-                    let mut printer = WitPrinterExt::new(OutputToString::default());
+                    let mut printer = WitPrinter::default();
                     printer
                         .print_type_name(resolve, &return_type)
                         .ok()

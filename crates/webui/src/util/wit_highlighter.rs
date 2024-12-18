@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Context;
 use hashbrown::HashSet;
 use std::path::PathBuf;
-use wit_component::{Output, TypeKind, WitPrinterExt};
+use wit_component::{Output, TypeKind, WitPrinter};
 use wit_parser::{Resolve, Type, TypeDefKind, TypeOwner, UnresolvedPackageGroup};
 use yew::{html, Html, ToHtml};
 
@@ -23,7 +23,7 @@ pub fn print_all(
         // The main package would show as a nested package as well
         .filter(|id| *id != main_id)
         .collect::<Vec<_>>();
-    let mut printer = WitPrinterExt::new(OutputToHtml::default());
+    let mut printer = WitPrinter::new(OutputToHtml::default());
     printer.output.render_ffqn_with_links = render_ffqn_with_links;
     let output_to_html = printer.print_all(&resolve, main_id, &ids)?;
     Ok(output_to_html.output)
@@ -36,7 +36,7 @@ pub fn print_interface_with_single_fn(
     let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
     let mut resolve = Resolve::new();
     let _main_id = resolve.push_group(group)?;
-    let mut printer = WitPrinterExt::new(OutputToHtml::default());
+    let mut printer = WitPrinter::new(OutputToHtml::default());
     printer.output.filter = PrintFilter::SubmitPage(ffqn.clone());
 
     print_interface_with_imported_types(
@@ -50,7 +50,7 @@ pub fn print_interface_with_single_fn(
 }
 
 fn print_interface_with_imported_types(
-    printer: &mut WitPrinterExt<OutputToHtml>,
+    printer: &mut WitPrinter<OutputToHtml>,
     resolve: &Resolve,
     ifc_fqn: &IfcFqn,
     additional_ifc_fqn: &mut HashSet<IfcFqn>,
@@ -167,41 +167,20 @@ pub struct OutputToHtml {
 }
 
 impl OutputToHtml {
-    fn push(&mut self, src: char) {
-        if self.ignore_until_end_of_line == 0 {
-            self.output.push(src.to_html());
-        }
-    }
-
-    fn push_str(&mut self, src: &str) {
-        assert!(!src.contains('\n'));
-        if self.ignore_until_end_of_line == 0 {
-            self.output.push(src.to_html());
-        }
-    }
-
     fn push_html(&mut self, html: Html) {
         if self.ignore_until_end_of_line == 0 {
             self.output.push(html);
         }
     }
 
-    fn indent_if_needed(&mut self) {
-        if self.ignore_until_end_of_line == 0 && self.needs_indent {
-            for _ in 0..self.indent {
-                // Indenting by two spaces.
-                self.push_str("  ");
-            }
-            self.needs_indent = false;
-        }
-    }
-
     fn indent_and_print(&mut self, src: &str) {
+        assert!(!src.contains('\n'));
         self.indent_if_needed();
         self.push_str(src);
     }
 
     fn indent_and_print_in_span(&mut self, src: &str, class: &'static str) {
+        assert!(!src.contains('\n'));
         self.indent_if_needed();
         self.push_html(html! {
             <span class={class}>{src}</span>
@@ -210,8 +189,49 @@ impl OutputToHtml {
 }
 
 impl Output for OutputToHtml {
+    fn push_str(&mut self, src: &str) {
+        if self.ignore_until_end_of_line == 0 {
+            self.output.push(src.to_html());
+        }
+    }
+
+    fn indent_if_needed(&mut self) -> bool {
+        if self.ignore_until_end_of_line == 0 && self.needs_indent {
+            for _ in 0..self.indent {
+                // Indenting by two spaces.
+                self.push_str("  ");
+            }
+            self.needs_indent = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn indent_start(&mut self) {
+        assert!(
+            self.ignore_until_end_of_line > 0 || !self.needs_indent,
+            "`indent_start` is never called after newline"
+        );
+        self.push_str(" {");
+        self.indent += 1;
+        self.newline();
+    }
+
+    fn indent_end(&mut self) {
+        self.ignore_until_end_of_line = 0;
+        // Note that a `saturating_sub` is used here to prevent a panic
+        // here in the case of invalid code being generated in debug
+        // mode. It's typically easier to debug those issues through
+        // looking at the source code rather than getting a panic.
+        self.indent = self.indent.saturating_sub(1);
+        self.indent_if_needed();
+        self.push_str("}");
+        self.newline();
+    }
+
     fn newline(&mut self) {
-        self.push('\n'); // ignore when muted
+        self.push_str("\n"); // ignore when muted
         self.needs_indent = true;
         self.ignore_until_end_of_line = self.ignore_until_end_of_line.saturating_sub(1);
     }
@@ -220,7 +240,7 @@ impl Output for OutputToHtml {
         self.indent_and_print_in_span(src, "keyword");
     }
 
-    fn r#type(&mut self, mut src: &str, kind: TypeKind) {
+    fn ty(&mut self, mut src: &str, kind: TypeKind) {
         match kind {
             TypeKind::NamespaceDeclaration => {
                 self.current_namespace = Some(src.to_string());
@@ -309,57 +329,12 @@ impl Output for OutputToHtml {
         self.indent_and_print_in_span(src, "case");
     }
 
-    fn generic_args_start(&mut self) {
-        self.push_str("<");
-    }
-
-    fn generic_args_end(&mut self) {
-        self.push_str(">");
-    }
-
-    fn doc(&mut self, src: &str) {
-        assert!(!src.contains('\n'));
-        self.indent_if_needed();
-        self.push_str("///");
-        if !src.is_empty() {
-            self.push(' ');
-            self.push_str(src);
-        }
-        self.newline();
-    }
-
     fn semicolon(&mut self) {
         assert!(
             self.ignore_until_end_of_line > 0 || !self.needs_indent,
             "`semicolon` is never called after newline"
         );
-        self.push(';');
+        self.push_str(";");
         self.newline();
-    }
-
-    fn indent_start(&mut self) {
-        assert!(
-            self.ignore_until_end_of_line > 0 || !self.needs_indent,
-            "`indent_start` is never called after newline"
-        );
-        self.push_str(" {");
-        self.indent += 1;
-        self.newline();
-    }
-
-    fn indent_end(&mut self) {
-        self.ignore_until_end_of_line = 0;
-        // Note that a `saturating_sub` is used here to prevent a panic
-        // here in the case of invalid code being generated in debug
-        // mode. It's typically easier to debug those issues through
-        // looking at the source code rather than getting a panic.
-        self.indent = self.indent.saturating_sub(1);
-        self.indent_if_needed();
-        self.push('}');
-        self.newline();
-    }
-
-    fn str(&mut self, src: &str) {
-        self.indent_and_print(src);
     }
 }
