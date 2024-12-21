@@ -254,6 +254,12 @@ pub(crate) struct ActivityWasmConfigVerified {
     pub(crate) content_digest: ContentDigest,
 }
 
+impl ActivityWasmConfigVerified {
+    pub fn component_id(&self) -> &ComponentId {
+        &self.activity_config.component_id
+    }
+}
+
 impl ActivityWasmConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name, component_id))]
     pub(crate) async fn fetch_and_verify(
@@ -323,6 +329,12 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) retry_config: ComponentRetryConfig,
+}
+
+impl WorkflowConfigVerified {
+    pub fn component_id(&self) -> &ComponentId {
+        &self.workflow_config.component_id
+    }
 }
 
 impl WorkflowConfigToml {
@@ -454,22 +466,13 @@ pub(crate) mod otlp {
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct OtlpConfig {
+        pub(crate) enabled: bool,
         #[serde(default)]
         pub(crate) level: EnvFilter,
         #[serde(default = "default_service_name")]
         pub(crate) service_name: String,
         #[serde(default = "default_otlp_endpoint")]
         pub(crate) otlp_endpoint: String,
-    }
-
-    impl Default for OtlpConfig {
-        fn default() -> Self {
-            Self {
-                level: EnvFilter::default(),
-                service_name: default_service_name(),
-                otlp_endpoint: default_otlp_endpoint(),
-            }
-        }
     }
 
     fn default_service_name() -> String {
@@ -583,11 +586,7 @@ pub(crate) mod log {
     }
     impl Default for EnvFilter {
         fn default() -> Self {
-            Self(
-                tracing_subscriber::EnvFilter::builder()
-                    .parse("info,app=trace")
-                    .expect("empty directive must not fail to parse"),
-            )
+            Self::from_str("info,app=trace").expect("empty directive must not fail to parse")
         }
     }
 

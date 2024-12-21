@@ -27,53 +27,53 @@ fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
 }
 
 #[cfg(feature = "otlp")]
-fn tokio_tracing_otlp<S>(config: &mut ObeliskConfig) -> Option<impl tracing_subscriber::Layer<S>>
+fn tokio_tracing_otlp<S>(
+    config: &mut ObeliskConfig,
+) -> Result<Option<impl tracing_subscriber::Layer<S>>, anyhow::Error>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
+    use anyhow::Context;
     use opentelemetry_otlp::WithExportConfig as _;
     use opentelemetry_sdk::propagation::TraceContextPropagator;
     use opentelemetry_sdk::runtime;
-    use opentelemetry_sdk::trace::BatchConfig;
-    use opentelemetry_sdk::trace::Config;
     use opentelemetry_sdk::Resource;
 
-    if let Some(otlp) = &mut config.otlp {
-        opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
-
-        let tracer = opentelemetry_otlp::new_pipeline()
-            .tracing()
-            .with_batch_config(BatchConfig::default())
-            .with_exporter(
-                opentelemetry_otlp::new_exporter()
-                    .tonic()
-                    .with_endpoint(otlp.otlp_endpoint.to_string()),
-            )
-            .with_trace_config(Config::default().with_resource(Resource::new(vec![
-                opentelemetry::KeyValue::new(
+    Ok(match &mut config.otlp {
+        Some(otlp) if otlp.enabled => {
+            opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
+            let exporter = opentelemetry_otlp::SpanExporter::builder()
+                .with_tonic()
+                .with_endpoint(&otlp.otlp_endpoint)
+                .build()
+                .context("otlp endpoint setup failure")?;
+            use opentelemetry::trace::TracerProvider;
+            let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
+                .with_batch_exporter(exporter, runtime::Tokio)
+                .with_resource(Resource::new(vec![opentelemetry::KeyValue::new(
                     opentelemetry_semantic_conventions::resource::SERVICE_NAME,
                     otlp.service_name.clone(),
-                ),
-            ])))
-            .install_batch(runtime::Tokio)
-            .expect("cannot setup otlp");
-        // EnvFilter missing Clone
-        let env_filter = std::mem::take(&mut otlp.level).0;
-        let telemetry_layer = tracing_opentelemetry::layer()
-            .with_tracer(tracer)
-            .with_filter(env_filter);
-        Some(telemetry_layer)
-    } else {
-        None
-    }
+                )]))
+                .build();
+            // EnvFilter missing Clone
+            let env_filter = std::mem::take(&mut otlp.level).0;
+            let telemetry_layer = tracing_opentelemetry::layer()
+                .with_tracer(tracer_provider.tracer(""))
+                .with_filter(env_filter);
+            Some(telemetry_layer)
+        }
+        _ => None,
+    })
 }
 #[cfg(not(feature = "otlp"))]
 #[expect(clippy::needless_pass_by_value)]
-fn tokio_tracing_otlp(_config: &mut ObeliskConfig) -> Option<tracing::level_filters::LevelFilter> {
+fn tokio_tracing_otlp(
+    _config: &mut ObeliskConfig,
+) -> Result<Option<tracing::level_filters::LevelFilter>, anyhow::Error> {
     None
 }
 
-pub(crate) fn init(config: &mut ObeliskConfig) -> Guard {
+pub(crate) fn init(config: &mut ObeliskConfig) -> Result<Guard, anyhow::Error> {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
@@ -143,13 +143,13 @@ pub(crate) fn init(config: &mut ObeliskConfig) -> Guard {
     };
     tracing_subscriber::registry()
         .with(tokio_console_layer())
-        .with(tokio_tracing_otlp(config))
+        .with(tokio_tracing_otlp(config)?)
         .with(out_layer)
         .with(rolling_file_layer)
         .init();
 
     std::panic::set_hook(Box::new(utils::tracing_panic_hook));
-    guard
+    Ok(guard)
 }
 
 #[derive(Default)]

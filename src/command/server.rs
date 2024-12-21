@@ -23,6 +23,7 @@ use crate::grpc_util::grpc_mapping::TonicServerResultExt;
 use crate::grpc_util::TonicRespResult;
 use crate::grpc_util::TonicResult;
 use crate::init;
+use crate::init::Guard;
 use anyhow::bail;
 use anyhow::Context;
 use assert_matches::assert_matches;
@@ -582,7 +583,7 @@ pub(crate) async fn run(
 ) -> anyhow::Result<()> {
     let config_holder = ConfigHolder::new(project_dirs, config);
     let mut config = config_holder.load_config().await?;
-    let _guard = init::init(&mut config);
+    let _guard: Guard = init::init(&mut config)?;
 
     Box::pin(run_internal(
         config,
@@ -604,7 +605,7 @@ pub(crate) async fn verify(
 ) -> Result<(), anyhow::Error> {
     let config_holder = ConfigHolder::new(project_dirs, config);
     let mut config = config_holder.load_config().await?;
-    let _guard = init::init(&mut config);
+    let _guard: Guard = init::init(&mut config)?;
     Box::pin(verify_internal(
         config,
         clean_db,
@@ -724,6 +725,7 @@ async fn run_internal(
     clean_codegen_cache: bool,
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
+    let span = info_span!("init");
     let api_listening_addr = config.api.listening_addr;
     let verified = Box::pin(verify_internal(
         config,
@@ -732,8 +734,11 @@ async fn run_internal(
         clean_codegen_cache,
         config_holder,
     ))
+    .instrument(span.clone())
     .await?;
-    let (init, component_registry_ro) = ServerInit::spawn_executors_and_webhooks(verified).await?;
+    let (init, component_registry_ro) = ServerInit::spawn_executors_and_webhooks(verified)
+        .instrument(span)
+        .await?;
     let grpc_server = Arc::new(GrpcServer::new(init.db_pool.clone(), component_registry_ro));
 
     tonic::transport::Server::builder()
@@ -789,7 +794,7 @@ struct ServerVerified {
 }
 
 impl ServerVerified {
-    #[instrument(name = "verify", skip_all)]
+    #[instrument(name = "ServerVerified::new", skip_all)]
     async fn new(
         config: ObeliskConfig,
         codegen_cache: Option<&Path>,
@@ -1193,7 +1198,7 @@ async fn compile_and_verify(
         .into_iter()
         .map(|activity| {
             let engines = engines.clone();
-            let span = tracing::Span::current();
+            let span = info_span!("activity_compile", component_id = %activity.component_id());
             #[cfg_attr(madsim, allow(deprecated))]
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
@@ -1204,7 +1209,7 @@ async fn compile_and_verify(
         })
         .chain(workflows.into_iter().map(|workflow| {
             let engines = engines.clone();
-            let span = tracing::Span::current();
+            let span = info_span!("workflow_compile", component_id = %workflow.component_id());
             #[cfg_attr(madsim, allow(deprecated))]
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
@@ -1215,7 +1220,7 @@ async fn compile_and_verify(
         }))
         .chain(webhooks_by_names.into_iter().map(|(name, webhook)| {
             let engines = engines.clone();
-            let span = tracing::Span::current();
+            let span = info_span!("webhook_compile", component_id = %webhook.component_id);
             #[cfg_attr(madsim, allow(deprecated))]
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
