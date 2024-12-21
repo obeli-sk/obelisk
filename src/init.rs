@@ -34,6 +34,7 @@ where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
     use anyhow::Context;
+    use opentelemetry::trace::TracerProvider;
     use opentelemetry_otlp::WithExportConfig as _;
     use opentelemetry_sdk::propagation::TraceContextPropagator;
     use opentelemetry_sdk::runtime;
@@ -47,7 +48,6 @@ where
                 .with_endpoint(&otlp.otlp_endpoint)
                 .build()
                 .context("otlp endpoint setup failure")?;
-            use opentelemetry::trace::TracerProvider;
             let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
                 .with_batch_exporter(exporter, runtime::Tokio)
                 .with_resource(Resource::new(vec![opentelemetry::KeyValue::new(
