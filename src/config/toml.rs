@@ -601,6 +601,7 @@ pub(crate) mod log {
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct AppenderRollingFile {
+        pub(crate) enabled: bool,
         #[serde(flatten, default)]
         pub(crate) common: AppenderCommon,
         pub(crate) directory: String,

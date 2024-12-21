@@ -107,40 +107,41 @@ pub(crate) fn init(config: &mut ObeliskConfig) -> Result<Guard, anyhow::Error> {
         }
         _ => None,
     };
-    let rolling_file_layer = if let Some(rolling) = &mut config.log.file {
-        // EnvFilter missing Clone
-        let env_filter = std::mem::take(&mut rolling.common.level).0;
-        let file_appender = tracing_appender::rolling::RollingFileAppender::new(
-            rolling.rotation.into(),
-            &rolling.directory,
-            &rolling.prefix,
-        );
-        let (non_blocking, file_guard) = tracing_appender::non_blocking(file_appender);
-        guard.file_guard = Some(file_guard);
-        Some(match rolling.style {
-            LoggingStyle::Plain => tracing_subscriber::fmt::layer()
-                .with_writer(non_blocking)
-                .with_target(rolling.common.target)
-                .with_span_events(rolling.common.span.into())
-                .with_filter(env_filter)
-                .boxed(),
-            LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
-                .with_writer(non_blocking)
-                .compact()
-                .with_target(rolling.common.target)
-                .with_span_events(rolling.common.span.into())
-                .with_filter(env_filter)
-                .boxed(),
-            LoggingStyle::Json => tracing_subscriber::fmt::layer()
-                .with_writer(non_blocking)
-                .json()
-                .with_target(rolling.common.target)
-                .with_span_events(rolling.common.span.into())
-                .with_filter(env_filter)
-                .boxed(),
-        })
-    } else {
-        None
+    let rolling_file_layer = match &mut config.log.file {
+        Some(rolling) if rolling.enabled => {
+            // EnvFilter missing Clone
+            let env_filter = std::mem::take(&mut rolling.common.level).0;
+            let file_appender = tracing_appender::rolling::RollingFileAppender::new(
+                rolling.rotation.into(),
+                &rolling.directory,
+                &rolling.prefix,
+            );
+            let (non_blocking, file_guard) = tracing_appender::non_blocking(file_appender);
+            guard.file_guard = Some(file_guard);
+            Some(match rolling.style {
+                LoggingStyle::Plain => tracing_subscriber::fmt::layer()
+                    .with_writer(non_blocking)
+                    .with_target(rolling.common.target)
+                    .with_span_events(rolling.common.span.into())
+                    .with_filter(env_filter)
+                    .boxed(),
+                LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
+                    .with_writer(non_blocking)
+                    .compact()
+                    .with_target(rolling.common.target)
+                    .with_span_events(rolling.common.span.into())
+                    .with_filter(env_filter)
+                    .boxed(),
+                LoggingStyle::Json => tracing_subscriber::fmt::layer()
+                    .with_writer(non_blocking)
+                    .json()
+                    .with_target(rolling.common.target)
+                    .with_span_events(rolling.common.span.into())
+                    .with_filter(env_filter)
+                    .boxed(),
+            })
+        }
+        _ => None,
     };
     tracing_subscriber::registry()
         .with(tokio_console_layer())

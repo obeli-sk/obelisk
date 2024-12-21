@@ -144,6 +144,7 @@ enabled = true
 
 ## Sample (rolling) file configuration
 # [log.file]
+# enabled = true
 # level = "info,obeli=debug,app=trace"
 # style = "json"
 # span = "close"
