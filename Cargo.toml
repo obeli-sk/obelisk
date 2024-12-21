@@ -188,14 +188,14 @@ docker_credential = "1.3.1"
 futures-util = "0.3.31"
 futures = { version = "0.3.31", default-features = false }
 getrandom = "=0.2.11" # For madsim patch
-hashbrown = { version = "0.15.1", features = ["serde"] }
+hashbrown = { version = "0.15.2", features = ["serde"] }
 hdrhistogram = "7.5.4"
 http = "1.1.0"
 http-body-util = "0.1"
 hyper = "1.5.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
-implicit-clone = "0.5.0"
-indexmap = { version = "2.6", features = ["serde"] }
+implicit-clone = "0.5.0" # Only for webui
+indexmap = { version = "2.7", features = ["serde"] }
 insta = { version = "1.41.1", features = ["json"] }
 itertools = "0.13"
 lazy_static = "1.5"
@@ -245,7 +245,7 @@ toml = { version = "0.8.19", features = ["preserve_order"] }
 tonic = { version = "0.12.3", default-features = false }
 tonic-build = { version = "0.12.3", default-features = false }
 tonic-web = "0.12.3"
-tonic-web-wasm-client = "0.6.0"
+tonic-web-wasm-client = "0.6.0" # Only for webui
 tower = "0.5.1"
 tower-http = { version = "0.6.2", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
@@ -275,14 +275,10 @@ wasmtime = { version = "27.0", features = ["memory-protection-keys"] }
 wasmtime-wasi = "27.0"
 wasmtime-wasi-http = "27.0"
 # wasm-tools
-# wast.path = "../wasm-tools/crates/wast"
-# wit-parser.path = "../wasm-tools/crates/wit-parser"
-# wasmparser.path = "../wasm-tools/crates/wasmparser"
-# wit-component.path = "../wasm-tools/crates/wit-component"
-wast = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "4fc165602dde1fa00a69dc4fbfc7727015858490" }
-wit-parser = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "4fc165602dde1fa00a69dc4fbfc7727015858490" }
-wasmparser = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "4fc165602dde1fa00a69dc4fbfc7727015858490" }
-wit-component = { git = "https://github.com/obeli-sk/wasm-tools.git", rev = "4fc165602dde1fa00a69dc4fbfc7727015858490" }
+wast = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }
+wit-parser = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }
+wasmparser = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }
+wit-component = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }
 
 # testing components
 wit-bindgen = "0.36.0"
