@@ -516,16 +516,16 @@ dependencies = [
 
 [[package]]
 name = "cargo_metadata"
-version = "0.18.1"
+version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d886547e41f740c616ae73108f6eb70afe6d940c7bc697cb30f13daec073037"
+checksum = "8769706aad5d996120af43197bf46ef6ad0fda35216b4505f926a365a232d924"
 dependencies = [
  "camino",
  "cargo-platform",
  "semver",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.8",
 ]
 
 [[package]]
@@ -630,19 +630,19 @@ dependencies = [
 
 [[package]]
 name = "config"
-version = "0.14.1"
+version = "0.15.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68578f196d2a33ff61b27fae256c3164f65e36382648e30666dde05b8cc9dfdf"
+checksum = "3d84f8d224ac58107d53d3ec2b9ad39fd8c8c4e285d3c9cb35485ffd2ca88cb3"
 dependencies = [
  "async-trait",
  "convert_case",
  "indexmap 2.7.0",
- "nom",
  "pathdiff",
  "ron",
  "serde",
  "serde_json",
  "toml",
+ "winnow 0.6.20",
 ]
 
 [[package]]
@@ -1031,7 +1031,7 @@ dependencies = [
  "obeli-sk-concepts",
  "obeli-sk-utils",
  "obeli-sk-val-json",
- "thiserror 1.0.69",
+ "thiserror 2.0.8",
  "tracing",
 ]
 
@@ -2960,7 +2960,7 @@ dependencies = [
  "serde_with",
  "smallvec",
  "strum",
- "thiserror 1.0.69",
+ "thiserror 2.0.8",
  "tracing",
  "tracing-opentelemetry",
  "ulid",
@@ -2987,7 +2987,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.8",
  "tracing",
 ]
 
@@ -3017,7 +3017,7 @@ dependencies = [
  "rstest",
  "serde",
  "test-utils",
- "thiserror 1.0.69",
+ "thiserror 2.0.8",
  "tracing",
  "tracing-opentelemetry",
  "ulid",
@@ -3049,7 +3049,7 @@ dependencies = [
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-workflow-builder",
  "test-utils",
- "thiserror 1.0.69",
+ "thiserror 2.0.8",
  "tracing",
  "wasmparser 0.222.0 (git+https://github.com/bytecodealliance/wasm-tools.git?rev=1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0)",
  "wasmtime",
@@ -3068,7 +3068,7 @@ dependencies = [
  "itertools 0.13.0",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.8",
  "wasmtime",
  "wast 222.0.0 (git+https://github.com/bytecodealliance/wasm-tools.git?rev=1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0)",
 ]
@@ -3117,7 +3117,7 @@ dependencies = [
  "test-programs-sleep-activity-builder",
  "test-programs-sleep-workflow-builder",
  "test-utils",
- "thiserror 1.0.69",
+ "thiserror 2.0.8",
  "tracing",
  "ulid",
  "wasmtime",
@@ -3168,7 +3168,7 @@ dependencies = [
  "shadow-rs",
  "strum",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.8",
  "tokio-stream",
  "toml",
  "tonic 0.12.3",
@@ -4366,9 +4366,9 @@ dependencies = [
 
 [[package]]
 name = "shadow-rs"
-version = "0.35.2"
+version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1b2328fb3ec0d5302f95915e7e77cfc2ff943714d9970bc4b66e9eacf318687"
+checksum = "974eb8222c62a8588bc0f02794dd1ba5b60b3ec88b58e050729d0907ed6af610"
 dependencies = [
  "const_format",
  "git2",
@@ -5470,9 +5470,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "waki"
-version = "0.4.2"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b44c4142fc90684377341be0ae96b110ce204049febce3f4c9bfddb729014fe7"
+checksum = "6e2db2daf1dfbadf228fd8b3c22b96a359135fd673b3d2c203274ee6a0df9c77"
 dependencies = [
  "anyhow",
  "form_urlencoded",
@@ -5484,9 +5484,9 @@ dependencies = [
 
 [[package]]
 name = "waki-macros"
-version = "0.4.2"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "856e37ead59a9789ba92ef0ec0d042762c8da1f469abe832d2b2159a2b353967"
+checksum = "a061143f321cc5eeb523f60bdbcd45cfc3ee8851f8cf24f7a4b963bddc5642eb"
 dependencies = [
  "proc-macro2",
  "quote",

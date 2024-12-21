@@ -1,7 +1,7 @@
 use std::error::Error;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    shadow_rs::new()?;
+    shadow_rs::ShadowBuilder::builder().build()?;
     tonic_build::configure()
         .protoc_arg("--experimental_allow_proto3_optional") // not needed anymore with protoc  25.3
         .compile_well_known_types(true)

@@ -164,11 +164,11 @@ assert_matches = "1.5.0"
 async-channel = "2.3.1"
 async-trait = "0.1"
 bytes = "1.9"
-cargo_metadata = "0.18"
+cargo_metadata = "0.19"
 cfg-if = "1.0.0"
 chrono = { version = "0.4.39", features = ["arbitrary", "serde"] }
 clap = { version = "4.5.23", features = ["derive"] }
-config = { version = "0.14.1", default-features = false, features = [
+config = { version = "0.15.4", default-features = false, features = [
     "toml",
     "preserve_order",
     "async",
@@ -223,11 +223,11 @@ serde = { version = "1.0.216", features = ["derive"] }
 serde_json = "1.0.133"
 serde_with = "3.11.0"
 sha2 = "0.10.8"
-shadow-rs = "0.35"
+shadow-rs = "0.37"
 smallvec = "1.13.2"
 strum = { version = "0.26.3", features = ["derive"] }
 tempfile = "3.14.0"
-thiserror = "1.0"
+thiserror = "2.0"
 tokio = { version = "0.2.30", package = "madsim-tokio", features = [
     "fs",
     "macros",
@@ -250,8 +250,8 @@ tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
 ulid = { version = "1.1.3", features = ["serde"] }
 url = "2.5.4"
-waki = "0.4.2"
-waki-macros = "0.4.2"
+waki = "0.5.1"
+waki-macros = "0.5.1"
 wasm-logger = "0.2.0"
 wiremock = "0.6"
 
