@@ -1385,7 +1385,7 @@ pub struct ParameterTypes(pub Vec<ParameterType>);
 pub struct ParameterType {
     pub type_wrapper: TypeWrapper,
     #[derivative(PartialEq = "ignore")]
-    pub name: Option<StrVariant>,
+    pub name: StrVariant,
     #[derivative(PartialEq = "ignore")]
     pub wit_type: Option<StrVariant>,
 }
@@ -1406,7 +1406,7 @@ impl Debug for ParameterTypes {
 
 impl Display for ParameterType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: ", self.name.as_deref().unwrap_or("unknown"))?;
+        write!(f, "{}: ", self.name)?;
         if let Some(wit_type) = &self.wit_type {
             write!(f, "{wit_type}")
         } else {

@@ -109,7 +109,6 @@ pub fn execution_submit_form(
         .iter()
         .enumerate()
         .map(|(idx, param)| {
-            let name = param.name.as_deref().unwrap_or("unknown_param_name");
             let r#type = param
                 .r#type
                 .as_ref()
@@ -128,7 +127,7 @@ pub fn execution_submit_form(
                 };
 
             html! {<p>
-                <label for={id.clone()}>{ format!("{}: {}", name, r#type) }</label>
+                <label for={id.clone()}>{ format!("{}: {}", param.name, r#type) }</label>
                 <input id={id} type="text" ref={&form_data_handle.param_refs[idx]} oninput = {on_param_change} />
             </p>}
         })

@@ -98,7 +98,7 @@ enum FunctionExtension {
 
 message FunctionParameter {
     WitType type = 1;
-    optional string name = 2;
+    string name = 2;
 }
 
 message WitType {

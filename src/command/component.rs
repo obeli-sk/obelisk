@@ -89,7 +89,7 @@ fn print_fn_details(vec: Vec<grpc::FunctionDetail>) -> Result<(), anyhow::Error>
         print!("\t{func} : func(");
         let mut params = fn_detail.params.into_iter().peekable();
         while let Some(param) = params.next() {
-            print!("{}: ", param.name.as_deref().unwrap_or("(unknown)"));
+            print!("{}: ", param.name);
             print_wit_type(param.r#type.context("field `params.type` must exist")?);
             if params.peek().is_some() {
                 print!(", ");

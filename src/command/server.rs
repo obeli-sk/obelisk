@@ -543,7 +543,7 @@ fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc
                 .0
                 .into_iter()
                 .map(|p| grpc::FunctionParameter {
-                    name: p.name.map(|s| s.to_string()),
+                    name: p.name.to_string(),
                     r#type: Some(grpc::WitType {
                         wit_type: p.wit_type.map(|s| s.to_string()),
                     }),

@@ -41,7 +41,6 @@ pub fn function_parameter_list(
         .iter()
         .enumerate()
         .map(|(idx, param)| {
-            let name = param.name.as_deref().unwrap_or("unknown_param_name");
             let r#type = param
                 .r#type
                 .as_ref()
@@ -51,7 +50,7 @@ pub fn function_parameter_list(
                 if idx > 0 {
                     {", "}
                 }
-                { format!("{}: {}", name, r#type) }
+                { format!("{}: {}", param.name, r#type) }
             </>}
         })
         .collect()

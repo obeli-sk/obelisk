@@ -373,7 +373,7 @@ impl ExIm {
         });
         let param_type_join_set = ParameterType {
             type_wrapper: join_set_id_type_wrapper.clone(),
-            name: Some(StrVariant::Static("join-set-id")),
+            name: StrVariant::Static("join-set-id"),
             wit_type: Some(StrVariant::Static(
                 "/* use obelisk:types/execution.{join-set-id} */ join-set-id",
             )),
@@ -394,7 +394,7 @@ impl ExIm {
                 })),
                 Box::from("in") => Some(duration_type_wrapper),
             }),
-            name: Some(StrVariant::Static("scheduled-at")),
+            name: StrVariant::Static("scheduled-at"),
             wit_type: Some(StrVariant::Static(
                 "/* use obelisk:types/time.{schedule-at} */ schedule-at",
             )),
@@ -632,7 +632,7 @@ fn enrich_function_params<'a>(
                                 .into_iter()
                                 .zip(params)
                                 .map(|(name_wit, (_param_name, type_wrapper))| ParameterType {
-                                    name: Some(StrVariant::from(name_wit.name)),
+                                    name: StrVariant::from(name_wit.name),
                                     wit_type: name_wit.wit_type.map(StrVariant::from),
                                     type_wrapper,
                                 })
@@ -643,7 +643,7 @@ fn enrich_function_params<'a>(
                             params
                                 .into_iter()
                                 .map(|(name, type_wrapper)| ParameterType {
-                                    name: Some(StrVariant::from(name.to_string())),
+                                    name: StrVariant::from(name.to_string()),
                                     wit_type: None,
                                     type_wrapper,
                                 })
