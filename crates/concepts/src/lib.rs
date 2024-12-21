@@ -751,7 +751,7 @@ impl Params {
 
     pub fn as_vals(
         &self,
-        param_types: Box<[Type]>,
+        param_types: Box<[(String, Type)]>,
     ) -> Result<Arc<[wasmtime::component::Val]>, ParamsParsingError> {
         if param_types.len() != self.len() {
             return Err(ParamsParsingError::ParameterCardinalityMismatch {
@@ -760,15 +760,17 @@ impl Params {
             });
         }
         match &self.0 {
-            ParamsInternal::JsonValues(params) => {
+            ParamsInternal::JsonValues(json_vec) => {
                 let param_types = param_types
                     .into_vec()
                     .into_iter()
                     .enumerate()
-                    .map(|(idx, ty)| TypeWrapper::try_from(ty).map_err(|err| (idx, err)))
+                    .map(|(idx, (_param_name, ty))| {
+                        TypeWrapper::try_from(ty).map_err(|err| (idx, err))
+                    })
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|(idx, err)| ParamsParsingError::ParameterTypeError { idx, err })?;
-                Ok(params::deserialize_values(params, param_types.iter())
+                Ok(params::deserialize_values(json_vec, param_types.iter())
                     .map_err(ParamsParsingError::ParamsDeserializationError)?
                     .into_iter()
                     .map(Val::from)

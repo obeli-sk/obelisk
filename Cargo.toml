@@ -271,9 +271,9 @@ yewprint = "0.5.0"
 yewprint-css = "0.4.0"
 
 # wasmtime
-wasmtime = { version = "27.0", features = ["memory-protection-keys"] }
-wasmtime-wasi = "27.0"
-wasmtime-wasi-http = "27.0"
+wasmtime = { version = "28.0", features = ["memory-protection-keys"] }
+wasmtime-wasi = "28.0"
+wasmtime-wasi-http = "28.0"
 # wasm-tools
 wast = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }
 wit-parser = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }

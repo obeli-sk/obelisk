@@ -608,7 +608,9 @@ fn enrich_function_params<'a>(
                     };
                     let params = match func
                         .params()
-                        .map(TypeWrapper::try_from)
+                        .map(|(param_name, param_type)| {
+                            TypeWrapper::try_from(param_type).map(|ty| (param_name, ty))
+                        })
                         .collect::<Result<Vec<_>, _>>()
                     {
                         Ok(params) => params,
@@ -629,7 +631,7 @@ fn enrich_function_params<'a>(
                             wit_meta_params
                                 .into_iter()
                                 .zip(params)
-                                .map(|(name_wit, type_wrapper)| ParameterType {
+                                .map(|(name_wit, (_param_name, type_wrapper))| ParameterType {
                                     name: Some(StrVariant::from(name_wit.name)),
                                     wit_type: name_wit.wit_type.map(StrVariant::from),
                                     type_wrapper,
@@ -640,8 +642,8 @@ fn enrich_function_params<'a>(
                         ParameterTypes(
                             params
                                 .into_iter()
-                                .map(|type_wrapper| ParameterType {
-                                    name: None,
+                                .map(|(name, type_wrapper)| ParameterType {
+                                    name: Some(StrVariant::from(name.to_string())),
                                     wit_type: None,
                                     type_wrapper,
                                 })
