@@ -134,11 +134,10 @@ location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-11-28@sha256:48
 # otlp_endpoint = "http://localhost:4317"
 
 # Stdout configuration, by default logs INFO and above.
-# Comment the table to disable stdout logging.
-# [log.stdout]
+[log.stdout]
+enabled = true
 ## Defaults:
-# enabled = true
-# level = "info,app=debug"
+# level = "info,app=trace"
 # style = "plain_compact" # One of "plain","plain_compact","json"
 # span = "none" # One of "none","new","enter","exit","close","active","full"
 # target = false

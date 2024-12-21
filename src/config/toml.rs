@@ -502,11 +502,9 @@ impl From<DurationConfig> for Duration {
 }
 
 pub(crate) mod log {
-    use std::str::FromStr;
-
+    use super::{default_out_style, Deserialize};
     use serde_with::serde_as;
-
-    use super::{appender_out_enabled, default_out_style, Deserialize};
+    use std::str::FromStr;
 
     #[derive(Debug, Deserialize, Default)]
     #[serde(deny_unknown_fields)]
@@ -514,7 +512,7 @@ pub(crate) mod log {
         #[serde(default)]
         pub(crate) file: Option<AppenderRollingFile>,
         #[serde(default)]
-        pub(crate) stdout: AppenderOut,
+        pub(crate) stdout: Option<AppenderOut>,
     }
 
     #[derive(Debug, Deserialize, Default, Copy, Clone)]
@@ -593,22 +591,11 @@ pub(crate) mod log {
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct AppenderOut {
-        #[serde(default = "appender_out_enabled")]
         pub(crate) enabled: bool,
         #[serde(flatten, default)]
         pub(crate) common: AppenderCommon,
         #[serde(default = "default_out_style")]
         pub(crate) style: LoggingStyle,
-    }
-
-    impl Default for AppenderOut {
-        fn default() -> Self {
-            Self {
-                enabled: appender_out_enabled(),
-                common: AppenderCommon::default(),
-                style: default_out_style(),
-            }
-        }
     }
 
     #[derive(Debug, Deserialize)]
@@ -915,10 +902,6 @@ const fn default_retry_on_trap() -> bool {
 }
 
 const fn default_convert_core_module() -> bool {
-    true
-}
-
-fn appender_out_enabled() -> bool {
     true
 }
 

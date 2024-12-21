@@ -79,32 +79,33 @@ pub(crate) fn init(config: &mut ObeliskConfig) -> Result<Guard, anyhow::Error> {
 
     let mut guard = Guard::default();
 
-    let out_layer = if config.log.stdout.enabled {
-        // EnvFilter missing Clone
-        let env_filter = std::mem::take(&mut config.log.stdout.common.level).0;
+    let out_layer = match &mut config.log.stdout {
+        Some(stdout) if stdout.enabled => {
+            // EnvFilter missing Clone
+            let env_filter = std::mem::take(&mut stdout.common.level).0;
 
-        // Code repetition because of https://github.com/tokio-rs/tracing/issues/575
-        Some(match config.log.stdout.style {
-            LoggingStyle::Plain => tracing_subscriber::fmt::layer()
-                .with_target(config.log.stdout.common.target)
-                .with_span_events(config.log.stdout.common.span.into())
-                .with_filter(env_filter)
-                .boxed(),
-            LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
-                .compact()
-                .with_target(config.log.stdout.common.target)
-                .with_span_events(config.log.stdout.common.span.into())
-                .with_filter(env_filter)
-                .boxed(),
-            LoggingStyle::Json => tracing_subscriber::fmt::layer()
-                .json()
-                .with_target(config.log.stdout.common.target)
-                .with_span_events(config.log.stdout.common.span.into())
-                .with_filter(env_filter)
-                .boxed(),
-        })
-    } else {
-        None
+            // Code repetition because of https://github.com/tokio-rs/tracing/issues/575
+            Some(match stdout.style {
+                LoggingStyle::Plain => tracing_subscriber::fmt::layer()
+                    .with_target(stdout.common.target)
+                    .with_span_events(stdout.common.span.into())
+                    .with_filter(env_filter)
+                    .boxed(),
+                LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
+                    .compact()
+                    .with_target(stdout.common.target)
+                    .with_span_events(stdout.common.span.into())
+                    .with_filter(env_filter)
+                    .boxed(),
+                LoggingStyle::Json => tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_target(stdout.common.target)
+                    .with_span_events(stdout.common.span.into())
+                    .with_filter(env_filter)
+                    .boxed(),
+            })
+        }
+        _ => None,
     };
     let rolling_file_layer = if let Some(rolling) = &mut config.log.file {
         // EnvFilter missing Clone
