@@ -121,12 +121,14 @@ pub(crate) fn init(config: &mut ObeliskConfig) -> Result<Guard, anyhow::Error> {
             Some(match rolling.style {
                 LoggingStyle::Plain => tracing_subscriber::fmt::layer()
                     .with_writer(non_blocking)
+                    .with_ansi(false)
                     .with_target(rolling.common.target)
                     .with_span_events(rolling.common.span.into())
                     .with_filter(env_filter)
                     .boxed(),
                 LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
                     .with_writer(non_blocking)
+                    .with_ansi(false)
                     .compact()
                     .with_target(rolling.common.target)
                     .with_span_events(rolling.common.span.into())
