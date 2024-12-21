@@ -163,11 +163,11 @@ arbitrary = { version = "1.4.1", features = ["derive"] }
 assert_matches = "1.5.0"
 async-channel = "2.3.1"
 async-trait = "0.1"
-bytes = "1.8"
+bytes = "1.9"
 cargo_metadata = "0.18"
 cfg-if = "1.0.0"
-chrono = { version = "0.4.38", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.21", features = ["derive"] }
+chrono = { version = "0.4.39", features = ["arbitrary", "serde"] }
+clap = { version = "4.5.23", features = ["derive"] }
 config = { version = "0.14.1", default-features = false, features = [
     "toml",
     "preserve_order",
@@ -175,7 +175,7 @@ config = { version = "0.14.1", default-features = false, features = [
     "convert-case",
 ] }
 console-subscriber = "0.4.1"
-const_format = "0.2.33"
+const_format = "0.2.34"
 criterion = "0.5"
 derivative = "2.2.0"
 derive_more = { version = "1.0", features = [
@@ -190,9 +190,9 @@ futures = { version = "0.3.31", default-features = false }
 getrandom = "=0.2.11" # For madsim patch
 hashbrown = { version = "0.15.2", features = ["serde"] }
 hdrhistogram = "7.5.4"
-http = "1.1.0"
+http = "1.2.0"
 http-body-util = "0.1"
-hyper = "1.5.1"
+hyper = "1.5.2"
 hyper-util = { version = "0.1", features = ["tokio"] }
 indexmap = { version = "2.7", features = ["serde"] }
 insta = { version = "1.41.1", features = ["json"] }
@@ -205,7 +205,7 @@ oci-client = { version = "0.14.0", default-features = false, features = [
 oci-wasm = { version = "0.2.0", default-features = false, features = [ # Dependent on matching oci-client
     "rustls-tls",
 ] }
-prost = "0.13.3"
+prost = "0.13.4"
 prost-wkt-types = "0.6"
 rand = "0.8.5"
 reqwest = { version = "0.12", default-features = false, features = [
@@ -219,7 +219,7 @@ rusqlite = { version = "0.32.1", features = [
     "chrono",
     "serde_json",
 ] }
-serde = { version = "1.0.215", features = ["derive"] }
+serde = { version = "1.0.216", features = ["derive"] }
 serde_json = "1.0.133"
 serde_with = "3.11.0"
 sha2 = "0.10.8"
@@ -238,16 +238,16 @@ tokio = { version = "0.2.30", package = "madsim-tokio", features = [
     "time",
     "tracing",
 ] }
-tokio-stream = "0.1.16"
+tokio-stream = "0.1.17"
 toml = { version = "0.8.19", features = ["preserve_order"] }
 tonic = { version = "0.12.3", default-features = false }
 tonic-build = { version = "0.12.3", default-features = false }
 tonic-web = "0.12.3"
-tower = "0.5.1"
+tower = "0.5.2"
 tower-http = { version = "0.6.2", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.3"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
 ulid = { version = "1.1.3", features = ["serde"] }
 url = "2.5.4"
 waki = "0.4.2"
