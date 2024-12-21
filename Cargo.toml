@@ -194,12 +194,10 @@ http = "1.1.0"
 http-body-util = "0.1"
 hyper = "1.5.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
-implicit-clone = "0.5.0" # Only for webui
 indexmap = { version = "2.7", features = ["serde"] }
 insta = { version = "1.41.1", features = ["json"] }
 itertools = "0.13"
 lazy_static = "1.5"
-log = "0.4.22" # Only for webui
 madsim = "0.2.31"
 oci-client = { version = "0.14.0", default-features = false, features = [
     "rustls-tls",
@@ -245,7 +243,6 @@ toml = { version = "0.8.19", features = ["preserve_order"] }
 tonic = { version = "0.12.3", default-features = false }
 tonic-build = { version = "0.12.3", default-features = false }
 tonic-web = "0.12.3"
-tonic-web-wasm-client = "0.6.0" # Only for webui
 tower = "0.5.1"
 tower-http = { version = "0.6.2", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
@@ -257,18 +254,21 @@ waki = "0.4.2"
 waki-macros = "0.4.2"
 wasm-logger = "0.2.0"
 wiremock = "0.6"
+
+# webui
+id-arena = "2.2.1"
+implicit-clone = "0.5.0"
+log = "0.4.22"
+semver = "1.0.24"
+tonic-web-wasm-client = "0.6.0"
+wasm-bindgen = "=0.2.95"         # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml and wasm-bindgen-futures on version change.
+wasm-bindgen-futures = "=0.4.45" # Dependent on wasm-bindgen
+web-sys = "=0.3.72"              # Dependent on wasm-bindgen
 yew = { version = "0.21.0", features = ["csr"] }
 yew_icons = { version = "0.8.0", features = ["LucideBox", "LucideFileDiff"] }
 yew-router = "0.18.0"
 yewprint = "0.5.0"
 yewprint-css = "0.4.0"
-
-# webui
-id-arena = "2.2.1"
-semver = "1.0.24"
-wasm-bindgen = "=0.2.95"         # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml and wasm-bindgen-futures on version change.
-wasm-bindgen-futures = "=0.4.45" # Dependent on wasm-bindgen
-web-sys = "=0.3.72"              # Dependent on wasm-bindgen
 
 # wasmtime
 wasmtime = { version = "27.0", features = ["memory-protection-keys"] }
