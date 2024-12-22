@@ -51,34 +51,51 @@ pub struct PoolingOptions {
     pub pooling_max_memory_size: Option<usize>,
 }
 
-#[derive(Clone)]
-// TODO: Change to a struct with `strategy` and optional cache config file
-pub enum EngineConfig {
-    NoCache(wasmtime::InstanceAllocationStrategy),
-    Cache(wasmtime::InstanceAllocationStrategy, Rc<NamedTempFile>),
-}
-
-impl Debug for EngineConfig {
-    // Workaround for missing debug in InstanceAllocationStrategy
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (mut f, strategy) = match self {
-            Self::NoCache(strategy) => (f.debug_struct("EngineConfig::NoCache"), strategy),
-            Self::Cache(strategy, _) => (f.debug_struct("EngineConfig::Cache"), strategy),
-        };
-        match strategy {
-            wasmtime::InstanceAllocationStrategy::OnDemand => {
-                f.field("allocation_strategy", &"OnDemand").finish()
-            }
-            wasmtime::InstanceAllocationStrategy::Pooling(polling) => f
-                .field("allocation_strategy", &"Polling")
-                .field("polling_config", &polling)
-                .finish(),
-            _ => f.field("allocation_strategy", &"Unknown").finish(),
-        }
-    }
+#[derive(Clone, Debug)]
+pub struct EngineConfig {
+    pooling_opts: Option<PoolingOptions>,
+    cache_config_file: Option<Rc<NamedTempFile>>,
 }
 
 impl EngineConfig {
+    fn strategy(&self) -> wasmtime::InstanceAllocationStrategy {
+        if let Some(opts) = &self.pooling_opts {
+            let mut cfg = wasmtime::PoolingAllocationConfig::default();
+            if let Some(size) = opts.pooling_memory_keep_resident {
+                cfg.linear_memory_keep_resident(size);
+            }
+            if let Some(size) = opts.pooling_table_keep_resident {
+                cfg.table_keep_resident(size);
+            }
+            if let Some(limit) = opts.pooling_total_core_instances {
+                cfg.total_core_instances(limit);
+            }
+            if let Some(limit) = opts.pooling_total_component_instances {
+                cfg.total_component_instances(limit);
+            }
+            if let Some(limit) = opts.pooling_total_memories {
+                cfg.total_memories(limit);
+            }
+            if let Some(limit) = opts.pooling_total_tables {
+                cfg.total_tables(limit);
+            }
+            if let Some(limit) = opts.pooling_total_stacks {
+                cfg.total_stacks(limit);
+            }
+            if let Some(limit) = opts.pooling_max_memory_size {
+                cfg.max_memory_size(limit);
+            }
+            if let Some(enable) = opts.memory_protection_keys {
+                if enable {
+                    cfg.memory_protection_keys(wasmtime::MpkEnabled::Enable);
+                }
+            }
+            wasmtime::InstanceAllocationStrategy::Pooling(cfg)
+        } else {
+            wasmtime::InstanceAllocationStrategy::OnDemand
+        }
+    }
+
     #[cfg(test)]
     pub(crate) async fn on_demand_testing() -> Self {
         use std::path::PathBuf;
@@ -89,7 +106,18 @@ impl EngineConfig {
             .unwrap()
             .unwrap();
         std::fs::create_dir_all(&codegen_cache).unwrap();
-        Self::Cache(wasmtime::InstanceAllocationStrategy::OnDemand, temp_file)
+        Self {
+            pooling_opts: None,
+            cache_config_file: Some(temp_file),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pooling_nocache_testing(opts: PoolingOptions) -> Self {
+        Self {
+            pooling_opts: Some(opts),
+            cache_config_file: None,
+        }
     }
 }
 
@@ -116,12 +144,9 @@ impl Engines {
     ) -> Result<Arc<Engine>, EngineError> {
         wasmtime_config.wasm_component_model(true);
         wasmtime_config.async_support(true);
-        let (strategy, cache_config) = match config {
-            EngineConfig::NoCache(strategy) => (strategy, None),
-            EngineConfig::Cache(strategy, cache_config) => (strategy, Some(cache_config)),
-        };
-        wasmtime_config.allocation_strategy(strategy);
-        if let Some(cache_config) = cache_config {
+
+        wasmtime_config.allocation_strategy(config.strategy());
+        if let Some(cache_config) = config.cache_config_file {
             wasmtime_config
                 .cache_config_load(cache_config.path())
                 .map_err(|err| EngineError::CodegenCache(err.into()))?;
@@ -153,11 +178,10 @@ impl Engines {
     }
 
     #[instrument(skip_all)]
-    fn on_demand(cache_config: Option<Rc<NamedTempFile>>) -> Result<Self, EngineError> {
-        let strategy = wasmtime::InstanceAllocationStrategy::OnDemand;
-        let engine_config = match cache_config {
-            None => EngineConfig::NoCache(strategy),
-            Some(cache_config) => EngineConfig::Cache(strategy, cache_config),
+    fn on_demand(cache_config_file: Option<Rc<NamedTempFile>>) -> Result<Self, EngineError> {
+        let engine_config = EngineConfig {
+            pooling_opts: None,
+            cache_config_file,
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
@@ -168,43 +192,12 @@ impl Engines {
 
     #[instrument(skip_all)]
     fn pooling(
-        opts: &PoolingOptions,
-        cache_config: Option<Rc<NamedTempFile>>,
+        opts: PoolingOptions,
+        cache_config_file: Option<Rc<NamedTempFile>>,
     ) -> Result<Self, EngineError> {
-        let mut cfg = wasmtime::PoolingAllocationConfig::default();
-        if let Some(size) = opts.pooling_memory_keep_resident {
-            cfg.linear_memory_keep_resident(size);
-        }
-        if let Some(size) = opts.pooling_table_keep_resident {
-            cfg.table_keep_resident(size);
-        }
-        if let Some(limit) = opts.pooling_total_core_instances {
-            cfg.total_core_instances(limit);
-        }
-        if let Some(limit) = opts.pooling_total_component_instances {
-            cfg.total_component_instances(limit);
-        }
-        if let Some(limit) = opts.pooling_total_memories {
-            cfg.total_memories(limit);
-        }
-        if let Some(limit) = opts.pooling_total_tables {
-            cfg.total_tables(limit);
-        }
-        if let Some(limit) = opts.pooling_total_stacks {
-            cfg.total_stacks(limit);
-        }
-        if let Some(limit) = opts.pooling_max_memory_size {
-            cfg.max_memory_size(limit);
-        }
-        if let Some(enable) = opts.memory_protection_keys {
-            if enable {
-                cfg.memory_protection_keys(wasmtime::MpkEnabled::Enable);
-            }
-        }
-        let allocation_strategy = wasmtime::InstanceAllocationStrategy::Pooling(cfg.clone());
-        let engine_config = match cache_config {
-            None => EngineConfig::NoCache(allocation_strategy),
-            Some(temp_file) => EngineConfig::Cache(allocation_strategy, temp_file),
+        let engine_config = EngineConfig {
+            pooling_opts: Some(opts),
+            cache_config_file,
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
@@ -214,7 +207,7 @@ impl Engines {
     }
 
     pub fn auto_detect_allocator(
-        pooling_opts: &PoolingOptions,
+        pooling_opts: PoolingOptions,
         cache_config: Option<Rc<NamedTempFile>>,
     ) -> Result<Self, EngineError> {
         Self::pooling(pooling_opts, cache_config.clone()).or_else(|err| {

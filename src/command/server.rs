@@ -808,7 +808,7 @@ impl ServerVerified {
                 .context("error configuring codegen cache")?;
 
             Engines::auto_detect_allocator(
-                &config.wasmtime_pooling_config.into(),
+                config.wasmtime_pooling_config.into(),
                 codegen_cache_config_file_holder,
             )?
         };

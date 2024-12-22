@@ -227,7 +227,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::engines::{EngineConfig, Engines};
+    use crate::engines::{EngineConfig, Engines, PoolingOptions};
 
     use super::*;
     use assert_matches::assert_matches;
@@ -398,17 +398,17 @@ pub(crate) mod tests {
         let tasks = env_or_default("TASKS", TASKS);
         let max_instances = env_or_default("MAX_INSTANCES", MAX_INSTANCES);
 
-        let mut pool = wasmtime::PoolingAllocationConfig::default();
-        pool.total_component_instances(max_instances);
-        pool.total_stacks(max_instances);
-        pool.total_core_instances(max_instances);
-        pool.total_memories(max_instances);
-        pool.total_tables(max_instances);
+        let pool_opts = PoolingOptions {
+            pooling_total_component_instances: Some(max_instances),
+            pooling_total_stacks: Some(max_instances),
+            pooling_total_core_instances: Some(max_instances),
+            pooling_total_memories: Some(max_instances),
+            pooling_total_tables: Some(max_instances),
+            ..Default::default()
+        };
 
-        let engine = Engines::get_activity_engine(EngineConfig::NoCache(
-            wasmtime::InstanceAllocationStrategy::Pooling(pool),
-        ))
-        .unwrap();
+        let engine =
+            Engines::get_activity_engine(EngineConfig::pooling_nocache_testing(pool_opts)).unwrap();
 
         let (fibo_worker, _) = new_activity_worker(
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,

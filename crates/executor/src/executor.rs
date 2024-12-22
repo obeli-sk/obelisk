@@ -62,8 +62,11 @@ impl ExecutionProgress {
     }
 }
 
+#[derive(derive_more::Debug)]
 pub struct ExecutorTaskHandle {
+    #[debug(skip)]
     is_closing: Arc<AtomicBool>,
+    #[debug(skip)]
     abort_handle: AbortHandle,
     component_id: ComponentId,
     executor_id: ExecutorId,
