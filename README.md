@@ -1,6 +1,8 @@
 # Obelisk
 Deterministic workflow engine built on top of the WASM Component Model.
 
+> ⚠️ This is a **pre-release**: Expect changes in the CLI, gRPC, WIT or database schema.
+
 ## What's Included
 * **Obelisk runtime**: A single binary executing your deterministic workflows, activities and webhook endpoints, persisting each step in an event log using SQLite.
 * **Control Interfaces**: Access and manage your components and executions through:
@@ -112,12 +114,6 @@ obelisk client component list
 # Call fibonacci(10) activity from the workflow 500 times in series.
 obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]' --follow
 ```
-
-## Project status / Disclaimer
-This is a **pre-release**.
-
-This repo contains backend code for local development and testing.
-The software doesn't have backward compatibility guarantees for the CLI, gRPC or database schema.
 
 # Contributing
 This project has a [roadmap](ROADMAP.md) and features are added in a certain order.
