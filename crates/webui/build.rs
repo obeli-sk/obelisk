@@ -12,14 +12,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         .build_server(false)
         .build_client(true)
         .compile_protos(&["obelisk.proto"], &[proto_path])?;
-
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
+    check_blueprint_css(&pkg_name)
+}
+
+// Keep in sync with webui-builder
+fn check_blueprint_css(webui_package_name: &str) -> Result<(), Box<dyn Error>> {
     let meta = cargo_metadata::MetadataCommand::new().exec().unwrap();
     let package = meta
         .packages
         .iter()
-        .find(|p| p.name == pkg_name)
-        .unwrap_or_else(|| panic!("package `{pkg_name}` must exist"));
+        .find(|p| p.name == webui_package_name)
+        .unwrap_or_else(|| panic!("package `{webui_package_name}` must exist"));
     let blueprint_css_path = &package
         .manifest_path
         .parent()

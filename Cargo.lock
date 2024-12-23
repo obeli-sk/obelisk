@@ -5990,6 +5990,7 @@ name = "webui-builder"
 version = "0.9.0"
 dependencies = [
  "cargo_metadata",
+ "yewprint-css",
 ]
 
 [[package]]

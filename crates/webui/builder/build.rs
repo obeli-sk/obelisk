@@ -1,24 +1,50 @@
 use cargo_metadata::camino::Utf8Path;
 use std::{
+    error::Error,
+    fs::File,
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
 };
 
-fn main() {
-    let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
-    let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
+// Keep in sync with webui
+fn check_blueprint_css(webui_package_name: &str) -> Result<(), Box<dyn Error>> {
     let meta = cargo_metadata::MetadataCommand::new().exec().unwrap();
     let package = meta
         .packages
         .iter()
-        .find(|p| p.name == pkg_name)
-        .unwrap_or_else(|| panic!("package `{pkg_name}` must exist"));
+        .find(|p| p.name == webui_package_name)
+        .unwrap_or_else(|| panic!("package `{webui_package_name}` must exist"));
+    let blueprint_css_path = &package
+        .manifest_path
+        .parent()
+        .unwrap()
+        .join("blueprint.css");
+    if !blueprint_css_path.exists() {
+        let mut blueprint_css_file = File::create(blueprint_css_path)?;
+        blueprint_css_file.write_all(yewprint_css::BLUEPRINT_CSS.as_bytes())?;
+        blueprint_css_file.flush()?;
+    }
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
+    let webui_package_name = pkg_name.strip_suffix("-builder").unwrap();
+    check_blueprint_css(webui_package_name)?;
+    let meta = cargo_metadata::MetadataCommand::new().exec().unwrap();
+    let package = meta
+        .packages
+        .iter()
+        .find(|p| p.name == webui_package_name)
+        .unwrap_or_else(|| panic!("package `{webui_package_name}` must exist"));
     let parent_package_path = package.manifest_path.parent().unwrap();
     run_trunk_build(parent_package_path.as_std_path());
     add_dependency(&package.manifest_path); // Cargo.toml
     for target in &package.targets {
         add_dependency(&target.src_path); // src folder
     }
+    Ok(())
 }
 
 fn run_trunk_build(current_dir: &Path) {
