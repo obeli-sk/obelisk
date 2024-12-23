@@ -1,22 +1,27 @@
 # Obelisk
-Deterministic workflow engine built on top of the WASM Component Model
+Deterministic workflow engine built on top of the WASM Component Model.
 
-## Project status / Disclaimer
-This is a **pre-release**.
+## What's Included
+* **Obelisk runtime**: A single binary executing your deterministic workflows, activities and webhook endpoints, persisting each step in an event log using SQLite.
+* **Control Interfaces**: Access and manage your components and executions through:
+  - **CLI**: Command-line interface using the `obelisk` executable.
+  - **gRPC API**: Programmatic interaction.
+  - **Web UI**: Visual and interactive interface, available at [localhost:8080](http://127.0.0.1:8080) by default.
 
-This repo contains backend code for local development and testing.
-The software doesn't have backward compatibility guarantees for the CLI, gRPC or database schema.
+## How It Works
+* **Schema-first design with end-to-end type safety**: Uses the [WASM Component Model](https://component-model.bytecodealliance.org/) and [WIT IDL](https://component-model.bytecodealliance.org/design/wit.html) to generate API bindings between components.
+* **Resilient Activities**: Automatically retries on errors and timeouts, with input parameters and execution results persistently stored.
+* **Replayable Workflows**: Deterministic execution and a persisted event log make workflows replayable, enabling reliable recovery, debugging, and auditing of processes.
 
-## Core principles
-* Schema first, using [WASM Component model](https://component-model.bytecodealliance.org/)'s [WIT](https://component-model.bytecodealliance.org/design/wit.html) language as the interface between workflows and activities.
-* Single process, uses sqlite and wasmtime
-* Automatic retries on errors, timeouts for activities
-* Observability - parameters and results together with function hierarchy can be inspected
-* Composability - nesting workflows, calling activities written in any supported language
-* Replayable workflows using deterministic execution and persisted event log
+## Use Cases
+* **Periodic Tasks**: Automate checks like customer limits, triggering activities such as transactional emails or project suspensions.
+* **Background Job Processing**: Offload and manage background tasks with built-in error handling and retries.
+* **Mass Deployments**: Manage large-scale deployments across systems efficiently.
+* **End-to-End Testing**: Automate tests with workflows, providing detailed logs for identifying and debugging issues (e.g., GraphQL API testing).
+* **Webhook Integrations**: Build webhook endpoints (e.g., GitHub) that trigger long-running workflows and interact with external APIs.
 
 ## Concepts and features
-* *Activities*
+* **Activities**
     * Must be idempotent (retriable). This contract must be fulfilled by the activity itself.
     * WASI activities are executed in a WASM sandbox
         * Able to contact HTTP servers using the WASI 0.2 HTTP client.
@@ -25,7 +30,7 @@ The software doesn't have backward compatibility guarantees for the CLI, gRPC or
     * Retries on timeouts with exponential backoff.
     * Execution result is persisted.
 
-* *Deterministic workflows*
+* **Deterministic workflows**
     * Replayable: Execution is persisted at every state change, so that it can be replayed after an interrupt or an error.
     * Running in a WASM sandbox, isolated from the environment
     * Automatically retried on failures like persistence errors, timeouts or even traps(panics).
@@ -33,12 +38,12 @@ The software doesn't have backward compatibility guarantees for the CLI, gRPC or
     * Join sets allow for structured concurrency, either blocking until child executions are done, or cancelling those that were not awaited (planned).
     * Distributed sagas (planned).
 
-* *Webhook Endpoints*
+* **Webhook Endpoints**
     * Mounted as a URL path, serving HTTP traffic.
     * Running in a WASM sandbox
     * Able to spawn child workflows or activities.
 
-* *Work stealing executor*
+* **Work stealing executor**
     * Periodically locking a batch of currently pending executions, starts/continues their execution
     * Cleaning up old hanging executions with expired locks. Executions that have the budget will be retried (planned).
     * Concurrency control - limit on the number of workers that can run simultaneously.
@@ -107,6 +112,12 @@ obelisk client component list
 # Call fibonacci(10) activity from the workflow 500 times in series.
 obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]' --follow
 ```
+
+## Project status / Disclaimer
+This is a **pre-release**.
+
+This repo contains backend code for local development and testing.
+The software doesn't have backward compatibility guarantees for the CLI, gRPC or database schema.
 
 # Contributing
 This project has a [roadmap](ROADMAP.md) and features are added in a certain order.
