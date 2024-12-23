@@ -39,6 +39,8 @@ yew_icons.workspace = true
 yewprint.workspace = true
 
 [build-dependencies]
+cargo_metadata.workspace = true
 tonic-build = { workspace = true, default-features = false, features = [
     "prost",
 ] }
+yewprint-css.workspace = true
