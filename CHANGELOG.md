@@ -3,6 +3,111 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/obeli-sk/obelisk/compare/v0.8.0...v0.9.0) - 2024-12-24
+
+### Added
+
+- Render function links inside the WIT
+- *(ui)* Highlight submittable functions in WIT
+- *(ui)* Hide unrelated functions on the submit page
+- *(ui)* Filter the WIT to required interfaces in the submit page
+- *(ui)* Add syntax highlighting for WIT
+- *(grpc)* Implement `GetWit`
+- *(ui)* Render interfaces as a code block in `<ComponentListPage />`
+- *(toml)* [**breaking**] Rename `api_listening_addr` to `api.listening_addr`
+- *(toml)* [**breaking**] Rename `oci.wasm_directory` to `wasm_cache_directory`
+- Hide webui config details behind `webui.listening_addr`
+- Add `convert_core_module` to `component push`
+- Add `convert_core_module` switch to workflows
+- Transform Core Module to a Component in `inspect`
+
+### Fixed
+
+- *(ci)* Save the `blueprint.css` in `webui-builder`
+- *(logging)* Skip ansi escape codes when logging to a file
+- Explicitly convert from `ConfigIdType` to `grpc::ComopnentType`
+- Make router match '/path/' with pattern '/path/*'
+- Update `clippy.sh` after `cargo-component` removal
+
+### Other
+
+- Move the `wasm-tools` fork declaration to the `patch section
+- Revert "chore: release v0.9.0"
+- Add `release-plz` to the dev shell
+- Update the disclaimer
+- Remove `blueprint.css` from git
+- Update the readme
+- Turn `EngineConfig` into a struct
+- Fix clippy
+- *(toml)* [**breaking**] Enable file logger with `enabled` flag
+- *(toml)* [**breaking**] Enable stdout logger with `log.stdout.enabled`
+- *(toml)* [**breaking**] Require `otlp.enabled`, bump dependencies
+- *(grpc)* [**breaking**] Make parameter names mandatory
+- Bump `wasmtime` to v28
+- Upgrade dependencies
+- Run `cargo update`
+- Bump `Cargo.lock`
+- Move all webui deps to the webui section
+- Bump `wasm-tools` after PR merge
+- Bump `flake.lock`
+- Bump `wasm-tools` fork revision
+- Bump fork of `wasm-tools` with the new `WitPrinter` API
+- release v0.9.0
+- Bump OCI reference of `webui`
+- Rename `ConfigId` to `ComponentId`, `ConfigIdType` to `ComponentType`
+- Rename `Webhook` to `WebhookEndpoint`
+- Move the WIT manipulation to the server side
+- *(ui)* Print `-submit` in `print_all`
+- Readd `-nosim` suffix
+- Bump the `webui` OCI reference
+- Rename `ConfigIdType::WebhookWasm` to `WebhookEndpoint`
+- Add `build.yml`
+- *(grpc)* [**breaking**] Rename `WEBHOOK_WASM` to `WEBHOOK_ENDPOINT`
+- Update the roadmap
+- Switch to `WitPrinterExt`
+- Show only types on nested interfaces
+- *(ui)* Remove `yewprint-css`
+- *(grpc)* [**breaking**] Rename `function` to `function_name`
+- *(grpc)* [**breaking**] Rename `ConfigId` to `ComponentId`
+- Bump `flake.lock`
+- Extract roadmap from the readme
+- *(toml)* [**breaking**] Rename `webhook_wasm` to `webhook_endpoint`
+- Change the commented out `external` port
+- Simplify the fibo webhook using `waki`
+- Update the readme
+- Determine architecture of the `macos-13` runner
+- Change the the arm architecture for MacOS
+- Add Mac OS 13 x64 to the list of supported platforms
+- Rename macos artifacts for `cargo-binstall`
+- Use `gnu-tar` instead of BSD `tar`
+- Remove `jq` as it is already present
+- Fix `protobuf` installation on MacOS
+- Replace `grep -oP` with MacOS-compatible `jq`
+- Add support for building on MacOS
+- Mention `protoc` in the instructions
+- Fix clippy
+- *(toml)* Enable stdout logger by default
+- *(toml)* Make `codegen_cache` enabled by default
+- *(toml)* [**breaking**] Rename `webhook_component` to `webhook_wasm`
+- Remove `wasm32-wasip1`
+- Add `cargo-generate` to `flake.nix`
+- Update `dev-deps.txt`
+- Remove `tracing-chrome`
+- Fix clippy
+- Update `rustc` to 1.83
+- Bump component versions in docker hub
+- Stop using `cargo-component` in `webui-proxy`
+- Remove `cargo-component`
+- Switch workflows away from `cargo-component`
+- Remove `cargo-component` from activities, webhooks
+- Add `wasm32-wasip2` target
+- Bump `wasmtime` to v27
+- Add `WasmComponent.wit()`
+- Fix missing delimiter
+- Build test workflows without `cargo-component`
+- Lower error to a warning on unsupported component elements
+- *(test)* Simplify tests by extracting `new_activity_worker`
+
 ## [0.8.0](https://github.com/obeli-sk/obelisk/compare/v0.7.0...v0.8.0) - 2024-11-25
 
 ### Added
