@@ -258,9 +258,16 @@ fn render_execution_details(
                 execution_event::Event::TimedOut(event) => html! {
                     <TemporarilyTimedOutEvent event={*event} />
                 },
-                execution_event::Event::Finished(event) => html! {
-                    <FinishedEvent event={event.clone()} />
-                },
+                execution_event::Event::Finished(event) => {
+                    let result_detail = event
+                        .result_detail
+                        .as_ref()
+                        .expect("`result_detail` is sent in the `Finished` message")
+                        .clone();
+                    html! {
+                        <FinishedEvent {result_detail} />
+                    }
+                }
                 execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
                     event: Some(execution_event::history_event::Event::Schedule(event)),
                 }) => html! {

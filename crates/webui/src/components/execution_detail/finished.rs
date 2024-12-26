@@ -12,7 +12,7 @@ use yewprint::{
 
 #[derive(Properties, PartialEq, Clone)]
 pub struct FinishedEventProps {
-    pub event: grpc_client::execution_event::Finished,
+    pub result_detail: grpc_client::ResultDetail,
 }
 
 pub fn attach_result_detail(
@@ -163,17 +163,11 @@ pub fn attach_result_detail(
 
 impl FinishedEventProps {
     fn construct_tree(&self) -> TreeData<u32> {
-        let result_detail = self
-            .event
-            .result_detail
-            .as_ref()
-            .expect("`result_detail` is sent in the `Finished` message");
-
         let mut tree = TreeBuilder::new().build();
         let root_id = tree
             .insert(Node::new(NodeData::default()), InsertBehavior::AsRoot)
             .unwrap();
-        attach_result_detail(&mut tree, &root_id, result_detail);
+        attach_result_detail(&mut tree, &root_id, &self.result_detail);
         TreeData::from(tree)
     }
 }

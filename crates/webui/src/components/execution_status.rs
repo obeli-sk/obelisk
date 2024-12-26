@@ -1,8 +1,11 @@
-use crate::grpc::grpc_client::{
-    self,
-    execution_status::{Finished, Locked, PendingAt},
-    get_status_response, ExecutionStatus as GExecutionStatus, ExecutionSummary, FinishedStatus,
-    ResultKind,
+use crate::{
+    components::execution_detail::finished::FinishedEvent,
+    grpc::grpc_client::{
+        self,
+        execution_status::{Finished, Locked, PendingAt},
+        get_status_response, ExecutionStatus as GExecutionStatus, ExecutionSummary, FinishedStatus,
+        ResultKind,
+    },
 };
 use chrono::DateTime;
 use log::{error, trace};
@@ -100,76 +103,16 @@ pub fn execution_status(
             finished_at: Some(finished_at),
             result_detail: Some(result_detail),
         })) => {
-            let render_result = |return_value: &Option<prost_wkt_types::Any>| {
-                let return_value = return_value
-                    .as_ref()
-                    .map(|return_value| String::from_utf8_lossy(&return_value.value));
-                html! {
-                    if let Some(return_value) = return_value {
-                        {return_value}
-                    } else {
-                        {"None"}
-                    }
-                }
-            };
-
-            let result = match &result_detail.value {
-                Some(grpc_client::result_detail::Value::Ok(grpc_client::result_detail::Ok {
-                    return_value,
-                })) => {
-                    html! {<>
-                        <span>{"OK"}</span>
-                        <span style="color:green">
-                            {render_result(return_value)}
-                        </span>
-                    </>}
-                }
-                Some(grpc_client::result_detail::Value::FallibleError(
-                    grpc_client::result_detail::FallibleError { return_value },
-                )) => {
-                    html! {<>
-                        <span>{"Err"}</span>
-                        <span style="color:red">
-                            {render_result(return_value)}
-                        </span>
-                    </>}
-                }
-                Some(grpc_client::result_detail::Value::Timeout(_)) => {
-                    html! {<>
-                        <span>{"Timeout"}</span>
-                    </>}
-                }
-                Some(grpc_client::result_detail::Value::ExecutionFailure(
-                    grpc_client::result_detail::ExecutionFailure { reason },
-                )) => {
-                    html! {<>
-                        <span>{"Execution failure"}</span>
-                        <span style="color:red">
-                            {reason}
-                        </span>
-                    </>}
-                }
-                Some(grpc_client::result_detail::Value::NondeterminismDetected(
-                    grpc_client::result_detail::NondeterminismDetected { reason },
-                )) => {
-                    html! {<>
-                        <span>{"Nondeterminism detected"}</span>
-                        <span style="color:red">
-                            {reason}
-                        </span>
-                    </>}
-                }
-                other => unreachable!("unexpected variant {other:?}"),
-            };
-
             let finished_at = DateTime::from(*finished_at);
             let scheduled_at = DateTime::from(*scheduled_at);
             let since_scheduled = (finished_at - scheduled_at)
                 .to_std()
                 .expect("must be non-negative");
             html! {<>
-                <p>{result}</p>
-                <p>{format!("Execution finished in {since_scheduled:?} after it was scheduled")}</p>
+                // <p>{result}</p>
+                <FinishedEvent result_detail={result_detail.clone()} />
+
+                <p>{format!("Execution completed {since_scheduled:?} after being scheduled.")}</p>
             </>}
         }
         Some(unknown) => unreachable!("unexpected {unknown:?}"),
