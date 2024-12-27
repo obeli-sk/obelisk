@@ -66,7 +66,7 @@ pub fn execution_submit_page(ExecutionSubmitPageProps { ffqn }: &ExecutionSubmit
             <header>
                 <h1>{"Execution submit"}</h1>
                 <h2>
-                    <FfqnWithLinks ffqn={ffqn.clone()} fully_qualified={false} hide_submit={true}  />
+                    <FfqnWithLinks ffqn={ffqn.clone()} fully_qualified={true} hide_submit={true}  />
                 </h2>
                 if let Some(found) = provided_by {
                     <h3>
