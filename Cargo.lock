@@ -5932,6 +5932,7 @@ dependencies = [
  "implicit-clone 0.5.0",
  "indexmap 2.7.0",
  "log",
+ "obeli-sk-val-json",
  "prost",
  "prost-wkt-types",
  "serde_json",

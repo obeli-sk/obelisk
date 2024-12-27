@@ -543,19 +543,23 @@ fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc
             params: parameter_types
                 .0
                 .into_iter()
-                .map(|p| grpc::FunctionParameter {
-                    name: p.name.to_string(),
+                .map(|param| grpc::FunctionParameter {
+                    name: param.name.to_string(),
                     r#type: Some(grpc::WitType {
-                        wit_type: p.wit_type.map(|s| s.to_string()),
+                        wit_type: param.wit_type.map(|s| s.to_string()),
+                        type_wrapper: serde_json::to_string(&param.type_wrapper)
+                            .expect("`TypeWrapper` must be serializable"),
                     }),
                 })
                 .collect(),
             return_type: return_type.map(
                 |ReturnType {
-                     type_wrapper: _,
+                     type_wrapper,
                      wit_type,
                  }| grpc::WitType {
                     wit_type: wit_type.map(|s| s.to_string()),
+                    type_wrapper: serde_json::to_string(&type_wrapper)
+                        .expect("`TypeWrapper` must be serializable"),
                 },
             ),
             function_name: Some(ffqn.into()),

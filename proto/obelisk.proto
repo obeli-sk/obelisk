@@ -103,7 +103,9 @@ message FunctionParameter {
 
 message WitType {
     optional string wit_type = 1;
-    reserved 2;
+
+    // Internal information about the type serialized as JSON
+    string type_wrapper = 2;
 }
 
 message ExecutionId {
