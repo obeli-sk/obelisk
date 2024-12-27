@@ -16,8 +16,11 @@ itertools.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-wasmtime.workspace = true
+wasmtime = { workspace = true, optional = true }
 wast.workspace = true
+
+[features]
+wasmtime = ["dep:wasmtime"]
 
 [lints]
 workspace = true

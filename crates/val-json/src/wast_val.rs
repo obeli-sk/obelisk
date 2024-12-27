@@ -3,7 +3,6 @@ use crate::type_wrapper::TypeWrapper;
 use indexmap::IndexMap;
 use serde::Serialize;
 use std::fmt::Debug;
-use wasmtime::component::Val;
 
 /// Expression that can be used inside of `invoke` expressions for core wasm
 /// functions.
@@ -76,10 +75,13 @@ pub enum WastValWithTypeConversionError {
 #[error("conversion of the resource type is not supported")]
 pub struct WastValConversionError;
 
-impl TryFrom<Val> for WastVal {
+#[cfg(feature = "wasmtime")]
+impl TryFrom<wasmtime::component::Val> for WastVal {
     type Error = WastValConversionError;
 
-    fn try_from(value: Val) -> Result<Self, Self::Error> {
+    fn try_from(value: wasmtime::component::Val) -> Result<Self, Self::Error> {
+        use wasmtime::component::Val;
+
         Ok(match value {
             Val::Bool(v) => Self::Bool(v),
             Val::S8(v) => Self::S8(v),
@@ -193,9 +195,12 @@ impl PartialEq for WastVal {
 
 impl Eq for WastVal {}
 
+#[cfg(feature = "wasmtime")]
 impl WastVal {
     #[must_use]
-    pub fn as_val(&self) -> Val {
+    pub fn as_val(&self) -> wasmtime::component::Val {
+        use wasmtime::component::Val;
+
         match self {
             Self::Bool(b) => Val::Bool(*b),
             Self::U8(b) => Val::U8(*b),
@@ -236,12 +241,13 @@ impl WastVal {
         }
     }
 
-    fn payload_val(v: Option<&WastVal>) -> Option<Box<Val>> {
+    fn payload_val(v: Option<&WastVal>) -> Option<Box<wasmtime::component::Val>> {
         v.map(|v| Box::new(v.as_val()))
     }
 }
 
-impl From<WastVal> for Val {
+#[cfg(feature = "wasmtime")]
+impl From<WastVal> for wasmtime::component::Val {
     fn from(value: WastVal) -> Self {
         value.as_val()
     }

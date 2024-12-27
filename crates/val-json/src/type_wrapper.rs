@@ -89,6 +89,7 @@ pub enum TypeConversionError {
     UnsupportedType(String),
 }
 
+#[cfg(feature = "wasmtime")]
 impl TryFrom<wasmtime::component::Type> for TypeWrapper {
     type Error = TypeConversionError;
 
