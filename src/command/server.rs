@@ -546,7 +546,7 @@ fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc
                 .map(|param| grpc::FunctionParameter {
                     name: param.name.to_string(),
                     r#type: Some(grpc::WitType {
-                        wit_type: param.wit_type.map(|s| s.to_string()),
+                        wit_type: param.wit_type.to_string(),
                         type_wrapper: serde_json::to_string(&param.type_wrapper)
                             .expect("`TypeWrapper` must be serializable"),
                     }),
@@ -557,7 +557,7 @@ fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc
                      type_wrapper,
                      wit_type,
                  }| grpc::WitType {
-                    wit_type: wit_type.map(|s| s.to_string()),
+                    wit_type: wit_type.to_string(),
                     type_wrapper: serde_json::to_string(&type_wrapper)
                         .expect("`TypeWrapper` must be serializable"),
                 },

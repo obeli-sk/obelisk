@@ -108,7 +108,7 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
             resolve.package_names.insert(package_name, ext_pkg_id);
             ext_pkg_id
         };
-    // // Get obelisk:types/time
+    // Get obelisk:types/time
     let time_ifc_id = *resolve.packages[obelisk_types_pkg_id]
         .interfaces
         .get("time")

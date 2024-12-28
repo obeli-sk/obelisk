@@ -90,7 +90,7 @@ fn print_fn_details(vec: Vec<grpc::FunctionDetail>) -> Result<(), anyhow::Error>
         let mut params = fn_detail.params.into_iter().peekable();
         while let Some(param) = params.next() {
             print!("{}: ", param.name);
-            print_wit_type(param.r#type.context("field `params.type` must exist")?);
+            print_wit_type(&param.r#type.context("field `params.type` must exist")?);
             if params.peek().is_some() {
                 print!(", ");
             }
@@ -98,17 +98,13 @@ fn print_fn_details(vec: Vec<grpc::FunctionDetail>) -> Result<(), anyhow::Error>
         print!(")");
         if let Some(return_type) = fn_detail.return_type {
             print!(" -> ");
-            print_wit_type(return_type);
+            print_wit_type(&return_type);
         }
         println!();
     }
     Ok(())
 }
 
-fn print_wit_type(wit_type: grpc::WitType) {
-    if let Some(wit_type) = wit_type.wit_type {
-        print!("{wit_type}");
-    } else {
-        print!("<unknown type>");
-    }
+fn print_wit_type(wit_type: &grpc::WitType) {
+    print!("{}", wit_type.wit_type);
 }

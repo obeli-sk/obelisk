@@ -8,7 +8,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
+        "wit_type": "join-set-id"
       }
     ],
     {
@@ -47,7 +47,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<string, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
+      "wit_type": "result<tuple<execution-id, result<string, string>>, tuple<execution-id, execution-error>>"
     },
     "AwaitNext"
   ],
@@ -75,7 +75,7 @@ expression: exports
           }
         },
         "name": "scheduled-at",
-        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+        "wit_type": "schedule-at"
       },
       {
         "type_wrapper": "string",
@@ -89,7 +89,7 @@ expression: exports
           "id": "string"
         }
       },
-      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
+      "wit_type": "execution-id"
     },
     "Schedule"
   ],
@@ -98,7 +98,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
+        "wit_type": "join-set-id"
       },
       {
         "type_wrapper": "string",
@@ -112,7 +112,7 @@ expression: exports
           "id": "string"
         }
       },
-      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
+      "wit_type": "execution-id"
     },
     "Submit"
   ],
@@ -121,7 +121,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
+        "wit_type": "join-set-id"
       }
     ],
     {
@@ -160,7 +160,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<string, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
+      "wit_type": "result<tuple<execution-id, result<string, string>>, tuple<execution-id, execution-error>>"
     },
     "AwaitNext"
   ],
@@ -169,7 +169,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
+        "wit_type": "join-set-id"
       }
     ],
     {
@@ -210,7 +210,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<list<string>, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
+      "wit_type": "result<tuple<execution-id, result<list<string>, string>>, tuple<execution-id, execution-error>>"
     },
     "AwaitNext"
   ],
@@ -238,7 +238,7 @@ expression: exports
           }
         },
         "name": "scheduled-at",
-        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+        "wit_type": "schedule-at"
       },
       {
         "type_wrapper": {
@@ -254,7 +254,7 @@ expression: exports
           "id": "string"
         }
       },
-      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
+      "wit_type": "execution-id"
     },
     "Schedule"
   ],
@@ -263,7 +263,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
+        "wit_type": "join-set-id"
       }
     ],
     {
@@ -304,7 +304,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<list<string>, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
+      "wit_type": "result<tuple<execution-id, result<list<string>, string>>, tuple<execution-id, execution-error>>"
     },
     "AwaitNext"
   ],
@@ -332,7 +332,7 @@ expression: exports
           }
         },
         "name": "scheduled-at",
-        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+        "wit_type": "schedule-at"
       },
       {
         "type_wrapper": "string",
@@ -351,7 +351,7 @@ expression: exports
           "id": "string"
         }
       },
-      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
+      "wit_type": "execution-id"
     },
     "Schedule"
   ],
@@ -360,7 +360,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
+        "wit_type": "join-set-id"
       },
       {
         "type_wrapper": "string",
@@ -379,7 +379,7 @@ expression: exports
           "id": "string"
         }
       },
-      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
+      "wit_type": "execution-id"
     },
     "Submit"
   ],
@@ -388,7 +388,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
+        "wit_type": "join-set-id"
       },
       {
         "type_wrapper": {
@@ -404,7 +404,7 @@ expression: exports
           "id": "string"
         }
       },
-      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
+      "wit_type": "execution-id"
     },
     "Submit"
   ],
@@ -432,7 +432,7 @@ expression: exports
           }
         },
         "name": "scheduled-at",
-        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+        "wit_type": "schedule-at"
       },
       {
         "type_wrapper": "string",
@@ -446,7 +446,7 @@ expression: exports
           "id": "string"
         }
       },
-      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
+      "wit_type": "execution-id"
     },
     "Schedule"
   ],
@@ -455,7 +455,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
+        "wit_type": "join-set-id"
       },
       {
         "type_wrapper": "string",
@@ -469,7 +469,7 @@ expression: exports
           "id": "string"
         }
       },
-      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
+      "wit_type": "execution-id"
     },
     "Submit"
   ],

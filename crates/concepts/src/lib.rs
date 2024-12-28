@@ -1357,38 +1357,34 @@ impl FromStr for Digest {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Derivative, Eq)]
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, Derivative, Eq, derive_more::Display,
+)]
 #[derivative(PartialEq)]
+#[display("{wit_type}")]
 pub struct ReturnType {
     pub type_wrapper: TypeWrapper,
     #[derivative(PartialEq = "ignore")]
-    pub wit_type: Option<StrVariant>,
+    pub wit_type: StrVariant,
 }
 
-impl Display for ReturnType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(wit_type) = &self.wit_type {
-            write!(f, "{wit_type}")
-        } else {
-            write!(f, "<unknown_type_{:?}>", self.type_wrapper)
-        }
-    }
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, Derivative, Eq, derive_more::Display,
+)]
+#[derivative(PartialEq)]
+#[display("{name}: {wit_type}")]
+pub struct ParameterType {
+    pub type_wrapper: TypeWrapper,
+    #[derivative(PartialEq = "ignore")]
+    pub name: StrVariant,
+    #[derivative(PartialEq = "ignore")]
+    pub wit_type: StrVariant,
 }
 
 #[derive(
     Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default, derive_more::Deref,
 )]
 pub struct ParameterTypes(pub Vec<ParameterType>);
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Derivative, Eq)]
-#[derivative(PartialEq)]
-pub struct ParameterType {
-    pub type_wrapper: TypeWrapper,
-    #[derivative(PartialEq = "ignore")]
-    pub name: StrVariant,
-    #[derivative(PartialEq = "ignore")]
-    pub wit_type: Option<StrVariant>,
-}
 
 impl Debug for ParameterTypes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1401,17 +1397,6 @@ impl Debug for ParameterTypes {
             }
         }
         write!(f, ")")
-    }
-}
-
-impl Display for ParameterType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: ", self.name)?;
-        if let Some(wit_type) = &self.wit_type {
-            write!(f, "{wit_type}")
-        } else {
-            write!(f, "<unknown_type_{:?}>", self.type_wrapper)
-        }
     }
 }
 

@@ -181,7 +181,6 @@ pub fn execution_submit_form(
                 .as_ref()
                 .expect("`FunctionParameter.type` is sent")
                 ;
-            let wit_type = ty.wit_type.as_ref().expect("`WitType.wit_type` is sent");
             let id = format!("param_{ffqn}_{idx}");
 
             let on_param_change = {
@@ -201,7 +200,7 @@ pub fn execution_submit_form(
             };
 
             html! {<p>
-                <label for={id.clone()}>{ format!("{}: {wit_type}", param.name) }</label>
+                <label for={id.clone()}>{ format!("{}: {}", param.name, ty.wit_type) }</label>
                 <input id={id} type="text" ref={&form_data_state.param_refs[idx]} oninput = {Callback::from(move |_| { on_param_change()})} />
                 if let Some(err) = form_data_state.param_errs.get(idx) {
                     <span style={"color:red"}>{err}</span>

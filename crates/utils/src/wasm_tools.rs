@@ -367,16 +367,12 @@ impl ExIm {
 
         let return_type_execution_id = Some(ReturnType {
             type_wrapper: execution_id_type_wrapper.clone(),
-            wit_type: Some(concepts::StrVariant::Static(
-                "/* use obelisk:types/execution.{execution-id} */ execution-id",
-            )),
+            wit_type: concepts::StrVariant::Static("execution-id"),
         });
         let param_type_join_set = ParameterType {
             type_wrapper: join_set_id_type_wrapper.clone(),
             name: StrVariant::Static("join-set-id"),
-            wit_type: Some(StrVariant::Static(
-                "/* use obelisk:types/execution.{join-set-id} */ join-set-id",
-            )),
+            wit_type: StrVariant::Static("join-set-id"),
         };
         let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("milliseconds") => Some(TypeWrapper::U64),
@@ -395,9 +391,7 @@ impl ExIm {
                 Box::from("in") => Some(duration_type_wrapper),
             }),
             name: StrVariant::Static("scheduled-at"),
-            wit_type: Some(StrVariant::Static(
-                "/* use obelisk:types/time.{schedule-at} */ schedule-at",
-            )),
+            wit_type: StrVariant::Static("schedule-at"),
         };
 
         let mut extensions = Vec::with_capacity(exports_hierarchy.len());
@@ -478,35 +472,34 @@ impl ExIm {
                                 Box::from("nondeterminism") => None,
                             }),
                         ]))));
-                        let (ok_part, type_wrapper) = if let Some(original_ret) =
-                            exported_fn_metadata.return_type
-                        {
-                            (
-                                // Use ReturnType::display to serialize wit_type or fallback
-                                Cow::Owned(format!("tuple</* use obelisk:types/execution.{{execution-id}} */ execution-id, {original_ret}>")),
-                                TypeWrapper::Result {
-                                    ok: Some(Box::new(TypeWrapper::Tuple(Box::new([
-                                        execution_id_type_wrapper.clone(),
-                                        original_ret.type_wrapper,
-                                    ])))), // (execution-id, original_ret)
-                                    err: error_tuple,
-                                },
-                            )
-                        } else {
-                            (
-                                Cow::Borrowed(
-                                    "/* use obelisk:types/execution.{execution-id} */ execution-id",
-                                ),
-                                TypeWrapper::Result {
-                                    ok: Some(Box::new(execution_id_type_wrapper.clone())),
-                                    err: error_tuple,
-                                },
-                            )
-                        };
-                        Some(ReturnType { type_wrapper, wit_type: Some(StrVariant::from(format!(
-                            // result<{ok_part}, tuple<execution_id, execution_error>>
-                            "result<{ok_part}, tuple</* use obelisk:types/execution.{{execution-id}} */ execution-id, /* use obelisk:types/execution.{{execution-error}} */ execution-error>>"
-                        ))) })
+                        let (ok_part, type_wrapper) =
+                            if let Some(original_ret) = exported_fn_metadata.return_type {
+                                (
+                                    // Use ReturnType::display to serialize wit_type or fallback
+                                    Cow::Owned(format!("tuple<execution-id, {original_ret}>")),
+                                    TypeWrapper::Result {
+                                        ok: Some(Box::new(TypeWrapper::Tuple(Box::new([
+                                            execution_id_type_wrapper.clone(),
+                                            original_ret.type_wrapper,
+                                        ])))), // (execution-id, original_ret)
+                                        err: error_tuple,
+                                    },
+                                )
+                            } else {
+                                (
+                                    Cow::Borrowed("execution-id"),
+                                    TypeWrapper::Result {
+                                        ok: Some(Box::new(execution_id_type_wrapper.clone())),
+                                        err: error_tuple,
+                                    },
+                                )
+                            };
+                        Some(ReturnType {
+                            type_wrapper,
+                            wit_type: StrVariant::from(format!(
+                                "result<{ok_part}, tuple<execution-id, execution-error>>"
+                            )),
+                        })
                     },
                     extension: Some(FunctionExtension::AwaitNext),
                 };
@@ -582,17 +575,20 @@ fn enrich_function_params<'a>(
                 if let ComponentItem::ComponentFunc(func) = export {
                     let function_name: Arc<str> = Arc::from(function_name);
                     let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), function_name.clone());
-                    let (wit_meta_params, wit_meta_res) = ffqns_to_wit_parsed_meta
-                        .remove(&ffqn)
-                        .map(|meta| (Some(meta.params), meta.return_type.map(StrVariant::from)))
-                        .unwrap_or_default();
+                    let (wit_meta_params, wit_meta_res) =
+                        ffqns_to_wit_parsed_meta.remove(&ffqn).map_or_else(
+                            || panic!("function {ffqn} from wasmtime must be found"),
+                            |meta| (meta.params, meta.return_type),
+                        );
 
                     let mut return_type = func.results();
                     let return_type = if return_type.len() <= 1 {
                         match return_type.next().map(TypeWrapper::try_from).transpose() {
                             Ok(type_wrapper) => type_wrapper.map(|type_wrapper| ReturnType {
                                 type_wrapper,
-                                wit_type: wit_meta_res,
+                                wit_type: wit_meta_res.expect(
+                                    "return value must have a single type according to wasmtime",
+                                ),
                             }),
                             Err(err) => {
                                 return Err(DecodeError::TypeNotSupported {
@@ -606,11 +602,9 @@ fn enrich_function_params<'a>(
                             FunctionFqn::new_arc(ifc_fqn, function_name),
                         ));
                     };
-                    let params = match func
+                    let param_type_wrappers = match func
                         .params()
-                        .map(|(param_name, param_type)| {
-                            TypeWrapper::try_from(param_type).map(|ty| (param_name, ty))
-                        })
+                        .map(|(_param_name, param_type)| TypeWrapper::try_from(param_type))
                         .collect::<Result<Vec<_>, _>>()
                     {
                         Ok(params) => params,
@@ -621,8 +615,8 @@ fn enrich_function_params<'a>(
                             })
                         }
                     };
-                    let params = if let Some(wit_meta_params) = wit_meta_params {
-                        if wit_meta_params.len() != params.len() {
+                    let params = {
+                        if wit_meta_params.len() != param_type_wrappers.len() {
                             return Err(DecodeError::ParameterCardinalityMismatch(
                                 FunctionFqn::new_arc(ifc_fqn, function_name),
                             ));
@@ -630,21 +624,10 @@ fn enrich_function_params<'a>(
                         ParameterTypes(
                             wit_meta_params
                                 .into_iter()
-                                .zip(params)
-                                .map(|(name_wit, (_param_name, type_wrapper))| ParameterType {
+                                .zip(param_type_wrappers)
+                                .map(|(name_wit, type_wrapper)| ParameterType {
                                     name: StrVariant::from(name_wit.name),
-                                    wit_type: name_wit.wit_type.map(StrVariant::from),
-                                    type_wrapper,
-                                })
-                                .collect(),
-                        )
-                    } else {
-                        ParameterTypes(
-                            params
-                                .into_iter()
-                                .map(|(name, type_wrapper)| ParameterType {
-                                    name: StrVariant::from(name.to_string()),
-                                    wit_type: None,
+                                    wit_type: name_wit.wit_type,
                                     type_wrapper,
                                 })
                                 .collect(),
@@ -674,14 +657,14 @@ fn enrich_function_params<'a>(
 #[derive(Debug)]
 struct WitParsedFunctionMetadata {
     params: Vec<ParameterNameWitType>,
-    return_type: Option<String>,
+    return_type: Option<StrVariant>,
 }
 
 #[cfg_attr(test, derive(serde::Serialize))]
 #[derive(Debug)]
 struct ParameterNameWitType {
     name: String,
-    wit_type: Option<String>,
+    wit_type: StrVariant,
 }
 
 fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
@@ -732,7 +715,9 @@ fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
                             wit_type: printer
                                 .print_type_name(resolve, param_ty)
                                 .ok()
-                                .map(|()| String::from(printer.output)),
+                                .map_or(StrVariant::Static("unknown"), |()| {
+                                    StrVariant::from(printer.output.to_string())
+                                }),
                         }
                     })
                     .collect();
@@ -741,7 +726,7 @@ fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
                     printer
                         .print_type_name(resolve, &return_type)
                         .ok()
-                        .map(|()| String::from(printer.output))
+                        .map(|()| StrVariant::from(printer.output.to_string()))
                 } else {
                     None
                 };

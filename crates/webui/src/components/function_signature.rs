@@ -18,13 +18,8 @@ pub fn function_signature(
             <FunctionParameterList params = {params.clone()} />
         {")"}
         if let Some(return_type) = return_type {
-
             {" -> "}
-            if let Some(wit_type) = &return_type.wit_type {
-                { wit_type }
-            } else {
-                { "<unknown type>" }
-            }
+            { &return_type.wit_type }
         }
     </>}
 }
@@ -41,16 +36,17 @@ pub fn function_parameter_list(
         .iter()
         .enumerate()
         .map(|(idx, param)| {
-            let r#type = param
+            let ty = param
                 .r#type
                 .as_ref()
-                .and_then(|wit_type| wit_type.wit_type.as_deref())
-                .unwrap_or("<unknown_type>");
+                .expect("`FunctionParameter.type` is sent")
+                .wit_type
+                .as_str();
             html! {<>
                 if idx > 0 {
                     {", "}
                 }
-                { format!("{}: {}", param.name, r#type) }
+                { format!("{}: {}", param.name, ty) }
             </>}
         })
         .collect()
