@@ -1,0 +1,143 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: wit
+---
+package root:component;
+
+world root {
+  import obelisk:types/execution;
+  import obelisk:workflow/host-activities;
+  import testing:fibo-obelisk-ext/fibo;
+  import testing:fibo-workflow-obelisk-ext/workflow;
+  import testing:fibo-workflow/workflow-nesting;
+  import testing:fibo/fibo;
+
+  export testing:fibo-workflow/workflow-nesting;
+  export testing:fibo-workflow/workflow;
+}
+package obelisk:types {
+  interface time {
+    variant duration {
+      milliseconds(u64),
+      seconds(u64),
+      minutes(u32),
+      hours(u32),
+      days(u32),
+    }
+
+    record datetime {
+      seconds: u64,
+      nanoseconds: u32,
+    }
+
+    variant schedule-at {
+      now,
+      at(datetime),
+      in(duration),
+    }
+  }
+  interface execution {
+    resource join-set-id;
+
+    record execution-id {
+      id: string,
+    }
+
+    record delay-id {
+      id: string,
+    }
+
+    variant execution-error {
+      permanent-failure(string),
+      permanent-timeout,
+      nondeterminism,
+    }
+  }
+}
+
+
+package obelisk:workflow {
+  interface host-activities {
+    use obelisk:types/execution.{join-set-id};
+
+    new-join-set: func() -> join-set-id;
+  }
+}
+
+
+package testing:fibo-obelisk-ext {
+  interface fibo {
+    use obelisk:types/execution.{join-set-id, execution-id, execution-error};
+
+    fibo-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
+
+    fibo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
+  }
+}
+
+
+package testing:fibo-workflow-obelisk-ext {
+  interface workflow {
+    use obelisk:types/execution.{execution-id, join-set-id};
+    use obelisk:types/time.{schedule-at};
+    use obelisk:types/execution.{execution-error};
+
+    fibow-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
+
+    fibow-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
+
+    fibow-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
+
+    fiboa-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
+
+    fiboa-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
+
+    fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
+
+    fiboa-concurrent-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
+
+    fiboa-concurrent-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
+
+    fiboa-concurrent-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
+  }
+  interface workflow-nesting {
+    use obelisk:types/execution.{execution-id, join-set-id};
+    use obelisk:types/time.{schedule-at};
+    use obelisk:types/execution.{execution-error};
+
+    fibo-nested-workflow-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
+
+    fibo-nested-workflow-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
+
+    fibo-nested-workflow-schedule: func(schedule-at: schedule-at, n: u8) -> execution-id;
+
+    fibo-start-fiboas-submit: func(join-set-id: borrow<join-set-id>, n: u8, fiboas: u32, iterations-per-fiboa: u32) -> execution-id;
+
+    fibo-start-fiboas-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
+
+    fibo-start-fiboas-schedule: func(schedule-at: schedule-at, n: u8, fiboas: u32, iterations-per-fiboa: u32) -> execution-id;
+  }
+}
+
+
+package testing:fibo-workflow {
+  interface workflow-nesting {
+    fibo-nested-workflow: func(n: u8) -> u64;
+
+    fibo-start-fiboas: func(n: u8, fiboas: u32, iterations-per-fiboa: u32) -> u64;
+  }
+  interface workflow {
+    fibow: func(n: u8, iterations: u32) -> u64;
+
+    fiboa: func(n: u8, iterations: u32) -> u64;
+
+    fiboa-concurrent: func(n: u8, iterations: u32) -> u64;
+  }
+}
+
+
+package testing:fibo {
+  interface fibo {
+    fibo: func(n: u8) -> u64;
+  }
+}

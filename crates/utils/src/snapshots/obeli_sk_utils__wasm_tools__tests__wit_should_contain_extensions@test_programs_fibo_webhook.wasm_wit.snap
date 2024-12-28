@@ -1,0 +1,385 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: wit
+---
+package root:component;
+
+world root {
+  import obelisk:log/log;
+  import obelisk:types/execution;
+  import obelisk:types/time;
+  import testing:fibo-workflow-obelisk-ext/workflow;
+  import testing:fibo-workflow/workflow;
+  import wasi:io/poll@0.2.2;
+  import wasi:clocks/wall-clock@0.2.2;
+  import wasi:random/random@0.2.2;
+  import wasi:io/error@0.2.2;
+  import wasi:io/streams@0.2.2;
+  import wasi:cli/stdout@0.2.2;
+  import wasi:cli/stderr@0.2.2;
+  import wasi:cli/stdin@0.2.2;
+  import wasi:http/types@0.2.2;
+  import wasi:cli/environment@0.2.0;
+  import wasi:cli/exit@0.2.0;
+  import wasi:filesystem/types@0.2.0;
+  import wasi:filesystem/preopens@0.2.0;
+
+  export wasi:http/incoming-handler@0.2.2;
+}
+package obelisk:log {
+  interface log {
+    info: func(message: string);
+  }
+}
+
+
+package obelisk:types {
+  interface execution {
+    record execution-id {
+      id: string,
+    }
+  }
+  interface time {
+    record datetime {
+      seconds: u64,
+      nanoseconds: u32,
+    }
+
+    variant duration {
+      milliseconds(u64),
+      seconds(u64),
+      minutes(u32),
+      hours(u32),
+      days(u32),
+    }
+
+    variant schedule-at {
+      now,
+      at(datetime),
+      in(duration),
+    }
+  }
+}
+
+
+package testing:fibo-workflow-obelisk-ext {
+  interface workflow {
+    use obelisk:types/time.{schedule-at};
+    use obelisk:types/execution.{execution-id};
+
+    fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
+  }
+}
+
+
+package testing:fibo-workflow {
+  interface workflow {
+    fiboa: func(n: u8, iterations: u32) -> u64;
+  }
+}
+
+
+package wasi:io@0.2.2 {
+  interface poll {
+    resource pollable {
+      block: func();
+    }
+  }
+  interface error {
+    resource error;
+  }
+  interface streams {
+    use error.{error};
+    use poll.{pollable};
+
+    resource input-stream {
+      blocking-read: func(len: u64) -> result<list<u8>, stream-error>;
+    }
+
+    variant stream-error {
+      last-operation-failed(error),
+      closed,
+    }
+
+    resource output-stream {
+      check-write: func() -> result<u64, stream-error>;
+      write: func(contents: list<u8>) -> result<_, stream-error>;
+      blocking-write-and-flush: func(contents: list<u8>) -> result<_, stream-error>;
+      flush: func() -> result<_, stream-error>;
+      blocking-flush: func() -> result<_, stream-error>;
+      subscribe: func() -> pollable;
+    }
+  }
+}
+
+
+package wasi:clocks@0.2.2 {
+  interface wall-clock {
+    record datetime {
+      seconds: u64,
+      nanoseconds: u32,
+    }
+  }
+}
+
+
+package wasi:random@0.2.2 {
+  interface random {
+    get-random-bytes: func(len: u64) -> list<u8>;
+  }
+}
+
+
+package wasi:cli@0.2.2 {
+  interface stdout {
+    use wasi:io/streams@0.2.2.{output-stream};
+
+    get-stdout: func() -> output-stream;
+  }
+  interface stderr {
+    use wasi:io/streams@0.2.2.{output-stream};
+
+    get-stderr: func() -> output-stream;
+  }
+  interface stdin {
+    use wasi:io/streams@0.2.2.{input-stream};
+
+    get-stdin: func() -> input-stream;
+  }
+}
+
+
+package wasi:http@0.2.2 {
+  interface types {
+    use wasi:io/streams@0.2.2.{input-stream, output-stream};
+
+    resource fields {
+      from-list: static func(entries: list<tuple<field-name, field-value>>) -> result<fields, header-error>;
+      entries: func() -> list<tuple<field-name, field-value>>;
+    }
+
+    type field-key = string;
+
+    type field-name = field-key;
+
+    type field-value = list<u8>;
+
+    variant header-error {
+      invalid-syntax,
+      forbidden,
+      immutable,
+    }
+
+    resource incoming-request {
+      method: func() -> method;
+      path-with-query: func() -> option<string>;
+      scheme: func() -> option<scheme>;
+      authority: func() -> option<string>;
+      headers: func() -> headers;
+      consume: func() -> result<incoming-body>;
+    }
+
+    variant method {
+      get,
+      head,
+      post,
+      put,
+      delete,
+      connect,
+      options,
+      trace,
+      patch,
+      other(string),
+    }
+
+    variant scheme {
+      HTTP,
+      HTTPS,
+      other(string),
+    }
+
+    type headers = fields;
+
+    resource incoming-body {
+      %stream: func() -> result<input-stream>;
+    }
+
+    resource response-outparam {
+      set: static func(param: response-outparam, response: result<outgoing-response, error-code>);
+    }
+
+    resource outgoing-response {
+      constructor(headers: headers);
+      set-status-code: func(status-code: status-code) -> result;
+      body: func() -> result<outgoing-body>;
+    }
+
+    record DNS-error-payload {
+      rcode: option<string>,
+      info-code: option<u16>,
+    }
+
+    record TLS-alert-received-payload {
+      alert-id: option<u8>,
+      alert-message: option<string>,
+    }
+
+    record field-size-payload {
+      field-name: option<string>,
+      field-size: option<u32>,
+    }
+
+    variant error-code {
+      DNS-timeout,
+      DNS-error(DNS-error-payload),
+      destination-not-found,
+      destination-unavailable,
+      destination-IP-prohibited,
+      destination-IP-unroutable,
+      connection-refused,
+      connection-terminated,
+      connection-timeout,
+      connection-read-timeout,
+      connection-write-timeout,
+      connection-limit-reached,
+      TLS-protocol-error,
+      TLS-certificate-error,
+      TLS-alert-received(TLS-alert-received-payload),
+      HTTP-request-denied,
+      HTTP-request-length-required,
+      HTTP-request-body-size(option<u64>),
+      HTTP-request-method-invalid,
+      HTTP-request-URI-invalid,
+      HTTP-request-URI-too-long,
+      HTTP-request-header-section-size(option<u32>),
+      HTTP-request-header-size(option<field-size-payload>),
+      HTTP-request-trailer-section-size(option<u32>),
+      HTTP-request-trailer-size(field-size-payload),
+      HTTP-response-incomplete,
+      HTTP-response-header-section-size(option<u32>),
+      HTTP-response-header-size(field-size-payload),
+      HTTP-response-body-size(option<u64>),
+      HTTP-response-trailer-section-size(option<u32>),
+      HTTP-response-trailer-size(field-size-payload),
+      HTTP-response-transfer-coding(option<string>),
+      HTTP-response-content-coding(option<string>),
+      HTTP-response-timeout,
+      HTTP-upgrade-failed,
+      HTTP-protocol-error,
+      loop-detected,
+      configuration-error,
+      internal-error(option<string>),
+    }
+
+    type status-code = u16;
+
+    resource outgoing-body {
+      write: func() -> result<output-stream>;
+      finish: static func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
+    }
+
+    type trailers = fields;
+  }
+  interface incoming-handler {
+    use types.{incoming-request, response-outparam};
+
+    handle: func(request: incoming-request, response-out: response-outparam);
+  }
+}
+
+
+package wasi:cli@0.2.0 {
+  interface environment {
+    get-environment: func() -> list<tuple<string, string>>;
+  }
+  interface exit {
+    exit: func(status: result);
+  }
+}
+
+
+package wasi:filesystem@0.2.0 {
+  interface types {
+    use wasi:io/streams@0.2.2.{output-stream};
+    use wasi:clocks/wall-clock@0.2.2.{datetime};
+    use wasi:io/streams@0.2.2.{error};
+
+    resource descriptor {
+      write-via-stream: func(offset: filesize) -> result<output-stream, error-code>;
+      append-via-stream: func() -> result<output-stream, error-code>;
+      get-type: func() -> result<descriptor-type, error-code>;
+      stat: func() -> result<descriptor-stat, error-code>;
+    }
+
+    type filesize = u64;
+
+    enum error-code {
+      access,
+      would-block,
+      already,
+      bad-descriptor,
+      busy,
+      deadlock,
+      quota,
+      exist,
+      file-too-large,
+      illegal-byte-sequence,
+      in-progress,
+      interrupted,
+      invalid,
+      io,
+      is-directory,
+      loop,
+      too-many-links,
+      message-size,
+      name-too-long,
+      no-device,
+      no-entry,
+      no-lock,
+      insufficient-memory,
+      insufficient-space,
+      not-directory,
+      not-empty,
+      not-recoverable,
+      unsupported,
+      no-tty,
+      no-such-device,
+      overflow,
+      not-permitted,
+      pipe,
+      read-only,
+      invalid-seek,
+      text-file-busy,
+      cross-device,
+    }
+
+    enum descriptor-type {
+      unknown,
+      block-device,
+      character-device,
+      directory,
+      fifo,
+      symbolic-link,
+      regular-file,
+      socket,
+    }
+
+    type link-count = u64;
+
+    record descriptor-stat {
+      %type: descriptor-type,
+      link-count: link-count,
+      size: filesize,
+      data-access-timestamp: option<datetime>,
+      data-modification-timestamp: option<datetime>,
+      status-change-timestamp: option<datetime>,
+    }
+
+    filesystem-error-code: func(err: borrow<error>) -> option<error-code>;
+  }
+  interface preopens {
+    use types.{descriptor};
+
+    get-directories: func() -> list<tuple<descriptor, string>>;
+  }
+}

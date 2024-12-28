@@ -780,9 +780,10 @@ mod tests {
     #[case(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)]
     #[case(test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW)]
     fn exports_imports(#[case] wasm_path: &str) {
+        test_utils::set_up();
+
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
-        test_utils::set_up();
         let engine = engine();
         let component =
             WasmComponent::new(&wasm_path, &engine, Some(ComponentType::Workflow.into())).unwrap();
@@ -876,5 +877,33 @@ mod tests {
         let engine = engine();
         let component = WasmComponent::new(wasm_path, &engine, None).unwrap();
         assert_eq!(exports_type, component.exports_type);
+    }
+
+    #[rstest]
+    #[test]
+    #[case(
+        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+        ComponentExportsType::Enrichable
+    )]
+    #[case(
+        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+        ComponentExportsType::Enrichable
+    )]
+    #[case(
+        test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
+        ComponentExportsType::Plain
+    )]
+    fn wit_should_contain_extensions(
+        #[case] wasm_path: &'static str,
+        #[case] exports_type: ComponentExportsType,
+    ) {
+        test_utils::set_up();
+
+        let engine = engine();
+        let component = WasmComponent::new(wasm_path, &engine, Some(exports_type)).unwrap();
+        let wasm_path = PathBuf::from(wasm_path);
+        let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
+        let wit = component.wit().unwrap();
+        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit")}, {insta::assert_snapshot!(wit)});
     }
 }
