@@ -1,19 +1,16 @@
-name: test
+name: check-test
 permissions:
   contents: read
   issues: read
   checks: write
   pull-requests: write
 
-# This configuration allows maintainers of this repo to create a branch and pull request based on
-# the new branch. Restricting the push trigger to the main branch ensures that the PR only gets
-# built once.
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-# If new code is pushed to a PR branch, then cancel in progress workflows for that PR.
+  workflow_run:
+    workflows:
+      - check
+    types:
+      - completed
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -26,6 +23,7 @@ defaults:
 jobs:
   ci-test-nosim:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - id: git-info
@@ -59,6 +57,7 @@ jobs:
 
   ci-test-madsim:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - id: git-info
