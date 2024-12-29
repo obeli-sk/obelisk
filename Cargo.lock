@@ -447,17 +447,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cargo-component-builder"
-version = "0.9.0"
-dependencies = [
- "cargo_metadata",
- "indexmap 2.7.0",
- "obeli-sk-concepts",
- "obeli-sk-utils",
- "wasmtime",
-]
-
-[[package]]
 name = "cargo-platform"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3072,6 +3061,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "obelisk-component-builder"
+version = "0.9.0"
+dependencies = [
+ "cargo_metadata",
+ "indexmap 2.7.0",
+ "obeli-sk-concepts",
+ "obeli-sk-utils",
+ "wasmtime",
+]
+
+[[package]]
 name = "object"
 version = "0.36.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4468,7 +4468,7 @@ dependencies = [
 name = "test-programs-fibo-activity-builder"
 version = "0.9.0"
 dependencies = [
- "cargo-component-builder",
+ "obelisk-component-builder",
 ]
 
 [[package]]
@@ -4484,7 +4484,7 @@ dependencies = [
 name = "test-programs-fibo-webhook-builder"
 version = "0.9.0"
 dependencies = [
- "cargo-component-builder",
+ "obelisk-component-builder",
 ]
 
 [[package]]
@@ -4498,7 +4498,7 @@ dependencies = [
 name = "test-programs-fibo-workflow-builder"
 version = "0.9.0"
 dependencies = [
- "cargo-component-builder",
+ "obelisk-component-builder",
 ]
 
 [[package]]
@@ -4514,7 +4514,7 @@ dependencies = [
 name = "test-programs-http-get-activity-builder"
 version = "0.9.0"
 dependencies = [
- "cargo-component-builder",
+ "obelisk-component-builder",
 ]
 
 [[package]]
@@ -4528,7 +4528,7 @@ dependencies = [
 name = "test-programs-http-get-workflow-builder"
 version = "0.9.0"
 dependencies = [
- "cargo-component-builder",
+ "obelisk-component-builder",
 ]
 
 [[package]]
@@ -4542,7 +4542,7 @@ dependencies = [
 name = "test-programs-sleep-activity-builder"
 version = "0.9.0"
 dependencies = [
- "cargo-component-builder",
+ "obelisk-component-builder",
 ]
 
 [[package]]
@@ -4556,7 +4556,7 @@ dependencies = [
 name = "test-programs-sleep-workflow-builder"
 version = "0.9.0"
 dependencies = [
- "cargo-component-builder",
+ "obelisk-component-builder",
 ]
 
 [[package]]

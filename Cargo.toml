@@ -103,7 +103,7 @@ members = [
     "crates/db-mem",
     "crates/db-sqlite",
     "crates/executor",
-    "crates/testing/cargo-component-builder",
+    "crates/component-builder",
     "crates/testing/db-tests",
     "crates/testing/test-programs/fibo/activity",
     "crates/testing/test-programs/fibo/activity/builder",
@@ -134,15 +134,15 @@ license = "AGPL-3.0-only"
 repository = "https://github.com/obeli-sk/obelisk"
 authors = ["Project Developers"]
 edition = "2021"
-rust-version = "1.81.0"
+rust-version = "1.83.0"
 
 [workspace.dependencies]
-cargo-component-builder = { path = "crates/testing/cargo-component-builder" }
 concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.9.0" }
 db-mem = { path = "crates/db-mem" }
 db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.9.0" }
 db-tests = { path = "crates/testing/db-tests" }
 executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.9.0" }
+obelisk-component-builder = { path = "crates/component-builder" }
 test-programs-fibo-activity-builder = { path = "crates/testing/test-programs/fibo/activity/builder" }
 test-programs-fibo-webhook-builder = { path = "crates/testing/test-programs/fibo/webhook/builder" }
 test-programs-fibo-workflow-builder = { path = "crates/testing/test-programs/fibo/workflow/builder" }
@@ -261,9 +261,9 @@ implicit-clone = "0.5.0"
 log = "0.4.22"
 semver = "1.0.24"
 tonic-web-wasm-client = "0.6.0"
-wasm-bindgen = "=0.2.95"         # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml and wasm-bindgen-futures on version change.
-wasm-bindgen-futures = "=0.4.45" # Dependent on wasm-bindgen
-web-sys = "=0.3.72"              # Dependent on wasm-bindgen
+wasm-bindgen = "=0.2.95"                                                      # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml and wasm-bindgen-futures on version change.
+wasm-bindgen-futures = "=0.4.45"                                              # Dependent on wasm-bindgen
+web-sys = "=0.3.72"                                                           # Dependent on wasm-bindgen
 yew = { version = "0.21.0", features = ["csr"] }
 yew_icons = { version = "0.8.0", features = ["LucideBox", "LucideFileDiff"] }
 yew-router = "0.18.0"
@@ -291,7 +291,7 @@ opentelemetry-semantic-conventions = "0.27.0"
 tracing-opentelemetry = "0.28"
 
 [patch.crates-io]
-getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" } # madsim
+getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" }             # madsim
 wast = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }
 wit-parser = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }
 wasmparser = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }

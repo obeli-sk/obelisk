@@ -9,4 +9,4 @@ rust-version.workspace = true
 version.workspace = true
 
 [build-dependencies]
-cargo-component-builder.workspace = true
+obelisk-component-builder.workspace = true

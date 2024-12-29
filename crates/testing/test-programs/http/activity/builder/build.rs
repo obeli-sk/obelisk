@@ -1,3 +1,3 @@
 fn main() {
-    cargo_component_builder::build_activity();
+    obelisk_component_builder::build_activity();
 }
