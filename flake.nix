@@ -25,8 +25,7 @@
                     isStatic = true;
                   } else null;
               };
-          makeObelisk = pkgs: patch-for-generic-linux:
-
+          makeObelisk = pkgs: patch-for-generic-linux: buildType:
             pkgs.rustPlatform.buildRustPackage {
               pname = "obelisk";
               version = "0.0.1";
@@ -35,6 +34,7 @@
                 lockFile = ./Cargo.lock;
                 outputHashes = {
                   "getrandom-0.2.11" = "sha256-fBPB5ptPPBQqvsxTJd+LwKXBdChrVm75DQewyQUhM2Q=";
+                  "wasm-encoder-0.222.0" = "sha256-w0BpxrAI8TjBMjDGf5oKX0uocE1ViCYlZm0Em+BK8BU=";
                 };
               };
               nativeBuildInputs = with pkgs; [
@@ -50,7 +50,7 @@
                 mkdir -p $out/bin/
                 cp $BINARY $out/bin/
               '';
-              buildType = "release";
+              inherit buildType;
               doCheck = false;
             };
           makeDocker = pkgs: obelisk: binSh:
@@ -111,11 +111,12 @@
             PROTOC = "${pkgs.protobuf}/bin/protoc";
           };
           packages = rec {
-            obelisk = makeObelisk pkgs false;
-            obeliskPatchForGenericLinux = makeObelisk pkgs true;
-            obeliskMusl = makeObelisk pkgsMusl false;
+            obeliskNix = makeObelisk pkgs false "release";
+            obeliskNixDev = makeObelisk pkgs false "dev";
+            obeliskPatchForGenericLinux = makeObelisk pkgs true "release";
+            obeliskMusl = makeObelisk pkgsMusl false "release";
             dockerLibcForUbuntu = makeDocker pkgs obeliskPatchForGenericLinux false;
-            default = obelisk;
+            default = obeliskNix;
           };
         }
       );
