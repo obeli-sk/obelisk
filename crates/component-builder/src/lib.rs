@@ -105,13 +105,13 @@ fn build_internal(tripple: &str, tool: Tool, component_type: ComponentType) {
                 .iter()
                 .map(|(function_name, (parameter_types, ret_type, extension))| {
                     assert!(extension.is_none(), "filtered above with `get_exports_hierarchy_noext");
-                    // FIXME: Use WIT format in the comment
+
                     format!(
-                        "pub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\"); // func{parameter_types:?} {arrow_ret_type}\n",
+                        "/// {fn}: func{parameter_types}{arrow_ret_type};\npub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\");\n",
                         name_upper = to_snake_case(function_name).to_uppercase(),
                         ifc = export.ifc_fqn,
                         fn = function_name,
-                        arrow_ret_type = if let Some(ret_type) = ret_type { format!("-> {ret_type:?}") } else { String::new() }
+                        arrow_ret_type = if let Some(ret_type) = ret_type { format!(" -> {ret_type}") } else { String::new() }
                     )
                 })
                 .collect();
