@@ -10,8 +10,11 @@ on:
         description: "The ref (branch or SHA) to process"
         required: false
         type: string
-  release:
-    types: [released]
+  workflow_run:
+    workflows:
+      - release-2-plz-release
+    types:
+      - completed
 
 env:
   CARGO_INCREMENTAL: 0
@@ -29,6 +32,7 @@ jobs:
   upload-assets:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:

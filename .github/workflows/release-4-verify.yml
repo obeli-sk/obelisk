@@ -2,6 +2,11 @@ name: release-4-verify
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - release-3-upload-artifacts
+    types:
+      - completed
 
 defaults:
   run:
@@ -11,6 +16,7 @@ jobs:
   verify-assets:
     name: ${{ matrix.target }}
     runs-on: ubuntu-24.04
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:

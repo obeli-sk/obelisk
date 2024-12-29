@@ -4,14 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'The ref (branch or SHA) to process'
+        description: "The ref (branch or SHA) to process"
         required: false
         type: string
       latest:
-        description: 'Tag with `latest` if $image == this value'
+        description: "Tag with `latest` if $image == this value"
         required: false
         type: string
         default: ubuntu
+  workflow_run:
+    workflows:
+      - release-4-verify
+    types:
+      - completed
 
 defaults:
   run:
@@ -21,6 +26,7 @@ jobs:
   push-image:
     name: ${{ matrix.dockerfile }}
     runs-on: ubuntu-24.04
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -35,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.ref }}  # Use the ref if provided, otherwise defaults to the current branch/commit
+          ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
 
       - run: |
           docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
