@@ -84,6 +84,8 @@ cargo install --locked obelisk
 #### Nix flakes
 ```sh
 nix run github:obeli-sk/obelisk
+# Install to the user's profile:
+nix profile install github:obeli-sk/obelisk
 ```
 
 ## Getting Started
