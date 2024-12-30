@@ -8,38 +8,35 @@ use std::{
 use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
 
+const WASI_P2: &str = "wasm32-wasip2";
+const WASM_CORE: &str = "wasm32-unknown-unknown";
+
+pub fn build_activity() {
+    build_internal(WASI_P2, ComponentType::ActivityWasm);
+}
+
+pub fn build_webhook_endpoint() {
+    build_internal(WASI_P2, ComponentType::WebhookEndpoint);
+}
+
+pub fn build_workflow() {
+    build_internal(WASM_CORE, ComponentType::Workflow);
+}
+
 fn to_snake_case(input: &str) -> String {
     input.replace(['-', '.'], "_")
 }
 
-pub fn build_activity() {
-    build_internal("wasm32-wasip2", Tool::Cargo, ComponentType::ActivityWasm);
-}
-
-pub fn build_webhook_endpoint() {
-    build_internal("wasm32-wasip2", Tool::Cargo, ComponentType::WebhookEndpoint);
-}
-
-pub fn build_workflow() {
-    build_internal(
-        "wasm32-unknown-unknown",
-        Tool::CargoAndWasmTools,
-        ComponentType::Workflow,
-    );
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Tool {
-    Cargo,
-    CargoAndWasmTools,
+fn is_transformation_to_wasm_component_needed(target_tripple: &str) -> bool {
+    target_tripple == WASM_CORE
 }
 
 #[expect(clippy::too_many_lines)]
-fn build_internal(tripple: &str, tool: Tool, component_type: ComponentType) {
+fn build_internal(target_tripple: &str, component_type: ComponentType) {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
-    let wasm_path = run_cargo_component_build(&out_dir, pkg_name, tripple, tool);
+    let wasm_path = run_cargo_component_build(&out_dir, pkg_name, target_tripple);
     if std::env::var("RUST_LOG").is_ok() {
         println!("cargo:warning=Built {wasm_path:?}");
     }
@@ -152,7 +149,7 @@ fn add_dependency(file: &Utf8Path) {
     println!("cargo:rerun-if-changed={file}");
 }
 
-fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str, tool: Tool) -> PathBuf {
+fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str) -> PathBuf {
     let mut cmd = Command::new("cargo");
     cmd.arg("build")
         .arg("--release")
@@ -170,7 +167,7 @@ fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str, tool: To
         .join("release")
         .join(format!("{name_snake_case}.wasm",));
     assert!(target.exists(), "Target path must exist: {target:?}");
-    if tool == Tool::CargoAndWasmTools {
+    if is_transformation_to_wasm_component_needed(tripple) {
         let target_transformed = out_dir
             .join(tripple)
             .join("release")
