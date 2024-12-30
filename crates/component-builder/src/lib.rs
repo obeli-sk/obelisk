@@ -78,7 +78,7 @@ fn build_internal(target_tripple: &str, component_type: ComponentType) {
             .expect("cannot decode wasm component");
         generated_code += "pub mod exports {\n";
         let mut outer_map: IndexMap<String, Value> = IndexMap::new();
-        for export in component.exim.get_exports_hierarchy_noext() {
+        for export in component.exim.get_exports_hierarchy_ext() {
             let ifc_fqn_split = export
                 .ifc_fqn
                 .split_terminator([':', '/', '@'])
@@ -100,8 +100,8 @@ fn build_internal(target_tripple: &str, component_type: ComponentType) {
             let vec = export
                 .fns
                 .iter()
-                .map(|(function_name, FunctionMetadata{parameter_types, return_type, extension, ..})| {
-                    assert!(extension.is_none(), "filtered above with `get_exports_hierarchy_noext");
+                .filter(| (_, FunctionMetadata { submittable,.. }) | *submittable )
+                .map(|(function_name, FunctionMetadata{parameter_types, return_type, ..})| {
                     format!(
                         "/// {fn}: func{parameter_types}{arrow_ret_type};\npub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\");\n",
                         name_upper = to_snake_case(function_name).to_uppercase(),
