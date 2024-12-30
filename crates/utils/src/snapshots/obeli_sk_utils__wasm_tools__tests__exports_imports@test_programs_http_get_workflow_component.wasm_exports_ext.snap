@@ -3,15 +3,19 @@ source: crates/utils/src/wasm_tools.rs
 expression: exports
 ---
 {
-  "testing:http-workflow-obelisk-ext/workflow.get-await-next": [
-    [
+  "testing:http-workflow-obelisk-ext/workflow.get-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "join-set-id"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -49,10 +53,15 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, result<string, string>>, tuple<execution-id, execution-error>>"
     },
-    "AwaitNext"
-  ],
-  "testing:http-workflow-obelisk-ext/workflow.get-schedule": [
-    [
+    "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-schedule"
+    },
+    "parameter_types": [
       {
         "type_wrapper": {
           "variant": {
@@ -83,7 +92,7 @@ expression: exports
         "wit_type": "string"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -91,10 +100,15 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Schedule"
-  ],
-  "testing:http-workflow-obelisk-ext/workflow.get-submit": [
-    [
+    "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -106,7 +120,7 @@ expression: exports
         "wit_type": "string"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -114,17 +128,22 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Submit"
-  ],
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-await-next": [
-    [
+    "extension": "Submit",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "join-set-id"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -162,17 +181,22 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, result<string, string>>, tuple<execution-id, execution-error>>"
     },
-    "AwaitNext"
-  ],
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-await-next": [
-    [
+    "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-concurrently-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "join-set-id"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -212,10 +236,15 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, result<list<string>, string>>, tuple<execution-id, execution-error>>"
     },
-    "AwaitNext"
-  ],
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-schedule": [
-    [
+    "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-concurrently-schedule"
+    },
+    "parameter_types": [
       {
         "type_wrapper": {
           "variant": {
@@ -248,7 +277,7 @@ expression: exports
         "wit_type": "list<string>"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -256,17 +285,22 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Schedule"
-  ],
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": [
-    [
+    "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-concurrently-stress-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "join-set-id"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -306,10 +340,15 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, result<list<string>, string>>, tuple<execution-id, execution-error>>"
     },
-    "AwaitNext"
-  ],
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-schedule": [
-    [
+    "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-concurrently-stress-schedule"
+    },
+    "parameter_types": [
       {
         "type_wrapper": {
           "variant": {
@@ -345,7 +384,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -353,10 +392,15 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Schedule"
-  ],
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": [
-    [
+    "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-concurrently-stress-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -373,7 +417,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -381,10 +425,15 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Submit"
-  ],
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-submit": [
-    [
+    "extension": "Submit",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-concurrently-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -398,7 +447,7 @@ expression: exports
         "wit_type": "list<string>"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -406,10 +455,15 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Submit"
-  ],
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-schedule": [
-    [
+    "extension": "Submit",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-schedule"
+    },
+    "parameter_types": [
       {
         "type_wrapper": {
           "variant": {
@@ -440,7 +494,7 @@ expression: exports
         "wit_type": "string"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -448,10 +502,15 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Schedule"
-  ],
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": [
-    [
+    "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -463,7 +522,7 @@ expression: exports
         "wit_type": "string"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -471,17 +530,22 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Submit"
-  ],
-  "testing:http-workflow/workflow.get": [
-    [
+    "extension": "Submit",
+    "submittable": false
+  },
+  "testing:http-workflow/workflow.get": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": "string",
@@ -490,17 +554,22 @@ expression: exports
       },
       "wit_type": "result<string, string>"
     },
-    null
-  ],
-  "testing:http-workflow/workflow.get-successful": [
-    [
+    "extension": null,
+    "submittable": true
+  },
+  "testing:http-workflow/workflow.get-successful": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get-successful"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": "string",
@@ -509,10 +578,15 @@ expression: exports
       },
       "wit_type": "result<string, string>"
     },
-    null
-  ],
-  "testing:http-workflow/workflow.get-successful-concurrently": [
-    [
+    "extension": null,
+    "submittable": true
+  },
+  "testing:http-workflow/workflow.get-successful-concurrently": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get-successful-concurrently"
+    },
+    "parameter_types": [
       {
         "type_wrapper": {
           "list": "string"
@@ -521,7 +595,7 @@ expression: exports
         "wit_type": "list<string>"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -532,10 +606,15 @@ expression: exports
       },
       "wit_type": "result<list<string>, string>"
     },
-    null
-  ],
-  "testing:http-workflow/workflow.get-successful-concurrently-stress": [
-    [
+    "extension": null,
+    "submittable": true
+  },
+  "testing:http-workflow/workflow.get-successful-concurrently-stress": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get-successful-concurrently-stress"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "string",
         "name": "url",
@@ -547,7 +626,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -558,6 +637,7 @@ expression: exports
       },
       "wit_type": "result<list<string>, string>"
     },
-    null
-  ]
+    "extension": null,
+    "submittable": true
+  }
 }

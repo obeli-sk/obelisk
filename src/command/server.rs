@@ -499,12 +499,13 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 r#type: grpc::ComponentType::from(component.component_id.component_type).into(),
                 component_id: Some(component.component_id.into()),
                 digest: component.content_digest.to_string(),
-                exports: if let Some(exports) = component.importable {
-                    list_fns(exports.exports_ext, true)
-                } else {
-                    vec![]
-                },
-                imports: list_fns(component.imports, false),
+                exports: component
+                    .workflow_or_activity_config
+                    .map(|workflow_or_activity_config| {
+                        list_fns(workflow_or_activity_config.exports_ext)
+                    })
+                    .unwrap_or_default(),
+                imports: list_fns(component.imports),
             };
             res_components.push(res_component);
         }
@@ -530,13 +531,14 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     }
 }
 
-fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc::FunctionDetail> {
+fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc::FunctionDetail> {
     let mut vec = Vec::with_capacity(functions.len());
     for FunctionMetadata {
         ffqn,
         parameter_types,
         return_type,
         extension,
+        submittable,
     } in functions
     {
         let fun = grpc::FunctionDetail {
@@ -571,7 +573,7 @@ fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc
                 }
                 .into()
             }),
-            submittable: extension.is_none() && listing_exports,
+            submittable,
         };
         vec.push(fun);
     }
@@ -1263,7 +1265,7 @@ async fn compile_and_verify(
                         let component = ComponentConfig {
                             component_id: webhook_compiled.component_id.clone(),
                             imports: webhook_compiled.imports().to_vec(),
-                            content_digest, importable: None,
+                            content_digest, workflow_or_activity_config: None,
                             wit: webhook_compiled.wasm_component.wit()
                                 .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
                                 .ok()
@@ -1385,7 +1387,7 @@ impl WorkerCompiled {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
             content_digest,
-            importable: Some(ComponentConfigImportable {
+            workflow_or_activity_config: Some(ComponentConfigImportable {
                 exports_ext: worker.exported_functions_ext().to_vec(),
                 exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
                 retry_config,
@@ -1414,7 +1416,7 @@ impl WorkerCompiled {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
             content_digest,
-            importable: Some(ComponentConfigImportable {
+            workflow_or_activity_config: Some(ComponentConfigImportable {
                 exports_ext: worker.exported_functions_ext().to_vec(),
                 exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
                 retry_config,
@@ -1487,7 +1489,7 @@ impl ComponentConfigRegistry {
         {
             bail!("component {} is already inserted", component.component_id);
         }
-        if let Some(importable) = &component.importable {
+        if let Some(importable) = &component.workflow_or_activity_config {
             for exported_ffqn in importable.exports_ext.iter().map(|f| &f.ffqn) {
                 if let Some((offending_id, _, _)) = self.inner.exported_ffqns_ext.get(exported_ffqn)
                 {
@@ -1633,7 +1635,9 @@ impl ComponentConfigRegistryRO {
             .cloned()
             .map(|mut component| {
                 // If no extensions are requested, retain those that are !ext
-                if let (Some(importable), false) = (&mut component.importable, extensions) {
+                if let (Some(importable), false) =
+                    (&mut component.workflow_or_activity_config, extensions)
+                {
                     importable
                         .exports_ext
                         .retain(|fn_metadata| !fn_metadata.ffqn.ifc_fqn.is_extension());

@@ -3,15 +3,19 @@ source: crates/utils/src/wasm_tools.rs
 expression: exports
 ---
 {
-  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-await-next": [
-    [
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow-nesting",
+      "function_name": "fibo-nested-workflow-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "join-set-id"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -44,10 +48,15 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     },
-    "AwaitNext"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-schedule": [
-    [
+    "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow-nesting",
+      "function_name": "fibo-nested-workflow-schedule"
+    },
+    "parameter_types": [
       {
         "type_wrapper": {
           "variant": {
@@ -78,7 +87,7 @@ expression: exports
         "wit_type": "u8"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -86,10 +95,15 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Schedule"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-submit": [
-    [
+    "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow-nesting",
+      "function_name": "fibo-nested-workflow-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -101,7 +115,7 @@ expression: exports
         "wit_type": "u8"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -109,17 +123,22 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Submit"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-await-next": [
-    [
+    "extension": "Submit",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow-nesting",
+      "function_name": "fibo-start-fiboas-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "join-set-id"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -152,10 +171,15 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     },
-    "AwaitNext"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-schedule": [
-    [
+    "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow-nesting",
+      "function_name": "fibo-start-fiboas-schedule"
+    },
+    "parameter_types": [
       {
         "type_wrapper": {
           "variant": {
@@ -196,7 +220,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -204,10 +228,15 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Schedule"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-submit": [
-    [
+    "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow-nesting",
+      "function_name": "fibo-start-fiboas-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -229,7 +258,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -237,17 +266,22 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Submit"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": [
-    [
+    "extension": "Submit",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fiboa-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "join-set-id"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -280,17 +314,22 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     },
-    "AwaitNext"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": [
-    [
+    "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fiboa-concurrent-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "join-set-id"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -323,10 +362,15 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     },
-    "AwaitNext"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-schedule": [
-    [
+    "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fiboa-concurrent-schedule"
+    },
+    "parameter_types": [
       {
         "type_wrapper": {
           "variant": {
@@ -362,7 +406,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -370,10 +414,15 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Schedule"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
-    [
+    "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fiboa-concurrent-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -390,7 +439,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -398,10 +447,15 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Submit"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-schedule": [
-    [
+    "extension": "Submit",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fiboa-schedule"
+    },
+    "parameter_types": [
       {
         "type_wrapper": {
           "variant": {
@@ -437,7 +491,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -445,10 +499,15 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Schedule"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [
-    [
+    "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fiboa-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -465,7 +524,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -473,17 +532,22 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Submit"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next": [
-    [
+    "extension": "Submit",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fibow-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "join-set-id"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -516,10 +580,15 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     },
-    "AwaitNext"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fibow-schedule": [
-    [
+    "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fibow-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fibow-schedule"
+    },
+    "parameter_types": [
       {
         "type_wrapper": {
           "variant": {
@@ -555,7 +624,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -563,10 +632,15 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Schedule"
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": [
-    [
+    "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fibow-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -583,7 +657,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -591,24 +665,34 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "Submit"
-  ],
-  "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
-    [
+    "extension": "Submit",
+    "submittable": false
+  },
+  "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow/workflow-nesting",
+      "function_name": "fibo-nested-workflow"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": "u64",
       "wit_type": "u64"
     },
-    null
-  ],
-  "testing:fibo-workflow/workflow-nesting.fibo-start-fiboas": [
-    [
+    "extension": null,
+    "submittable": true
+  },
+  "testing:fibo-workflow/workflow-nesting.fibo-start-fiboas": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow/workflow-nesting",
+      "function_name": "fibo-start-fiboas"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "u8",
         "name": "n",
@@ -625,14 +709,19 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": "u64",
       "wit_type": "u64"
     },
-    null
-  ],
-  "testing:fibo-workflow/workflow.fiboa": [
-    [
+    "extension": null,
+    "submittable": true
+  },
+  "testing:fibo-workflow/workflow.fiboa": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow/workflow",
+      "function_name": "fiboa"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "u8",
         "name": "n",
@@ -644,14 +733,19 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": "u64",
       "wit_type": "u64"
     },
-    null
-  ],
-  "testing:fibo-workflow/workflow.fiboa-concurrent": [
-    [
+    "extension": null,
+    "submittable": true
+  },
+  "testing:fibo-workflow/workflow.fiboa-concurrent": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow/workflow",
+      "function_name": "fiboa-concurrent"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "u8",
         "name": "n",
@@ -663,14 +757,19 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": "u64",
       "wit_type": "u64"
     },
-    null
-  ],
-  "testing:fibo-workflow/workflow.fibow": [
-    [
+    "extension": null,
+    "submittable": true
+  },
+  "testing:fibo-workflow/workflow.fibow": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow/workflow",
+      "function_name": "fibow"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "u8",
         "name": "n",
@@ -682,10 +781,11 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": "u64",
       "wit_type": "u64"
     },
-    null
-  ]
+    "extension": null,
+    "submittable": true
+  }
 }

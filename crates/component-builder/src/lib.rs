@@ -100,7 +100,7 @@ fn build_internal(target_tripple: &str, component_type: ComponentType) {
             let vec = export
                 .fns
                 .iter()
-                .map(|(function_name, FunctionMetadata{parameter_types, return_type, extension, ffqn: _})| {
+                .map(|(function_name, FunctionMetadata{parameter_types, return_type, extension, ..})| {
                     assert!(extension.is_none(), "filtered above with `get_exports_hierarchy_noext");
                     format!(
                         "/// {fn}: func{parameter_types}{arrow_ret_type};\npub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\");\n",

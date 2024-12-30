@@ -599,6 +599,7 @@ pub struct FunctionMetadata {
     pub parameter_types: ParameterTypes,
     pub return_type: Option<ReturnType>,
     pub extension: Option<FunctionExtension>,
+    pub submittable: bool,
 }
 impl Display for FunctionMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

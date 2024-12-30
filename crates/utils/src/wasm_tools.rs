@@ -318,8 +318,9 @@ impl ExIm {
         >,
     ) -> Result<ExIm, DecodeError> {
         let component_type = component.component_type();
-        let mut exports_hierarchy_ext = enrich_function_params(
-            component_type.exports(engine),
+        let mut exports_hierarchy_ext = merge_function_params_with_wasmtime(
+            &component_type,
+            true,
             engine,
             exported_ffqns_to_wit_parsed_meta,
         )?;
@@ -344,8 +345,9 @@ impl ExIm {
         let exports_flat_noext = Self::flatten(&exports_hierarchy_ext);
         Self::enrich_exports_with_extensions(&mut exports_hierarchy_ext);
         let exports_flat_ext = Self::flatten(&exports_hierarchy_ext);
-        let imports_hierarchy = enrich_function_params(
-            component_type.imports(engine),
+        let imports_hierarchy = merge_function_params_with_wasmtime(
+            &component_type,
+            false,
             engine,
             imported_ffqns_to_wit_parsed_meta,
         )?;
@@ -419,12 +421,17 @@ impl ExIm {
                     parameter_types,
                     return_type,
                     extension,
+                    submittable: original_submittable,
                 },
             ) in fns
             {
                 assert!(
                     extension.is_none(),
                     "`exports_hierarchy` must not contain extensions"
+                );
+                assert!(
+                    original_submittable,
+                    "original exported function must be submittable"
                 );
                 let exported_fn_metadata = FunctionMetadata {
                     ffqn: FunctionFqn {
@@ -434,6 +441,7 @@ impl ExIm {
                     parameter_types: parameter_types.clone(),
                     return_type: return_type.clone(),
                     extension: None,
+                    submittable: false,
                 };
 
                 // -submit(join-set-id: join-set-id, original params) -> execution id
@@ -454,6 +462,7 @@ impl ExIm {
                     },
                     return_type: return_type_execution_id.clone(),
                     extension: Some(FunctionExtension::Submit),
+                    submittable: false,
                 };
                 insert(fn_submit);
 
@@ -506,6 +515,7 @@ impl ExIm {
                         })
                     },
                     extension: Some(FunctionExtension::AwaitNext),
+                    submittable: false,
                 };
                 insert(fn_await_next);
                 // -schedule(schedule: schedule-at, original params) -> string (execution id)
@@ -526,6 +536,7 @@ impl ExIm {
                     },
                     return_type: return_type_execution_id.clone(),
                     extension: Some(FunctionExtension::Schedule),
+                    submittable: false, // TODO: Make `-schedule` submittable
                 };
                 insert(fn_schedule);
             }
@@ -548,8 +559,35 @@ impl ExIm {
     }
 }
 
-// Attempt to merge parameter names obtained using the wit-parser passed as `ffqns_to_wit_parsed_meta`
-fn enrich_function_params<'a>(
+// Merge parameters obtained using the wit-parser passed as `ffqns_to_wit_parsed_meta` with `TypeWrapper` obtained from wasmtime representation.
+// TODO: Implement wit-parser -> TypeWrapper conversion which would simplify this operation
+fn merge_function_params_with_wasmtime(
+    component_type: &wasmtime::component::types::Component,
+    exports: bool,
+    // wasmtime_parsed_interfaces: impl ExactSizeIterator<Item = (&'a str /* ifc_fqn */, ComponentItem)>
+    //     + 'a,
+    engine: &Engine,
+    ffqns_to_wit_parsed_meta: hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>,
+) -> Result<Vec<PackageIfcFns>, DecodeError> {
+    if exports {
+        merge_function_params_with_wasmtime_internal(
+            true,
+            component_type.exports(engine),
+            engine,
+            ffqns_to_wit_parsed_meta,
+        )
+    } else {
+        merge_function_params_with_wasmtime_internal(
+            false,
+            component_type.imports(engine),
+            engine,
+            ffqns_to_wit_parsed_meta,
+        )
+    }
+}
+
+fn merge_function_params_with_wasmtime_internal<'a>(
+    submittable: bool,
     wasmtime_parsed_interfaces: impl ExactSizeIterator<Item = (&'a str /* ifc_fqn */, ComponentItem)>
         + 'a,
     engine: &Engine,
@@ -572,6 +610,7 @@ fn enrich_function_params<'a>(
                         );
 
                     let mut return_type = func.results();
+                    // Obtain return type's TypeWrapper
                     let return_type = if return_type.len() <= 1 {
                         match return_type.next().map(TypeWrapper::try_from).transpose() {
                             Ok(type_wrapper) => type_wrapper.map(|type_wrapper| ReturnType {
@@ -592,6 +631,7 @@ fn enrich_function_params<'a>(
                             FunctionFqn::new_arc(ifc_fqn, function_name),
                         ));
                     };
+                    // Obtain parameters' TypeWrappers
                     let param_type_wrappers = match func
                         .params()
                         .map(|(_param_name, param_type)| TypeWrapper::try_from(param_type))
@@ -630,6 +670,7 @@ fn enrich_function_params<'a>(
                             parameter_types,
                             return_type,
                             extension: None,
+                            submittable,
                         },
                     );
                 } else {
@@ -742,7 +783,7 @@ fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
 mod tests {
     use super::wit_parsed_ffqn_to_wit_parsed_fn_metadata;
     use crate::wasm_tools::{ComponentExportsType, WasmComponent};
-    use concepts::{ComponentType, FunctionMetadata};
+    use concepts::ComponentType;
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
     use wasmtime::Engine;
@@ -770,14 +811,7 @@ mod tests {
         let exports = component
             .exported_functions(false)
             .iter()
-            .map(
-                |FunctionMetadata {
-                     ffqn,
-                     parameter_types,
-                     return_type,
-                     extension,
-                 }| (ffqn.to_string(), (parameter_types, return_type, extension)),
-            )
+            .map(|fn_metadata| (fn_metadata.ffqn.to_string(), fn_metadata))
             .collect::<hashbrown::HashMap<_, _>>();
 
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports_noext")}, {insta::assert_json_snapshot!(exports)});
@@ -785,14 +819,7 @@ mod tests {
         let exports = component
             .exported_functions(true)
             .iter()
-            .map(
-                |FunctionMetadata {
-                     ffqn,
-                     parameter_types,
-                     return_type,
-                     extension,
-                 }| (ffqn.to_string(), (parameter_types, return_type, extension)),
-            )
+            .map(|fn_metadata| (fn_metadata.ffqn.to_string(), fn_metadata))
             .collect::<hashbrown::HashMap<_, _>>();
 
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports_ext")}, {insta::assert_json_snapshot!(exports)});
@@ -800,14 +827,7 @@ mod tests {
         let imports = component
             .imported_functions()
             .iter()
-            .map(
-                |FunctionMetadata {
-                     ffqn,
-                     parameter_types,
-                     return_type,
-                     extension,
-                 }| (ffqn.to_string(), (parameter_types, return_type, extension)),
-            )
+            .map(|fn_metadata| (fn_metadata.ffqn.to_string(), fn_metadata))
             .collect::<hashbrown::HashMap<_, _>>();
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
     }

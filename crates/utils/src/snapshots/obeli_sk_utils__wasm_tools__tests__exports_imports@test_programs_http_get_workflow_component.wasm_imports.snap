@@ -3,23 +3,32 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:workflow/host-activities.new-join-set": [
-    [],
-    {
+  "obelisk:workflow/host-activities.new-join-set": {
+    "ffqn": {
+      "ifc_fqn": "obelisk:workflow/host-activities",
+      "function_name": "new-join-set"
+    },
+    "parameter_types": [],
+    "return_type": {
       "type_wrapper": "own",
       "wit_type": "join-set-id"
     },
-    null
-  ],
-  "testing:http-obelisk-ext/http-get.get-successful-await-next": [
-    [
+    "extension": null,
+    "submittable": false
+  },
+  "testing:http-obelisk-ext/http-get.get-successful-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-obelisk-ext/http-get",
+      "function_name": "get-successful-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "borrow<join-set-id>"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -57,10 +66,15 @@ expression: imports
       },
       "wit_type": "result<tuple<execution-id, result<string, string>>, tuple<execution-id, execution-error>>"
     },
-    null
-  ],
-  "testing:http-obelisk-ext/http-get.get-successful-submit": [
-    [
+    "extension": null,
+    "submittable": false
+  },
+  "testing:http-obelisk-ext/http-get.get-successful-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-obelisk-ext/http-get",
+      "function_name": "get-successful-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -72,7 +86,7 @@ expression: imports
         "wit_type": "string"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -80,17 +94,22 @@ expression: imports
       },
       "wit_type": "execution-id"
     },
-    null
-  ],
-  "testing:http/http-get.get": [
-    [
+    "extension": null,
+    "submittable": false
+  },
+  "testing:http/http-get.get": {
+    "ffqn": {
+      "ifc_fqn": "testing:http/http-get",
+      "function_name": "get"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": "string",
@@ -99,17 +118,22 @@ expression: imports
       },
       "wit_type": "result<string, string>"
     },
-    null
-  ],
-  "testing:http/http-get.get-successful": [
-    [
+    "extension": null,
+    "submittable": false
+  },
+  "testing:http/http-get.get-successful": {
+    "ffqn": {
+      "ifc_fqn": "testing:http/http-get",
+      "function_name": "get-successful"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": "string",
@@ -118,6 +142,7 @@ expression: imports
       },
       "wit_type": "result<string, string>"
     },
-    null
-  ]
+    "extension": null,
+    "submittable": false
+  }
 }

@@ -3,23 +3,32 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:workflow/host-activities.new-join-set": [
-    [],
-    {
+  "obelisk:workflow/host-activities.new-join-set": {
+    "ffqn": {
+      "ifc_fqn": "obelisk:workflow/host-activities",
+      "function_name": "new-join-set"
+    },
+    "parameter_types": [],
+    "return_type": {
       "type_wrapper": "own",
       "wit_type": "join-set-id"
     },
-    null
-  ],
-  "testing:fibo-obelisk-ext/fibo.fibo-await-next": [
-    [
+    "extension": null,
+    "submittable": false
+  },
+  "testing:fibo-obelisk-ext/fibo.fibo-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-obelisk-ext/fibo",
+      "function_name": "fibo-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "borrow<join-set-id>"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -52,10 +61,15 @@ expression: imports
       },
       "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     },
-    null
-  ],
-  "testing:fibo-obelisk-ext/fibo.fibo-submit": [
-    [
+    "extension": null,
+    "submittable": false
+  },
+  "testing:fibo-obelisk-ext/fibo.fibo-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-obelisk-ext/fibo",
+      "function_name": "fibo-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -67,7 +81,7 @@ expression: imports
         "wit_type": "u8"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -75,17 +89,22 @@ expression: imports
       },
       "wit_type": "execution-id"
     },
-    null
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": [
-    [
+    "extension": null,
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fiboa-concurrent-await-next"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "borrow<join-set-id>"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -118,10 +137,15 @@ expression: imports
       },
       "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     },
-    null
-  ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
-    [
+    "extension": null,
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fiboa-concurrent-submit"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
@@ -138,7 +162,7 @@ expression: imports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "record": {
           "id": "string"
@@ -146,34 +170,45 @@ expression: imports
       },
       "wit_type": "execution-id"
     },
-    null
-  ],
-  "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
-    [
+    "extension": null,
+    "submittable": false
+  },
+  "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow/workflow-nesting",
+      "function_name": "fibo-nested-workflow"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": "u64",
       "wit_type": "u64"
     },
-    null
-  ],
-  "testing:fibo/fibo.fibo": [
-    [
+    "extension": null,
+    "submittable": false
+  },
+  "testing:fibo/fibo.fibo": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo/fibo",
+      "function_name": "fibo"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": "u64",
       "wit_type": "u64"
     },
-    null
-  ]
+    "extension": null,
+    "submittable": false
+  }
 }

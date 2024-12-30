@@ -3,15 +3,19 @@ source: crates/utils/src/wasm_tools.rs
 expression: exports
 ---
 {
-  "testing:http-workflow/workflow.get": [
-    [
+  "testing:http-workflow/workflow.get": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": "string",
@@ -20,17 +24,22 @@ expression: exports
       },
       "wit_type": "result<string, string>"
     },
-    null
-  ],
-  "testing:http-workflow/workflow.get-successful": [
-    [
+    "extension": null,
+    "submittable": true
+  },
+  "testing:http-workflow/workflow.get-successful": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get-successful"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": "string",
@@ -39,10 +48,15 @@ expression: exports
       },
       "wit_type": "result<string, string>"
     },
-    null
-  ],
-  "testing:http-workflow/workflow.get-successful-concurrently": [
-    [
+    "extension": null,
+    "submittable": true
+  },
+  "testing:http-workflow/workflow.get-successful-concurrently": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get-successful-concurrently"
+    },
+    "parameter_types": [
       {
         "type_wrapper": {
           "list": "string"
@@ -51,7 +65,7 @@ expression: exports
         "wit_type": "list<string>"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -62,10 +76,15 @@ expression: exports
       },
       "wit_type": "result<list<string>, string>"
     },
-    null
-  ],
-  "testing:http-workflow/workflow.get-successful-concurrently-stress": [
-    [
+    "extension": null,
+    "submittable": true
+  },
+  "testing:http-workflow/workflow.get-successful-concurrently-stress": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get-successful-concurrently-stress"
+    },
+    "parameter_types": [
       {
         "type_wrapper": "string",
         "name": "url",
@@ -77,7 +96,7 @@ expression: exports
         "wit_type": "u32"
       }
     ],
-    {
+    "return_type": {
       "type_wrapper": {
         "result": {
           "ok": {
@@ -88,6 +107,7 @@ expression: exports
       },
       "wit_type": "result<list<string>, string>"
     },
-    null
-  ]
+    "extension": null,
+    "submittable": true
+  }
 }

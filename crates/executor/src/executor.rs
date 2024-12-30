@@ -528,6 +528,7 @@ pub mod simple_worker {
                     parameter_types: ParameterTypes::default(),
                     return_type: None,
                     extension: None,
+                    submittable: true,
                 }],
                 ffqn,
             }
@@ -543,6 +544,7 @@ pub mod simple_worker {
                     parameter_types: ParameterTypes::default(),
                     return_type: None,
                     extension: None,
+                    submittable: true,
                 }],
             }
         }
@@ -1205,6 +1207,7 @@ mod tests {
                 parameter_types: ParameterTypes::default(),
                 return_type: None,
                 extension: None,
+                submittable: true,
             }],
         });
         // Create an execution

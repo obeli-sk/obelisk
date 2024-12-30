@@ -20,7 +20,7 @@ use utils::sha256sum::calculate_sha256_file;
 pub(crate) struct ComponentConfig {
     pub(crate) component_id: ComponentId,
     pub(crate) imports: Vec<FunctionMetadata>,
-    pub(crate) importable: Option<ComponentConfigImportable>,
+    pub(crate) workflow_or_activity_config: Option<ComponentConfigImportable>,
     pub(crate) content_digest: ContentDigest,
     pub(crate) wit: Option<String>,
 }

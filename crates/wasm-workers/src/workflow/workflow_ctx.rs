@@ -515,6 +515,7 @@ pub(crate) mod tests {
                     parameter_types: ParameterTypes::default(),
                     return_type: None,
                     extension: None,
+                    submittable: true,
                 }],
                 ffqn,
                 steps,
