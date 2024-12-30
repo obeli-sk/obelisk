@@ -410,24 +410,28 @@ impl ExIm {
             );
             let mut extension_fns = IndexMap::new();
             let mut insert = |fn_metadata: FunctionMetadata| {
-                //(fun, (param_types, return_type))
-                extension_fns.insert(
-                    fn_metadata.ffqn.function_name,
-                    (
-                        fn_metadata.parameter_types,
-                        fn_metadata.return_type,
-                        fn_metadata.extension,
-                    ),
-                );
+                extension_fns.insert(fn_metadata.ffqn.function_name.clone(), fn_metadata);
             };
-            for (fun, (param_types, return_type, none)) in fns {
-                assert!(none.is_none());
+            for (
+                fun,
+                FunctionMetadata {
+                    ffqn: _,
+                    parameter_types,
+                    return_type,
+                    extension,
+                },
+            ) in fns
+            {
+                assert!(
+                    extension.is_none(),
+                    "`exports_hierarchy` must not contain extensions"
+                );
                 let exported_fn_metadata = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: ifc_fqn.clone(),
                         function_name: fun.clone(),
                     },
-                    parameter_types: param_types.clone(),
+                    parameter_types: parameter_types.clone(),
                     return_type: return_type.clone(),
                     extension: None,
                 };
@@ -539,21 +543,7 @@ impl ExIm {
     fn flatten(input: &[PackageIfcFns]) -> Vec<FunctionMetadata> {
         input
             .iter()
-            .flat_map(|pif| {
-                pif.fns
-                    .iter()
-                    .map(
-                        |(fun, (param_types, return_type, extension))| FunctionMetadata {
-                            ffqn: FunctionFqn {
-                                ifc_fqn: pif.ifc_fqn.clone(),
-                                function_name: fun.clone(),
-                            },
-                            parameter_types: param_types.clone(),
-                            return_type: return_type.clone(),
-                            extension: *extension,
-                        },
-                    )
-            })
+            .flat_map(|pif| pif.fns.values().cloned())
             .collect()
     }
 }
@@ -615,7 +605,7 @@ fn enrich_function_params<'a>(
                             })
                         }
                     };
-                    let params = {
+                    let parameter_types = {
                         if wit_meta_params.len() != param_type_wrappers.len() {
                             return Err(DecodeError::ParameterCardinalityMismatch(
                                 FunctionFqn::new_arc(ifc_fqn, function_name),
@@ -635,7 +625,12 @@ fn enrich_function_params<'a>(
                     };
                     fns.insert(
                         FnName::new_arc(function_name),
-                        (params, return_type, None /* no extensions yet */),
+                        FunctionMetadata {
+                            ffqn,
+                            parameter_types,
+                            return_type,
+                            extension: None,
+                        },
                     );
                 } else {
                     debug!("Ignoring export - not a ComponentFunc: {export:?}");

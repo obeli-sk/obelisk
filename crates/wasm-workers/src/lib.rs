@@ -89,8 +89,8 @@ pub(crate) mod tests {
 
     use async_trait::async_trait;
     use concepts::{
-        ComponentId, ComponentRetryConfig, FnName, FunctionExtension, FunctionFqn,
-        FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterTypes, ReturnType,
+        ComponentId, ComponentRetryConfig, FnName, FunctionFqn, FunctionMetadata, FunctionRegistry,
+        IfcFqnName, PackageIfcFns, ParameterTypes,
     };
     use indexmap::IndexMap;
     use utils::wasm_tools::WasmComponent;
@@ -106,17 +106,9 @@ pub(crate) mod tests {
             wasm_components: Vec<(WasmComponent, ComponentId)>,
         ) -> Arc<dyn FunctionRegistry> {
             let mut ffqn_to_fn_details = hashbrown::HashMap::new();
-            #[expect(clippy::type_complexity)]
             let mut export_hierarchy: hashbrown::HashMap<
                 IfcFqnName,
-                IndexMap<
-                    FnName,
-                    (
-                        ParameterTypes,
-                        Option<ReturnType>,
-                        Option<FunctionExtension>,
-                    ),
-                >,
+                IndexMap<FnName, FunctionMetadata>,
             > = hashbrown::HashMap::new();
             for (wasm_component, component_id) in wasm_components {
                 for exported_function in wasm_component.exim.get_exports(true) {
@@ -134,14 +126,7 @@ pub(crate) mod tests {
                     );
 
                     let index_map = export_hierarchy.entry(ffqn.ifc_fqn.clone()).or_default();
-                    index_map.insert(
-                        ffqn.function_name.clone(),
-                        (
-                            exported_function.parameter_types.clone(),
-                            exported_function.return_type.clone(),
-                            exported_function.extension,
-                        ),
-                    );
+                    index_map.insert(ffqn.function_name.clone(), exported_function.clone());
                 }
             }
             let export_hierarchy = export_hierarchy
@@ -176,28 +161,21 @@ pub(crate) mod tests {
     pub(crate) fn fn_registry_dummy(ffqns: &[FunctionFqn]) -> Arc<dyn FunctionRegistry> {
         let component_id = ComponentId::dummy_activity();
         let mut ffqn_to_fn_details = hashbrown::HashMap::new();
-        #[expect(clippy::type_complexity)]
         let mut export_hierarchy: hashbrown::HashMap<
             IfcFqnName,
-            IndexMap<
-                FnName,
-                (
-                    ParameterTypes,
-                    Option<ReturnType>,
-                    Option<FunctionExtension>,
-                ),
-            >,
+            IndexMap<FnName, FunctionMetadata>,
         > = hashbrown::HashMap::new();
         for ffqn in ffqns {
+            let fn_metadata = FunctionMetadata {
+                ffqn: ffqn.clone(),
+                parameter_types: ParameterTypes::default(),
+                return_type: None,
+                extension: None,
+            };
             ffqn_to_fn_details.insert(
                 ffqn.clone(),
                 (
-                    FunctionMetadata {
-                        ffqn: ffqn.clone(),
-                        parameter_types: ParameterTypes::default(),
-                        return_type: None,
-                        extension: None,
-                    },
+                    fn_metadata.clone(),
                     component_id.clone(),
                     ComponentRetryConfig {
                         max_retries: 0,
@@ -206,10 +184,7 @@ pub(crate) mod tests {
                 ),
             );
             let index_map = export_hierarchy.entry(ffqn.ifc_fqn.clone()).or_default();
-            index_map.insert(
-                ffqn.function_name.clone(),
-                (ParameterTypes::default(), None, None),
-            );
+            index_map.insert(ffqn.function_name.clone(), fn_metadata);
         }
         let export_hierarchy = export_hierarchy
             .into_iter()

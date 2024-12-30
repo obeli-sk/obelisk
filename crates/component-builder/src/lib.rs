@@ -1,5 +1,5 @@
 use cargo_metadata::camino::Utf8Path;
-use concepts::ComponentType;
+use concepts::{ComponentType, FunctionMetadata};
 use indexmap::IndexMap;
 use std::{
     path::{Path, PathBuf},
@@ -100,22 +100,19 @@ fn build_internal(target_tripple: &str, component_type: ComponentType) {
             let vec = export
                 .fns
                 .iter()
-                .map(|(function_name, (parameter_types, ret_type, extension))| {
+                .map(|(function_name, FunctionMetadata{parameter_types, return_type, extension, ffqn: _})| {
                     assert!(extension.is_none(), "filtered above with `get_exports_hierarchy_noext");
-
                     format!(
                         "/// {fn}: func{parameter_types}{arrow_ret_type};\npub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\");\n",
                         name_upper = to_snake_case(function_name).to_uppercase(),
                         ifc = export.ifc_fqn,
                         fn = function_name,
-                        arrow_ret_type = if let Some(ret_type) = ret_type { format!(" -> {ret_type}") } else { String::new() }
+                        arrow_ret_type = if let Some(ret_type) = return_type { format!(" -> {ret_type}") } else { String::new() }
                     )
                 })
                 .collect();
-            assert!(
-                map.insert(String::new(), Value::Leaf(vec)).is_none(),
-                "same interface cannot appear twice"
-            );
+            let old_val = map.insert(String::new(), Value::Leaf(vec));
+            assert!(old_val.is_none(), "same interface cannot appear twice");
         }
 
         ser_map(&outer_map, &mut generated_code);

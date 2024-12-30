@@ -1418,14 +1418,7 @@ impl Display for ParameterTypes {
 pub struct PackageIfcFns {
     pub ifc_fqn: IfcFqnName,
     pub extension: bool,
-    pub fns: IndexMap<
-        FnName,
-        (
-            ParameterTypes,
-            Option<ReturnType>,
-            Option<FunctionExtension>,
-        ),
-    >,
+    pub fns: IndexMap<FnName, FunctionMetadata>,
 }
 
 #[derive(Debug, Clone, Copy)]
