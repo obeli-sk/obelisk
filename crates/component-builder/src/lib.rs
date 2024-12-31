@@ -11,16 +11,64 @@ use wasmtime::Engine;
 const WASI_P2: &str = "wasm32-wasip2";
 const WASM_CORE: &str = "wasm32-unknown-unknown";
 
+/// Build the parent activity WASM component and place it into the `target` directory.
+///
+/// This function must be called from `build.rs`. It reads the current package
+/// name and strips the `-builder` suffix to determine the target package name.
+/// Then, it runs `cargo build` with the appropriate target triple and sets
+/// the `--target` directory to the output of [`get_target_dir`].
 pub fn build_activity() {
-    build_internal(WASI_P2, ComponentType::ActivityWasm);
+    build_internal(WASI_P2, ComponentType::ActivityWasm, &get_target_dir());
 }
 
+/// Build the parent webhook endpoint WASM component and place it into the `target` directory.
+///
+/// This function must be called from `build.rs`. It reads the current package
+/// name and strips the `-builder` suffix to determine the target package name.
+/// Then, it runs `cargo build` with the appropriate target triple and sets
+/// the `--target` directory to the output of [`get_target_dir`].
 pub fn build_webhook_endpoint() {
-    build_internal(WASI_P2, ComponentType::WebhookEndpoint);
+    build_internal(WASI_P2, ComponentType::WebhookEndpoint, &get_target_dir());
 }
 
+/// Build the parent workflow WASM component and place it into the `target` directory.
+///
+/// This function must be called from `build.rs`. It reads the current package
+/// name and strips the `-builder` suffix to determine the target package name.
+/// Then, it runs `cargo build` with the appropriate target triple and sets
+/// the `--target` directory to the output of [`get_target_dir`].
 pub fn build_workflow() {
-    build_internal(WASM_CORE, ComponentType::Workflow);
+    build_internal(WASM_CORE, ComponentType::Workflow, &get_target_dir());
+}
+
+/// Build the parent activity WASM component and place it into the `OUT_DIR`.
+///
+/// This function must be called from `build.rs`. It reads the current package
+/// name and strips the `-builder` suffix to determine the target package name.
+/// Then, it runs `cargo build` with the appropriate target triple and sets
+/// the `--target` directory to the output of [`get_out_dir`].
+pub fn build_activity_test() {
+    build_internal(WASI_P2, ComponentType::ActivityWasm, &get_out_dir());
+}
+
+/// Build the parent webhook endpoint WASM component and place it into the `OUT_DIR`.
+///
+/// This function must be called from `build.rs`. It reads the current package
+/// name and strips the `-builder` suffix to determine the target package name.
+/// Then, it runs `cargo build` with the appropriate target triple and sets
+/// the `--target` directory to the output of [`get_out_dir`].
+pub fn build_webhook_endpoint_test() {
+    build_internal(WASI_P2, ComponentType::WebhookEndpoint, &get_out_dir());
+}
+
+/// Build the parent workflow WASM component and place it into the `OUT_DIR`.
+///
+/// This function must be called from `build.rs`. It reads the current package
+/// name and strips the `-builder` suffix to determine the target package name.
+/// Then, it runs `cargo build` with the appropriate target triple and sets
+/// the `--target` directory to the output of [`get_out_dir`].
+pub fn build_workflow_test() {
+    build_internal(WASM_CORE, ComponentType::Workflow, &get_out_dir());
 }
 
 fn to_snake_case(input: &str) -> String {
@@ -31,12 +79,41 @@ fn is_transformation_to_wasm_component_needed(target_tripple: &str) -> bool {
     target_tripple == WASM_CORE
 }
 
+/// Get the path to the target directory.
+///
+/// Attempts to use the `CARGO_WORKSPACE_DIR` environment variable first.
+/// If not set, falls back to deriving it from the `OUT_DIR` environment variable.
+/// To set the environment variable automatically, modify `.cargo/config.toml`:
+/// ```toml
+/// [env]
+/// # remove once stable https://doc.rust-lang.org/cargo/reference/environment-variables.html#environment-variables-cargo-reads
+/// CARGO_WORKSPACE_DIR = { value = "", relative = true }
+/// ```
+fn get_target_dir() -> PathBuf {
+    // Try to get `CARGO_WORKSPACE_DIR` from the environment
+    if let Ok(workspace_dir) = std::env::var("CARGO_WORKSPACE_DIR") {
+        return Path::new(&workspace_dir).join("target");
+    }
+    let out_path = get_out_dir();
+    // Navigate up to the `target` directory
+    out_path
+        .ancestors()
+        .nth(3) // Move up 3 levels from OUT_DIR to get to 'target'
+        .expect("Unable to determine target directory")
+        .to_path_buf()
+}
+/// Get the `OUT_DIR` as a `PathBuf`.
+///
+/// The folder structure typically looks like this: `target/debug/build/<crate_name>-<hash>/out`.
+fn get_out_dir() -> PathBuf {
+    PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR environment variable not set"))
+}
+
 #[expect(clippy::too_many_lines)]
-fn build_internal(target_tripple: &str, component_type: ComponentType) {
-    let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+fn build_internal(target_tripple: &str, component_type: ComponentType, out_dir: &Path) {
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
-    let wasm_path = run_cargo_component_build(&out_dir, pkg_name, target_tripple);
+    let wasm_path = run_cargo_component_build(out_dir, pkg_name, target_tripple);
     if std::env::var("RUST_LOG").is_ok() {
         println!("cargo:warning=Built {wasm_path:?}");
     }
