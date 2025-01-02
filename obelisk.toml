@@ -73,6 +73,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Only the path portion of a URL is taken into cosideration, the query part
 ## ("?param_name=value") is ignored by the matcher.
 ## Syntax of a route:
+## "/"                                          # Only the root URL path is matched.
 ## "/path"                                      # All methods are matched, URL path must be exactly '/path'.
 ## "/path/*"                                    # All methods are matched, URL path must start with '/path/'.
 ## { methods = ["GET"], route = "/some/path" }  # Method must be GET and path '/some/path'.
