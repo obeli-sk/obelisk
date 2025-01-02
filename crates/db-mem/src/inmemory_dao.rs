@@ -233,7 +233,7 @@ impl DbConnection for InMemoryDbConnection {
             .subscribe_to_pending(pending_at_or_sooner, &ffqns);
         // unlock
         match either {
-            Either::Left(()) => {} // Got results imediately
+            Either::Left(()) => {} // Got results immediately
             Either::Right(mut receiver) => {
                 tokio::select! { // future's liveness: Dropping the loser immediately.
                     _ = receiver.recv() => {} // Got results eventually

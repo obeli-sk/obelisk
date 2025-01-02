@@ -761,7 +761,7 @@ pub trait DbConnection: Send + Sync {
     ) -> Result<FinishedExecutionResult, ClientError>;
 
     /// Best effort for blocking while there are no pending executions.
-    /// Return imediately if there are pending notifications at `pending_at_or_sooner`.
+    /// Return immediately if there are pending notifications at `pending_at_or_sooner`.
     /// Implementation must return not later than at expiry date, which is: `pending_at_or_sooner` + `max_wait`.
     /// Timers that expire until the expiry date can be disregarded.
     /// Databases that do not support subscriptions should wait for `max_wait`.
