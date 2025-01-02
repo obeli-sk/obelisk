@@ -459,6 +459,14 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                 }
             }
 
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                // bugfix for `join_set_deser_should_work`
+                self.visit_none()
+            }
+
             fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
             where
                 D: Deserializer<'de>,
@@ -817,6 +825,25 @@ mod tests {
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
             json!({"type":{"result":{"ok":null, "err":null}},"value":{"ok":null}}),
+            json
+        );
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_result_ok_option_none() {
+        // Note: this does not trigger the bug, only `join_set_deser_with_result_ok_option_none_should_work`
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Result {
+                ok: Some(Box::new(TypeWrapper::Option(Box::new(TypeWrapper::String)))),
+                err: Some(Box::new(TypeWrapper::String)),
+            },
+            value: WastVal::Result(Ok(Some(Box::new(WastVal::Option(None))))),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            json!({"type":{"result":{"ok":{"option":"string"},"err":"string"}},"value":{"ok":null}}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();

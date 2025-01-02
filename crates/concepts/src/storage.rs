@@ -1042,11 +1042,21 @@ pub enum LockKind {
 
 #[cfg(test)]
 mod tests {
+    use super::JoinSetResponse;
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
     use super::PendingStateFinishedResultKind;
+    use crate::ExecutionId;
+    use crate::FinishedExecutionResult;
+    use crate::SupportedFunctionReturnValue;
+    use assert_matches::assert_matches;
     use chrono::Utc;
     use rstest::rstest;
+    use serde_json::json;
+    use std::str::FromStr;
+    use val_json::type_wrapper::TypeWrapper;
+    use val_json::wast_val::WastVal;
+    use val_json::wast_val::WastValWithType;
 
     #[rstest(expected => [
         PendingStateFinishedResultKind(Result::Ok(())),
@@ -1076,5 +1086,51 @@ mod tests {
         let ser = serde_json::to_string(&expected).unwrap();
         let actual: PendingStateFinished = serde_json::from_str(&ser).unwrap();
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn join_set_deser_with_result_ok_option_none_should_work() {
+        let json = json!({
+            "type": "ChildExecutionFinished",
+            "child_execution_id": "E_01JGKY3WWV7Z24NP9BJF90JZHB.0",
+            "result": {
+                "Ok": {
+                    "InfallibleOrResultOk": {
+                        "type": {
+                            "result": {
+                                "ok": {
+                                    "option": "string"
+                                },
+                                "err": "string"
+                            }
+                        },
+                        "value": {
+                            "ok": null
+                        }
+                    }
+                }
+            }
+        });
+        let actual: JoinSetResponse = serde_json::from_value(json).unwrap();
+        let (child_execution_id, wast_val_with_type) = assert_matches!(
+            actual,
+            JoinSetResponse::ChildExecutionFinished {
+                child_execution_id,
+                result: FinishedExecutionResult::Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(wast_val_with_type))
+            } => (child_execution_id, wast_val_with_type)
+        );
+        assert_eq!(
+            ExecutionId::from_str("E_01JGKY3WWV7Z24NP9BJF90JZHB.0").unwrap(),
+            child_execution_id
+        );
+
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Result {
+                ok: Some(Box::new(TypeWrapper::Option(Box::new(TypeWrapper::String)))),
+                err: Some(Box::new(TypeWrapper::String)),
+            },
+            value: WastVal::Result(Ok(Some(Box::new(WastVal::Option(None))))),
+        };
+        assert_eq!(expected, wast_val_with_type);
     }
 }
