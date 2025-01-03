@@ -41,36 +41,6 @@ pub fn build_workflow() {
     build_internal(WASM_CORE, ComponentType::Workflow, &get_target_dir());
 }
 
-/// Build the parent activity WASM component and place it into the `OUT_DIR`.
-///
-/// This function must be called from `build.rs`. It reads the current package
-/// name and strips the `-builder` suffix to determine the target package name.
-/// Then, it runs `cargo build` with the appropriate target triple and sets
-/// the `--target` directory to the output of [`get_out_dir`].
-pub fn build_activity_test() {
-    build_internal(WASI_P2, ComponentType::ActivityWasm, &get_out_dir());
-}
-
-/// Build the parent webhook endpoint WASM component and place it into the `OUT_DIR`.
-///
-/// This function must be called from `build.rs`. It reads the current package
-/// name and strips the `-builder` suffix to determine the target package name.
-/// Then, it runs `cargo build` with the appropriate target triple and sets
-/// the `--target` directory to the output of [`get_out_dir`].
-pub fn build_webhook_endpoint_test() {
-    build_internal(WASI_P2, ComponentType::WebhookEndpoint, &get_out_dir());
-}
-
-/// Build the parent workflow WASM component and place it into the `OUT_DIR`.
-///
-/// This function must be called from `build.rs`. It reads the current package
-/// name and strips the `-builder` suffix to determine the target package name.
-/// Then, it runs `cargo build` with the appropriate target triple and sets
-/// the `--target` directory to the output of [`get_out_dir`].
-pub fn build_workflow_test() {
-    build_internal(WASM_CORE, ComponentType::Workflow, &get_out_dir());
-}
-
 fn to_snake_case(input: &str) -> String {
     input.replace(['-', '.'], "_")
 }
