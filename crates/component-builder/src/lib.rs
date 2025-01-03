@@ -9,7 +9,7 @@ use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
 
 const WASI_P2: &str = "wasm32-wasip2";
-const WASM_CORE: &str = "wasm32-unknown-unknown";
+const WASM_CORE_MODULE: &str = "wasm32-unknown-unknown";
 
 /// Build the parent activity WASM component and place it into the `target` directory.
 ///
@@ -38,7 +38,7 @@ pub fn build_webhook_endpoint() {
 /// Then, it runs `cargo build` with the appropriate target triple and sets
 /// the `--target` directory to the output of [`get_target_dir`].
 pub fn build_workflow() {
-    build_internal(WASM_CORE, ComponentType::Workflow, &get_target_dir());
+    build_internal(WASM_CORE_MODULE, ComponentType::Workflow, &get_target_dir());
 }
 
 fn to_snake_case(input: &str) -> String {
@@ -46,7 +46,7 @@ fn to_snake_case(input: &str) -> String {
 }
 
 fn is_transformation_to_wasm_component_needed(target_tripple: &str) -> bool {
-    target_tripple == WASM_CORE
+    target_tripple == WASM_CORE_MODULE
 }
 
 /// Get the path to the target directory.
@@ -240,8 +240,9 @@ fn run_cargo_build(dst_target_dir: &Path, name: &str, tripple: &str) -> PathBuf 
             target_transformed.exists(),
             "Transformed target path must exist: {target_transformed:?}"
         );
-        target_transformed
-    } else {
-        target
+        // mv target_transformed -> target
+        std::fs::remove_file(&target).expect("deletion must succeed");
+        std::fs::rename(target_transformed, &target).expect("rename must succeed");
     }
+    target
 }
