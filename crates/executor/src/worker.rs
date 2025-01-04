@@ -77,6 +77,6 @@ pub enum FatalError {
     ResultParsingError(ResultParsingError),
     #[error("child finished with an execution error: {0}")]
     ChildExecutionError(FinishedExecutionError),
-    #[error("uncategorized error: {0}")]
-    UncategorizedError(String),
+    #[error("uncategorized error: {reason} - {detail}")]
+    UncategorizedError { reason: String, detail: String },
 }

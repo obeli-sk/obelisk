@@ -5,7 +5,7 @@ use concepts::storage::{
     AppendRequest, DbPool, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
     LockedExecution,
 };
-use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, StrVariant};
+use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn};
 use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
     FinishedExecutionError,
@@ -357,7 +357,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     }
                     WorkerError::TemporaryError {
                         reason,
-                        err: _,
+                        err,
                         version,
                     } => {
                         if let Some(duration) = can_be_retried {
@@ -373,7 +373,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             )
                         } else {
                             info!("Permanently failed - {reason}");
-                            let result = Err(FinishedExecutionError::PermanentFailure(reason));
+                            let result = Err(FinishedExecutionError::PermanentFailure {
+                                reason: format!("permanently failed - {reason}"),
+                                detail: err.map(|err| format!("{err:?}")),
+                            });
                             let parent = parent.map(|(p, j)| (p, j, result.clone()));
                             (ExecutionEventInner::Finished { result }, parent, version)
                         }
@@ -393,36 +396,40 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     }
                     WorkerError::FatalError(FatalError::ParamsParsingError(err), version) => {
                         info!("Error parsing parameters - {err:?}");
-                        let result =
-                            Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
-                                Arc::from(format!("error parsing parameters: `{err}`")),
-                            )));
+                        let result = Err(FinishedExecutionError::PermanentFailure {
+                            reason: format!("error parsing parameters: `{err}`"),
+                            detail: Some(format!("{err:?}")),
+                        });
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
                     WorkerError::FatalError(FatalError::ResultParsingError(err), version) => {
                         info!("Error parsing result - {err:?}");
-                        let result = Err(FinishedExecutionError::PermanentFailure(
-                            StrVariant::Arc(Arc::from(format!("error parsing result: `{err}`"))),
-                        ));
+                        let result = Err(FinishedExecutionError::PermanentFailure {
+                            reason: format!("error parsing result: `{err}`"),
+                            detail: Some(format!("{err:?}")),
+                        });
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
                     WorkerError::FatalError(FatalError::ChildExecutionError(err), version) => {
                         info!("Child finished with an execution error - {err:?}");
-                        let result = Err(FinishedExecutionError::PermanentFailure(
-                            StrVariant::Arc(Arc::from(format!(
-                                "child finished with an execution error: `{err}`"
-                            ))),
-                        ));
+                        let result = Err(FinishedExecutionError::PermanentFailure {
+                            reason: format!("child finished with an execution error: {err}"),
+                            detail: Some(format!("{err:?}")),
+                        });
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
-                    WorkerError::FatalError(FatalError::UncategorizedError(err), version) => {
-                        info!("Uncategorized error - {err:?}");
-                        let result = Err(FinishedExecutionError::PermanentFailure(
-                            StrVariant::Arc(Arc::from(format!("uncategorized error: `{err}`"))),
-                        ));
+                    WorkerError::FatalError(
+                        FatalError::UncategorizedError { reason, detail },
+                        version,
+                    ) => {
+                        info!("Uncategorized error - {reason} - {detail}");
+                        let result = Err(FinishedExecutionError::PermanentFailure {
+                            reason: format!("uncategorized error - {reason}"),
+                            detail: Some(detail),
+                        });
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
@@ -582,7 +589,9 @@ mod tests {
     use concepts::storage::{
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
-    use concepts::{FunctionMetadata, ParameterTypes, Params, SupportedFunctionReturnValue};
+    use concepts::{
+        FunctionMetadata, ParameterTypes, Params, StrVariant, SupportedFunctionReturnValue,
+    };
     use db_tests::Database;
     use indexmap::IndexMap;
     use simple_worker::FFQN_SOME;
@@ -934,9 +943,11 @@ mod tests {
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
         };
+
+        let expected_reason = "error reason";
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::TemporaryError {
-                reason: StrVariant::Static("error reason"),
+                reason: StrVariant::Static(expected_reason),
                 err: None,
                 version: Version::new(2),
             },
@@ -957,17 +968,19 @@ mod tests {
         )
         .await;
         assert_eq!(3, execution_log.events.len());
-        let reason = assert_matches!(
+        let (reason, detail) = assert_matches!(
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished{
-                    result: Err(FinishedExecutionError::PermanentFailure(reason))
+                    result: Err(FinishedExecutionError::PermanentFailure{reason, detail})
                 },
                 created_at: at,
             } if *at == created_at
-            => reason.to_string()
+            => (reason, detail)
         );
-        assert_eq!("error reason", reason);
+        assert_eq!(format!("permanently failed - {expected_reason}"), *reason);
+        assert_eq!(None, *detail);
+
         db_pool.close().await.unwrap();
     }
 
@@ -976,6 +989,11 @@ mod tests {
             WorkerError::TemporaryError {
                 reason: StrVariant::Static("error reason"),
                 err: None,
+                version: Version::new(2),
+            },
+            WorkerError::TemporaryError {
+                reason: StrVariant::Static("error reason"),
+                err: Some(Box::new(WorkerError::TemporaryTimeout)),
                 version: Version::new(2),
             },
             WorkerError::TemporaryTimeout,
@@ -1083,10 +1101,15 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let expected_child_err = match worker_error {
-            WorkerError::TemporaryError { .. } => {
-                FinishedExecutionError::PermanentFailure(StrVariant::Static("error reason"))
-            }
+        let expected_child_err = match &worker_error {
+            WorkerError::TemporaryError {
+                reason,
+                err,
+                version: _,
+            } => FinishedExecutionError::PermanentFailure {
+                reason: format!("permanently failed - {reason}"),
+                detail: err.as_ref().map(|err| format!("{err:?}")),
+            },
             WorkerError::TemporaryTimeout => FinishedExecutionError::PermanentTimeout,
             worker_error => {
                 unreachable!("unexpected {worker_error}")

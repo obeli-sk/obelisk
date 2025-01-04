@@ -61,8 +61,11 @@ impl WorkflowFunctionError {
             Self::ChildExecutionError(err) => {
                 WorkerPartialResult::FatalError(FatalError::ChildExecutionError(err), version)
             }
-            Self::UncategorizedError(err) => WorkerPartialResult::FatalError(
-                FatalError::UncategorizedError(err.to_string()),
+            Self::UncategorizedError(reason) => WorkerPartialResult::FatalError(
+                FatalError::UncategorizedError {
+                    reason: reason.to_string(),
+                    detail: String::new(),
+                },
                 version,
             ),
         }

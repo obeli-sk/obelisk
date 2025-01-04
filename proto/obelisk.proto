@@ -205,6 +205,7 @@ message ResultDetail {
     }
     message ExecutionFailure {
         string reason = 1;
+        optional string detail = 2;
     }
     message FallibleError {
         // The top level JSON attribute "err" must be present.

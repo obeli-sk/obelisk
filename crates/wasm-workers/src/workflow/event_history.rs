@@ -497,14 +497,14 @@ impl<C: ClockFn> EventHistory<C> {
                                                 Err(ApplyError::ChildExecutionError(err.clone()))
                                             }
                                             JoinNextKind::AwaitNext => {
-                                                let variant = match err { // TODO: copied from webhook_trigger
+                                                let variant = match err {
                                                     FinishedExecutionError::PermanentTimeout => {
                                                         WastVal::Variant("permanent-timeout".to_string(), None)
                                                     }
                                                     FinishedExecutionError::NondeterminismDetected(_) => {
                                                         WastVal::Variant("nondeterminism".to_string(), None)
                                                     }
-                                                    FinishedExecutionError::PermanentFailure(reason) => WastVal::Variant(
+                                                    FinishedExecutionError::PermanentFailure{reason, detail:_} => WastVal::Variant(
                                                         "permanent-failure".to_string(),
                                                         Some(Box::new(WastVal::String(reason.to_string()))),
                                                     ),

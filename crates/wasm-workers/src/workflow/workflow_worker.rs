@@ -460,7 +460,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                         info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as an temporary error - {err:?}")
                     );
                     WorkerError::TemporaryError {
-                        reason: StrVariant::Arc(Arc::from(format!("trap - {err}"))),
+                        reason: StrVariant::Arc(Arc::from(format!("trap - {err:?}"))),
                         err: Some(err),
                         version,
                     }
@@ -469,7 +469,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                         info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as a fatal error - {err:?}")
                     );
                     WorkerError::FatalError(
-                        FatalError::UncategorizedError(format!("trap - {err}")),
+                        FatalError::UncategorizedError {
+                            reason: format!("trap - {err}"),
+                            detail: format!("{err:?}"),
+                        },
                         version,
                     )
                 };

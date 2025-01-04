@@ -148,15 +148,38 @@ pub fn attach_result_detail(
             .unwrap();
         }
         grpc_client::result_detail::Value::ExecutionFailure(failure) => {
+            let error_node = tree
+                .insert(
+                    Node::new(NodeData {
+                        icon: Icon::Error,
+                        label: "Execution Failure".into_html(),
+                        has_caret: true,
+                        ..Default::default()
+                    }),
+                    InsertBehavior::UnderNode(root_id),
+                )
+                .unwrap();
+
             tree.insert(
                 Node::new(NodeData {
                     icon: Icon::Error,
-                    label: format!("Execution Failure: {}", failure.reason).into_html(),
+                    label: failure.reason.as_str().into_html(),
                     ..Default::default()
                 }),
-                InsertBehavior::UnderNode(root_id),
+                InsertBehavior::UnderNode(&error_node),
             )
             .unwrap();
+            if let Some(detail) = &failure.detail {
+                tree.insert(
+                    Node::new(NodeData {
+                        icon: Icon::List,
+                        label: format!("detail: {detail}").into_html(),
+                        ..Default::default()
+                    }),
+                    InsertBehavior::UnderNode(&error_node),
+                )
+                .unwrap();
+            }
         }
     }
 }

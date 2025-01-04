@@ -38,8 +38,11 @@ pub enum FinishedExecutionError {
     PermanentTimeout,
     #[error("nondeterminism detected: `{0}`")]
     NondeterminismDetected(StrVariant),
-    #[error("permanent failure: `{0}`")]
-    PermanentFailure(StrVariant), // temporary failure that is not retried (anymore)
+    #[error("permanent failure: {reason}")]
+    PermanentFailure {
+        reason: String,
+        detail: Option<String>,
+    }, // temporary failure that is not retried (anymore)
 }
 
 impl FinishedExecutionError {
@@ -47,7 +50,7 @@ impl FinishedExecutionError {
     pub fn as_pending_state_finished_error(&self) -> PendingStateFinishedError {
         match self {
             Self::PermanentTimeout => PendingStateFinishedError::Timeout,
-            Self::PermanentFailure(_) => PendingStateFinishedError::ExecutionFailure,
+            Self::PermanentFailure { .. } => PendingStateFinishedError::ExecutionFailure,
             Self::NondeterminismDetected(_) => PendingStateFinishedError::NondeterminismDetected,
         }
     }

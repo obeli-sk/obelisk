@@ -341,11 +341,9 @@ impl From<FinishedExecutionResult> for grpc::ResultDetail {
             Err(FinishedExecutionError::PermanentTimeout) => {
                 grpc::result_detail::Value::Timeout(grpc::result_detail::Timeout {})
             }
-            Err(FinishedExecutionError::PermanentFailure(reason)) => {
+            Err(FinishedExecutionError::PermanentFailure { reason, detail }) => {
                 grpc::result_detail::Value::ExecutionFailure(
-                    grpc::result_detail::ExecutionFailure {
-                        reason: reason.to_string(),
-                    },
+                    grpc::result_detail::ExecutionFailure { reason, detail },
                 )
             }
             Err(FinishedExecutionError::NondeterminismDetected(reason)) => {
