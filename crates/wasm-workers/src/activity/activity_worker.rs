@@ -116,7 +116,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 }
                 return WorkerResult::Err(WorkerError::TemporaryError {
                     reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
-                    err: Some(err.into()),
+                    detail: Some(format!("{err:?}")),
                     version: ctx.version,
                 });
             }
@@ -151,7 +151,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                         reason: StrVariant::Arc(Arc::from(format!(
                             "wasm function call error - {err}"
                         ))),
-                        err: Some(err.into()),
+                        detail: Some(format!("{err:?}")),
                         version: ctx.version,
                     });
                 };
@@ -171,7 +171,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                         reason: StrVariant::Arc(Arc::from(format!(
                             "wasm post function call error - {err}"
                         ))),
-                        err: Some(err.into()),
+                        detail: Some(format!("{err:?}")),
                         version: ctx.version,
                     });
                 }
@@ -180,13 +180,12 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                     // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (TemporaryError)
                     if let SupportedFunctionReturnValue::FallibleResultErr(result_err) = &result {
                         if ctx.can_be_retried {
-                            let result_err = serde_json::to_string(result_err).expect(
+                            let detail = serde_json::to_string(result_err).expect(
                                 "SupportedFunctionReturnValue should be serializable to JSON",
                             );
-                            let reason = StrVariant::Arc(Arc::from(result_err));
                             return WorkerResult::Err(WorkerError::TemporaryError {
-                                reason,
-                                err: None,
+                                reason: StrVariant::Static("activity returned an error"),
+                                detail: Some(detail),
                                 version: ctx.version,
                             });
                         }
@@ -805,18 +804,20 @@ pub(crate) mod tests {
                 );
                 let exec_log = db_connection.get(&execution_id).await.unwrap();
 
-                let (reason, found_expires_at) = assert_matches!(
+                let (reason, detail, found_expires_at) = assert_matches!(
                     &exec_log.last_event().event,
                     ExecutionEventInner::TemporarilyFailed {
                         backoff_expires_at,
                         reason,
+                        detail: Some(detail),
                     }
-                    => (reason, *backoff_expires_at)
+                    => (reason, detail, *backoff_expires_at)
                 );
                 assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
+                assert_eq!("activity returned an error", reason.deref());
                 assert!(
-                    reason.contains("wrong status code: 500"),
-                    "Unexpected {reason}"
+                    detail.contains("wrong status code: 500"),
+                    "Unexpected {detail}"
                 );
                 server.verify().await;
             }

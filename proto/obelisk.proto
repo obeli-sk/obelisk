@@ -251,7 +251,8 @@ message ExecutionEvent {
 
     message TemporarilyFailed {
         string reason = 1;
-        google.protobuf.Timestamp backoff_expires_at = 2;
+        optional string detail = 2;
+        google.protobuf.Timestamp backoff_expires_at = 3;
     }
 
     message TemporarilyTimedOut {

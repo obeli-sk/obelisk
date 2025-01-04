@@ -285,7 +285,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 }
                 return Err(WorkerError::TemporaryError {
                     reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
-                    err: Some(err.into()),
+                    detail: Some(format!("{err:?}")),
                     version,
                 });
             }
@@ -461,7 +461,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     );
                     WorkerError::TemporaryError {
                         reason: StrVariant::Arc(Arc::from(format!("trap - {err:?}"))),
-                        err: Some(err),
+                        detail: Some(format!("{err:?}")),
                         version,
                     }
                 } else {

@@ -357,7 +357,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     }
                     WorkerError::TemporaryError {
                         reason,
-                        err,
+                        detail,
                         version,
                     } => {
                         if let Some(duration) = can_be_retried {
@@ -367,6 +367,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                                 ExecutionEventInner::TemporarilyFailed {
                                     backoff_expires_at: expires_at,
                                     reason,
+                                    detail,
                                 },
                                 None,
                                 version,
@@ -375,7 +376,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             info!("Permanently failed - {reason}");
                             let result = Err(FinishedExecutionError::PermanentFailure {
                                 reason: format!("permanently failed - {reason}"),
-                                detail: err.map(|err| format!("{err:?}")),
+                                detail,
                             });
                             let parent = parent.map(|(p, j)| (p, j, result.clone()));
                             (ExecutionEventInner::Finished { result }, parent, version)
@@ -835,7 +836,7 @@ mod tests {
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::TemporaryError {
                 reason: StrVariant::Static("fail"),
-                err: None,
+                detail: None,
                 version: Version::new(2),
             },
         )));
@@ -858,18 +859,20 @@ mod tests {
         .await;
         assert_eq!(3, execution_log.events.len());
         {
-            let (reason, at, expires_at) = assert_matches!(
+            let (reason, detail, at, expires_at) = assert_matches!(
                 &execution_log.events.get(2).unwrap(),
                 ExecutionEvent {
                     event: ExecutionEventInner::TemporarilyFailed {
                         reason,
+                        detail,
                         backoff_expires_at,
                     },
                     created_at: at,
                 }
-                => (reason, *at, *backoff_expires_at)
+                => (reason, detail, *at, *backoff_expires_at)
             );
             assert_eq!("fail", reason.deref());
+            assert_eq!(None, *detail);
             assert_eq!(at, sim_clock.now());
             assert_eq!(sim_clock.now() + retry_exp_backoff, expires_at);
         }
@@ -948,7 +951,7 @@ mod tests {
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::TemporaryError {
                 reason: StrVariant::Static(expected_reason),
-                err: None,
+                detail: None,
                 version: Version::new(2),
             },
         )));
@@ -988,12 +991,12 @@ mod tests {
         worker_error => [
             WorkerError::TemporaryError {
                 reason: StrVariant::Static("error reason"),
-                err: None,
+                detail: None,
                 version: Version::new(2),
             },
             WorkerError::TemporaryError {
                 reason: StrVariant::Static("error reason"),
-                err: Some(Box::new(WorkerError::TemporaryTimeout)),
+                detail: Some("detail".to_string()),
                 version: Version::new(2),
             },
             WorkerError::TemporaryTimeout,
@@ -1104,11 +1107,11 @@ mod tests {
         let expected_child_err = match &worker_error {
             WorkerError::TemporaryError {
                 reason,
-                err,
+                detail,
                 version: _,
             } => FinishedExecutionError::PermanentFailure {
                 reason: format!("permanently failed - {reason}"),
-                detail: err.as_ref().map(|err| format!("{err:?}")),
+                detail: detail.clone(),
             },
             WorkerError::TemporaryTimeout => FinishedExecutionError::PermanentTimeout,
             worker_error => {

@@ -401,8 +401,10 @@ pub(crate) fn from_execution_event_to_grpc(
                 ExecutionEventInner::TemporarilyFailed {
                     backoff_expires_at,
                     reason,
+                    detail
                 } => grpc::execution_event::Event::Failed(grpc::execution_event::TemporarilyFailed {
                     reason: reason.to_string(),
+                    detail,
                     backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                 }),
                 ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at } => {

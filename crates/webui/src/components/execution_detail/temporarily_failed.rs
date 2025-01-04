@@ -33,13 +33,26 @@ impl TemporarilyFailedEventProps {
         // Add reason node
         tree.insert(
             Node::new(NodeData {
-                icon: Icon::Comment,
-                label: format!("Reason: {}", self.event.reason).into_html(),
+                icon: Icon::Error,
+                label: self.event.reason.as_str().into_html(),
                 ..Default::default()
             }),
             InsertBehavior::UnderNode(&failed_node),
         )
         .unwrap();
+
+        // Add detail
+        if let Some(detail) = &self.event.detail {
+            tree.insert(
+                Node::new(NodeData {
+                    icon: Icon::List,
+                    label: format!("detail: {detail}").into_html(),
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&failed_node),
+            )
+            .unwrap();
+        }
 
         // Add backoff expiration
         let backoff_expires_at = DateTime::from(

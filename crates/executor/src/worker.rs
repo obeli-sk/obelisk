@@ -12,7 +12,6 @@ use concepts::{
 };
 use concepts::{FunctionFqn, ParamsParsingError, ResultParsingError};
 use concepts::{Params, SupportedFunctionReturnValue};
-use std::error::Error;
 use tracing::Span;
 
 #[async_trait]
@@ -53,7 +52,7 @@ pub enum WorkerError {
     #[error("temporary error: {reason}")]
     TemporaryError {
         reason: StrVariant,
-        err: Option<Box<dyn Error + Send + Sync>>,
+        detail: Option<String>,
         version: Version,
     },
     #[error("Limit reached: {0}")]

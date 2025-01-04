@@ -235,6 +235,7 @@ pub const DUMMY_TEMPORARILY_TIMED_OUT: ExecutionEventInner =
 pub const DUMMY_TEMPORARILY_FAILED: ExecutionEventInner = ExecutionEventInner::TemporarilyFailed {
     backoff_expires_at: DateTime::from_timestamp_nanos(0),
     reason: StrVariant::empty(),
+    detail: None,
 };
 
 #[derive(
@@ -291,6 +292,7 @@ pub enum ExecutionEventInner {
         backoff_expires_at: DateTime<Utc>,
         #[arbitrary(value = StrVariant::Static("reason"))]
         reason: StrVariant,
+        detail: Option<String>,
     },
     // Created by the executor holding last lock.
     // After expiry interpreted as pending.
