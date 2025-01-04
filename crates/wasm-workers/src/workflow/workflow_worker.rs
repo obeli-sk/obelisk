@@ -34,7 +34,7 @@ pub enum JoinNextBlockingStrategy {
     Interrupt,
     /// Keep the execution hot. Worker will poll the database until the execution lock expires.
     #[default]
-    Await,
+    Await, // TODO: Move `non_blocking_event_batching` here
 }
 
 #[derive(Clone, Debug)]
@@ -592,7 +592,8 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         activity::activity_worker::tests::{
-            compile_activity, spawn_activity_fibo, wasm_file_name, FIBO_10_INPUT, FIBO_10_OUTPUT,
+            compile_activity, spawn_activity, spawn_activity_fibo, wasm_file_name, FIBO_10_INPUT,
+            FIBO_10_OUTPUT,
         },
         engines::{EngineConfig, Engines},
         tests::{fn_registry_dummy, TestingFnRegistry},
@@ -626,8 +627,17 @@ pub(crate) mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
+    const FFQN_WORKFLOW_HTTP_GET_STARGAZERS: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_STARGAZERS);
+
     #[cfg(not(madsim))]
-    const HTTP_GET_SUCCESSFUL_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
+    const FFQN_WORKFLOW_HTTP_GET: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET,
+    );
+    #[cfg(not(madsim))]
+    const FFQN_WORKFLOW_HTTP_GET_SUCCESSFUL: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
+    #[cfg(not(madsim))]
+    const FFQN_WORKFLOW_HTTP_GET_RESP: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_RESP);
 
     pub(crate) async fn compile_workflow(wasm_path: &str) -> (WasmComponent, ComponentId) {
         let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
@@ -1019,6 +1029,74 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
+    #[rstest]
+    #[tokio::test]
+    async fn stargazers_should_be_deserialized_after_interrupt(
+        #[values(Database::Sqlite, Database::Memory)] db: Database,
+    ) {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool) = db.set_up().await;
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection();
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(
+                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            )
+            .await,
+            compile_workflow(
+                test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+            )
+            .await,
+        ]);
+        let activity_exec_task = spawn_activity(
+            db_pool.clone(),
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            sim_clock.clone(),
+        )
+        .await;
+
+        let workflow_exec_task = spawn_workflow(
+            db_pool.clone(),
+            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+            sim_clock.clone(),
+            JoinNextBlockingStrategy::Interrupt,
+            0,
+            fn_registry,
+        )
+        .await;
+        let execution_id = ExecutionId::generate();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: FFQN_WORKFLOW_HTTP_GET_STARGAZERS,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: u32::MAX,
+                component_id: ComponentId::dummy_workflow(),
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+        // Check the result.
+        let res = assert_matches!(
+            db_connection
+                .wait_for_finished_result(&execution_id, None)
+                .await
+                .unwrap(),
+            Ok(res) => res
+        );
+        assert_eq!(SupportedFunctionReturnValue::None, res);
+        drop(db_connection);
+        activity_exec_task.close().await;
+        workflow_exec_task.close().await;
+        db_pool.close().await.unwrap();
+    }
+
     #[cfg(not(madsim))]
     #[rstest]
     #[tokio::test]
@@ -1026,6 +1104,13 @@ pub(crate) mod tests {
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         #[values(0, 10)] batching: u32,
+        #[values(
+            FFQN_WORKFLOW_HTTP_GET,
+            FFQN_WORKFLOW_HTTP_GET_RESP,
+            FFQN_WORKFLOW_HTTP_GET_SUCCESSFUL
+        )]
+        ffqn: FunctionFqn,
+        #[values(Database::Sqlite, Database::Memory)] db: Database,
     ) {
         use crate::activity::activity_worker::tests::spawn_activity;
         use chrono::DateTime;
@@ -1039,7 +1124,7 @@ pub(crate) mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool) = db.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
@@ -1084,14 +1169,14 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at,
                 execution_id: execution_id.clone(),
-                ffqn: HTTP_GET_SUCCESSFUL_WORKFLOW_FFQN,
+                ffqn,
                 params,
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
-                component_id: ComponentId::dummy_activity(),
+                component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
             .await
@@ -1196,7 +1281,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::from_millis(0),
                 max_retries: u32::MAX,
-                component_id: ComponentId::dummy_activity(),
+                component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
             .await
@@ -1236,7 +1321,7 @@ pub(crate) mod tests {
 
         const SLEEP_DURATION: Duration = Duration::from_millis(100);
         const ITERATIONS: u8 = 1;
-        const RESCHEDULE_FFQN: FunctionFqn =
+        const FFQN_WORKFLOW_SLEEP_RESCHEDULE_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::RESCHEDULE);
         test_utils::set_up();
         let sim_clock = SimClock::default();
@@ -1267,14 +1352,14 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id: execution_id.clone(),
-                ffqn: RESCHEDULE_FFQN,
+                ffqn: FFQN_WORKFLOW_SLEEP_RESCHEDULE_FFQN,
                 params,
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
-                component_id: ComponentId::dummy_activity(),
+                component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
             .await
@@ -1285,12 +1370,12 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                component_id: ComponentId::dummy_activity(),
+                component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
             },
             sim_clock.clone(),
             db_pool.clone(),
-            Arc::new([RESCHEDULE_FFQN]),
+            Arc::new([FFQN_WORKFLOW_SLEEP_RESCHEDULE_FFQN]),
         );
         // tick2 + await should mark the first execution finished.
         assert_eq!(
@@ -1315,9 +1400,9 @@ pub(crate) mod tests {
             .lock_pending(
                 10,
                 sim_clock.now(),
-                Arc::from([RESCHEDULE_FFQN]),
+                Arc::from([FFQN_WORKFLOW_SLEEP_RESCHEDULE_FFQN]),
                 sim_clock.now(),
-                ComponentId::dummy_activity(),
+                ComponentId::dummy_workflow(),
                 ExecutorId::generate(),
                 sim_clock.now() + Duration::from_secs(1),
             )
@@ -1391,14 +1476,14 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at,
                 execution_id: execution_id.clone(),
-                ffqn: HTTP_GET_SUCCESSFUL_WORKFLOW_FFQN,
+                ffqn: FFQN_WORKFLOW_HTTP_GET_SUCCESSFUL,
                 params,
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
-                component_id: ComponentId::dummy_activity(),
+                component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
             .await

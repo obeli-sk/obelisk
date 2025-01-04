@@ -1,6 +1,20 @@
 package testing:http;
 
 interface http-get {
+
+    record response {
+        body: list<u8>,
+        status-code: u16,
+    }
+
+
+    record stargazers {
+        logins: string,
+        cursor: string,
+    }
+
     get: func(url: string) -> result<string, string>;
+    get-resp: func(url: string) -> result<response, string>;
+    get-stargazers: func() -> result<stargazers, string>;
     get-successful: func(url: string) -> result<string, string>;
 }

@@ -56,6 +56,134 @@ expression: exports
     "extension": "AwaitNext",
     "submittable": false
   },
+  "testing:http-workflow-obelisk-ext/workflow.get-resp-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-resp-await-next"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set-id",
+        "wit_type": "join-set-id"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "tuple": [
+              {
+                "record": {
+                  "id": "string"
+                }
+              },
+              {
+                "result": {
+                  "ok": "string",
+                  "err": "string"
+                }
+              }
+            ]
+          },
+          "err": {
+            "tuple": [
+              {
+                "record": {
+                  "id": "string"
+                }
+              },
+              {
+                "variant": {
+                  "nondeterminism": null,
+                  "permanent-failure": "string",
+                  "permanent-timeout": null
+                }
+              }
+            ]
+          }
+        }
+      },
+      "wit_type": "result<tuple<execution-id, result<string, string>>, tuple<execution-id, execution-error>>"
+    },
+    "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-resp-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-resp-schedule"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "variant": {
+            "at": {
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
+              }
+            },
+            "in": {
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
+              }
+            },
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "record": {
+          "id": "string"
+        }
+      },
+      "wit_type": "execution-id"
+    },
+    "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-resp-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-resp-submit"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set-id",
+        "wit_type": "join-set-id"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "record": {
+          "id": "string"
+        }
+      },
+      "wit_type": "execution-id"
+    },
+    "extension": "Submit",
+    "submittable": false
+  },
   "testing:http-workflow-obelisk-ext/workflow.get-schedule": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -101,6 +229,114 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-stargazers-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-stargazers-await-next"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set-id",
+        "wit_type": "join-set-id"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "record": {
+              "id": "string"
+            }
+          },
+          "err": {
+            "tuple": [
+              {
+                "record": {
+                  "id": "string"
+                }
+              },
+              {
+                "variant": {
+                  "nondeterminism": null,
+                  "permanent-failure": "string",
+                  "permanent-timeout": null
+                }
+              }
+            ]
+          }
+        }
+      },
+      "wit_type": "result<execution-id, tuple<execution-id, execution-error>>"
+    },
+    "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-stargazers-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-stargazers-schedule"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "variant": {
+            "at": {
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
+              }
+            },
+            "in": {
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
+              }
+            },
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "record": {
+          "id": "string"
+        }
+      },
+      "wit_type": "execution-id"
+    },
+    "extension": "Schedule",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-stargazers-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-stargazers-submit"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set-id",
+        "wit_type": "join-set-id"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "record": {
+          "id": "string"
+        }
+      },
+      "wit_type": "execution-id"
+    },
+    "extension": "Submit",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-submit": {
@@ -554,6 +790,40 @@ expression: exports
       },
       "wit_type": "result<string, string>"
     },
+    "extension": null,
+    "submittable": true
+  },
+  "testing:http-workflow/workflow.get-resp": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get-resp"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": "string",
+          "err": "string"
+        }
+      },
+      "wit_type": "result<string, string>"
+    },
+    "extension": null,
+    "submittable": true
+  },
+  "testing:http-workflow/workflow.get-stargazers": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get-stargazers"
+    },
+    "parameter_types": [],
+    "return_type": null,
     "extension": null,
     "submittable": true
   },

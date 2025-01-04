@@ -656,7 +656,9 @@ mod tests {
         wast_val::{WastVal, WastValWithType},
         wast_val_ser::WastValDeserialize,
     };
+    use assert_matches::assert_matches;
     use indexmap::{indexmap, indexset, IndexMap};
+    use itertools::Itertools;
     use serde::de::DeserializeSeed;
     use serde_json::json;
 
@@ -1152,6 +1154,37 @@ mod tests {
         assert_eq!(
             "cannot deserialize flags: flag `d` not found in the list: `{\"a\", \"b\", \"c\"}`",
             err.to_string()
+        );
+    }
+
+    #[test]
+    fn deser_should_preserve_its_attribute_order() {
+        let expected_keys = vec!["logins", "cursor"];
+        let json = r#"
+            {
+                "type": {
+                    "record": {
+                        "logins": "string",
+                        "cursor": "string"
+                    }
+                },
+                "value": {
+                    "logins": "logins",
+                    "cursor": "cursor"
+                }
+            }
+        "#;
+        let deser: WastValWithType = serde_json::from_str(json).unwrap();
+        let fields = assert_matches!(deser.value, WastVal::Record(fields) => fields);
+        assert_eq!(expected_keys, fields.keys().collect_vec());
+
+        let fields = assert_matches!(deser.r#type, TypeWrapper::Record(fields) => fields);
+        assert_eq!(
+            expected_keys,
+            fields
+                .keys()
+                .map(std::string::ToString::to_string)
+                .collect_vec()
         );
     }
 }

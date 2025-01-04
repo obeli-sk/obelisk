@@ -19,6 +19,9 @@ thiserror.workspace = true
 wasmtime = { workspace = true, optional = true }
 wast.workspace = true
 
+[dev-dependencies]
+assert_matches.workspace = true
+
 [features]
 wasmtime = ["dep:wasmtime"]
 

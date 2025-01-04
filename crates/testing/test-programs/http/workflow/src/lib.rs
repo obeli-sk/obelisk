@@ -15,6 +15,11 @@ impl Guest for Component {
         http_get::get(&url)
     }
 
+    fn get_resp(url: String) -> Result<String, String> {
+        let resp = http_get::get_resp(&url)?;
+        Ok(String::from_utf8_lossy(&resp.body).into_owned())
+    }
+
     fn get_successful(url: String) -> Result<String, String> {
         http_get::get_successful(&url)
     }
@@ -49,5 +54,9 @@ impl Guest for Component {
             list.push(contents);
         }
         Ok(list)
+    }
+
+    fn get_stargazers() {
+        http_get::get_stargazers().unwrap();
     }
 }

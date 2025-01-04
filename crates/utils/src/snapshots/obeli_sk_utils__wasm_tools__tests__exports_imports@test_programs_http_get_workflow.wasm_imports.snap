@@ -121,6 +121,60 @@ expression: imports
     "extension": null,
     "submittable": false
   },
+  "testing:http/http-get.get-resp": {
+    "ffqn": {
+      "ifc_fqn": "testing:http/http-get",
+      "function_name": "get-resp"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "record": {
+              "body": {
+                "list": "u8"
+              },
+              "status-code": "u16"
+            }
+          },
+          "err": "string"
+        }
+      },
+      "wit_type": "result<response, string>"
+    },
+    "extension": null,
+    "submittable": false
+  },
+  "testing:http/http-get.get-stargazers": {
+    "ffqn": {
+      "ifc_fqn": "testing:http/http-get",
+      "function_name": "get-stargazers"
+    },
+    "parameter_types": [],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "record": {
+              "cursor": "string",
+              "logins": "string"
+            }
+          },
+          "err": "string"
+        }
+      },
+      "wit_type": "result<stargazers, string>"
+    },
+    "extension": null,
+    "submittable": false
+  },
   "testing:http/http-get.get-successful": {
     "ffqn": {
       "ifc_fqn": "testing:http/http-get",

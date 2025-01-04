@@ -159,11 +159,40 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
 #[cfg(test)]
 mod tests {
     use super::TypeWrapper;
+    use assert_matches::assert_matches;
+    use indexmap::indexmap;
+    use itertools::Itertools;
 
     #[test]
     fn deserialize_type_u64() {
         let json = r#"["u64"]"#;
         let actual: Vec<TypeWrapper> = serde_json::from_str(json).unwrap();
         assert_eq!(vec![TypeWrapper::U64], actual);
+    }
+
+    #[test]
+    fn deser_should_preserve_its_attribute_order() {
+        let json = r#"
+            {
+                "record": {
+                    "logins": "string",
+                    "cursor": "string"
+                }
+            }
+        "#;
+        let deser: TypeWrapper = serde_json::from_str(json).unwrap();
+        let fields = assert_matches!(deser, TypeWrapper::Record(fields) => fields);
+        let expected = indexmap! {
+            Box::from("logins") => TypeWrapper::String,
+            Box::from("cursor") => TypeWrapper::String,
+        };
+        assert_eq!(expected, fields);
+        assert_eq!(
+            vec!["logins", "cursor"],
+            fields
+                .keys()
+                .map(std::string::ToString::to_string)
+                .collect_vec()
+        );
     }
 }

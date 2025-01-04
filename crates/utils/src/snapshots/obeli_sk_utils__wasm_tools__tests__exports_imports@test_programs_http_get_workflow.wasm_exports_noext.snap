@@ -27,6 +27,40 @@ expression: exports
     "extension": null,
     "submittable": true
   },
+  "testing:http-workflow/workflow.get-resp": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get-resp"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": "string",
+          "err": "string"
+        }
+      },
+      "wit_type": "result<string, string>"
+    },
+    "extension": null,
+    "submittable": true
+  },
+  "testing:http-workflow/workflow.get-stargazers": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow/workflow",
+      "function_name": "get-stargazers"
+    },
+    "parameter_types": [],
+    "return_type": null,
+    "extension": null,
+    "submittable": true
+  },
   "testing:http-workflow/workflow.get-successful": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow/workflow",

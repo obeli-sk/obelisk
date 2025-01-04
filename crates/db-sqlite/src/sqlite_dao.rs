@@ -223,13 +223,24 @@ impl<T: 'static> FromSql for PrefixedUlidWrapper<T> {
 }
 
 struct JsonWrapper<T>(T);
-impl<T: serde::de::DeserializeOwned + 'static> FromSql for JsonWrapper<T> {
+impl<T: serde::de::DeserializeOwned + 'static + Debug> FromSql for JsonWrapper<T> {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        let value = serde_json::Value::column_result(value)?;
-        let value = serde_json::from_value::<T>(value).map_err(|err| {
+        let value = match value {
+            rusqlite::types::ValueRef::Text(value) | rusqlite::types::ValueRef::Blob(value) => {
+                Ok(value)
+            }
+            other => {
+                error!(
+                    backtrace = %std::backtrace::Backtrace::capture(),
+                    "Unexpected type when conveting to JSON - expected Text or Blob, got type `{other:?}`",
+                );
+                Err(FromSqlError::InvalidType)
+            }
+        }?;
+        let value = serde_json::from_slice::<T>(value).map_err(|err| {
             error!(
                 backtrace = %std::backtrace::Backtrace::capture(),
-                "Cannot convert JSON to type:`{type}` - {err:?}",
+                "Cannot convert JSON value `{value:?}` to type:`{type}` - {err:?}",
                 r#type = std::any::type_name::<T>()
             );
             FromSqlError::InvalidType
