@@ -17,12 +17,14 @@ anyhow.workspace = true
 assert_matches.workspace = true
 chrono.workspace = true
 derive_more.workspace = true
+futures.workspace = true
 hashbrown.workspace = true
 implicit-clone.workspace = true
 indexmap.workspace = true
 log.workspace = true
 prost-wkt-types.workspace = true
 prost.workspace = true
+rand = { workspace = true, features = ["small_rng", "std"] }
 serde_json.workspace = true
 tonic = { workspace = true, default-features = false, features = [
     "codegen",
