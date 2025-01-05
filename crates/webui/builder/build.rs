@@ -44,6 +44,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     for target in &package.targets {
         add_dependency(&target.src_path); // src folder
     }
+    // dist folder
+    let dist_dir = parent_package_path.join("dist");
+    assert!(dist_dir.exists());
+    add_dependency(&dist_dir);
     Ok(())
 }
 
