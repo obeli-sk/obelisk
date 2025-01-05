@@ -7,7 +7,6 @@ dist = "dist-dev"
 port = 8081
 
 [[proxy]]
-# Proxy the gRPC requests to the "webui" web server as configured in obelisk.toml .
 # Only /api prefixed requests should be proxied:
 # Remove /api path prefix using the rewrite rule, then add it back.
 rewrite = "/api"
