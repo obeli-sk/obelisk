@@ -405,7 +405,10 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             .await
             .unwrap();
         let req = AppendRequest {
-            event: ExecutionEventInner::Unlocked { backoff_expires_at },
+            event: ExecutionEventInner::Unlocked {
+                backoff_expires_at,
+                reason: StrVariant::Static("reason"),
+            },
             created_at,
         };
         version = db_connection

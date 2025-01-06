@@ -250,7 +250,7 @@ fn render_execution_details(
                     <LockedEvent locked={locked.clone()} />
                 },
                 execution_event::Event::Unlocked(event) => html! {
-                    <UnlockedEvent event={*event}/>
+                    <UnlockedEvent event={event.clone()}/>
                 },
                 execution_event::Event::Failed(event) => html! {
                     <TemporarilyFailedEvent event={event.clone()} />

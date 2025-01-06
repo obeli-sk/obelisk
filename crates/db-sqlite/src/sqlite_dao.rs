@@ -1549,11 +1549,11 @@ impl SqlitePool {
                 backoff_expires_at, ..
             }
             | ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at }
-            | ExecutionEventInner::Unlocked { backoff_expires_at } => {
-                IndexAction::PendingStateChanged(PendingState::PendingAt {
-                    scheduled_at: *backoff_expires_at,
-                })
-            }
+            | ExecutionEventInner::Unlocked {
+                backoff_expires_at, ..
+            } => IndexAction::PendingStateChanged(PendingState::PendingAt {
+                scheduled_at: *backoff_expires_at,
+            }),
             ExecutionEventInner::Finished { result } => {
                 next_version = appending_version.clone();
                 IndexAction::PendingStateChanged(PendingState::Finished {

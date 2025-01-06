@@ -294,7 +294,11 @@ pub enum ExecutionEventInner {
     /// out of resources like [`WorkerError::LimitReached`] or when
     /// the executor is shutting down.
     #[display("Unlocked(`{backoff_expires_at}`)")]
-    Unlocked { backoff_expires_at: DateTime<Utc> },
+    Unlocked {
+        backoff_expires_at: DateTime<Utc>,
+        #[arbitrary(value = StrVariant::Static("reason"))]
+        reason: StrVariant,
+    },
     // Created by the executor holding the lock.
     // After expiry interpreted as pending.
     #[display("TemporarilyFailed(`{backoff_expires_at}`)")]

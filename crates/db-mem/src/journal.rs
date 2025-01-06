@@ -179,6 +179,7 @@ impl ExecutionJournal {
                 }
                 | ExecutionEventInner::Unlocked {
                     backoff_expires_at: expires_at,
+                    ..
                 } => Some(PendingState::PendingAt {
                     scheduled_at: *expires_at,
                 }),

@@ -249,6 +249,7 @@ message ExecutionEvent {
 
     message Unlocked {
         google.protobuf.Timestamp backoff_expires_at = 1;
+        string reason = 2;
     }
 
     message TemporarilyFailed {

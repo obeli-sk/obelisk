@@ -397,9 +397,10 @@ pub(crate) fn from_execution_event_to_grpc(
                     run_id: run_id.to_string(),
                     lock_expires_at: Some(prost_wkt_types::Timestamp::from(lock_expires_at)),
                 }),
-                ExecutionEventInner::Unlocked { backoff_expires_at } => {
+                ExecutionEventInner::Unlocked { backoff_expires_at, reason } => {
                     grpc::execution_event::Event::Unlocked(grpc::execution_event::Unlocked {
-                        backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at))
+                        backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
+                        reason: reason.to_string(),
                     })
                 },
                 ExecutionEventInner::TemporarilyFailed {

@@ -10,7 +10,7 @@ use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
     FinishedExecutionError,
 };
-use concepts::{ComponentId, FinishedExecutionResult, FunctionMetadata};
+use concepts::{ComponentId, FinishedExecutionResult, FunctionMetadata, StrVariant};
 use derivative::Derivative;
 use std::marker::PhantomData;
 use std::{
@@ -395,6 +395,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         (
                             ExecutionEventInner::Unlocked {
                                 backoff_expires_at: expires_at,
+                                reason: StrVariant::from(format!("limit reached - {reason}")),
                             },
                             None,
                             new_version,

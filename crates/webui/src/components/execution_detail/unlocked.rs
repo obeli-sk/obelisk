@@ -17,15 +17,28 @@ impl UnlockedEventProps {
             .insert(Node::new(NodeData::default()), InsertBehavior::AsRoot)
             .unwrap();
 
+        let unlocked_node_id = tree
+            .insert(
+                Node::new(NodeData {
+                    icon: Icon::Unlock,
+                    label: "Execution Unlocked".into_html(),
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&root_id),
+            )
+            .unwrap();
+
+        // Add reason node
         tree.insert(
             Node::new(NodeData {
-                icon: Icon::Unlock,
-                label: "Execution Unlocked".into_html(),
+                icon: Icon::Error,
+                label: self.event.reason.as_str().into_html(),
                 ..Default::default()
             }),
-            InsertBehavior::UnderNode(&root_id),
+            InsertBehavior::UnderNode(&unlocked_node_id),
         )
         .unwrap();
+
         TreeData::from(tree)
     }
 }
