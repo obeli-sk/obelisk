@@ -592,8 +592,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         activity::activity_worker::tests::{
-            compile_activity, spawn_activity, spawn_activity_fibo, wasm_file_name, FIBO_10_INPUT,
-            FIBO_10_OUTPUT,
+            compile_activity, spawn_activity_fibo, wasm_file_name, FIBO_10_INPUT, FIBO_10_OUTPUT,
         },
         engines::{EngineConfig, Engines},
         tests::{fn_registry_dummy, TestingFnRegistry},
@@ -627,6 +626,7 @@ pub(crate) mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
+    #[cfg(not(madsim))]
     const FFQN_WORKFLOW_HTTP_GET_STARGAZERS: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_STARGAZERS);
 
@@ -1029,11 +1029,14 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
+    #[cfg(not(madsim))]
     #[rstest]
     #[tokio::test]
     async fn stargazers_should_be_deserialized_after_interrupt(
         #[values(Database::Sqlite, Database::Memory)] db: Database,
     ) {
+        use crate::activity::activity_worker::tests::spawn_activity;
+
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = db.set_up().await;
