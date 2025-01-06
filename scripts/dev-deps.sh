@@ -16,8 +16,8 @@ cargo nextest --version | head -n 1 >> dev-deps.txt
 dive --version >> dev-deps.txt
 echo "litecli $(litecli --version)" >> dev-deps.txt
 lldb --version >> dev-deps.txt
-nixpkgs-fmt --version   >> dev-deps.txt || true
-pkg-config --version >> dev-deps.txt
+echo $(nixpkgs-fmt --version) >> dev-deps.txt
+echo "pkg-config $(pkg-config --version)" >> dev-deps.txt
 # protobuf
 protoc --version >> dev-deps.txt
 rustc --version >> dev-deps.txt
