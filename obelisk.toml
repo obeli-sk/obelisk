@@ -126,15 +126,16 @@ exec.lock_expiry.secs = 10
 name = "sleep_workflow"
 location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-11-28@sha256:48c52c28f2eb10dc83013b3d1d6dc8847fd9166549f59a2242dee9ffd9d53e5f"
 
-## Send spans via gRPC to an OTLP collector.
-# [otlp] # Run `docker run --rm -it  -p 4317:4317 -p 16686:16686 jaegertracing/all-in-one:1.60` to start collecting traces.
+### Send spans via gRPC to an OTLP collector.
+# [otlp]
+## Run `docker run --rm -it  -p 4317:4317 -p 16686:16686 jaegertracing/all-in-one:1.60` to start collecting traces.
 # enabled = true
 ## Defaults:
 # level = "info,app=trace"
 # service_name = "obelisk-server"
 # otlp_endpoint = "http://localhost:4317"
 
-# Stdout configuration, by default logs INFO and above.
+### Stdout configuration, by default logs INFO and above.
 [log.stdout]
 enabled = true
 ## Defaults:
@@ -143,7 +144,7 @@ enabled = true
 # span = "none" # One of "none","new","enter","exit","close","active","full"
 # target = false
 
-## Sample (rolling) file configuration
+### Sample (rolling) file configuration
 # [log.file]
 # enabled = true
 # level = "info,obeli=debug,app=trace"
