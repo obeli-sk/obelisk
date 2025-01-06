@@ -4,7 +4,7 @@
 # This script should be executed after every `nix flake update`.
 
 set -exuo pipefail
-cd $(dirname "$0")/..
+cd "$(dirname "$0")/.."
 
 rm -f dev-deps.txt
 echo "cargo-binstall $(cargo-binstall -V)" >> dev-deps.txt
