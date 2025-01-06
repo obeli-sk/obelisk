@@ -247,7 +247,9 @@ message ExecutionEvent {
         google.protobuf.Timestamp lock_expires_at = 3;
     }
 
-    message Unlocked {}
+    message Unlocked {
+        google.protobuf.Timestamp backoff_expires_at = 1;
+    }
 
     message TemporarilyFailed {
         string reason = 1;

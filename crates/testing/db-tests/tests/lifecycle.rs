@@ -388,8 +388,9 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             .await
             .is_err());
     }
-    {
+    let backoff_expires_at = {
         let created_at = sim_clock.now();
+        let backoff_expires_at = created_at + lock_expiry;
         info!(now = %created_at, "persist and unlock");
         let req = AppendRequest {
             event: ExecutionEventInner::HistoryEvent {
@@ -404,20 +405,45 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             .await
             .unwrap();
         let req = AppendRequest {
-            event: ExecutionEventInner::Unlocked,
+            event: ExecutionEventInner::Unlocked { backoff_expires_at },
             created_at,
         };
         version = db_connection
             .append(execution_id.clone(), version, req)
             .await
             .unwrap();
-    }
+        backoff_expires_at
+    };
     sim_clock
         .move_time_forward(Duration::from_millis(200))
         .await;
+    assert!(sim_clock.now() < backoff_expires_at);
     {
         let created_at = sim_clock.now();
-        info!(now = %created_at, "Lock again");
+        info!(now = %created_at, "Locking before backoff_expires_at should fail");
+        let not_yet_pending = db_connection
+            .lock(
+                created_at,
+                component_id.clone(),
+                &execution_id,
+                RunId::generate(),
+                version.clone(),
+                exec1,
+                created_at + lock_expiry,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            DbError::Specific(SpecificError::ValidationFailed(StrVariant::Static(
+                "cannot lock, not yet pending"
+            ))),
+            not_yet_pending
+        );
+    }
+    sim_clock.move_time_to(backoff_expires_at).await;
+    {
+        let created_at = sim_clock.now();
+        info!(now = %created_at, "Locking exactly at `backoff_expires_at` should succeed");
         let (event_history, current_version) = db_connection
             .lock(
                 created_at,

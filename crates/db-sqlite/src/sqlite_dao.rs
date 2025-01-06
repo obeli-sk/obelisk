@@ -1548,7 +1548,8 @@ impl SqlitePool {
             ExecutionEventInner::TemporarilyFailed {
                 backoff_expires_at, ..
             }
-            | ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at } => {
+            | ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at }
+            | ExecutionEventInner::Unlocked { backoff_expires_at } => {
                 IndexAction::PendingStateChanged(PendingState::PendingAt {
                     scheduled_at: *backoff_expires_at,
                 })
@@ -1561,11 +1562,6 @@ impl SqlitePool {
                         finished_at: req.created_at,
                         result_kind: PendingStateFinishedResultKind::from(result),
                     },
-                })
-            }
-            ExecutionEventInner::Unlocked => {
-                IndexAction::PendingStateChanged(PendingState::PendingAt {
-                    scheduled_at: req.created_at,
                 })
             }
             ExecutionEventInner::HistoryEvent {

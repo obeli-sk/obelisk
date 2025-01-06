@@ -147,10 +147,6 @@ impl ExecutionJournal {
                     })
                 }
 
-                ExecutionEventInner::Unlocked => Some(PendingState::PendingAt {
-                    scheduled_at: event.created_at,
-                }),
-
                 ExecutionEventInner::Finished { result } => {
                     assert_eq!(self.execution_events.len() - 1, idx);
                     Some(PendingState::Finished {
@@ -180,6 +176,9 @@ impl ExecutionJournal {
                 | ExecutionEventInner::TemporarilyTimedOut {
                     backoff_expires_at: expires_at,
                     ..
+                }
+                | ExecutionEventInner::Unlocked {
+                    backoff_expires_at: expires_at,
                 } => Some(PendingState::PendingAt {
                     scheduled_at: *expires_at,
                 }),

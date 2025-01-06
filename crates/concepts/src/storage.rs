@@ -54,6 +54,15 @@ impl ExecutionLog {
     }
 
     #[must_use]
+    pub fn compute_retry_duration_when_retrying_forever(
+        temporary_event_count: u32,
+        retry_exp_backoff: Duration,
+    ) -> Duration {
+        Self::can_be_retried_after(temporary_event_count, u32::MAX, retry_exp_backoff)
+            .expect("`max_retries` set to MAX must never return None")
+    }
+
+    #[must_use]
     pub fn retry_exp_backoff(&self) -> Duration {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
             event: ExecutionEventInner::Created { retry_exp_backoff, .. },
@@ -284,7 +293,8 @@ pub enum ExecutionEventInner {
     /// without timing out. This can happen when the executor is running
     /// out of resources like [`WorkerError::LimitReached`] or when
     /// the executor is shutting down.
-    Unlocked,
+    #[display("Unlocked(`{backoff_expires_at}`)")]
+    Unlocked { backoff_expires_at: DateTime<Utc> },
     // Created by the executor holding the lock.
     // After expiry interpreted as pending.
     #[display("TemporarilyFailed(`{backoff_expires_at}`)")]

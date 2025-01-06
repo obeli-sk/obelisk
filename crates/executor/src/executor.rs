@@ -279,6 +279,11 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             locked_execution.max_retries,
             locked_execution.retry_exp_backoff,
         );
+        let unlock_expiry_on_limit_reached =
+            ExecutionLog::compute_retry_duration_when_retrying_forever(
+                locked_execution.temporary_event_count + 1,
+                locked_execution.retry_exp_backoff,
+            );
         let ctx = WorkerContext {
             execution_id: locked_execution.execution_id.clone(),
             metadata: locked_execution.metadata,
@@ -305,6 +310,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             result_obtained_at,
             locked_execution.parent,
             can_be_retried,
+            unlock_expiry_on_limit_reached,
         )? {
             Some(append) => {
                 let db_connection = db_pool.connection();
@@ -324,6 +330,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         result_obtained_at: DateTime<Utc>,
         parent: Option<(ExecutionId, JoinSetId)>,
         can_be_retried: Option<Duration>,
+        unlock_expiry_on_limit_reached: Duration,
     ) -> Result<Option<Append>, DbError> {
         Ok(match worker_result {
             WorkerResult::Ok(result, new_version) => {
@@ -383,8 +390,15 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         }
                     }
                     WorkerError::LimitReached(reason, new_version) => {
-                        warn!("Limit reached: {reason}, unlocking");
-                        (ExecutionEventInner::Unlocked, None, new_version)
+                        let expires_at = result_obtained_at + unlock_expiry_on_limit_reached;
+                        warn!("Limit reached: {reason}, unlocking after {unlock_expiry_on_limit_reached:?} at {expires_at}");
+                        (
+                            ExecutionEventInner::Unlocked {
+                                backoff_expires_at: expires_at,
+                            },
+                            None,
+                            new_version,
+                        )
                     }
                     WorkerError::FatalError(
                         FatalError::NondeterminismDetected(reason),
