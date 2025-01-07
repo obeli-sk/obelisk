@@ -8,12 +8,15 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-concepts.workspace = true
-utils.workspace = true
+concepts = { workspace = true, optional = true }
+utils = { workspace = true, optional = true }
 
 cargo_metadata.workspace = true
-indexmap.workspace = true
-wasmtime.workspace = true
+indexmap = { workspace = true, optional = true }
+wasmtime = { workspace = true, optional = true }
+
+[features]
+genrs = ["dep:concepts", "dep:utils", "dep:indexmap", "dep:wasmtime"]
 
 [lints]
 workspace = true

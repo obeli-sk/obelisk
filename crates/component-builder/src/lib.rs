@@ -1,12 +1,8 @@
 use cargo_metadata::camino::Utf8Path;
-use concepts::{ComponentType, FunctionMetadata};
-use indexmap::IndexMap;
 use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-use utils::wasm_tools::WasmComponent;
-use wasmtime::Engine;
 
 const WASI_P2: &str = "wasm32-wasip2";
 const WASM_CORE_MODULE: &str = "wasm32-unknown-unknown";
@@ -39,6 +35,12 @@ pub fn build_webhook_endpoint() {
 /// the `--target` directory to the output of [`get_target_dir`].
 pub fn build_workflow() {
     build_internal(WASM_CORE_MODULE, ComponentType::Workflow, &get_target_dir());
+}
+
+enum ComponentType {
+    ActivityWasm,
+    WebhookEndpoint,
+    Workflow,
 }
 
 fn to_snake_case(input: &str) -> String {
@@ -87,8 +89,7 @@ fn build_internal(target_tripple: &str, component_type: ComponentType, dst_targe
         println!("cargo:warning=Built `{pkg_name}` - {wasm_path:?}");
     }
 
-    let generated_code = generate_code(&wasm_path, pkg_name, component_type);
-    std::fs::write(get_out_dir().join("gen.rs"), generated_code).unwrap();
+    generate_code(&wasm_path, pkg_name, component_type);
 
     let meta = cargo_metadata::MetadataCommand::new().exec().unwrap();
     let package = meta
@@ -111,7 +112,24 @@ fn build_internal(target_tripple: &str, component_type: ComponentType, dst_targe
     }
 }
 
-fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType) -> String {
+#[cfg(not(feature = "genrs"))]
+fn generate_code(_wasm_path: &Path, _pkg_name: &str, _component_type: ComponentType) {}
+
+#[cfg(feature = "genrs")]
+impl From<ComponentType> for utils::wasm_tools::ComponentExportsType {
+    fn from(value: ComponentType) -> Self {
+        match value {
+            ComponentType::ActivityWasm | ComponentType::Workflow => Self::Enrichable,
+            ComponentType::WebhookEndpoint => Self::Plain,
+        }
+    }
+}
+
+#[cfg(feature = "genrs")]
+fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType) {
+    use concepts::FunctionMetadata;
+    use indexmap::IndexMap;
+
     enum Value {
         Map(IndexMap<String, Value>),
         Leaf(Vec<String>),
@@ -139,7 +157,7 @@ fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType
         let mut wasmtime_config = wasmtime::Config::new();
         wasmtime_config.wasm_component_model(true);
         wasmtime_config.async_support(true);
-        Engine::new(&wasmtime_config).unwrap()
+        wasmtime::Engine::new(&wasmtime_config).unwrap()
     };
     let mut generated_code = String::new();
     generated_code += &format!(
@@ -147,8 +165,9 @@ fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType
         name_upper = to_snake_case(pkg_name).to_uppercase()
     );
 
-    let component = WasmComponent::new(wasm_path, &engine, Some(component_type.into()))
-        .expect("cannot decode wasm component");
+    let component =
+        utils::wasm_tools::WasmComponent::new(wasm_path, &engine, Some(component_type.into()))
+            .expect("cannot decode wasm component");
     generated_code += "pub mod exports {\n";
     let mut outer_map: IndexMap<String, Value> = IndexMap::new();
     for export in component.exim.get_exports_hierarchy_ext() {
@@ -190,7 +209,7 @@ fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType
 
     ser_map(&outer_map, &mut generated_code);
     generated_code += "}\n";
-    generated_code
+    std::fs::write(get_out_dir().join("gen.rs"), generated_code).unwrap();
 }
 
 fn add_dependency(file: &Utf8Path) {
