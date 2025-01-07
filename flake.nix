@@ -89,7 +89,7 @@
                 cargo-generate
                 cargo-insta
                 cargo-nextest
-                # cargo-semver-checks
+                cargo-semver-checks
                 dive
                 git-cliff
                 litecli

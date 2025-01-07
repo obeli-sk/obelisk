@@ -13,6 +13,7 @@ cargo upgrade --version >> dev-deps.txt
 cargo-expand --version >> dev-deps.txt
 # cargo-insta --version >> dev-deps.txt  # Broken as of 1.39-unstable-2024-08-22
 cargo nextest --version | head -n 1 >> dev-deps.txt
+cargo semver-checks --version >> dev-deps.txt
 dive --version >> dev-deps.txt
 echo "litecli $(litecli --version)" >> dev-deps.txt
 lldb --version >> dev-deps.txt
