@@ -1,4 +1,4 @@
-name: release-4-verify-docker
+name: release-5-verify-cargo-install-using-docker
 
 on:
   workflow_dispatch:

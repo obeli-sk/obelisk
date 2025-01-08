@@ -1,4 +1,6 @@
-name: release-5-push-docker-image
+# TODO: Use flakes to generate the docker image
+
+name: release-4-push-docker-image
 
 on:
   workflow_dispatch:
@@ -14,7 +16,7 @@ on:
         default: ubuntu
   workflow_run:
     workflows:
-      - release-4-verify
+      - release-3-upload-artifacts
     types:
       - completed
 
