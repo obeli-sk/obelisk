@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.9.0](https://github.com/obeli-sk/obelisk/compare/v0.8.0...v0.9.0) - 2024-12-24
+## [0.10.0](https://github.com/obeli-sk/obelisk/compare/v0.8.0...v0.10.0) - 2025-01-08
 
 ### Added
 
@@ -20,6 +20,13 @@ All notable changes to this project will be documented in this file.
 - Add `convert_core_module` to `component push`
 - Add `convert_core_module` switch to workflows
 - Transform Core Module to a Component in `inspect`
+- Make the component builder publishable
+- Add error detail to the `ExecutionFailure` message
+- Add error detail to the `TemporarilyFailed` message
+- Increase timeouts exponentially when limit is reached
+- *(grpc)* Propagate `Unblock` reason
+- *(ui)* Show submission and parameter parsing errors
+- *(ui)* Type check parameters before submission
 
 ### Fixed
 
@@ -28,6 +35,9 @@ All notable changes to this project will be documented in this file.
 - Explicitly convert from `ConfigIdType` to `grpc::ComopnentType`
 - Make router match '/path/' with pattern '/path/*'
 - Update `clippy.sh` after `cargo-component` removal
+- Fix `null` deserialization into `WastValWithType`
+- *(sqlite)* Fix broken attribute ordering in `JsonWrapper`
+- *(ui)* Stop leaking connections in `<ExecutionStatus />`
 
 ### Other
 
