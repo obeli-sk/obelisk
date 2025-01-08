@@ -1,4 +1,4 @@
-name: release-4-verify
+name: release-4-verify-docker
 
 on:
   workflow_dispatch:

@@ -1,0 +1,53 @@
+name: release-4-verify-vm
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "The ref (branch or SHA) to obtain the tag"
+        required: false
+        type: string
+  workflow_run:
+    workflows:
+      - release-3-upload-artifacts
+    types:
+      - completed
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  verify-assets:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            file: obelisk-x86_64-unknown-linux-gnu.tar.gz
+          - runner: ubuntu-22.04
+            file: obelisk-x86_64-unknown-linux-musl.tar.gz
+          - runner: macos-13
+            file: obelisk-x86_64-apple-darwin.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
+
+      - id: git-info
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "tag=$(git tag --contains HEAD)" >> $GITHUB_OUTPUT
+
+      - run: |
+          # download the binary from GitHub Releases
+          FILE="${{ matrix.file }}"
+          TAG="${{ steps.git-info.outputs.tag }}"
+          curl --fail -L -o "$FILE" \
+            https://github.com/obeli-sk/obelisk/releases/download/$TAG/$FILE
+          tar xzfv "$FILE"
+          ./obelisk --version
