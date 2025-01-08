@@ -117,7 +117,12 @@
             obeliskGlibcGenericDev = makeObelisk pkgs true "dev";
             obeliskMusl = makeObelisk pkgsMusl false "release";
             obeliskMuslDev = makeObelisk pkgsMusl false "dev";
+            # Docker images
+            dockerGlibcNixDev = makeDocker pkgs obeliskGlibcNixDev true;
+            dockerMuslDev = makeDocker pkgs obeliskMuslDev true;
+            # `dockerGlibcGeneric*` will not run unless FROM ubuntu
             dockerGlibcGeneric = makeDocker pkgs obeliskGlibcGeneric false;
+            dockerGlibcGenericDev = makeDocker pkgs obeliskGlibcGenericDev true;
             default = obeliskGlibcNix;
           };
         }
