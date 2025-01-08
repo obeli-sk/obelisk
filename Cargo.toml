@@ -277,10 +277,10 @@ wasmtime = { version = "28.0", features = ["memory-protection-keys"] }
 wasmtime-wasi = "28.0"
 wasmtime-wasi-http = "28.0"
 # wasm-tools
-wast = "222.0.0"
-wit-parser = "0.222.0"
-wasmparser = "0.222.0"
-wit-component = "0.222.0"
+wast = "223.0.0"
+wit-parser = "0.223.0"
+wasmparser = "0.223.0"
+wit-component = "0.223.0"
 
 # testing components
 wit-bindgen = "0.36.0"
@@ -293,11 +293,7 @@ opentelemetry-semantic-conventions = "0.27.0"
 tracing-opentelemetry = "0.28"
 
 [patch.crates-io]
-getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" }             # madsim
-wast = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }
-wit-parser = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }
-wasmparser = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }
-wit-component = { git = "https://github.com/bytecodealliance/wasm-tools.git", rev = "1e85a2a6b2fabbf0fd96767e3d3e3193182e07f0" }
+getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" } # madsim
 
 [workspace.lints]
 # lower the priority to allow overriding later

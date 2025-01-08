@@ -34,7 +34,6 @@
                 lockFile = ./Cargo.lock;
                 outputHashes = {
                   "getrandom-0.2.11" = "sha256-fBPB5ptPPBQqvsxTJd+LwKXBdChrVm75DQewyQUhM2Q=";
-                  "wasm-encoder-0.222.0" = "sha256-w0BpxrAI8TjBMjDGf5oKX0uocE1ViCYlZm0Em+BK8BU=";
                 };
               };
               nativeBuildInputs = with pkgs; [
