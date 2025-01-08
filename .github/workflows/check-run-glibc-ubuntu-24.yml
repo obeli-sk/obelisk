@@ -1,0 +1,27 @@
+name: check-run-glibc-ubuntu-24
+
+on:
+  workflow_run:
+    workflows:
+      - check-test
+    types:
+      - completed
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  nix-run:
+    runs-on: ubuntu-24.04
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+      - name: Build the binary
+        run: nix build .#obeliskLibcGenericDev
+      - name: Run the binary
+        run: ./result/bin/obelisk --help
