@@ -22,6 +22,6 @@ jobs:
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
       - name: Build the binary
-        run: nix build .#obeliskLibcGenericDev
+        run: nix build .#obeliskGlibcGenericDev
       - name: Run the binary
         run: ./result/bin/obelisk --help
