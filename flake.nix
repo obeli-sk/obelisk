@@ -114,8 +114,10 @@
             obeliskNix = makeObelisk pkgs false "release";
             obeliskNixDev = makeObelisk pkgs false "dev";
             obeliskPatchForGenericLinux = makeObelisk pkgs true "release";
+            obeliskPatchForGenericLinuxDev = makeObelisk pkgs true "dev";
             obeliskMusl = makeObelisk pkgsMusl false "release";
             dockerLibcForUbuntu = makeDocker pkgs obeliskPatchForGenericLinux false;
+            obeliskMuslDev = makeObelisk pkgsMusl false "dev";
             default = obeliskNix;
           };
         }

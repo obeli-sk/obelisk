@@ -1,4 +1,4 @@
-name: check-nix-run
+name: check-run-nix
 
 on:
   workflow_run:

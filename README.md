@@ -52,7 +52,7 @@ Deterministic workflow engine built on top of the WASM Component Model.
 
 ## Installation
 ### Supported platforms
-* Linux x64
+* Linux x64 - linked with musl or glibc (version in [dev-deps.txt](./dev-deps.txt))
 * Mac OS 13 x64
 
 ### Docker
