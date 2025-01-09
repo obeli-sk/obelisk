@@ -10,7 +10,7 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  nix-run:
+  check-run-nix:
     strategy:
       fail-fast: false
       matrix:
