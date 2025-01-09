@@ -78,16 +78,16 @@ jobs:
 
       # Build the glibc binary natively
       - name: Install Rust
-        if: ${{ matrix.target == ' x86_64-unknown-linux-gnu' }}
+        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
       - name: Install dependencies
-        if: ${{ matrix.target == ' x86_64-unknown-linux-gnu' }}
+        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
         run: |
           sudo apt update
           sudo apt install wget gcc protobuf-compiler libprotobuf-dev -y
       - name: Install obelisk from crates.io
-        if: ${{ matrix.target == ' x86_64-unknown-linux-gnu' }}
+        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
         run: |
           source "$HOME/.cargo/env"
           TAG=${{ steps.git-info.outputs.tag }}
