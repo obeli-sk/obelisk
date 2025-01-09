@@ -9,3 +9,5 @@ RUN echo $TAG
 RUN ./cargo-binstall obelisk@$TAG --no-track --install-path . -y
 RUN ldd obelisk
 RUN ./obelisk --version
+RUN ./obelisk server generate-config
+RUN ./obelisk server verify

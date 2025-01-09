@@ -52,3 +52,5 @@ jobs:
             https://github.com/obeli-sk/obelisk/releases/download/$TAG/$FILE
           tar xzfv "$FILE"
           ./obelisk --version
+          ./obelisk server generate-config
+          ./obelisk server verify
