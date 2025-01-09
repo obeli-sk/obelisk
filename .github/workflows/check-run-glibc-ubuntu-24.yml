@@ -24,4 +24,7 @@ jobs:
       - name: Build the binary
         run: nix build .#obeliskGlibcGenericDev
       - name: Run the binary
-        run: ./result/bin/obelisk --help
+        run: |
+          ./result/bin/obelisk -v
+          ./result/bin/obelisk server generate-config
+          ./result/bin/obelisk server verify
