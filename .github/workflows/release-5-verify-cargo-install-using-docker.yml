@@ -4,6 +4,11 @@ name: release-5-verify-cargo-install-using-docker
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "The ref (branch or SHA) to process"
+        required: false
+        type: string
   workflow_run:
     workflows:
       - release-3-upload-artifacts
@@ -28,6 +33,8 @@ jobs:
           - target: ubuntu-24.04-install
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
 
       - id: git-info
         run: |
