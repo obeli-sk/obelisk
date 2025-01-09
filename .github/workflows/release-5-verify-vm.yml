@@ -45,6 +45,8 @@ jobs:
           echo "tag=$(git tag --contains HEAD)" >> $GITHUB_OUTPUT
 
       - run: |
+          mkdir temp
+          cd temp
           # download the binary from GitHub Releases
           FILE="${{ matrix.file }}"
           TAG="${{ steps.git-info.outputs.tag }}"
