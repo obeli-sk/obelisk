@@ -93,7 +93,7 @@ jobs:
           TAG=${{ steps.git-info.outputs.tag }}
           TAG=${TAG#v}
           cargo install obelisk@$TAG --locked --root .
-          tar czf archive.tar.gz --transform='s/^target\/release\///' target/release/obelisk
+          tar czf archive.tar.gz --transform='s/^bin\///' bin/obelisk
 
       - name: Upload the archive
         run: |
