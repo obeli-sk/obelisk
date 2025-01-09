@@ -1,4 +1,4 @@
-name: check-run
+name: check-run-nix
 
 on:
   push:
