@@ -15,12 +15,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
-            target: .#obeliskGlibcGenericDev
-          - runner: ubuntu-24.04
-            target: .#obeliskGlibcNixDev
-          - runner: ubuntu-22.04
-            target: .#obeliskMuslDev
+          - target: .#obeliskGlibcNixDev
+            runner: ubuntu-24.04
+          - target: .#obeliskMuslDev
+            runner: ubuntu-22.04
 
     runs-on: ${{ matrix.runner }}
     steps:
