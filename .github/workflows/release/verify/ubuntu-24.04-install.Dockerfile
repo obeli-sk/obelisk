@@ -6,8 +6,8 @@ WORKDIR /root
 RUN wget https://sh.rustup.rs -O rustup.sh \
     && chmod u+x ./rustup.sh \
     && ./rustup.sh -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-RUN cargo install obelisk@$TAG --locked
-RUN obelisk --version
+
+RUN cargo install obelisk@$TAG --locked --root .
+RUN ./obelisk --version
 RUN ./obelisk server generate-config
 RUN ./obelisk server verify
