@@ -1,4 +1,4 @@
-name: release-5-verify-vm
+name: release-5-verify-vm-download
 
 on:
   workflow_dispatch:
