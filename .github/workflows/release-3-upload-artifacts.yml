@@ -38,11 +38,9 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
-            nix_target: obeliskGlibcGeneric
+            os: ubuntu-22.04
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04
-            nix_target: obeliskMusl
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,16 +63,37 @@ jobs:
           RELEASE_ID=$(jq -r '.id' release.json)
           echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
 
+      # Build the musl binary with Nix
       - name: Install Nix
+        if: ${{ matrix.target == 'x86_64-unknown-linux-musl' }}
         uses: cachix/install-nix-action@v30
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
-
-      - name: Build obelisk
-        run: nix build '.#${{ matrix.nix_target }}'
-
+      - name: Build obelisk with Nix
+        if: ${{ matrix.target == 'x86_64-unknown-linux-musl' }}
+        run: nix build '.#obeliskMusl'
       - name: Create a tar.gz archive
+        if: ${{ matrix.target == 'x86_64-unknown-linux-musl' }}
         run: tar czf archive.tar.gz --transform='s/^result\/bin\///' result/bin/obelisk
+
+      # Build the glibc binary natively
+      - name: Install Rust
+        if: ${{ matrix.target == ' x86_64-unknown-linux-gnu' }}
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      - name: Install dependencies
+        if: ${{ matrix.target == ' x86_64-unknown-linux-gnu' }}
+        run: |
+          sudo apt update
+          sudo apt install wget gcc protobuf-compiler libprotobuf-dev -y
+      - name: Install obelisk from crates.io
+        if: ${{ matrix.target == ' x86_64-unknown-linux-gnu' }}
+        run: |
+          source "$HOME/.cargo/env"
+          TAG=${{ steps.git-info.outputs.tag }}
+          TAG=${TAG#v}
+          cargo install obelisk@$TAG --locked --root .
+          tar czf archive.tar.gz --transform='s/^target\/release\///' target/release/obelisk
 
       - name: Upload the archive
         run: |
