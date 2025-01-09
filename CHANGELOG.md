@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/obeli-sk/obelisk/compare/v0.10.0...v0.11.0) - 2025-01-09
+
+
+### Fixed
+
+- Build glibc artifact natively
+
 ## [0.10.0](https://github.com/obeli-sk/obelisk/compare/v0.8.0...v0.10.0) - 2025-01-08
 
 ### Added
