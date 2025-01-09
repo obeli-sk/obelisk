@@ -45,6 +45,13 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
 
+      - id: git-info
+        run: |
+          git fetch --tags
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "tag=$(git tag --contains HEAD)" >> $GITHUB_OUTPUT
+
       - run: |
           docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
           mkdir tmp
@@ -58,22 +65,17 @@ jobs:
           docker build --progress=plain -f ../.github/workflows/release/docker-image/${{ matrix.dockerfile }} . --tag $IMAGE
           docker push $IMAGE
 
-          TAGS=$(git tag --points-at HEAD)
-          TAGS=$(echo "$TAGS" | grep '^v' || true)
-          if [ -z "$TAGS" ]; then
-            echo "No tags starting with 'v' pointing at HEAD."
-            exit 1
-          elif [ $(echo "$TAGS" | wc -l) -eq 1 ]; then
-            VERSION="${TAGS#v}"
-            echo "Tagging with version ${VERSION}"
-            IMAGE2="${IMAGE_BASE}:${VERSION}-${{ matrix.image_tag }}"
-            echo "Tagging as $IMAGE2"
-            docker tag $IMAGE $IMAGE2
-            docker push $IMAGE2
-          else
-            echo "More than one tag starting with 'v' pointing at HEAD."
+          TAG="${{ steps.git-info.outputs.tag }}"
+          if [ -z "$TAG" ]; then
+            echo "No tag pointing at HEAD."
             exit 1
           fi
+          VERSION="${TAG#v}"
+          echo "Tagging with version ${VERSION}"
+          IMAGE2="${IMAGE_BASE}:${VERSION}-${{ matrix.image_tag }}"
+          echo "Tagging as $IMAGE2"
+          docker tag $IMAGE $IMAGE2
+          docker push $IMAGE2
 
           if [ "${{ github.event.inputs.latest }}" = "${{ matrix.image_tag }}" ]; then
             docker tag $IMAGE $IMAGE_BASE
