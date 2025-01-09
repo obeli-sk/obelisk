@@ -1,17 +1,9 @@
 name: check-run
 
 on:
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: "The ref (branch or SHA) to obtain the tag"
-        required: false
-        type: string
-  workflow_run:
-    workflows:
-      - check-test
-    types:
-      - completed
+  push:
+    branches:
+      - main
 
 defaults:
   run:
@@ -19,7 +11,6 @@ defaults:
 
 jobs:
   nix-run:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -34,8 +25,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
 
       - name: Install Nix
         uses: cachix/install-nix-action@v30
