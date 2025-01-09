@@ -1,0 +1,57 @@
+name: check-run
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "The ref (branch or SHA) to obtain the tag"
+        required: false
+        type: string
+  workflow_run:
+    workflows:
+      - check-test
+    types:
+      - completed
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  nix-run:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: .#obeliskGlibcGenericDev
+          - runner: ubuntu-24.04
+            target: .#obeliskGlibcNixDev
+          - runner: ubuntu-22.04
+            target: .#obeliskMuslDev
+
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Create temp directory
+        run: mkdir temp
+
+      - name: Build the binary
+        working-directory: temp
+        run: nix build ${{ matrix.target }}
+
+      - name: Run the binary
+        working-directory: temp
+        run: |
+          ./result/bin/obelisk -v
+          ./result/bin/obelisk server generate-config
+          ./result/bin/obelisk server verify
