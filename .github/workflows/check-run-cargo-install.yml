@@ -1,0 +1,38 @@
+name: check-run
+
+on:
+  push:
+    branches:
+      - main
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  nix-run:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        if: ${{ matrix.target == ' x86_64-unknown-linux-gnu' }}
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+      - name: Install obelisk from current path
+        if: ${{ matrix.target == ' x86_64-unknown-linux-gnu' }}
+        run: |
+          source "$HOME/.cargo/env"
+          cargo install --path . --locked
+
+      - name: Create temp directory
+        run: mkdir temp
+
+      - name: Run the binary
+        working-directory: temp
+        run: |
+          source "$HOME/.cargo/env"
+          obelisk -v
+          obelisk server generate-config
+          obelisk server verify
