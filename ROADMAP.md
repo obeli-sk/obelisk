@@ -1,36 +1,52 @@
-# Milestones
+# Immediate goals
 
-## Milestone 1: Release the binary - done
-- [x] Getting the `obelisk` application up and running as a Linux binary
-- [x] Scheduling of workflows and wasm activities, retries on timeouts and failures
-- [x] Persistence using sqlite
-- [x] Launching child workflows/activities concurrently using join sets
-- [x] Basic CLI for wasm component configuration and scheduling
-- [x] Github release, docker image, publish to crates.io, support `cargo-binstall`
+## fix: Get rid of streaming in WebUI
+Listening to multiple streams will exhaust all the available connections in a browser.
+Use timer instead, Add `stream` parameter.
 
-## Milestone 2: Allow remote interaction via CLI - done
-- [x] Move component and general configuration into a TOML file
-- [x] Pull components -from an OCI registry
-- [x] Publish the obelisk image to the Docker Hub (ubuntu, alpine)
-- [x] obelisk client component push
-- [x] gRPC API for execution management
-- [x] Track the topmost parent
-- [x] Params typecheck on creation, introspection of types of all functions in the system
-- [x] Logging and tracing configuration, sending events to an OTLP collector
+## feat: Turn `execution-id` into a resource
+Make it symetrical with `join-set-id`, disallow users from `-await`ing on a string,
+can track the join set created.
 
-## Milestone 3: Webhooks, Verify, Structured concurrency, Web UI - started
-- [x] HTTP webhook triggers able to start new executions (workflows and activities), able to wait for result before sending the response.
-- [x] Forward stdout and stderr (configurable) of activities and webhooks
-- [x] Support for distributed tracing, logging from components collected by OTLP
-- [x] Mapping from any execution result (e.g. traps, timeouts, err variants) to other execution results via `-await-next`
-- [x] Server verification - downloads components, checks the TOML configuration and matches component imports with exports.
-- [x] Structured concurrency for join sets - blocking parent until all child executions are finished
-- [x] HTML based UI for showing executions, event history and relations
-- [x] WIT Explorer
-- [ ] Heterogenous join sets, allowing one join set to combine multiple function signatures and delays
-- [ ] Expose network configuration for activities, webhooks
-- [ ] Keepalives for activities, extending the lock until completion
-- [ ] Examples with C#, Go, JS, Python
+## fix: Deadlock when calling `-await-next` while nothing is in queue
+
+## feat: Add `obelisk generate`
+`obelisk generate config` blank,webui,fibo
+`obelisk generate wit -c obelisk.toml --out-dir wit/deps/ my-activity`
+`obelisk new` - show templates
+
+## feat: Create an SDK for workflows and other (logging - maybe a proc macro)
+
+## feat: Versioning
+versioning to tell when a component is not supported.
+The generated WITs should have a version.
+SDK needs to be versioned as well.
+
+## feat: `-await(execution-id)`, can be called multiple times
+
+## fix: Make `JoinSetId` in the format `executionid#0`
+Avoid possible conflicts when creating join sets.
+
+## refactor Remove wasmtime from parser
+
+## feat: deps.toml tool
+obelisk wit update-deps
+
+## feat: Support WIT-only WASM files
+Allow pushing and declaring WASM resources only containing the WIT.
+Needed for external activities.
+
+## feat: Long running monitor trigger
+Similar to a webhook endpoint, new component type with `main`, restarts on exit or trap.
+Can listen to a HTTP stream and trigger an execution.
+Could be used to monitor MQTT, UDP etc.
+
+## Heterogenous join sets, allowing one join set to combine multiple function signatures and delays
+
+## Expose network configuration for activities, webhooks
+Enable allow/deny lists of remote hosts.
+
+## Keepalives for activities, extending the lock until completion
 
 ## Future ideas
 * Interactive CLI for execution management
