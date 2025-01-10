@@ -981,6 +981,7 @@ dependencies = [
  "obeli-sk-db-sqlite",
  "obeli-sk-utils",
  "obeli-sk-val-json",
+ "rstest",
  "serde_json",
  "tempfile",
  "test-utils",

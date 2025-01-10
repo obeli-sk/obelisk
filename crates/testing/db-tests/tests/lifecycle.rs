@@ -510,6 +510,93 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
     }
 }
 
+#[cfg(not(madsim))]
+#[tokio::test]
+#[rstest::rstest]
+async fn lock_pending_while_expired_lock_should_return_nothing(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+
+    let (_guard, db_pool) = database.set_up().await;
+    let db_connection = db_pool.connection();
+    lock_pending_while_expired_lock_should_return_nothing_inner(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[expect(clippy::too_many_lines)]
+pub async fn lock_pending_while_expired_lock_should_return_nothing_inner(
+    db_connection: &impl DbConnection,
+) {
+    const LOCK_EXPIRY: Duration = Duration::from_millis(500);
+    let sim_clock = SimClock::default();
+    let execution_id = ExecutionId::generate();
+    let exec1 = ExecutorId::generate();
+
+    // Create
+    let component_id = ComponentId::dummy_activity();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+            component_id: component_id.clone(),
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // LockPending
+    {
+        let created_at = sim_clock.now();
+        info!(now = %created_at, "LockPending");
+        let mut locked_executions = db_connection
+            .lock_pending(
+                1,
+                created_at,
+                Arc::from([SOME_FFQN]),
+                created_at,
+                component_id.clone(),
+                exec1,
+                created_at + LOCK_EXPIRY,
+            )
+            .await
+            .unwrap();
+        assert_eq!(1, locked_executions.len());
+        let locked_execution = locked_executions.pop().unwrap();
+        assert_eq!(execution_id, locked_execution.execution_id);
+        assert_eq!(Version::new(2), locked_execution.version);
+        assert_eq!(0, locked_execution.params.len());
+        assert_eq!(SOME_FFQN, locked_execution.ffqn);
+    }
+    // 0 = Before lock expiry
+    // 1 = Right at lock expiry
+    // 2 = Some time after lock expiry
+    for _ in 0..3 {
+        assert!(db_connection
+            .lock_pending(
+                1,
+                sim_clock.now(),
+                Arc::from([SOME_FFQN]),
+                sim_clock.now(),
+                ComponentId::dummy_activity(),
+                exec1,
+                sim_clock.now() + LOCK_EXPIRY,
+            )
+            .await
+            .unwrap()
+            .is_empty());
+        sim_clock.move_time_forward(LOCK_EXPIRY).await;
+    }
+}
+
 pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim_clock: SimClock) {
     const MAX_RETRIES: u32 = 1;
     const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(100);
