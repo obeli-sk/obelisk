@@ -181,7 +181,7 @@ async fn test_get_expired_delay_sqlite() {
 }
 
 #[expect(clippy::too_many_lines)]
-pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
+async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let exec1 = ExecutorId::generate();
     let exec2 = ExecutorId::generate();
@@ -525,8 +525,8 @@ async fn lock_pending_while_expired_lock_should_return_nothing(
     db_pool.close().await.unwrap();
 }
 
-#[expect(clippy::too_many_lines)]
-pub async fn lock_pending_while_expired_lock_should_return_nothing_inner(
+#[cfg(not(madsim))]
+async fn lock_pending_while_expired_lock_should_return_nothing_inner(
     db_connection: &impl DbConnection,
 ) {
     const LOCK_EXPIRY: Duration = Duration::from_millis(500);
