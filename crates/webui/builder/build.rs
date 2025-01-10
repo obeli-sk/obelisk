@@ -29,7 +29,7 @@ fn check_blueprint_css(webui_package_name: &str) -> Result<(), Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    if std::env::var("SKIP_WEBUI_BUILDER").as_deref() == Ok("true") {
+    if std::env::var("RUN_TRUNK").as_deref() != Ok("true") {
         return Ok(());
     }
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();

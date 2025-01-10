@@ -8,6 +8,7 @@ cd "$(dirname "$0")/.."
 TAG="$1"
 rm -rf crates/webui/dist
 
-cargo build --package webui-proxy --target=wasm32-wasip2 --profile=release_trunk
+# Run trunk in webui-builder
+RUN_TRUNK=true cargo build --package webui-proxy --target=wasm32-wasip2 --profile=release_trunk
 echo -n $(obelisk client component push "target/wasm32-wasip2/release_trunk/webui_proxy.wasm" \
     "docker.io/getobelisk/webui:$TAG") > webui-version.txt

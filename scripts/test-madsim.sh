@@ -5,5 +5,5 @@
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
-SKIP_WEBUI_BUILDER=true RUST_BACKTRACE=1 MADSIM_ALLOW_SYSTEM_THREAD=1 RUSTFLAGS="--cfg madsim" RUST_LOG=obeli=debug \
+RUST_BACKTRACE=1 MADSIM_ALLOW_SYSTEM_THREAD=1 RUSTFLAGS="--cfg madsim" RUST_LOG=obeli=debug \
  cargo nextest run --workspace --target-dir target/debug/madsim -P ci-test-madsim "$@"
