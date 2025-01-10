@@ -144,7 +144,10 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             interface_name,
             function_name,
         } = request.function_name.argument_must_exist("function")?;
-        let execution_id = ExecutionId::generate();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
         let span = Span::current();
         span.record("execution_id", tracing::field::display(&execution_id));
         let ffqn =

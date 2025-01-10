@@ -3,6 +3,12 @@ use std::{fmt::Display, str::FromStr};
 use yew::{html, ToHtml};
 
 pub trait ExecutionIdExt {
+    fn generate() -> grpc_client::ExecutionId {
+        let ulid = ulid::Ulid::new();
+        grpc_client::ExecutionId {
+            id: format!("E_{ulid}"),
+        }
+    }
     // For the top-level ExecutionId return [(execution_id.to_string(), execution_id)].
     // For a derived ExecutionId, return [(grandparent_id.to_string(), grandparent_id), (parent_index, parent_id), .. (child_index, child_id)].
     fn as_hierarchy(&self) -> Vec<(String, grpc_client::ExecutionId)>;

@@ -143,10 +143,9 @@ message FunctionName {
 }
 
 message SubmitRequest {
-    FunctionName function_name = 1;
-    google.protobuf.Any params = 2;
-    reserved 3;
-    reserved 4;
+    ExecutionId execution_id = 1;
+    FunctionName function_name = 2;
+    google.protobuf.Any params = 3;
 }
 
 message SubmitResponse {

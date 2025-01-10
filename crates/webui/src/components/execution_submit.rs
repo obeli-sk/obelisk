@@ -1,4 +1,11 @@
-use crate::{app::Route, grpc::ffqn::FunctionFqn, grpc::grpc_client};
+use crate::{
+    app::Route,
+    grpc::{
+        execution_id::ExecutionIdExt,
+        ffqn::FunctionFqn,
+        grpc_client::{self, ExecutionId},
+    },
+};
 use log::{debug, error, trace, warn};
 use std::ops::Deref;
 use val_json::wast_val::WastValWithType;
@@ -143,6 +150,7 @@ pub fn execution_submit_form(
                         );
                     let response = client
                         .submit(grpc_client::SubmitRequest {
+                            execution_id: Some(ExecutionId::generate()),
                             params: Some(prost_wkt_types::Any {
                                 type_url: format!("urn:obelisk:json:params:{ffqn}"),
                                 value: serde_json::Value::Array(params).to_string().into_bytes(),

@@ -5980,6 +5980,7 @@ dependencies = [
  "tonic",
  "tonic-build",
  "tonic-web-wasm-client",
+ "ulid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-logger",

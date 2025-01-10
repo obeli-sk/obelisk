@@ -20,6 +20,7 @@ pub(crate) async fn submit(
 ) -> anyhow::Result<()> {
     let resp = client
         .submit(tonic::Request::new(grpc::SubmitRequest {
+            execution_id: Some(ExecutionId::generate().into()),
             params: Some(prost_wkt_types::Any {
                 type_url: format!("urn:obelisk:json:params:{ffqn}"),
                 value: serde_json::Value::Array(params).to_string().into_bytes(),
