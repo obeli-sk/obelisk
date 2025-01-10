@@ -1990,11 +1990,11 @@ impl SqlitePool {
         let mut execution_ids_versions = Vec::with_capacity(batch_size);
 
         for ffqn in ffqns {
-            // Select executions in PendingAt or Locked after expiry.
+            // Select executions in PendingAt.
             let mut stmt = conn
                 .prepare(&format!(
                     "SELECT execution_id, next_version FROM t_state WHERE \
-                            (state = \"{STATE_PENDING_AT}\" OR state = \"{STATE_LOCKED}\") AND \
+                            state = \"{STATE_PENDING_AT}\" AND \
                             pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn \
                             ORDER BY pending_expires_finished LIMIT :batch_size"
                 ))
