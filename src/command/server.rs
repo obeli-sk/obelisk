@@ -1,4 +1,5 @@
 use super::grpc;
+use super::grpc::GenerateExecutionIdResponse;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookComponentVerified;
@@ -123,6 +124,16 @@ impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
 impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     grpc::execution_repository_server::ExecutionRepository for GrpcServer<DB, P>
 {
+    async fn generate_execution_id(
+        &self,
+        _request: tonic::Request<grpc::GenerateExecutionIdRequest>,
+    ) -> TonicRespResult<grpc::GenerateExecutionIdResponse> {
+        let execution_id = ExecutionId::generate();
+        Ok(tonic::Response::new(GenerateExecutionIdResponse {
+            execution_id: Some(execution_id.into()),
+        }))
+    }
+
     #[instrument(skip_all, fields(execution_id, ffqn, params, component_id))]
     async fn submit(
         &self,

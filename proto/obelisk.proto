@@ -7,6 +7,7 @@ import "google/protobuf/any.proto";
 package obelisk;
 
 service ExecutionRepository {
+    rpc GenerateExecutionId(GenerateExecutionIdRequest) returns (GenerateExecutionIdResponse);
     rpc Submit(SubmitRequest) returns (SubmitResponse);
     rpc GetStatus(GetStatusRequest) returns (stream GetStatusResponse);
     rpc ListExecutions(ListExecutionsRequest) returns (ListExecutionsResponse);
@@ -17,6 +18,13 @@ service ExecutionRepository {
 service FunctionRepository {
     rpc ListComponents(ListComponentsRequest) returns (ListComponentsResponse);
     rpc GetWit(GetWitRequest) returns (GetWitResponse);
+}
+
+message GenerateExecutionIdRequest {
+}
+
+message GenerateExecutionIdResponse {
+    ExecutionId execution_id = 1;
 }
 
 message ListExecutionsRequest {
