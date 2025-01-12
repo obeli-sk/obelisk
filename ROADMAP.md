@@ -24,7 +24,7 @@ SDK needs to be versioned as well.
 
 ## feat: `-await(execution-id)`, can be called multiple times
 
-## fix: Make `JoinSetId` in the format `executionid#0`
+## fix: Make `JoinSetId` in the format `executionid;0`
 Avoid possible conflicts when creating join sets.
 
 ## refactor Remove wasmtime from parser
@@ -41,27 +41,28 @@ Similar to a webhook endpoint, new component type with `main`, restarts on exit 
 Can listen to a HTTP stream and trigger an execution.
 Could be used to monitor MQTT, UDP etc.
 
-## Heterogenous join sets, allowing one join set to combine multiple function signatures and delays
+## feat: Heterogenous join sets, allowing one join set to combine multiple function signatures and delays
 
-## Expose network configuration for activities, webhooks
+## feat: Expose network configuration for activities, webhooks
 Enable allow/deny lists of remote hosts.
 
-## Keepalives for activities, extending the lock until completion
+## feat: Keepalives for activities, extending the lock until completion
+
+## feat: Request stack trace at any point of the workflow log
 
 ## Future ideas
 * Interactive CLI for execution management
 * External activities gRPC API
-* OpenAPI activity generator
-* Spawning processes from WASM activities, reading their outputs
-* Backpressure: Limits on pending queues, or an eviction strategy, slow down on `LimitReached`
 * External executors support - starting executions solely based on WIT exports. External executors must share write access to the sqlite database.
+* OpenAPI, GraphQL activity generator
+* Backpressure: Limits on pending queues, or an eviction strategy, slow down on `LimitReached`
 * Labels restricting workflows/activities to executors
 * Periodic scheduling
 * [Deadline propagation](https://sre.google/sre-book/addressing-cascading-failures)
 * [Cancellation propagation](https://sre.google/sre-book/addressing-cascading-failures)
 * Queue capacity setting, adding backpressure to execution submission
 * Ability to simulate behaviour of the system with injected failures
-* Notify activities. When called, thir return value must be supplied via an API endpoint.
+* (Manual) Notify activities. When called, thir return value must be supplied via an API endpoint.
 * An API for listing executions with their open notify activities.
 * Read only query function that can be called during an await point or after execution finishes.
 * Optional stdout,stderr persistence / forwarding
@@ -70,9 +71,10 @@ Enable allow/deny lists of remote hosts.
 * Configurable jitter added to retries
 * Workflow memory snapshots for faster replay
 * Time traveling debugger for workflows, that works accross WASM deployments
-* Ability to hotfix a set of workflows, with an approval system when non determinism is detected
+* Ability to hotfix a set of workflows, with an approval system when non determinism is detected - forking the execution log
 * Trace strings to their origin accross workflows and activities
 * Webhook endpoint mappings: running a single function, translating between HTTP and WIT defined parameters and return value
 * Distributed tracing context forwarding for outgoing HTTP as well as webhooks
 * Allow specifying permanent error variants in as annotations in WIT
 * Support for (distributed) sagas - define rollbacks on activities, call them on failed workflows
+* Investigate code-coverage for workflow steps
