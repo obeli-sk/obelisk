@@ -589,7 +589,7 @@ impl Default for Params {
     }
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum FunctionExtension {
     Submit,
     AwaitNext,
@@ -619,7 +619,7 @@ impl Display for FunctionMetadata {
     }
 }
 
-mod serde_params {
+pub mod serde_params {
     use crate::{Params, ParamsInternal};
     use serde::de::{SeqAccess, Visitor};
     use serde::ser::SerializeSeq;
@@ -654,7 +654,7 @@ mod serde_params {
         }
     }
 
-    struct VecVisitor;
+    pub struct VecVisitor;
 
     impl<'de> Visitor<'de> for VecVisitor {
         type Value = Vec<Value>;
@@ -730,6 +730,15 @@ impl Params {
             Value::Array(vec) if vec.is_empty() => Ok(Self::empty()),
             Value::Array(vec) => Ok(Self(ParamsInternal::JsonValues(vec))),
             _ => Err(ParamsFromJsonError::MustBeArray),
+        }
+    }
+
+    #[must_use]
+    pub fn from_json_values(vec: Vec<Value>) -> Self {
+        if vec.is_empty() {
+            Self::empty()
+        } else {
+            Self(ParamsInternal::JsonValues(vec))
         }
     }
 

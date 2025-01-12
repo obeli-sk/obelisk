@@ -154,7 +154,7 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
-    "submittable": false
+    "submittable": true
   },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-submit": {
     "ffqn": {
@@ -229,7 +229,7 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
-    "submittable": false
+    "submittable": true
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-await-next": {
     "ffqn": {
@@ -314,7 +314,7 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
-    "submittable": false
+    "submittable": true
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-submit": {
     "ffqn": {
@@ -522,7 +522,7 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
-    "submittable": false
+    "submittable": true
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": {
     "ffqn": {
@@ -629,7 +629,7 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
-    "submittable": false
+    "submittable": true
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": {
     "ffqn": {
@@ -739,7 +739,7 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
-    "submittable": false
+    "submittable": true
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": {
     "ffqn": {

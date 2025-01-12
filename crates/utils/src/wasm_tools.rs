@@ -19,6 +19,8 @@ use wasmtime::{
 use wit_component::{ComponentEncoder, WitPrinter};
 use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
 
+pub const EXTENSION_FN_SUFFIX_SCHEDULE: &str = "-schedule";
+
 pub const HTTP_HANDLER_FFQN: FunctionFqn =
     FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
 
@@ -523,7 +525,7 @@ impl ExIm {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_extended_ifc.clone(),
                         function_name: FnName::from(format!(
-                            "{}-schedule",
+                            "{}{EXTENSION_FN_SUFFIX_SCHEDULE}",
                             exported_fn_metadata.ffqn.function_name
                         )),
                     },
@@ -536,7 +538,7 @@ impl ExIm {
                     },
                     return_type: return_type_execution_id.clone(),
                     extension: Some(FunctionExtension::Schedule),
-                    submittable: false, // TODO: Make `-schedule` submittable
+                    submittable: true,
                 };
                 insert(fn_schedule);
             }

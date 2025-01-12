@@ -96,7 +96,7 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
-    "submittable": false
+    "submittable": true
   },
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-submit": {
     "ffqn": {
@@ -229,7 +229,7 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
-    "submittable": false
+    "submittable": true
   },
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-submit": {
     "ffqn": {
@@ -415,7 +415,7 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
-    "submittable": false
+    "submittable": true
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": {
     "ffqn": {
@@ -500,7 +500,7 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
-    "submittable": false
+    "submittable": true
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": {
     "ffqn": {
@@ -633,7 +633,7 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Schedule",
-    "submittable": false
+    "submittable": true
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": {
     "ffqn": {

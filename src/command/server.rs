@@ -36,6 +36,7 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionWithState;
+use concepts::storage::HistoryEventScheduledAt;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
 use concepts::storage::VersionType;
@@ -45,10 +46,12 @@ use concepts::ComponentType;
 use concepts::ContentDigest;
 use concepts::ExecutionId;
 use concepts::FinishedExecutionResult;
+use concepts::FnName;
 use concepts::FunctionExtension;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
+use concepts::IfcFqnName;
 use concepts::PackageIfcFns;
 use concepts::ParameterType;
 use concepts::Params;
@@ -64,6 +67,7 @@ use executor::worker::Worker;
 use hashbrown::HashSet;
 use itertools::Either;
 use serde::Deserialize;
+use serde_json::json;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::Deref;
@@ -90,6 +94,8 @@ use utils::time::now_tokio_instant;
 use utils::time::ClockFn;
 use utils::time::Now;
 use utils::wasm_tools::WasmComponent;
+use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
+use val_json::wast_val::WastValWithType;
 use wasm_workers::activity::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::envvar::EnvVar;
@@ -139,6 +145,21 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         &self,
         request: tonic::Request<grpc::SubmitRequest>,
     ) -> TonicRespResult<grpc::SubmitResponse> {
+        struct JsonVals {
+            vec: Vec<serde_json::Value>,
+        }
+
+        impl<'de> Deserialize<'de> for JsonVals {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let vec: Vec<serde_json::Value> =
+                    deserializer.deserialize_seq(concepts::serde_params::VecVisitor)?;
+                Ok(Self { vec })
+            }
+        }
+
         let request = request.into_inner();
         let grpc::FunctionName {
             interface_name,
@@ -150,32 +171,105 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .try_into()?;
         let span = Span::current();
         span.record("execution_id", tracing::field::display(&execution_id));
-        let ffqn =
-            concepts::FunctionFqn::new_arc(Arc::from(interface_name), Arc::from(function_name));
-        span.record("ffqn", tracing::field::display(&ffqn));
+
         // Deserialize params JSON into `Params`
-        let params = {
+        let mut params = {
             let params = request.params.argument_must_exist("params")?;
             let params = String::from_utf8(params.value).map_err(|_err| {
                 tonic::Status::invalid_argument("argument `params` must be UTF-8 encoded")
             })?;
             span.record("params", &params);
-            Params::deserialize(&mut serde_json::Deserializer::from_str(&params)).map_err(
-                |serde_err| {
+            JsonVals::deserialize(&mut serde_json::Deserializer::from_str(&params))
+                .map_err(|serde_err| {
                     tonic::Status::invalid_argument(format!(
                         "argument `params` must be encoded as JSON array - {serde_err}"
                     ))
-                },
-            )?
+                })?
+                .vec
         };
 
         // Check that ffqn exists
         let Some((component_id, retry_config, fn_metadata)) = self
             .component_registry_ro
-            .find_by_exported_ffqn_noext(&ffqn)
+            .find_by_exported_ffqn_submittable(&concepts::FunctionFqn::new_arc(
+                Arc::from(interface_name),
+                Arc::from(function_name),
+            ))
         else {
             return Err(tonic::Status::not_found("function not found"));
         };
+        span.record("component_id", tracing::field::display(component_id));
+
+        // Extract `scheduled_at`
+        let created_at = Now.now();
+        let (scheduled_at, params, fn_metadata) = if fn_metadata.extension
+            == Some(FunctionExtension::Schedule)
+        {
+            // First parameter must be `schedule-at`
+            let Some(schedule_at) = params.drain(0..1).next() else {
+                return Err(tonic::Status::invalid_argument(
+                    "argument `params` must be an array with first value of type `schedule-at`",
+                ));
+            };
+            let schedule_at_type_wrapper = fn_metadata
+                .parameter_types
+                .iter()
+                .map(|ParameterType { type_wrapper, .. }| type_wrapper.clone())
+                .next()
+                .expect("checked that `fn_metadata` is FunctionExtension::Schedule");
+            let wast_val_with_type = json!({
+                "value": schedule_at,
+                "type": schedule_at_type_wrapper
+            });
+            let wast_val_with_type: WastValWithType =
+                serde_json::from_value(wast_val_with_type).map_err(|serde_err|
+                    tonic::Status::invalid_argument(
+                        format!("argument `params` must be an array with first value of type `schedule-at` - {serde_err}")
+                    ))?;
+            let schedule_at = HistoryEventScheduledAt::try_from(&wast_val_with_type.value)
+                .map_err(|serde_err| {
+                    tonic::Status::invalid_argument(format!(
+                        "cannot convert `schedule-at` - {serde_err}"
+                    ))
+                })?;
+            // Find the original fn_metadata. No need to change the `component_id` or `retry_config` as they belong to the same component.
+            let ffqn = FunctionFqn {
+                ifc_fqn: IfcFqnName::from_parts(
+                    fn_metadata.ffqn.ifc_fqn.namespace(),
+                    fn_metadata
+                        .ffqn
+                        .ifc_fqn
+                        .package_strip_extension_suffix()
+                        .expect("checked that the ifc is ext"),
+                    fn_metadata.ffqn.ifc_fqn.ifc_name(),
+                    fn_metadata.ffqn.ifc_fqn.version(),
+                ),
+                function_name: FnName::from(
+                    fn_metadata
+                        .ffqn
+                        .function_name
+                        .to_string()
+                        .strip_suffix(EXTENSION_FN_SUFFIX_SCHEDULE)
+                        .expect("checked that the function is FunctionExtension::Schedule")
+                        .to_string(),
+                ),
+            };
+            let fn_metadata = self
+                .component_registry_ro
+                .find_by_exported_ffqn_submittable(&ffqn)
+                .expect("-schedule must have the original counterpart in the component registry")
+                .2;
+
+            (
+                schedule_at.as_date_time(created_at),
+                Params::from_json_values(params),
+                fn_metadata,
+            )
+        } else {
+            (created_at, Params::from_json_values(params), fn_metadata)
+        };
+        let ffqn = &fn_metadata.ffqn;
+        span.record("ffqn", tracing::field::display(ffqn));
         // Type check `params`
         if let Err(err) = params.typecheck(
             fn_metadata
@@ -187,9 +281,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 "argument `params` invalid - {err}"
             )));
         }
+
         let db_connection = self.db_pool.connection();
-        let created_at = Now.now();
-        span.record("component_id", tracing::field::display(component_id));
         // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
         let metadata = concepts::ExecutionMetadata::from_parent_span(&span);
         db_connection
@@ -197,10 +290,10 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 created_at,
                 execution_id: execution_id.clone(),
                 metadata,
-                ffqn,
+                ffqn: ffqn.clone(),
                 params,
                 parent: None,
-                scheduled_at: created_at,
+                scheduled_at,
                 retry_exp_backoff: retry_config.retry_exp_backoff,
                 max_retries: retry_config.max_retries,
                 component_id: component_id.clone(),
@@ -1627,19 +1720,19 @@ impl ComponentConfigRegistryRO {
             .and_then(|component_config| component_config.wit.as_deref())
     }
 
-    fn find_by_exported_ffqn_noext(
+    fn find_by_exported_ffqn_submittable(
         &self,
         ffqn: &FunctionFqn,
     ) -> Option<(&ComponentId, ComponentRetryConfig, &FunctionMetadata)> {
-        if ffqn.ifc_fqn.is_extension() {
-            None
-        } else {
-            self.inner.exported_ffqns_ext.get(ffqn).map(
-                |(component_id, fn_metadata, retry_config)| {
-                    (component_id, *retry_config, fn_metadata)
-                },
-            )
-        }
+        self.inner.exported_ffqns_ext.get(ffqn).and_then(
+            |(component_id, fn_metadata, retry_config)| {
+                if fn_metadata.submittable {
+                    Some((component_id, *retry_config, fn_metadata))
+                } else {
+                    None
+                }
+            },
+        )
     }
 
     fn list(&self, extensions: bool) -> Vec<ComponentConfig> {
