@@ -725,14 +725,6 @@ impl Params {
         }
     }
 
-    pub fn from_json_value(value: Value) -> Result<Self, ParamsFromJsonError> {
-        match value {
-            Value::Array(vec) if vec.is_empty() => Ok(Self::empty()),
-            Value::Array(vec) => Ok(Self(ParamsInternal::JsonValues(vec))),
-            _ => Err(ParamsFromJsonError::MustBeArray),
-        }
-    }
-
     #[must_use]
     pub fn from_json_values(vec: Vec<Value>) -> Self {
         if vec.is_empty() {

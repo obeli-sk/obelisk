@@ -357,7 +357,7 @@ pub(crate) mod tests {
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
-        let params = Params::from_json_value(json!([FIBO_10_INPUT])).unwrap();
+        let params = Params::from_json_values(vec![json!(FIBO_10_INPUT)]);
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -424,7 +424,7 @@ pub(crate) mod tests {
                     execution_id: execution_id.clone(),
                     metadata: concepts::ExecutionMetadata::empty(),
                     ffqn: FIBO_ACTIVITY_FFQN,
-                    params: Params::from_json_value(json!([fibo_input])).unwrap(),
+                    params: Params::from_json_values(vec![json!(fibo_input)]),
                     event_history: Vec::new(),
                     responses: Vec::new(),
                     version: Version::new(0),
@@ -525,11 +525,11 @@ pub(crate) mod tests {
                     created_at,
                     execution_id: execution_id.clone(),
                     ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
-                    params: Params::from_json_value(json!([
-                        {"milliseconds": sleep_millis},
-                        sleep_iterations
-                    ]))
-                    .unwrap(),
+                    params: Params::from_json_values(vec![
+                        json!(
+                        {"milliseconds": sleep_millis}),
+                        json!(sleep_iterations),
+                    ]),
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
@@ -590,11 +590,11 @@ pub(crate) mod tests {
                 execution_id: ExecutionId::generate(),
                 metadata: concepts::ExecutionMetadata::empty(),
                 ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
-                params: Params::from_json_value(json!([
-                    {"milliseconds": sleep_millis},
-                    sleep_iterations
-                ]))
-                .unwrap(),
+                params: Params::from_json_values(vec![
+                    json!(
+                    {"milliseconds": sleep_millis}),
+                    json!(sleep_iterations),
+                ]),
                 event_history: Vec::new(),
                 responses: Vec::new(),
                 version: Version::new(0),
@@ -650,11 +650,10 @@ pub(crate) mod tests {
                 .local_addr()
                 .expect("Failed to get server address.");
 
-            let params = Params::from_json_value(json!([format!(
+            let params = Params::from_json_values(vec![json!(format!(
                 "http://127.0.0.1:{port}/",
                 port = server_address.port()
-            )]))
-            .unwrap();
+            ))]);
             let execution_id = ExecutionId::generate();
             let created_at = sim_clock.now();
             let db_connection = db_pool.connection();
@@ -756,11 +755,10 @@ pub(crate) mod tests {
                 .local_addr()
                 .expect("Failed to get server address.");
 
-            let params = Params::from_json_value(json!([format!(
+            let params = Params::from_json_values(vec![json!(format!(
                 "http://127.0.0.1:{port}/",
                 port = server_address.port()
-            )]))
-            .unwrap();
+            ))]);
             let execution_id = ExecutionId::generate();
             let created_at = sim_clock.now();
             let db_connection = db_pool.connection();

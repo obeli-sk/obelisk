@@ -796,7 +796,7 @@ pub(crate) mod tests {
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
 
-        let params = Params::from_json_value(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
+        let params = Params::from_json_values(vec![json!(FIBO_10_INPUT), json!(INPUT_ITERATIONS)]);
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -972,7 +972,7 @@ pub(crate) mod tests {
         );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
-        let params = Params::from_json_value(json!([{"milliseconds":SLEEP_MILLIS}])).unwrap();
+        let params = Params::from_json_values(vec![json!({"milliseconds":SLEEP_MILLIS})]);
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -1166,7 +1166,7 @@ pub(crate) mod tests {
             .await;
         debug!("started mock server on {}", server.address());
         let url = format!("http://127.0.0.1:{}/", server.address().port());
-        let params = Params::from_json_value(json!([url])).unwrap();
+        let params = Params::from_json_values(vec![json!(url)]);
         // Create an execution.
         let execution_id = ExecutionId::generate();
         db_connection
@@ -1270,7 +1270,7 @@ pub(crate) mod tests {
             .await;
         debug!("started mock server on {}", server.address());
         let url = format!("http://127.0.0.1:{}/", server.address().port());
-        let params = Params::from_json_value(json!([url, concurrency])).unwrap();
+        let params = Params::from_json_values(vec![json!(url), json!(concurrency)]);
         // Create an execution.
         let execution_id = ExecutionId::generate();
 
@@ -1348,10 +1348,10 @@ pub(crate) mod tests {
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
 
-        let params = Params::from_json_value(
-            json!([{"milliseconds": SLEEP_DURATION.as_millis()}, ITERATIONS]),
-        )
-        .unwrap();
+        let params = Params::from_json_values(vec![
+            json!({"milliseconds": SLEEP_DURATION.as_millis()}),
+            json!(ITERATIONS),
+        ]);
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -1415,12 +1415,10 @@ pub(crate) mod tests {
         assert_eq!(1, next_pending.len());
         let next_pending = next_pending.pop().unwrap();
         assert!(next_pending.parent.is_none());
-        let params = serde_json::to_string(
-            &Params::from_json_value(
-                json!([{"milliseconds":SLEEP_DURATION.as_millis()}, ITERATIONS - 1]),
-            )
-            .unwrap(),
-        )
+        let params = serde_json::to_string(&Params::from_json_values(vec![
+            json!({"milliseconds":SLEEP_DURATION.as_millis()}),
+            json!(ITERATIONS - 1),
+        ]))
         .unwrap();
         assert_eq!(params, serde_json::to_string(&next_pending.params).unwrap());
         drop(exec_task);
@@ -1473,7 +1471,7 @@ pub(crate) mod tests {
         .await;
 
         let url = "http://";
-        let params = Params::from_json_value(json!([url])).unwrap();
+        let params = Params::from_json_values(vec![json!(url)]);
         // Create an execution.
         let execution_id = ExecutionId::generate();
         db_connection
