@@ -1,4 +1,3 @@
-use super::function_signature::FunctionSignature;
 use crate::app::AppState;
 use crate::components::ffqn_with_links::FfqnWithLinks;
 use crate::grpc::ffqn::FunctionFqn;
@@ -23,7 +22,7 @@ pub enum ComponentTreeConfig {
     ComponentsOnly {
         on_component_selected: Callback<ComponentId>,
     },
-    ComponentsWithSubmittableFns, // No extensions, no imports
+    ExecutionListFiltering, // No extensions, no imports
 }
 
 impl PartialEq for ComponentTreeConfig {
@@ -38,10 +37,7 @@ impl PartialEq for ComponentTreeConfig {
                 Self::ComponentsOnly {
                     on_component_selected: _
                 }
-            ) | (
-                Self::ComponentsWithSubmittableFns,
-                Self::ComponentsWithSubmittableFns
-            )
+            ) | (Self::ExecutionListFiltering, Self::ExecutionListFiltering)
         )
     }
 }
@@ -80,30 +76,15 @@ impl ComponentTree {
             for fn_detail in function_detail_vec {
                 let ffqn =
                     FunctionFqn::from_fn_detail(&fn_detail).expect("ffqn should be parseable");
-                let fn_node_id = tree
-                    .insert(
-                        Node::new(NodeData {
-                            icon: Icon::Function,
-                            label: html! {<FfqnWithLinks {ffqn} /> },
-                            has_caret: true,
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&ifc_node_id),
-                    )
-                    .unwrap();
-                // insert fn details
                 tree.insert(
-                Node::new(NodeData {
-                    icon: Icon::Blank,
-                    label: html! {
-                        <FunctionSignature params = {fn_detail.params} return_type = {fn_detail.return_type} />
-                    },
-                    disabled: true,
-                    ..Default::default()
-                }),
-                InsertBehavior::UnderNode(&fn_node_id),
-            )
-            .unwrap();
+                    Node::new(NodeData {
+                        icon: Icon::Function,
+                        label: html! {<FfqnWithLinks {ffqn} hide_submit={true}/> },
+                        ..Default::default()
+                    }),
+                    InsertBehavior::UnderNode(&ifc_node_id),
+                )
+                .unwrap();
             }
         }
     }
@@ -128,22 +109,22 @@ impl ComponentTree {
             )
             .unwrap();
         for (id, component) in components {
-            let with_submittable =
-                matches!(config, ComponentTreeConfig::ComponentsWithSubmittableFns);
+            let execution_list_filtering =
+                matches!(config, ComponentTreeConfig::ExecutionListFiltering);
             let component_node_id = tree
                 .insert(
                     Node::new(NodeData {
                         icon: icon.clone(),
                         label: component.name.clone().into(),
-                        has_caret: with_submittable,
+                        has_caret: execution_list_filtering,
                         data: Some(id.clone()),
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(&group_dir_node_id),
                 )
                 .unwrap();
-            if with_submittable {
-                // exports
+            if execution_list_filtering {
+                // Add children - export functions, without extensions as they are not to be found in the database.
                 Self::fill_interfaces_and_fns(
                     tree,
                     map_interfaces_to_fn_details(

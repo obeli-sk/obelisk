@@ -199,7 +199,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                 <p><Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.clone() }}>{"Submit new execution"}</Link<Route>></p>
                 <p><Link<Route> to={Route::ExecutionList}>{"Remove filter"}</Link<Route>></p>
             }
-            <ComponentTree config={ComponentTreeConfig::ComponentsWithSubmittableFns} />
+            <ComponentTree config={ComponentTreeConfig::ExecutionListFiltering} />
             <table>
                 <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
                 { rows }
