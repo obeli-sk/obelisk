@@ -30,6 +30,7 @@ use tokio::net::TcpListener;
 use tracing::{debug, error, info, instrument, trace, warn, Instrument, Level, Span};
 use utils::time::ClockFn;
 use utils::wasm_tools::{ExIm, WasmComponent, HTTP_HANDLER_FFQN};
+use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};
@@ -442,7 +443,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                         "error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list",
                     ));
                 };
-                let scheduled_at = match HistoryEventScheduledAt::try_from(scheduled_at) {
+                let scheduled_at =
+                    WastVal::try_from(scheduled_at.clone()).map_err(|err| {
+                        error!("Error running `-schedule` extension function: cannot convert to internal representation - {err:?}");
+                        WebhookEndpointFunctionError::UncategorizedError(
+                            "error running `-schedule` extension function: cannot convert to internal representation",
+                        )
+                    })?;
+                let scheduled_at = match HistoryEventScheduledAt::try_from(&scheduled_at) {
                     Ok(scheduled_at) => scheduled_at,
                     Err(err) => {
                         error!("Wrong type for the first `-scheduled-at` parameter, expected `scheduled-at`, got `{scheduled_at:?}` - {err:?}");

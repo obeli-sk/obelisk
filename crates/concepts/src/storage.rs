@@ -425,64 +425,6 @@ impl HistoryEventScheduledAt {
         }
     }
 }
-impl TryFrom<&wasmtime::component::Val> for HistoryEventScheduledAt {
-    type Error = &'static str;
-
-    fn try_from(scheduled_at: &wasmtime::component::Val) -> Result<Self, Self::Error> {
-        use wasmtime::component::Val;
-        let Val::Variant(variant, val) = scheduled_at else {
-            return Err("wrong type");
-        };
-        match (variant.as_str(), val) {
-            ("now", None) => Ok(HistoryEventScheduledAt::Now),
-            ("in", Some(duration)) => {
-                if let &Val::Variant(key, value) = &duration.deref() {
-                    let duration = match (key.as_str(), value.as_deref()) {
-                        ("milliseconds", Some(Val::U64(value))) => Duration::from_millis(*value),
-                        ("seconds", Some(Val::U64(value))) => Duration::from_secs(*value),
-                        ("minutes", Some(Val::U64(value))) => Duration::from_secs(*value * 60),
-                        ("hours", Some(Val::U64(value))) => Duration::from_secs(*value * 60 * 60),
-                        ("days", Some(Val::U64(value))) => {
-                            Duration::from_secs(*value * 60 * 60 * 24)
-                        },
-                        _ => return Err(
-                            "cannot convert `scheduled-at`, `in` variant: value must be one of the following keys: `milliseconds`(U64), `seconds`(U64), `minutes`(U32), `hours`(U32), `days`(U32)",
-                        )
-                    };
-                    Ok(HistoryEventScheduledAt::In(duration))
-                } else {
-                    Err("cannot convert `scheduled-at`, `in` variant: value must be a variant")
-                }
-            }
-            ("at", Some(date_time)) if matches!(date_time.deref(), Val::Record(_)) => {
-                let date_time =
-                    assert_matches!(date_time.deref(), Val::Record(keys_vals) => keys_vals)
-                        .iter()
-                        .map(|(k, v)| (k.as_str(), v))
-                        .collect::<HashMap<_, _>>();
-                let seconds = date_time.get("seconds");
-                let nanos = date_time.get("nanoseconds");
-                match (date_time.len(), seconds, nanos) {
-                    (2, Some(Val::U64(seconds)), Some(Val::U32(nanos))) => {
-                        let Ok(seconds) = i64::try_from(*seconds) else {
-                            return Err("cannot convert `scheduled-at`, cannot convert seconds from u64 to i64");
-                        };
-                        let Some(date_time) = DateTime::from_timestamp(seconds, *nanos) else {
-                            return Err("cannot convert `scheduled-at`, cannot convert seconds and nanos to DateTime");
-                        };
-                        Ok(HistoryEventScheduledAt::At(date_time))
-                    }
-                    _ => {
-                        Err(
-                            "cannot convert `scheduled-at`, `at` variant: record must have exactly two keys: `seconds`(U64), `nanoseconds`(U32)",
-                        )
-                    }
-                }
-            }
-            _ => Err("cannot convert `scheduled-at` variant, expected one of `now`, `in`, `at`"),
-        }
-    }
-}
 
 impl TryFrom<&WastVal> for HistoryEventScheduledAt {
     type Error = &'static str;

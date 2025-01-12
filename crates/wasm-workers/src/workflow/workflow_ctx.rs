@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, instrument, trace, Span};
 use utils::time::ClockFn;
+use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Val};
 
 /// Result that is passed from guest to host as an error, must be downcast from anyhow.
@@ -307,7 +308,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                         "error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list",
                     ));
                 };
-                let scheduled_at = match HistoryEventScheduledAt::try_from(scheduled_at) {
+                let scheduled_at =
+                    WastVal::try_from(scheduled_at.clone()).map_err(|err| {
+                        error!("Error running `-schedule` extension function: cannot convert to internal representation - {err:?}");
+                        WorkflowFunctionError::UncategorizedError(
+                            "error running `-schedule` extension function: cannot convert to internal representation",
+                        )
+                    })?;
+                let scheduled_at = match HistoryEventScheduledAt::try_from(&scheduled_at) {
                     Ok(scheduled_at) => scheduled_at,
                     Err(err) => {
                         error!("Wrong type for the first `-scheduled-at` parameter, expected `scheduled-at`, got `{scheduled_at:?}` - {err:?}");
