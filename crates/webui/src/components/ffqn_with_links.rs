@@ -24,11 +24,15 @@ pub fn ffqn_with_links(
     } else {
         ffqn.function_name.clone()
     };
+    let ext = ffqn.ifc_fqn.pkg_fqn.is_extension();
     html! {
         <div style="display: inline-flex;">
-            <Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() } }>
-                <Icon icon = { Icon::Search }/>
-            </Link<Route>>
+            // Hide search button when rendering an extension function.
+            if !ext {
+                <Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() } }>
+                    <Icon icon = { Icon::Search }/>
+                </Link<Route>>
+            }
             if !hide_submit {
                 <Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.clone() } }>
                     <Icon icon = { Icon::Play }/>
