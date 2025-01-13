@@ -429,7 +429,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
                     WorkerError::FatalError(FatalError::ChildExecutionError(err), version) => {
-                        info!("Child finished with an execution error - {err:?}");
+                        info!("Child finished with an execution error - {err}");
                         let (reason, detail) = match err {
                             FinishedExecutionError::PermanentFailure { reason, detail } => {
                                 (reason, detail)
@@ -442,6 +442,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                                 Some(detail.to_string()),
                             ),
                         };
+                        if let Some(detail) = &detail {
+                            debug!("Detail: {detail}");
+                        }
                         let result = Err(FinishedExecutionError::PermanentFailure {
                             reason: format!("child finished with an execution error: {reason}"),
                             detail,
@@ -453,7 +456,8 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         FatalError::UncategorizedError { reason, detail },
                         version,
                     ) => {
-                        info!("Uncategorized error - {reason} - {detail}");
+                        info!("Uncategorized error - {reason}");
+                        debug!("Detail: {detail}");
                         let result = Err(FinishedExecutionError::PermanentFailure {
                             reason: format!("uncategorized error - {reason}"),
                             detail: Some(detail),

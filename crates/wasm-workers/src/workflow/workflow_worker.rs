@@ -478,7 +478,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 let version = workflow_ctx.version;
                 let err = if retry_on_trap {
                     worker_span.in_scope(||
-                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as an temporary error - {detail}")
+                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as an temporary error")
                     );
                     WorkerError::TemporaryError {
                         reason: trap_kind.to_str_variant(),
@@ -487,7 +487,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     }
                 } else {
                     worker_span.in_scope(||
-                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as a fatal error - {detail}")
+                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as a fatal error")
                     );
                     WorkerError::FatalError(
                         FatalError::UncategorizedError {
@@ -511,7 +511,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 }
                 match worker_partial_result {
                     WorkerPartialResult::FatalError(err, _version) => {
-                        worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a fatal error: {err:?}"));
+                        worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a fatal error: {err}"));
                         WorkerResultRefactored::FatalError(err, workflow_ctx)
                     }
                     WorkerPartialResult::InterruptRequested => {
