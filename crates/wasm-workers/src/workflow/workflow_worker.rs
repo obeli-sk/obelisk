@@ -13,7 +13,6 @@ use concepts::{
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
-use std::error::Error;
 use std::future;
 use std::ops::Deref;
 use std::time::Duration;
@@ -227,7 +226,20 @@ enum RunError<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 
     /// Error from the wasmtime runtime that can be downcast to `WorkflowFunctionError`
     WorkerPartialResult(WorkerPartialResult, WorkflowCtx<C, DB, P>),
     /// Error that happened while running the function, which cannot be downcast to `WorkflowFunctionError`
-    Trap(Box<dyn Error + Send + Sync>, WorkflowCtx<C, DB, P>),
+    Trap(String, WorkflowCtx<C, DB, P>, TrapKind),
+}
+
+enum TrapKind {
+    Function,
+    PostReturn,
+}
+impl TrapKind {
+    fn to_str_variant(&self) -> StrVariant {
+        match self {
+            Self::Function => StrVariant::Static("trap"),
+            Self::PostReturn => StrVariant::Static("trap in `post-return`"),
+        }
+    }
 }
 
 enum WorkerResultRefactored<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
@@ -319,7 +331,11 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let func_call_result = func.call_async(&mut store, &params, &mut results).await;
         if func_call_result.is_ok() {
             if let Err(post_return_err) = func.post_return_async(&mut store).await {
-                warn!("Ignoring post return error: {post_return_err:?}");
+                return Err(RunError::Trap(
+                    format!("{post_return_err:?}"),
+                    store.into_data(),
+                    TrapKind::PostReturn,
+                ));
             }
         }
         let workflow_ctx = store.into_data();
@@ -347,7 +363,11 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                         workflow_ctx,
                     ))
                 } else {
-                    Err(RunError::Trap(err.into(), workflow_ctx))
+                    Err(RunError::Trap(
+                        format!("{err:?}"),
+                        workflow_ctx,
+                        TrapKind::Function,
+                    ))
                 }
             }
         }
@@ -446,10 +466,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 }
                 WorkerResultRefactored::Ok(supported_result, workflow_ctx)
             }
-            Err(RunError::Trap(err, mut workflow_ctx)) => {
+            Err(RunError::Trap(detail, mut workflow_ctx, trap_kind)) => {
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(||
-                        error!("Database flush error: {db_err:?} while handling: {err:?}, execution will be retried")
+                        error!("Database flush error: {db_err:?} while handling: {detail}, execution will be retried")
                     );
                     return WorkerResultRefactored::Retriable(WorkerResult::Err(
                         WorkerError::DbError(db_err),
@@ -458,21 +478,21 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 let version = workflow_ctx.version;
                 let err = if retry_on_trap {
                     worker_span.in_scope(||
-                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as an temporary error - {err:?}")
+                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as an temporary error - {detail}")
                     );
                     WorkerError::TemporaryError {
-                        reason: StrVariant::Arc(Arc::from(format!("trap - {err:?}"))),
-                        detail: Some(format!("{err:?}")),
+                        reason: trap_kind.to_str_variant(),
+                        detail: Some(detail),
                         version,
                     }
                 } else {
                     worker_span.in_scope(||
-                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as a fatal error - {err:?}")
+                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as a fatal error - {detail}")
                     );
                     WorkerError::FatalError(
                         FatalError::UncategorizedError {
-                            reason: format!("trap - {err}"),
-                            detail: format!("{err:?}"),
+                            reason: trap_kind.to_str_variant().to_string(),
+                            detail,
                         },
                         version,
                     )
