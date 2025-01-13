@@ -148,9 +148,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
                     // guest panic is translated to an TemporaryError, which allows for retries.
                     return WorkerResult::Err(WorkerError::TemporaryError {
-                        reason: StrVariant::Arc(Arc::from(format!(
-                            "wasm function call error - {err}"
-                        ))),
+                        reason: StrVariant::Static("trap"),
                         detail: Some(format!("{err:?}")),
                         version: ctx.version,
                     });
@@ -168,9 +166,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 };
                 if let Err(err) = func.post_return_async(&mut store).await {
                     return WorkerResult::Err(WorkerError::TemporaryError {
-                        reason: StrVariant::Arc(Arc::from(format!(
-                            "wasm post function call error - {err}"
-                        ))),
+                        reason: StrVariant::Static("trap in `post-return`"),
                         detail: Some(format!("{err:?}")),
                         version: ctx.version,
                     });
