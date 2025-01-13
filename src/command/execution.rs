@@ -120,7 +120,18 @@ fn print_finished_status(finished_status: grpc::FinishedStatus, old_pending_stat
             }
             Some(grpc::result_detail::Value::Timeout(_)) => "Timeout".to_string(),
             Some(grpc::result_detail::Value::ExecutionFailure(
-                grpc::result_detail::ExecutionFailure { reason, detail: _ },
+                grpc::result_detail::ExecutionFailure {
+                    reason,
+                    detail: Some(detail),
+                },
+            )) => {
+                format!("Execution failure: {reason}\ndetail: {detail}")
+            }
+            Some(grpc::result_detail::Value::ExecutionFailure(
+                grpc::result_detail::ExecutionFailure {
+                    reason,
+                    detail: None,
+                },
             )) => {
                 format!("Execution failure: {reason}")
             }
