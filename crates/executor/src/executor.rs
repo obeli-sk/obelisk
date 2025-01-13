@@ -430,9 +430,21 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     }
                     WorkerError::FatalError(FatalError::ChildExecutionError(err), version) => {
                         info!("Child finished with an execution error - {err:?}");
+                        let (reason, detail) = match err {
+                            FinishedExecutionError::PermanentFailure { reason, detail } => {
+                                (reason, detail)
+                            }
+                            err @ FinishedExecutionError::PermanentTimeout => {
+                                (err.to_string(), None)
+                            }
+                            FinishedExecutionError::NondeterminismDetected(detail) => (
+                                "nondeterminism detected".to_string(),
+                                Some(detail.to_string()),
+                            ),
+                        };
                         let result = Err(FinishedExecutionError::PermanentFailure {
-                            reason: format!("child finished with an execution error: {err}"),
-                            detail: Some(format!("{err:?}")),
+                            reason: format!("child finished with an execution error: {reason}"),
+                            detail,
                         });
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
