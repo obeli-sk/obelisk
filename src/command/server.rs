@@ -9,7 +9,7 @@ use crate::config::toml::ActivityWasmConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::InflightSemaphore;
-use crate::config::toml::ObeliskConfig;
+use crate::config::toml::ConfigToml;
 use crate::config::toml::StdOutput;
 use crate::config::toml::WorkflowConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
@@ -732,7 +732,7 @@ pub(crate) async fn verify(
 
 #[instrument(skip_all, name = "verify")]
 async fn verify_internal(
-    config: ObeliskConfig,
+    config: ConfigToml,
     clean_db: bool,
     clean_cache: bool,
     clean_codegen_cache: bool,
@@ -832,7 +832,7 @@ async fn verify_internal(
 }
 
 async fn run_internal(
-    config: ObeliskConfig,
+    config: ConfigToml,
     clean_db: bool,
     clean_cache: bool,
     clean_codegen_cache: bool,
@@ -909,7 +909,7 @@ struct ServerVerified {
 impl ServerVerified {
     #[instrument(name = "ServerVerified::new", skip_all)]
     async fn new(
-        config: ObeliskConfig,
+        config: ConfigToml,
         codegen_cache: Option<&Path>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,

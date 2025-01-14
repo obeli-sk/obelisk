@@ -1,4 +1,4 @@
-use crate::config::toml::{log::LoggingStyle, ObeliskConfig};
+use crate::config::toml::{log::LoggingStyle, ConfigToml};
 use tracing_subscriber::Layer;
 
 #[cfg(feature = "tokio-console")]
@@ -28,7 +28,7 @@ fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
 
 #[cfg(feature = "otlp")]
 fn tokio_tracing_otlp<S>(
-    config: &mut ObeliskConfig,
+    config: &mut ConfigToml,
 ) -> Result<Option<impl tracing_subscriber::Layer<S>>, anyhow::Error>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
@@ -68,12 +68,12 @@ where
 #[cfg(not(feature = "otlp"))]
 #[expect(clippy::needless_pass_by_value)]
 fn tokio_tracing_otlp(
-    _config: &mut ObeliskConfig,
+    _config: &mut ConfigToml,
 ) -> Result<Option<tracing::level_filters::LevelFilter>, anyhow::Error> {
     None
 }
 
-pub(crate) fn init(config: &mut ObeliskConfig) -> Result<Guard, anyhow::Error> {
+pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 

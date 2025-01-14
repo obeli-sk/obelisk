@@ -36,8 +36,7 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-// TODO: Rename to ConfigToml
-pub(crate) struct ObeliskConfig {
+pub(crate) struct ConfigToml {
     pub(crate) api: ApiConfig,
     #[serde(default)]
     pub(crate) sqlite: SqliteConfigToml,
@@ -64,7 +63,7 @@ pub(crate) struct ObeliskConfig {
     pub(crate) webhooks: Vec<WebhookComponent>,
 }
 
-impl ObeliskConfig {
+impl ConfigToml {
     pub(crate) async fn get_wasm_cache_directory(
         &self,
         project_dirs: Option<&ProjectDirs>,

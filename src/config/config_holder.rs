@@ -1,4 +1,4 @@
-use super::toml::ObeliskConfig;
+use super::toml::ConfigToml;
 use anyhow::bail;
 use config::{builder::AsyncState, ConfigBuilder, Environment, File, FileFormat};
 use directories::ProjectDirs;
@@ -59,7 +59,7 @@ impl ConfigHolder {
         }
     }
 
-    pub(crate) async fn load_config(&self) -> Result<ObeliskConfig, anyhow::Error> {
+    pub(crate) async fn load_config(&self) -> Result<ConfigToml, anyhow::Error> {
         let mut builder = ConfigBuilder::<AsyncState>::default();
         let mut config_exists = false;
         for path in &self.paths {
