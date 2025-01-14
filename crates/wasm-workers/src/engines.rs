@@ -237,10 +237,10 @@ impl Engines {
             debug!("Setting codegen cache to {codegen_cache:?}");
             let codegen_cache = codegen_cache.canonicalize()?;
             let content = format!(
-                r#"[cache]
+                r"[cache]
 enabled = true
 directory = {codegen_cache:?}
-"#
+"
             );
             write(&codegen_cache_config_file, content).await?;
             trace!(
