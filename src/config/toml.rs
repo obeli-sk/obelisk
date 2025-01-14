@@ -51,7 +51,9 @@ pub(crate) struct ConfigToml {
     #[serde(default, rename = "workflow")]
     pub(crate) workflows: Vec<WorkflowConfigToml>,
     #[serde(default)]
-    pub(crate) wasmtime_pooling_config: WasmtimePoolingConfig,
+    pub(crate) wasmtime_allocator_config: WasmtimeAllocatorConfig,
+    #[serde(default)]
+    pub(crate) wasmtime_pooling_config: WasmtimePoolingAllocatorConfig,
     #[cfg(feature = "otlp")]
     #[serde(default)]
     pub(crate) otlp: Option<otlp::OtlpConfig>,
@@ -392,57 +394,66 @@ impl WorkflowConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, Default, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WasmtimeAllocatorConfig {
+    #[default]
+    Auto,
+    OnDemand,
+    Pooling,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, Default)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WasmtimePoolingConfig {
+pub(crate) struct WasmtimePoolingAllocatorConfig {
     /// How many bytes to keep resident between instantiations for the
     /// pooling allocator in linear memories.
     #[serde(default)]
-    pub(crate) pooling_memory_keep_resident: Option<usize>,
+    pooling_memory_keep_resident: Option<usize>,
 
     /// How many bytes to keep resident between instantiations for the
     /// pooling allocator in tables.
     #[serde(default)]
-    pub(crate) pooling_table_keep_resident: Option<usize>,
+    pooling_table_keep_resident: Option<usize>,
 
     /// Enable memory protection keys for the pooling allocator; this can
     /// optimize the size of memory slots.
     #[serde(default)]
-    pub(crate) memory_protection_keys: Option<bool>,
+    memory_protection_keys: Option<bool>,
 
     /// The maximum number of WebAssembly instances which can be created
     /// with the pooling allocator.
     #[serde(default)]
-    pub(crate) pooling_total_core_instances: Option<u32>,
+    pooling_total_core_instances: Option<u32>,
 
     /// The maximum number of WebAssembly components which can be created
     /// with the pooling allocator.
     #[serde(default)]
-    pub(crate) pooling_total_component_instances: Option<u32>,
+    pooling_total_component_instances: Option<u32>,
 
     /// The maximum number of WebAssembly memories which can be created with
     /// the pooling allocator.
     #[serde(default)]
-    pub(crate) pooling_total_memories: Option<u32>,
+    pooling_total_memories: Option<u32>,
 
     /// The maximum number of WebAssembly tables which can be created with
     /// the pooling allocator.
     #[serde(default)]
-    pub(crate) pooling_total_tables: Option<u32>,
+    pooling_total_tables: Option<u32>,
 
     /// The maximum number of WebAssembly stacks which can be created with
     /// the pooling allocator.
     #[serde(default)]
-    pub(crate) pooling_total_stacks: Option<u32>,
+    pooling_total_stacks: Option<u32>,
 
     /// The maximum runtime size of each linear memory in the pooling
     /// allocator, in bytes.
     #[serde(default)]
-    pub(crate) pooling_max_memory_size: Option<usize>,
+    pooling_max_memory_size: Option<usize>,
 }
 
-impl From<WasmtimePoolingConfig> for wasm_workers::engines::PoolingOptions {
-    fn from(value: WasmtimePoolingConfig) -> wasm_workers::engines::PoolingOptions {
+impl From<WasmtimePoolingAllocatorConfig> for wasm_workers::engines::PoolingOptions {
+    fn from(value: WasmtimePoolingAllocatorConfig) -> wasm_workers::engines::PoolingOptions {
         wasm_workers::engines::PoolingOptions {
             pooling_memory_keep_resident: value.pooling_memory_keep_resident,
             pooling_table_keep_resident: value.pooling_table_keep_resident,

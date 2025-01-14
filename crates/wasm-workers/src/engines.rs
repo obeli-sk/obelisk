@@ -178,7 +178,7 @@ impl Engines {
     }
 
     #[instrument(skip_all)]
-    fn on_demand(cache_config_file: Option<Rc<NamedTempFile>>) -> Result<Self, EngineError> {
+    pub fn on_demand(cache_config_file: Option<Rc<NamedTempFile>>) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: None,
             cache_config_file,
@@ -191,7 +191,7 @@ impl Engines {
     }
 
     #[instrument(skip_all)]
-    fn pooling(
+    pub fn pooling(
         opts: PoolingOptions,
         cache_config_file: Option<Rc<NamedTempFile>>,
     ) -> Result<Self, EngineError> {

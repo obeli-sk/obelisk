@@ -8,9 +8,10 @@ use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::config::toml::ActivityWasmConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ComponentCommon;
-use crate::config::toml::InflightSemaphore;
 use crate::config::toml::ConfigToml;
+use crate::config::toml::InflightSemaphore;
 use crate::config::toml::StdOutput;
+use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::ComponentConfig;
@@ -919,11 +920,19 @@ impl ServerVerified {
             let codegen_cache_config_file_holder = Engines::write_codegen_config(codegen_cache)
                 .await
                 .context("error configuring codegen cache")?;
-
-            Engines::auto_detect_allocator(
-                config.wasmtime_pooling_config.into(),
-                codegen_cache_config_file_holder,
-            )?
+            match config.wasmtime_allocator_config {
+                WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
+                    config.wasmtime_pooling_config.into(),
+                    codegen_cache_config_file_holder,
+                )?,
+                WasmtimeAllocatorConfig::OnDemand => {
+                    Engines::on_demand(codegen_cache_config_file_holder)?
+                }
+                WasmtimeAllocatorConfig::Pooling => Engines::pooling(
+                    config.wasmtime_pooling_config.into(),
+                    codegen_cache_config_file_holder,
+                )?,
+            }
         };
         let sqlite_config = config.sqlite.as_config();
         let mut http_servers = config.http_servers;
