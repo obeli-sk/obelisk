@@ -1,7 +1,7 @@
-cargo-binstall 1.10.17
-cargo-dist 0.23.0
+cargo-binstall 1.10.19
+cargo-dist 0.27.1
 cargo-edit-upgrade 0.13.0
-cargo-expand 1.0.95
+cargo-expand 1.0.96
 cargo-nextest 0.9.87
 cargo-semver-checks 0.38.0
 dive 0.12.0
@@ -12,7 +12,7 @@ pkg-config 0.29.2
 libprotoc 29.1
 rustc 1.83.0 (90b35a623 2024-11-26)
 tokio-console 0.1.13
-wasm-tools 1.222.0
+wasm-tools 1.223.0
 wasmtime 28.0.0
 wasm-opt version 120
 trunk 0.21.5
