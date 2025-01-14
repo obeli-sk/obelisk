@@ -13,7 +13,7 @@ use tracing::{debug, info, info_span, instrument, warn, Instrument};
 use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
 
-const OCI_CLIENT_RETRIES: u8 = 10;
+const OCI_CLIENT_RETRIES: u64 = 10;
 
 fn digest_to_metadata_file(metadata_dir: &Path, metadata_file: &Digest) -> PathBuf {
     metadata_dir.join(format!(
@@ -203,11 +203,11 @@ fn calculate_sha256_mem(data: &[u8]) -> ContentDigest {
 
 struct WasmClientWithRetry {
     client: WasmClient,
-    retries: u8,
+    retries: u64,
 }
 
 impl WasmClientWithRetry {
-    fn new(retries: u8) -> Self {
+    fn new(retries: u64) -> Self {
         Self {
             client: WasmClient::new(oci_client::Client::default()),
             retries,
@@ -225,7 +225,7 @@ impl WasmClientWithRetry {
                 Err(err) if tries == self.retries => return Err(err),
                 _ => {
                     tries += 1;
-                    let duration = Duration::from_millis(100 * u64::from(tries));
+                    let duration = Duration::from_secs(tries);
                     warn!("Retrying after {duration:?}");
                     tokio::time::sleep(duration).await;
                 }
