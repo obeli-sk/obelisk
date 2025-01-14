@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+# Pushes all WASM components to the Docker Hub and updates obelisk-oci.toml
+
+set -exuo pipefail
+cd "$(dirname "$0")/.."
+
+TAG="$1"
+TOML_FILE="obelisk.toml"
+PREFIX="docker.io/getobelisk/"
+
+push() {
+    RELATIVE_PATH=$1
+    FILE_NAME_WITHOUT_EXT=$(basename "$RELATIVE_PATH" | sed 's/\.[^.]*$//')
+    OCI_LOCATION="${PREFIX}${FILE_NAME_WITHOUT_EXT}:${TAG}"
+    echo "Pushing ${RELATIVE_PATH} to ${OCI_LOCATION}..."
+    OUTPUT=$(obelisk client component push "$RELATIVE_PATH" "$OCI_LOCATION")
+
+    # Replace the old location with the actual OCI location
+    sed -i -E "/name = \"${FILE_NAME_WITHOUT_EXT}\"/{n;s|location\.oci = \".*\"|location.oci = \"${OUTPUT}\"|}" "$TOML_FILE"
+}
+
+# Make sure all components are fresh
+cargo check --workspace
+
+push "target/wasm32-wasip2/release/test_programs_fibo_activity.wasm"
+push "target/wasm32-unknown-unknown/release/test_programs_fibo_workflow.wasm"
+push "target/wasm32-wasip2/release/test_programs_fibo_webhook.wasm"
+push "target/wasm32-wasip2/release/test_programs_http_get_activity.wasm"
+push "target/wasm32-unknown-unknown/release/test_programs_http_get_workflow.wasm"
+push "target/wasm32-wasip2/release/test_programs_sleep_activity.wasm"
+push "target/wasm32-unknown-unknown/release/test_programs_sleep_workflow.wasm"
+
+echo "All components pushed and TOML file updated successfully."
