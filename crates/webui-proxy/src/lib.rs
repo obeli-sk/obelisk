@@ -234,9 +234,7 @@ fn start_outgoing_request(
 fn write_static_response(mut buf: &[u8], content_type: &str, outparam: ResponseOutparam) {
     let content_type = content_type.as_bytes().to_vec();
     let resp_headers = Fields::new();
-    resp_headers
-        .set(&"content-type".to_string(), &[content_type])
-        .unwrap();
+    resp_headers.set("content-type", &[content_type]).unwrap();
     let resp = OutgoingResponse::new(resp_headers);
     let body = resp.body().expect("outgoing response");
     // Start sending the 200 OK response
