@@ -1,4 +1,4 @@
-name: push-components
+name: push-test-components
 
 permissions:
   contents: write
@@ -43,10 +43,10 @@ jobs:
         env:
           DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
           DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
-      - name: Run push-components.sh
+      - name: Push test components
         run: |
           which obelisk
-          nix develop --command ./scripts/push-components.sh $TAG
+          nix develop --command ./scripts/push-test-components.sh $TAG
         env:
           TAG: ${{ github.event.inputs.tag }}
       - name: Configure git before push
