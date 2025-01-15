@@ -87,6 +87,7 @@ nix run github:obeli-sk/obelisk
 # Install to the user's profile:
 nix profile install github:obeli-sk/obelisk
 ```
+Setting up the [Garnix Cache](https://garnix.io/docs/caching) is recommended to speed up the build.
 
 ## Getting Started
 
