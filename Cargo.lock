@@ -3019,6 +3019,7 @@ dependencies = [
  "config",
  "console-subscriber",
  "const_format",
+ "derive_more",
  "directories",
  "docker_credential",
  "futures-util",

@@ -1,6 +1,7 @@
 use super::grpc;
 use super::grpc::GenerateExecutionIdResponse;
 use crate::config::config_holder::ConfigHolder;
+use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookComponentVerified;
 use crate::config::toml::webhook::WebhookRoute;
@@ -99,7 +100,6 @@ use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
 use val_json::wast_val::WastValWithType;
 use wasm_workers::activity::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
-use wasm_workers::envvar::EnvVar;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
@@ -716,6 +716,7 @@ pub(crate) async fn verify(
     clean_db: bool,
     clean_cache: bool,
     clean_codegen_cache: bool,
+    ignore_missing_env_vars: bool,
 ) -> Result<(), anyhow::Error> {
     let config_holder = ConfigHolder::new(project_dirs, config);
     let mut config = config_holder.load_config().await?;
@@ -726,6 +727,7 @@ pub(crate) async fn verify(
         clean_cache,
         clean_codegen_cache,
         config_holder,
+        ignore_missing_env_vars,
     ))
     .await?;
     Ok(())
@@ -738,6 +740,7 @@ async fn verify_internal(
     clean_cache: bool,
     clean_codegen_cache: bool,
     config_holder: ConfigHolder,
+    ignore_missing_env_vars: bool,
 ) -> Result<ServerVerified, anyhow::Error> {
     debug!("Using toml config: {config:#?}");
     let db_file = config
@@ -826,6 +829,7 @@ async fn verify_internal(
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
         db_file,
+        ignore_missing_env_vars,
     )
     .await?;
     info!("Server configuration was verified");
@@ -847,6 +851,7 @@ async fn run_internal(
         clean_cache,
         clean_codegen_cache,
         config_holder,
+        false,
     ))
     .instrument(span.clone())
     .await?;
@@ -915,6 +920,7 @@ impl ServerVerified {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         db_file: PathBuf,
+        ignore_missing_env_vars: bool,
     ) -> Result<Self, anyhow::Error> {
         let engines = {
             let codegen_cache_config_file_holder = Engines::write_codegen_config(codegen_cache)
@@ -959,9 +965,9 @@ impl ServerVerified {
                 routes: vec![WebhookRoute::default()],
                 forward_stdout: StdOutput::default(),
                 forward_stderr: StdOutput::default(),
-                env_vars: vec![EnvVar {
+                env_vars: vec![EnvVarConfig {
                     key: "TARGET_URL".to_string(),
-                    val: format!("http://{}", config.api.listening_addr),
+                    val: Some(format!("http://{}", config.api.listening_addr)),
                 }],
             });
         }
@@ -972,6 +978,7 @@ impl ServerVerified {
             webhooks,
             wasm_cache_dir,
             metadata_dir,
+            ignore_missing_env_vars,
         )
         .await?;
         debug!("Verified config: {config:#?}");
@@ -1157,6 +1164,7 @@ async fn fetch_and_verify_all(
     webhooks: Vec<webhook::WebhookComponent>,
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
+    ignore_missing_env_vars: bool,
 ) -> Result<ConfigVerified, anyhow::Error> {
     // Check for name clashes which might make for confusing traces.
     {
@@ -1233,7 +1241,11 @@ async fn fetch_and_verify_all(
                 let metadata_dir = metadata_dir.clone();
                 async move {
                     activity
-                        .fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone())
+                        .fetch_and_verify(
+                            wasm_cache_dir.clone(),
+                            metadata_dir.clone(),
+                            ignore_missing_env_vars,
+                        )
                         .await
                 }
                 .in_current_span()
@@ -1259,7 +1271,11 @@ async fn fetch_and_verify_all(
                 async move {
                     let name = webhook.common.name.clone();
                     let webhook = webhook
-                        .fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone())
+                        .fetch_and_verify(
+                            wasm_cache_dir.clone(),
+                            metadata_dir.clone(),
+                            ignore_missing_env_vars,
+                        )
                         .await?;
                     Ok::<_, anyhow::Error>((name, webhook))
                 }
@@ -1353,7 +1369,7 @@ async fn compile_and_verify(
                         component_id.clone(),
                         webhook.forward_stdout,
                         webhook.forward_stderr,
-                        Arc::from(webhook.env_vars),
+                        webhook.env_vars,
                     )?;
                     Ok(Either::Right((
                         name,
@@ -1810,9 +1826,10 @@ mod tests {
         crate::command::server::verify(
             crate::project_dirs(),
             Some(obelisk_toml),
-            false, //clean_db,
-            false, //clean_cache,
-            false, //clean_codegen_cache,
+            false, // clean_db,
+            false, // clean_cache,
+            false, // clean_codegen_cache,
+            false, // ignore_missing_env_vars
         )
         .await
         .unwrap();

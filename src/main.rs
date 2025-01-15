@@ -46,6 +46,7 @@ async fn main() -> Result<(), anyhow::Error> {
             clean_cache,
             clean_codegen_cache,
             config,
+            ignore_missing_env_vars,
         }) => {
             command::server::verify(
                 project_dirs(),
@@ -53,6 +54,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 clean_db,
                 clean_cache,
                 clean_codegen_cache,
+                ignore_missing_env_vars,
             )
             .await
         }

@@ -57,6 +57,8 @@ pub(crate) enum Server {
         clean_codegen_cache: bool,
         #[arg(long, short)]
         config: Option<PathBuf>,
+        #[arg(long, short)]
+        ignore_missing_env_vars: bool,
     },
 }
 

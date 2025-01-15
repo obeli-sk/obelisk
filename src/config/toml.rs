@@ -1,5 +1,5 @@
-use super::{ComponentLocation, ConfigStoreCommon};
-use anyhow::bail;
+use super::{env_var::EnvVarConfig, ComponentLocation, ConfigStoreCommon};
+use anyhow::{anyhow, bail};
 use concepts::{ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, StrVariant};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use directories::ProjectDirs;
@@ -241,7 +241,7 @@ pub(crate) struct ActivityWasmConfigToml {
     #[serde(default)]
     pub(crate) forward_stderr: StdOutput,
     #[serde(default)]
-    pub(crate) env_vars: Vec<EnvVar>,
+    pub(crate) env_vars: Vec<EnvVarConfig>,
     #[serde(default = "default_retry_on_err")]
     pub(crate) retry_on_err: bool,
 }
@@ -267,6 +267,7 @@ impl ActivityWasmConfigToml {
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
+        ignore_missing_env_vars: bool,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
         let mut hasher = std::hash::DefaultHasher::new();
         std::hash::Hash::hash(&self, &mut hasher);
@@ -282,7 +283,7 @@ impl ActivityWasmConfigToml {
         )?;
 
         let content_digest = common.content_digest.clone();
-        let env_vars: Arc<[EnvVar]> = Arc::from(self.env_vars);
+        let env_vars = resolve_env_vars(self.env_vars, ignore_missing_env_vars)?;
         tracing::Span::current().record("component_id", tracing::field::display(&component_id));
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
@@ -660,7 +661,9 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 }
 
 pub(crate) mod webhook {
-    use super::{ComponentCommon, InflightSemaphore, StdOutput};
+    use crate::config::env_var::EnvVarConfig;
+
+    use super::{resolve_env_vars, ComponentCommon, InflightSemaphore, StdOutput};
     use anyhow::Context;
     use concepts::{ComponentId, ComponentType, ContentDigest, StrVariant};
     use serde::Deserialize;
@@ -694,7 +697,7 @@ pub(crate) mod webhook {
         #[serde(default)]
         pub(crate) forward_stderr: StdOutput,
         #[serde(default)]
-        pub(crate) env_vars: Vec<EnvVar>,
+        pub(crate) env_vars: Vec<EnvVarConfig>,
     }
 
     impl WebhookComponent {
@@ -703,6 +706,7 @@ pub(crate) mod webhook {
             self,
             wasm_cache_dir: Arc<Path>,
             metadata_dir: Arc<Path>,
+            ignore_missing_env_vars: bool,
         ) -> Result<WebhookComponentVerified, anyhow::Error> {
             let mut hasher = std::hash::DefaultHasher::new();
             std::hash::Hash::hash(&self, &mut hasher);
@@ -730,7 +734,7 @@ pub(crate) mod webhook {
                     .collect::<Result<Vec<_>, _>>()?,
                 forward_stdout: self.forward_stdout.into(),
                 forward_stderr: self.forward_stderr.into(),
-                env_vars: self.env_vars,
+                env_vars: resolve_env_vars(self.env_vars, ignore_missing_env_vars)?,
                 content_digest,
             })
         }
@@ -766,7 +770,7 @@ pub(crate) mod webhook {
         pub(crate) routes: Vec<WebhookRouteVerified>,
         pub(crate) forward_stdout: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) forward_stderr: Option<wasm_workers::std_output_stream::StdOutput>,
-        pub(crate) env_vars: Vec<EnvVar>,
+        pub(crate) env_vars: Arc<[EnvVar]>,
         pub(crate) content_digest: ContentDigest,
     }
 
@@ -870,6 +874,33 @@ mod util {
         File,
         Folder,
     }
+}
+
+fn resolve_env_vars(
+    env_vars: Vec<EnvVarConfig>,
+    ignore_missing: bool,
+) -> Result<Arc<[EnvVar]>, anyhow::Error> {
+    env_vars
+        .into_iter()
+        .map(|EnvVarConfig { key, val }| match val {
+            Some(val) => Ok(EnvVar { key, val }),
+            None => match std::env::var(&key) {
+                Ok(val) => Ok(EnvVar { key, val }),
+                Err(err) => {
+                    if ignore_missing {
+                        Ok(EnvVar {
+                            key,
+                            val: String::new(),
+                        })
+                    } else {
+                        Err(anyhow!(
+                            "cannot get environment variable `{key}` from the host - {err}"
+                        ))
+                    }
+                }
+            },
+        })
+        .collect::<Result<_, _>>()
 }
 
 const fn default_codegen_enabled() -> bool {

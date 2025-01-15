@@ -25,61 +25,11 @@ pub enum WasmFileError {
 }
 
 pub mod envvar {
-    use serde::{Deserialize, Deserializer};
-
-    #[derive(Clone, derivative::Derivative)]
-    #[derivative(Debug, Hash)]
+    #[derive(Clone, derive_more::Debug)]
     pub struct EnvVar {
         pub key: String,
-        #[derivative(Debug = "ignore")]
+        #[debug(skip)]
         pub val: String,
-    }
-
-    struct EnvVarVisitor;
-
-    impl serde::de::Visitor<'_> for EnvVarVisitor {
-        type Value = EnvVar;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str(
-                "either key of environment varaible to be forwarded from host, or key=value",
-            )
-        }
-
-        fn visit_str<E>(self, input: &str) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            Ok(match input.split_once('=') {
-                None => {
-                    let val = match std::env::var(input) {
-                        Ok(val) => val,
-                        Err(err) => {
-                            return Err(E::custom(format!(
-                                "cannot get environment variable `{input}` from the host - {err}"
-                            )))
-                        }
-                    };
-
-                    EnvVar {
-                        key: input.to_string(),
-                        val,
-                    }
-                }
-                Some((k, input)) => EnvVar {
-                    key: k.to_string(),
-                    val: input.to_string(),
-                },
-            })
-        }
-    }
-    impl<'de> Deserialize<'de> for EnvVar {
-        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            deserializer.deserialize_str(EnvVarVisitor)
-        }
     }
 }
 
