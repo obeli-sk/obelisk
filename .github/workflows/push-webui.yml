@@ -1,0 +1,64 @@
+name: push-webui
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag to be used when pushing components to the Docker Hub."
+        required: true
+        type: string
+      ref:
+        description: "The ref (branch or SHA) to process"
+        required: false
+        type: string
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  push-components:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+      - name: Populate the nix store
+        run: nix develop --command echo
+      - name: Download obelisk
+        run: |
+          nix develop --command cargo binstall obelisk --install-path . -y
+          echo $(pwd) >> $GITHUB_PATH
+      - name: Log in to Docker Hub
+        run: |
+          echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+      - name: Push webui
+        run: |
+          which obelisk
+          nix develop --command ./scripts/push-webui.sh $TAG
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+      - name: Configure git before push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Push webui-version.txt
+        run: |
+          git add webui-version.txt
+          git commit -m "chore: Bump webui to $TAG"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+          git push origin main
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
