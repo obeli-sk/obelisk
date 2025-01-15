@@ -320,6 +320,7 @@ unknown_lints = "deny"
 [profile.release]
 overflow-checks = true
 lto = true
+opt-level = "s"
 
 [profile.release_trunk]
 inherits = "release"
