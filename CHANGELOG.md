@@ -3,6 +3,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/obeli-sk/obelisk/compare/v0.11.0...v0.12.0) - 2025-01-15
+
+### Added
+
+- Make `-schedule` submittable
+- *(grpc!)* Make `Submit` rpc idempotent
+- Add `ignore_missing_env_vars` to `server verify`
+- Wait 1,2,... seconds on OCI pull failure
+- Make wasmtime allocator configurable
+- *(cli)* Display the detail of an execution failure
+- *(grpc)* Add `GenerateExecutionId` rpc
+- Parse reason and detail of `ChildExecutionError`
+- Move activity error details away from `reason`
+- Do not ignore `post-return` trap in workflows
+
+### Fixed
+
+- Run `obelisk` using `cargo run` in `webui-bump.sh`
+- *(sqlite)* Ignore expired locks in `get_pending`
+- Use snake case in `JoinNextBlockingStrategy` serde
+
+### Other
+
+- Set up garnix
+- Add `push-webui` workflow
+- Optimize release build for size
+- Bump `rustc` to 1.84
+- Update the roadmap
+- Replace `SKIP_WEBUI_BUILDER` with `RUN_TRUNK`
+- Fix `ubuntu-24.04-install`
+- Fix comparison when building `x86_64-unknown-linux-gnu`
+- Log execution error details on `debug` level
+
 ## [0.11.0](https://github.com/obeli-sk/obelisk/compare/v0.10.0...v0.11.0) - 2025-01-09
 
 
