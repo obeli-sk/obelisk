@@ -9,6 +9,7 @@ mod oci;
 use anyhow::{bail, Context};
 use args::{Args, Client, ClientSubcommand, Server, Subcommand};
 use clap::Parser;
+use command::server::{RunParams, VerifyParams};
 use config::config_holder::ConfigHolder;
 use directories::ProjectDirs;
 use grpc_util::{injector::TracingInjector, to_channel};
@@ -18,6 +19,7 @@ use tonic::{codec::CompressionEncoding, transport::Channel};
 pub type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[tokio::main]
+#[expect(clippy::too_many_lines)]
 async fn main() -> Result<(), anyhow::Error> {
     match Args::parse().command {
         Subcommand::Server(Server::Run {
@@ -29,9 +31,11 @@ async fn main() -> Result<(), anyhow::Error> {
             Box::pin(command::server::run(
                 project_dirs(),
                 config,
-                clean_db,
-                clean_cache,
-                clean_codegen_cache,
+                RunParams {
+                    clean_db,
+                    clean_cache,
+                    clean_codegen_cache,
+                },
             ))
             .await
         }
@@ -51,10 +55,12 @@ async fn main() -> Result<(), anyhow::Error> {
             command::server::verify(
                 project_dirs(),
                 config,
-                clean_db,
-                clean_cache,
-                clean_codegen_cache,
-                ignore_missing_env_vars,
+                VerifyParams {
+                    clean_db,
+                    clean_cache,
+                    clean_codegen_cache,
+                    ignore_missing_env_vars,
+                },
             )
             .await
         }

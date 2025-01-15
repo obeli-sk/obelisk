@@ -688,59 +688,50 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc::FunctionDetail> {
     vec
 }
 
+pub(crate) struct RunParams {
+    pub(crate) clean_db: bool,
+    pub(crate) clean_cache: bool,
+    pub(crate) clean_codegen_cache: bool,
+}
+
 pub(crate) async fn run(
     project_dirs: Option<ProjectDirs>,
     config: Option<PathBuf>,
-    clean_db: bool,
-    clean_all_cache: bool,
-    clean_codegen_cache: bool,
+    params: RunParams,
 ) -> anyhow::Result<()> {
     let config_holder = ConfigHolder::new(project_dirs, config);
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
 
-    Box::pin(run_internal(
-        config,
-        clean_db,
-        clean_all_cache,
-        clean_codegen_cache,
-        config_holder,
-    ))
-    .await?;
+    Box::pin(run_internal(config, config_holder, params)).await?;
     Ok(())
+}
+
+#[expect(clippy::struct_excessive_bools)]
+pub(crate) struct VerifyParams {
+    pub(crate) clean_db: bool,
+    pub(crate) clean_cache: bool,
+    pub(crate) clean_codegen_cache: bool,
+    pub(crate) ignore_missing_env_vars: bool,
 }
 
 pub(crate) async fn verify(
     project_dirs: Option<ProjectDirs>,
     config: Option<PathBuf>,
-    clean_db: bool,
-    clean_cache: bool,
-    clean_codegen_cache: bool,
-    ignore_missing_env_vars: bool,
+    verify_params: VerifyParams,
 ) -> Result<(), anyhow::Error> {
     let config_holder = ConfigHolder::new(project_dirs, config);
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
-    Box::pin(verify_internal(
-        config,
-        clean_db,
-        clean_cache,
-        clean_codegen_cache,
-        config_holder,
-        ignore_missing_env_vars,
-    ))
-    .await?;
+    Box::pin(verify_internal(config, config_holder, verify_params)).await?;
     Ok(())
 }
 
 #[instrument(skip_all, name = "verify")]
 async fn verify_internal(
     config: ConfigToml,
-    clean_db: bool,
-    clean_cache: bool,
-    clean_codegen_cache: bool,
     config_holder: ConfigHolder,
-    ignore_missing_env_vars: bool,
+    params: VerifyParams,
 ) -> Result<ServerVerified, anyhow::Error> {
     debug!("Using toml config: {config:#?}");
     let db_file = config
@@ -768,7 +759,7 @@ async fn verify_internal(
             Err(err)
         }
     };
-    if clean_db {
+    if params.clean_db {
         tokio::fs::remove_file(&db_file)
             .await
             .or_else(ignore_not_found)
@@ -794,13 +785,13 @@ async fn verify_internal(
             .or_else(ignore_not_found)
             .with_context(|| format!("cannot delete database file `{shm_file:?}`"))?;
     }
-    if clean_cache {
+    if params.clean_cache {
         tokio::fs::remove_dir_all(&wasm_cache_dir)
             .await
             .or_else(ignore_not_found)
             .with_context(|| format!("cannot delete wasm cache directory {wasm_cache_dir:?}"))?;
     }
-    if clean_cache || clean_codegen_cache {
+    if params.clean_cache || params.clean_codegen_cache {
         if let Some(codegen_cache) = &codegen_cache {
             tokio::fs::remove_dir_all(codegen_cache)
                 .await
@@ -829,7 +820,7 @@ async fn verify_internal(
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
         db_file,
-        ignore_missing_env_vars,
+        params.ignore_missing_env_vars,
     )
     .await?;
     info!("Server configuration was verified");
@@ -838,20 +829,20 @@ async fn verify_internal(
 
 async fn run_internal(
     config: ConfigToml,
-    clean_db: bool,
-    clean_cache: bool,
-    clean_codegen_cache: bool,
     config_holder: ConfigHolder,
+    params: RunParams,
 ) -> anyhow::Result<()> {
     let span = info_span!("init");
     let api_listening_addr = config.api.listening_addr;
     let verified = Box::pin(verify_internal(
         config,
-        clean_db,
-        clean_cache,
-        clean_codegen_cache,
         config_holder,
-        false,
+        VerifyParams {
+            clean_db: params.clean_db,
+            clean_cache: params.clean_cache,
+            clean_codegen_cache: params.clean_codegen_cache,
+            ignore_missing_env_vars: false,
+        },
     ))
     .instrument(span.clone())
     .await?;
@@ -1810,6 +1801,7 @@ impl Drop for AbortOnDropHandle {
 
 #[cfg(all(test, not(madsim)))]
 mod tests {
+    use crate::command::server::VerifyParams;
     use std::path::PathBuf;
 
     fn get_workspace_dir() -> PathBuf {
@@ -1826,10 +1818,12 @@ mod tests {
         crate::command::server::verify(
             crate::project_dirs(),
             Some(obelisk_toml),
-            false, // clean_db,
-            false, // clean_cache,
-            false, // clean_codegen_cache,
-            false, // ignore_missing_env_vars
+            VerifyParams {
+                clean_db: false,
+                clean_cache: false,
+                clean_codegen_cache: false,
+                ignore_missing_env_vars: false,
+            },
         )
         .await
         .unwrap();
