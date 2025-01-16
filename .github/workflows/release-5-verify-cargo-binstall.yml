@@ -41,7 +41,7 @@ jobs:
           echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
           echo "tag=$(git tag --contains HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Install cargo-binstall
+      - name: Download cargo-binstall
         run: |
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 
@@ -49,10 +49,16 @@ jobs:
         run: |
           TAG="${{ steps.git-info.outputs.tag }}"
           VERSION=${TAG#v}
-          cargo binstall obelisk@$VERSION --no-track --install-path . -y
+          cargo binstall \
+            --github-token ${{ secrets.GITHUB_TOKEN }} \
+            --strategies "crate-meta-data,quick-install" \
+            -y \
+            obelisk@$VERSION
 
       - name: Verify Obelisk
         run: |
-          ./obelisk --version
-          ./obelisk server generate-config
-          ./obelisk server verify
+          mkdir tmp # Avoid conflict with existing obelisk.toml
+          cd tmp
+          obelisk --version
+          obelisk server generate-config
+          obelisk server verify
