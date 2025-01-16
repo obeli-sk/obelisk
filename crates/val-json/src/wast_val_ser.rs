@@ -503,8 +503,9 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                     }
                     Ok(WastVal::List(vec))
                 } else if let TypeWrapper::Tuple(type_sequence) = self.0 {
+                    let expected_size = type_sequence.len();
                     if let Some(actual_size) = seq.size_hint() {
-                        if actual_size != type_sequence.len() {
+                        if actual_size != expected_size {
                             return Err(Error::invalid_length(actual_size, &self));
                         }
                     }
@@ -516,7 +517,11 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                             return Err(Error::invalid_length(idx, &self));
                         }
                     }
-                    // Will fail if there are more elements than consumed
+                    // No more elements are expected.
+                    let unexpected: Option<serde_json::Value> = seq.next_element()?;
+                    if unexpected.is_some() {
+                        return Err(Error::invalid_length(expected_size + 1, &self));
+                    }
                     Ok(WastVal::Tuple(vec))
                 } else if let TypeWrapper::Flags(possible_flags) = self.0 {
                     let mut vec = Vec::with_capacity(possible_flags.len());
@@ -529,7 +534,7 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                             return Err(Error::custom(format!("cannot deserialize flags: flag `{element}` not found in the list: `{possible_flags:?}`")));
                         }
                     }
-                    // Will fail if there are more elements than consumed
+                    // All elements from `seq` must be consumed at this point.
                     Ok(WastVal::Flags(vec))
                 } else {
                     Err(Error::invalid_type(Unexpected::Seq, &self))
