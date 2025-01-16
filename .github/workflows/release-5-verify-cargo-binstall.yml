@@ -42,7 +42,8 @@ jobs:
           echo "tag=$(git tag --contains HEAD)" >> $GITHUB_OUTPUT
 
       - name: Install cargo-binstall
-        run: curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+        run: |
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 
       - name: Download Obelisk
         run: |
@@ -52,6 +53,6 @@ jobs:
 
       - name: Verify Obelisk
         run: |
-          obelisk --version
-          obelisk server generate-config
-          obelisk server verify
+          ./obelisk --version
+          ./obelisk server generate-config
+          ./obelisk server verify
