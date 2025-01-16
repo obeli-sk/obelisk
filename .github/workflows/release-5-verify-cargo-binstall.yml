@@ -41,15 +41,8 @@ jobs:
           echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
           echo "tag=$(git tag --contains HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal  # Install only necessary components
-          override: true  # Set Rust as the default for this job
-
       - name: Install cargo-binstall
-        run: cargo install cargo-binstall
+        run: curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 
       - name: Download Obelisk
         run: cargo binstall obelisk@$TAG --no-track --install-path . -y
