@@ -43,5 +43,5 @@ jobs:
 
       - run: |
           TAG="${{ steps.git-info.outputs.tag }}"
-          TAG=${TAG#v}
-          cat .github/workflows/release/verify/${{ matrix.target }}.Dockerfile | docker build --progress=plain --build-arg TAG=$TAG -
+          VERSION=${TAG#v}
+          cat .github/workflows/release/verify/${{ matrix.target }}.Dockerfile | docker build --progress=plain --build-arg VERSION=$VERSION -
