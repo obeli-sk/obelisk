@@ -1,4 +1,4 @@
-name: release-5-verify-vm-download
+name: release-5-verify-github-release
 
 on:
   workflow_dispatch:
