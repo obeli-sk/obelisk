@@ -110,6 +110,11 @@ fn print_finished_status(finished_status: grpc::FinishedStatus, old_pending_stat
                 let return_value = String::from_utf8_lossy(&return_value.value);
                 format!("OK: {return_value}")
             }
+            Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
+                return_value: None,
+            })) => {
+                format!("OK: (no return value)")
+            }
             Some(grpc::result_detail::Value::FallibleError(
                 grpc::result_detail::FallibleError {
                     return_value: Some(return_value),
