@@ -1,0 +1,61 @@
+name: release-5-verify-cargo-binstall
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "The ref (branch or SHA) to obtain the tag"
+        required: false
+        type: string
+  workflow_run:
+    workflows:
+      - release-3-upload-artifacts
+    types:
+      - completed
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  verify-assets:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+          - runner: macos-13
+          - runner: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
+
+      - id: git-info
+        run: |
+          git fetch --tags
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "tag=$(git tag --contains HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal  # Install only necessary components
+          override: true  # Set Rust as the default for this job
+
+      - name: Install cargo-binstall
+        run: cargo install cargo-binstall
+
+      - name: Download Obelisk
+        run: cargo binstall obelisk@$TAG --no-track --install-path . -y
+
+      - name: Verify Obelisk
+        run: |
+          obelisk --version
+          obelisk server generate-config
+          obelisk server verify
