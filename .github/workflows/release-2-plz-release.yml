@@ -1,25 +1,35 @@
 name: release-2-plz-release
 
 permissions:
-  pull-requests: write
   contents: write
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "The ref (branch or SHA) to process"
+        required: false
+        type: string
+      latest:
+        description: "Should the branch `latest` be updated?"
+        required: false
+        type: boolean
+        default: true
 
 defaults:
   run:
     shell: bash -xe {0}
-    
+
 jobs:
   release-plz-release:
     name: Release-plz-release
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
           fetch-depth: 0
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Install protobuf
@@ -33,3 +43,8 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
         with:
           command: release
+
+      - name: Update `latest` branch
+        if: ${{ github.event.inputs.latest }}
+        run: |
+          git push --force origin HEAD:latest

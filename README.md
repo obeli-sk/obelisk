@@ -80,9 +80,9 @@ cargo install --locked obelisk
 
 #### Nix flakes
 ```sh
-nix run github:obeli-sk/obelisk
+nix run github:obeli-sk/obelisk?ref=latest
 # Install to the user's profile:
-nix profile install github:obeli-sk/obelisk
+nix profile install github:obeli-sk/obelisk?ref=latest
 ```
 Setting up the [Garnix Cache](https://garnix.io/docs/caching) is recommended to speed up the build.
 
