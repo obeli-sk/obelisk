@@ -60,13 +60,14 @@ pub(crate) fn wit(
     exim: &ExIm,
 ) -> Result<String, anyhow::Error> {
     let resolve = decoded.resolve();
-    let ids = resolve
+    let mut ids = resolve
         .packages
         .iter()
         .map(|(id, _)| id)
         // The main package would show as a nested package as well
         .filter(|id| *id != decoded.package())
         .collect::<Vec<_>>();
+    ids.sort();
     let mut printer = WitPrinter::default();
     printer.print(resolve, decoded.package(), &ids)?;
     let wit = printer.output.to_string();
