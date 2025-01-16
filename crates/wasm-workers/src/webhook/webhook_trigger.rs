@@ -562,10 +562,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 .await?;
             self.version = Some(version);
 
-            let res = match db_connection
+            let res = db_connection
                 .wait_for_finished_result(&child_execution_id, None /* TODO timeouts */)
-                .await
-            {
+                .await;
+            trace!("Finished result: {res:?}");
+
+            let res = match res {
                 Ok(res) => res?,
                 Err(ClientError::DbError(err)) => {
                     return Err(WebhookEndpointFunctionError::DbError(err))

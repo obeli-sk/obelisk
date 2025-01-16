@@ -742,14 +742,13 @@ impl SqlitePool {
                 },
                 |row| {
                     let created_at = row.get("created_at")?;
-                    let event = serde_json::from_value::<ExecutionEventInner>(
-                        row.get::<_, serde_json::Value>("json_value")?,
-                    )
-                    .map(|event| (created_at, event))
-                    .map_err(|serde| {
-                        error!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
-                        parsing_err(serde)
-                    });
+                    let event = row
+                        .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                        .map(|event| (created_at, event.0))
+                        .map_err(|serde| {
+                            error!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
+                            parsing_err(serde)
+                        });
                     Ok(event)
                 },
             )
@@ -1389,13 +1388,13 @@ impl SqlitePool {
                     ":v2": DUMMY_HISTORY_EVENT.variant(),
                 },
                 |row| {
-                    let event = serde_json::from_value::<ExecutionEventInner>(
-                        row.get::<_, serde_json::Value>("json_value")?,
-                    )
-                    .map_err(|serde| {
-                        error!("Cannot deserialize {row:?} - {serde:?}");
-                        parsing_err(serde)
-                    });
+                    let event = row
+                        .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                        .map(|wrapper| wrapper.0)
+                        .map_err(|serde| {
+                            error!("Cannot deserialize {row:?} - {serde:?}");
+                            parsing_err(serde)
+                        });
                     Ok(event)
                 },
             )
@@ -1756,14 +1755,16 @@ impl SqlitePool {
                 },
                 |row| {
                     let created_at = row.get("created_at")?;
-                    let event = serde_json::from_value::<ExecutionEventInner>(
-                        row.get::<_, serde_json::Value>("json_value")?,
-                    )
-                    .map(|event| ExecutionEvent { created_at, event })
-                    .map_err(|serde| {
-                        error!("Cannot deserialize {row:?} - {serde:?}");
-                        parsing_err(serde)
-                    });
+                    let event = row
+                        .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                        .map(|event| ExecutionEvent {
+                            created_at,
+                            event: event.0,
+                        })
+                        .map_err(|serde| {
+                            error!("Cannot deserialize {row:?} - {serde:?}");
+                            parsing_err(serde)
+                        });
                     Ok(event)
                 },
             )
@@ -1810,10 +1811,9 @@ impl SqlitePool {
             },
             |row| {
                 let created_at = row.get("created_at")?;
-                let event = serde_json::from_value::<ExecutionEventInner>(
-                    row.get::<_, serde_json::Value>("json_value")?,
-                )
-                .map(|event| ExecutionEvent { created_at, event })
+                let event =
+                    row.get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                .map(|event| ExecutionEvent { created_at, event: event.0 })
                 .map_err(|serde| {
                     error!("Cannot deserialize {row:?} - {serde:?}");
                     parsing_err(serde)
@@ -1846,14 +1846,16 @@ impl SqlitePool {
             },
             |row| {
                 let created_at = row.get("created_at")?;
-                let event = serde_json::from_value::<ExecutionEventInner>(
-                    row.get::<_, serde_json::Value>("json_value")?,
-                )
-                .map(|event| ExecutionEvent { created_at, event })
-                .map_err(|serde| {
-                    error!("Cannot deserialize {row:?} - {serde:?}");
-                    parsing_err(serde)
-                });
+                let event = row
+                    .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                    .map(|event| ExecutionEvent {
+                        created_at,
+                        event: event.0,
+                    })
+                    .map_err(|serde| {
+                        error!("Cannot deserialize {row:?} - {serde:?}");
+                        parsing_err(serde)
+                    });
                 Ok(event)
             },
         )
