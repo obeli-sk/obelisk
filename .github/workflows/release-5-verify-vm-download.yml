@@ -26,7 +26,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             file: obelisk-x86_64-unknown-linux-gnu.tar.gz
           - runner: ubuntu-22.04
             file: obelisk-x86_64-unknown-linux-musl.tar.gz
