@@ -1,9 +1,12 @@
 name: check-run-nix
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "The ref (branch or SHA) to process"
+        required: false
+        type: string
 
 defaults:
   run:
@@ -23,6 +26,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
 
       - name: Install Nix
         uses: cachix/install-nix-action@v30

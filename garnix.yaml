@@ -2,3 +2,4 @@ builds:
   branch: main
   include:
     - "packages.x86_64-linux.default"
+    - "packages.x86_64-linux.obeliskMusl"
