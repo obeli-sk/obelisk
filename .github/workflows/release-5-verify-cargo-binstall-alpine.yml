@@ -1,6 +1,6 @@
 # FIXME: TAG
 
-name: release-5-verify-cargo-install-using-docker
+name: release-5-verify-cargo-binstall-alpine
 
 on:
   workflow_dispatch:
@@ -29,8 +29,6 @@ jobs:
       matrix:
         include:
           - target: alpine-binstall
-          - target: ubuntu-24.04-binstall
-          - target: ubuntu-24.04-install
     steps:
       - uses: actions/checkout@v4
         with:
