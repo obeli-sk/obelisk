@@ -36,6 +36,7 @@ pub enum TypeWrapper {
 }
 
 impl PartialEq for TypeWrapper {
+    #[expect(clippy::match_same_arms)]
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Bool, Self::Bool) => true,

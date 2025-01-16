@@ -112,9 +112,7 @@ fn print_finished_status(finished_status: grpc::FinishedStatus, old_pending_stat
             }
             Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
                 return_value: None,
-            })) => {
-                format!("OK: (no return value)")
-            }
+            })) => "OK: (no return value)".to_string(),
             Some(grpc::result_detail::Value::FallibleError(
                 grpc::result_detail::FallibleError {
                     return_value: Some(return_value),

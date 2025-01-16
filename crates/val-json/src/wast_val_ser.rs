@@ -855,7 +855,7 @@ mod tests {
         let json = r#"
             {"type":{"result":{"err":null,"ok":null}},"value":{"ok":true}}
             "#;
-        let actual = serde_json::from_str::<WastValWithType>(&json).unwrap_err();
+        let actual = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "invalid result value, expected null at line 2 column 73",
             actual.to_string()
@@ -867,7 +867,7 @@ mod tests {
         let json = r#"
             {"type":{"result":{"err":null,"ok":null}},"value":{"err":true}}
             "#;
-        let actual = serde_json::from_str::<WastValWithType>(&json).unwrap_err();
+        let actual = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "invalid result value, expected null at line 2 column 74",
             actual.to_string()
@@ -1012,7 +1012,7 @@ mod tests {
         let json = r#"
             {"type":{"variant":{"a":null,"b":null}},"value":{"c":null}}
             "#;
-        let err = serde_json::from_str::<WastValWithType>(&json).unwrap_err();
+        let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "cannot deserialize variant: `c` not found in the following list: `[\"a\", \"b\"]` at line 2 column 64",
             err.to_string()
@@ -1024,7 +1024,7 @@ mod tests {
         let json = r#"
             {"type":{"variant":{"string":null,"map":"u64"}},"value":"map"}
         "#;
-        let err = serde_json::from_str::<WastValWithType>(&json).unwrap_err();
+        let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "cannot deserialize variant: `map` must be serialized as map at line 2 column 73",
             err.to_string()
@@ -1036,7 +1036,7 @@ mod tests {
         let json = r#"
             {"type":{"variant":{"string":null,"map":"u64"}},"value":{"string": true}}
         "#;
-        let err = serde_json::from_str::<WastValWithType>(&json).unwrap_err();
+        let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "cannot deserialize variant: `string` must be serialized as string at line 2 column 77",
             err.to_string()
@@ -1063,7 +1063,7 @@ mod tests {
         let json = r#"
             {"type":{"enum":["a","b"]},"value":"c"}
             "#;
-        let err = serde_json::from_str::<WastValWithType>(&json).unwrap_err();
+        let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "cannot deserialize enum: `c` not found in the following list: `{\"a\", \"b\"}` at line 2 column 50",
             err.to_string()
@@ -1075,7 +1075,7 @@ mod tests {
         let json = r#"
             {"type":{"enum":["a","b"]},"value":{"a":1}}
             "#;
-        let err = serde_json::from_str::<WastValWithType>(&json).unwrap_err();
+        let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "invalid type: map, expected value matching Enum({\"a\", \"b\"}) at line 2 column 48",
             err.to_string()

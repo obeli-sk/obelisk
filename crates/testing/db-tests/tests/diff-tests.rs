@@ -132,6 +132,7 @@ async fn get_execution_event_should_not_break_json_order(
     db_pool.close().await.unwrap();
 }
 
+#[cfg(not(madsim))]
 async fn get_execution_event_should_not_break_json_order_inner(db_connection: &impl DbConnection) {
     const LOCK_EXPIRY: Duration = Duration::from_millis(500);
     let component_id = ComponentId::dummy_activity();
