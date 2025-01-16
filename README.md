@@ -97,10 +97,14 @@ Setting up the [Garnix Cache](https://garnix.io/docs/caching) is recommended to 
 ## Getting Started
 
 ### Demo: Stargazers
-This demo shows a workflow that runs several activities when a monitored GitHub repository
-receives a star.
+Stargazers is a Obelisk app that contains
+* Webhook endpoint which listens to "star" events from GitHub
+* Turso database activity
+* ChatGPT activity
+* GitHub GraphQL activity
+* Workflow that wires the activities together
 
-Navigate to [demo-stargazers](https://github.com/obeli-sk/demo-stargazers) repo.
+Navigate to [demo-stargazers](https://github.com/obeli-sk/demo-stargazers) repo for details.
 
 ### Creating components from a template
 See [obelisk-templates](https://github.com/obeli-sk/obelisk-templates/)
