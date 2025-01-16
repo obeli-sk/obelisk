@@ -56,17 +56,25 @@ Deterministic workflow engine built on top of the WASM Component Model.
 * MacOS 13 x64
 * MacOS 14 arm64
 
-### Docker
+### Pre-built binary
+
 ```sh
-docker run --net=host getobelisk/obelisk
+curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/install.sh | bash
 ```
 
-### Pre-built binary
-Download [latest release](https://github.com/obeli-sk/obelisk/releases/latest) from the GitHub Release page.
+The [script](https://raw.githubusercontent.com/obeli-sk/obelisk/main/install.sh) will download
+[latest release](https://github.com/obeli-sk/obelisk/releases/latest) from the GitHub Releases
+into the current directory.
+
 
 If [cargo-binstall](https://crates.io/crates/cargo-binstall) is available:
 ```sh
 cargo binstall obelisk
+```
+
+### Docker
+```sh
+docker run --net=host getobelisk/obelisk
 ```
 
 ### Compiling from source

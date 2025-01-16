@@ -1,4 +1,4 @@
-name: release-5-verify-github-release
+name: release-5-verify-install-sh
 
 on:
   workflow_dispatch:
@@ -27,13 +27,8 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-22.04
-            file: obelisk-x86_64-unknown-linux-gnu.tar.gz
-          - runner: ubuntu-22.04
-            file: obelisk-x86_64-unknown-linux-musl.tar.gz
           - runner: macos-13
-            file: obelisk-x86_64-apple-darwin.tar.gz
           - runner: macos-14
-            file: obelisk-aarch64-apple-darwin.tar.gz
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,11 +46,7 @@ jobs:
           VERSION=${TAG#v}
           mkdir temp
           cd temp
-          # download the binary from GitHub Releases
-          FILE="${{ matrix.file }}"
-          curl --fail -L -o "$FILE" \
-            https://github.com/obeli-sk/obelisk/releases/download/$TAG/$FILE
-          tar xzfv "$FILE"
+          curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/install.sh | bash
           ./obelisk --version | grep $VERSION
           ./obelisk server generate-config
           ./obelisk server verify
