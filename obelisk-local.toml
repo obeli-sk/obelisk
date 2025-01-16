@@ -1,0 +1,44 @@
+api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
+webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
+
+[[http_server]]
+name = "external_webhook"
+listening_addr = "127.0.0.1:9090"
+
+[[activity_wasm]]
+name = "test_programs_fibo_activity"
+location.path = "target/wasm32-wasip2/release/test_programs_fibo_activity.wasm"
+max_retries = 0
+
+[[workflow]]
+name = "test_programs_fibo_workflow"
+location.path = "target/wasm32-unknown-unknown/release/test_programs_fibo_workflow.wasm"
+exec.lock_expiry.secs = 2
+
+[[webhook_endpoint]]
+name = "test_programs_fibo_webhook"
+location.path = "target/wasm32-wasip2/release/test_programs_fibo_webhook.wasm"
+http_server = "external_webhook"
+routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
+
+[[activity_wasm]]
+name = "test_programs_http_get_activity"
+location.path = "target/wasm32-wasip2/release/test_programs_http_get_activity.wasm"
+forward_stdout = "stderr"
+forward_stderr = "stderr"
+
+[[workflow]]
+name = "test_programs_http_get_workflow"
+location.path = "target/wasm32-unknown-unknown/release/test_programs_http_get_workflow.wasm"
+
+[[activity_wasm]]
+name = "test_programs_sleep_activity"
+location.path = "target/wasm32-wasip2/release/test_programs_sleep_activity.wasm"
+exec.lock_expiry.secs = 10
+
+[[workflow]]
+name = "test_programs_sleep_workflow"
+location.path = "target/wasm32-unknown-unknown/release/test_programs_sleep_workflow.wasm"
+
+[log.stdout]
+enabled = true
