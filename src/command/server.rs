@@ -997,6 +997,8 @@ struct ServerInit {
     timers_watcher: expired_timers_watcher::TaskHandle,
     #[expect(dead_code)] // http servers will be aborted automatically
     http_servers_handles: Vec<AbortOnDropHandle>,
+    #[expect(dead_code)] // Shuts itself down in drop
+    epoch_ticker: EpochTicker,
 }
 
 impl ServerInit {
@@ -1005,7 +1007,7 @@ impl ServerInit {
         mut verified: ServerVerified,
     ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
         // Start components requiring a database
-        let _epoch_ticker = EpochTicker::spawn_new(
+        let epoch_ticker = EpochTicker::spawn_new(
             verified.engines.weak_refs(),
             Duration::from_millis(EPOCH_MILLIS),
         );
@@ -1065,6 +1067,7 @@ impl ServerInit {
                 exec_join_handles,
                 timers_watcher,
                 http_servers_handles,
+                epoch_ticker,
             },
             verified.component_registry_ro,
         ))

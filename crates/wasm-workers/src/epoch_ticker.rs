@@ -33,7 +33,7 @@ impl EpochTicker {
 
 impl Drop for EpochTicker {
     fn drop(&mut self) {
-        debug!("Aborting the epoch ticker");
+        debug!("Closing the epoch ticker");
         self.shutdown
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
