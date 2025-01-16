@@ -38,9 +38,13 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-22.04
+            os: ubuntu-22.04 # Make sure to use the old glibc for native build.
           - target: x86_64-unknown-linux-musl
-            os: ubuntu-24.04
+            os: ubuntu-24.04 # Does not matter as musl is built with Nix.
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: aarch64-apple-darwin
+            os: macos-14
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,25 +80,32 @@ jobs:
         if: ${{ matrix.target == 'x86_64-unknown-linux-musl' }}
         run: tar czf archive.tar.gz --transform='s/^result\/bin\///' result/bin/obelisk
 
-      # Build the glibc binary natively
+      # Build natively for !musl
       - name: Install Rust
-        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
+        if: ${{ matrix.target != 'x86_64-unknown-linux-musl' }}
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-      - name: Install dependencies
+      - name: Install dependencies - Ubuntu
         if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
         run: |
           sudo apt update
           sudo apt install wget gcc protobuf-compiler libprotobuf-dev -y
+      - name: Install dependencies - MacOS
+        if: startsWith(matrix.os, 'macos-')
+        run: |
+          brew install protobuf
+          brew install gnu-tar
       - name: Install obelisk from crates.io
-        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
+        if: ${{ matrix.target != 'x86_64-unknown-linux-musl' }}
         run: |
           source "$HOME/.cargo/env"
           TAG=${{ steps.git-info.outputs.tag }}
           TAG=${TAG#v}
           cargo install obelisk@$TAG --locked --root .
-          tar czf archive.tar.gz --transform='s/^bin\///' bin/obelisk
+          TAR_CMD=$(if [[ $RUNNER_OS == 'macOS' ]]; then echo gtar; else echo tar; fi)
+          $TAR_CMD czf archive.tar.gz --transform='s/^bin\///' bin/obelisk
 
+      # Common for all targets
       - name: Upload the archive
         run: |
           curl -v --fail -X POST \
