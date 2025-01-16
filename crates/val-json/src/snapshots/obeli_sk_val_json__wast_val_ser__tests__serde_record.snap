@@ -1,0 +1,16 @@
+---
+source: crates/val-json/src/wast_val_ser.rs
+expression: json
+---
+{
+  "type": {
+    "record": {
+      "field1": "bool",
+      "field2": "u32"
+    }
+  },
+  "value": {
+    "field1": true,
+    "field2": 1
+  }
+}

@@ -1,0 +1,10 @@
+---
+source: crates/val-json/src/wast_val_ser.rs
+expression: json
+---
+{
+  "type": {
+    "option": "bool"
+  },
+  "value": null
+}

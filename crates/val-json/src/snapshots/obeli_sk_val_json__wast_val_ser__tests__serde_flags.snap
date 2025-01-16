@@ -1,0 +1,17 @@
+---
+source: crates/val-json/src/wast_val_ser.rs
+expression: json
+---
+{
+  "type": {
+    "flags": [
+      "a",
+      "b",
+      "c"
+    ]
+  },
+  "value": [
+    "a",
+    "b"
+  ]
+}
