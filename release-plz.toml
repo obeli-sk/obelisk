@@ -26,3 +26,52 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 """
+body = """
+
+{% macro print_commit(commit) -%}
+    - {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
+      {% if commit.breaking %}[**breaking**] {% endif %}\
+      {{ commit.message | upper_first }} - \
+      ([{{ commit.id | truncate(length=7, end="") }}]({{ remote.link }}/commit/{{ commit.id }}))\
+{% endmacro -%}
+
+{% if version %}\
+    {% if previous.version %}\
+        ## [{{ version | trim_start_matches(pat="v") }}]({{ release_link }})
+    {% else %}\
+        ## [{{ version | trim_start_matches(pat="v") }}]
+    {% endif %}\
+{% endif %}\
+
+{% for group, commits in commits
+| filter(attribute="merge_commit", value=false)
+| unique(attribute="message")
+| group_by(attribute="group") %}
+    ### {{ group | striptags | trim | upper_first }}
+    {% for commit in commits
+    | filter(attribute="scope")
+    | sort(attribute="scope") %}
+        {{ self::print_commit(commit=commit) }}
+    {%- endfor -%}
+    {% raw %}\n{% endraw %}\
+    {%- for commit in commits %}
+        {%- if not commit.scope -%}
+            {{ self::print_commit(commit=commit) }}
+        {% endif -%}
+    {% endfor -%}
+{% endfor %}\n
+"""
+
+commit_parsers = [
+    { message = "^feat", group = "<!-- 0 -->⛰️ Features" },
+    { message = "^fix", group = "<!-- 1 -->🐛 Bug Fixes" },
+    { message = "^doc", group = "<!-- 2 -->📚 Documentation" },
+    { message = "^perf", group = "<!-- 3 -->⚡ Performance" },
+    { message = "^test", group = "<!-- 4 -->🧪 Testing" },
+    { body = ".*security", group = "<!-- 5 -->🛡️ Security" },
+    { message = "^revert", group = "<!-- 6 -->◀️ Revert" },
+    { message = "^refactor", group = "<!-- 7 -->🚜 Refactor" },
+    { message = "^style", skip = true },
+    { message = "^chore", skip = true },
+    { message = "^ci", skip = true },
+]
