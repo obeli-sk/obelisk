@@ -3005,6 +3005,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "indexmap 2.7.0",
+ "insta",
  "itertools 0.14.0",
  "serde",
  "serde_json",

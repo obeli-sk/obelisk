@@ -3,7 +3,8 @@ use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+// FIXME: Consider replacing IndexMap with ordermap - https://github.com/indexmap-rs/indexmap/issues/153#issuecomment-2189804150
+#[derive(Clone, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TypeWrapper {
     Bool,
@@ -19,10 +20,12 @@ pub enum TypeWrapper {
     F64,
     Char,
     String,
+    Own,
+    Borrow,
+    Record(IndexMap<Box<str>, TypeWrapper>), // FIXME: indexmap
+    Variant(IndexMap<Box<str>, Option<TypeWrapper>>), // FIXME: indexmap
     List(Box<TypeWrapper>),
-    Record(IndexMap<Box<str>, TypeWrapper>),
     Tuple(Box<[TypeWrapper]>),
-    Variant(IndexMap<Box<str>, Option<TypeWrapper>>),
     Enum(IndexSet<Box<str>>),
     Option(Box<TypeWrapper>),
     Result {
@@ -30,8 +33,76 @@ pub enum TypeWrapper {
         err: Option<Box<TypeWrapper>>,
     },
     Flags(IndexSet<Box<str>>),
-    Own,
-    Borrow,
+}
+
+impl PartialEq for TypeWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Bool, Self::Bool) => true,
+            (Self::Bool, _) => false, // Avoids catch-all arm
+            (Self::S8, Self::S8) => true,
+            (Self::S8, _) => false,
+            (Self::U8, Self::U8) => true,
+            (Self::U8, _) => false,
+            (Self::S16, Self::S16) => true,
+            (Self::S16, _) => false,
+            (Self::U16, Self::U16) => true,
+            (Self::U16, _) => false,
+            (Self::S32, Self::S32) => true,
+            (Self::S32, _) => false,
+            (Self::U32, Self::U32) => true,
+            (Self::U32, _) => false,
+            (Self::S64, Self::S64) => true,
+            (Self::S64, _) => false,
+            (Self::U64, Self::U64) => true,
+            (Self::U64, _) => false,
+            (Self::F32, Self::F32) => true,
+            (Self::F32, _) => false,
+            (Self::F64, Self::F64) => true,
+            (Self::F64, _) => false,
+            (Self::Char, Self::Char) => true,
+            (Self::Char, _) => false,
+            (Self::String, Self::String) => true,
+            (Self::String, _) => false,
+            (Self::Own, Self::Own) => true,
+            (Self::Own, _) => false,
+            (Self::Borrow, Self::Borrow) => true,
+            (Self::Borrow, _) => false,
+
+            // IndexMap equality only if ordering is the same!
+            (Self::Record(left_map), Self::Record(right_map)) => {
+                left_map.as_slice() == right_map.as_slice()
+            }
+            (Self::Record(_), _) => false,
+            (Self::Variant(left_map), Self::Variant(right_map)) => {
+                left_map.as_slice() == right_map.as_slice()
+            }
+            (Self::Variant(_), _) => false,
+
+            // Other types that do not have this problem.
+            (Self::List(l0), Self::List(r0)) => l0 == r0,
+            (Self::List(_), _) => false,
+            (Self::Tuple(l0), Self::Tuple(r0)) => l0 == r0,
+            (Self::Tuple(_), _) => false,
+            (Self::Enum(l0), Self::Enum(r0)) => l0 == r0,
+            (Self::Enum(_), _) => false,
+            (Self::Option(l0), Self::Option(r0)) => l0 == r0,
+            (Self::Option(_), _) => false,
+            (
+                Self::Result {
+                    ok: l_ok,
+                    err: l_err,
+                },
+                Self::Result {
+                    ok: r_ok,
+                    err: r_err,
+                },
+            ) => l_ok == r_ok && l_err == r_err,
+            (Self::Result { .. }, _) => false,
+            (Self::Flags(l0), Self::Flags(r0)) => l0 == r0,
+            (Self::Flags(_), _) => false,
+        }
+    }
 }
 
 impl Debug for TypeWrapper {

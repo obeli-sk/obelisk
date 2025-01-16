@@ -1,0 +1,18 @@
+---
+source: crates/val-json/src/wast_val_ser.rs
+expression: json
+---
+{
+  "type": {
+    "variant": {
+      "milliseconds": "u64",
+      "seconds": "u64",
+      "minutes": "u32",
+      "hours": "u32",
+      "days": "u32"
+    }
+  },
+  "value": {
+    "seconds": 1
+  }
+}

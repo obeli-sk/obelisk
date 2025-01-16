@@ -988,13 +988,9 @@ mod tests {
             r#type: duration_type_wrapper,
             value: WastVal::Variant("seconds".to_string(), Some(Box::new(WastVal::U64(1)))),
         };
-        let json = serde_json::to_value(&expected).unwrap();
-        assert_eq!(
-            json!({"type":{"variant":{"milliseconds":"u64","seconds":"u64","minutes":"u32","hours":"u32","days":"u32"}},
-                "value":{"seconds":1}}),
-            json
-        );
-        let actual = serde_json::from_value(json).unwrap();
+        let json = serde_json::to_string_pretty(&expected).unwrap();
+        insta::assert_snapshot!(json);
+        let actual = serde_json::from_str(&json).unwrap();
         assert_eq!(expected, actual);
     }
 

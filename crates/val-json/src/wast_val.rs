@@ -23,7 +23,7 @@ pub enum WastVal {
     Char(char),
     String(String),
     List(Vec<WastVal>),
-    Record(IndexMap<String, WastVal>),
+    Record(IndexMap<String, WastVal>), // FIXME: Consider replacing IndexMap with ordermap - https://github.com/indexmap-rs/indexmap/issues/153#issuecomment-2189804150
     Tuple(Vec<WastVal>),
     Variant(String, Option<Box<WastVal>>),
     Enum(String),
@@ -175,7 +175,9 @@ impl PartialEq for WastVal {
             (Self::String(_), _) => false,
             (Self::List(l), Self::List(r)) => l == r,
             (Self::List(_), _) => false,
-            (Self::Record(l), Self::Record(r)) => l == r,
+            (Self::Record(left_map), Self::Record(right_map)) => {
+                left_map.as_slice() == right_map.as_slice()
+            }
             (Self::Record(_), _) => false,
             (Self::Tuple(l), Self::Tuple(r)) => l == r,
             (Self::Tuple(_), _) => false,
