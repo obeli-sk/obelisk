@@ -13,7 +13,7 @@ Deterministic workflow engine built on top of the WASM Component Model.
 ## How It Works
 * **Schema-first design with end-to-end type safety**: Uses the [WASM Component Model](https://component-model.bytecodealliance.org/) and [WIT IDL](https://component-model.bytecodealliance.org/design/wit.html) to generate API bindings between components.
 * **Resilient Activities**: Automatically retries on errors and timeouts, with input parameters and execution results persistently stored.
-* **Replayable Workflows**: Deterministic execution and a persisted event log make workflows replayable, enabling reliable recovery, debugging, and auditing of processes.
+* **Replayable Workflows**: Deterministic execution and a persisted event log make workflows replayable, enabling reliable recovery, debugging, and auditing of executions.
 
 ## Use Cases
 * **Periodic Tasks**: Automate checks like customer limits, triggering activities such as transactional emails or project suspensions.
@@ -52,31 +52,28 @@ Deterministic workflow engine built on top of the WASM Component Model.
 
 ## Installation
 ### Supported platforms
-* Linux x64 - musl or glibc v2.35+
-* Mac OS 13 x64
+* Linux x64 - musl, glibc v2.35+, NixOS
+* MacOS 13 x64
+* MacOS 14 arm64
 
 ### Docker
 ```sh
-CONTAINER_ID=$(docker run -d getobelisk/obelisk)
-docker logs --follow $CONTAINER_ID | grep "Serving gRPC requests"
-```
-```sh
-docker exec $CONTAINER_ID obelisk client component list
-# See Usage for more details
+docker run --net=host getobelisk/obelisk
 ```
 
 ### Pre-built binary
 Download [latest release](https://github.com/obeli-sk/obelisk/releases/latest) from the GitHub Release page.
 
+If [cargo-binstall](https://crates.io/crates/cargo-binstall) is available:
+```sh
+cargo binstall obelisk
+```
+
 ### Compiling from source
 The compilation requires `protoc` [Protocol Buffers compiler](https://protobuf.dev/downloads/).
 
 #### Using latest version from crates.io
-Download using [cargo-binstall](https://crates.io/crates/cargo-binstall)
-```sh
-cargo binstall --locked obelisk
-```
-or build using [cargo](https://rustup.rs/)
+Build using [cargo](https://rustup.rs/)
 ```sh
 cargo install --locked obelisk
 ```
@@ -91,7 +88,13 @@ Setting up the [Garnix Cache](https://garnix.io/docs/caching) is recommended to 
 
 ## Getting Started
 
-### Creating sample components from a template
+### Demo: Stargazers
+This demo shows a workflow that runs several activities when a monitored GitHub repository
+receives a star.
+
+Navigate to [demo-stargazers](https://github.com/obeli-sk/demo-stargazers) repo.
+
+### Creating components from a template
 See [obelisk-templates](https://github.com/obeli-sk/obelisk-templates/)
 
 ### Configuration
@@ -107,16 +110,16 @@ obelisk server generate-config
 obelisk server run
 ```
 
-### Getting the list of loaded functions
+### Using the CLI client
 ```sh
 obelisk client component list
-```
-
-### Submitting a function to execute (either workflow or activity)
-```sh
 # Call fibonacci(10) activity from the workflow 500 times in series.
 obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]' --follow
 ```
+
+### Using the Web UI
+Navigate to [localhost:8080](http://127.0.0.1:8080). The UI shows list of comopnents with functions that
+can be submitted, as well as execution history.
 
 # Contributing
 This project has a [roadmap](ROADMAP.md) and features are added in a certain order.
@@ -130,7 +133,8 @@ Set up the development dependencies using nix flakes:
 nix develop
 # or `direnv allow`, after simlinking .envrc-example -> .envrc
 ```
-Or manually download all dependencies, see [dev-deps.txt](dev-deps.txt) and [Ubuntu based verification Dockerfile](.github/workflows/release/verify/ubuntu-24.04-install.Dockerfile)
+Or manually download all dependencies, see [dev-deps.txt](dev-deps.txt) for details.
+
 Run the program
 ```sh
 cargo run --release
