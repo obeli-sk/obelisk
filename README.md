@@ -156,8 +156,3 @@ cargo run --release
 ```sh
 ./scripts/test.sh
 ```
-
-## Deterministic tests using the [madsim simulator](https://github.com/madsim-rs/madsim)
-```sh
-./scripts/test-madsim.sh
-```
