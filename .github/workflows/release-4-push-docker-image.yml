@@ -66,7 +66,6 @@ jobs:
           wget -q https://github.com/obeli-sk/obelisk/releases/download/${{ matrix.tarfile }}
           tar xvfz ${{ matrix.tarfile }}
           cp ../obelisk.toml obelisk.toml
-          sed -i 's/api_listening_addr.*/api_listening_addr = "0.0.0.0:5005"/g' obelisk.toml
           IMAGE_BASE="getobelisk/obelisk"
           IMAGE="${IMAGE_BASE}:${{ matrix.image_tag }}"
           docker build --progress=plain -f ../.github/workflows/release/docker-image/${{ matrix.dockerfile }} . --tag $IMAGE
