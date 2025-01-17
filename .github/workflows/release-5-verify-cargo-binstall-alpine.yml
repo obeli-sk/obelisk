@@ -37,6 +37,10 @@ jobs:
 
       - run: |
           TAG="${{ steps.git-info.outputs.tag }}"
+          if [ -z "$TAG" ]; then
+            echo "No tag pointing at HEAD."
+            exit 1
+          fi
           VERSION=${TAG#v}
 
           docker build --progress=plain --build-arg VERSION=$VERSION - <<EOF

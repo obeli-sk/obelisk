@@ -100,6 +100,10 @@ jobs:
         run: |
           source "$HOME/.cargo/env"
           TAG=${{ steps.git-info.outputs.tag }}
+          if [ -z "$TAG" ]; then
+            echo "No tag pointing at HEAD."
+            exit 1
+          fi
           TAG=${TAG#v}
           cargo install obelisk@$TAG --locked --root .
           TAR_CMD=$(if [[ $RUNNER_OS == 'macOS' ]]; then echo gtar; else echo tar; fi)
