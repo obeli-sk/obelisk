@@ -3,3 +3,4 @@ builds:
   include:
     - "packages.x86_64-linux.default"
     - "packages.x86_64-linux.obeliskMusl"
+    - "packages.x86_64-linux.obeliskGlibcGeneric"
