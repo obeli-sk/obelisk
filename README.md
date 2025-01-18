@@ -24,6 +24,7 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 - **Batch jobs**: Manage large-scale tasks like deployments.
 - **End-to-End Testing**: Automate tests with detailed logs.
 - **Webhook Integrations**: Trigger workflows from external events (e.g., GitHub).
+- **Running AI Generated Code**: Code is sandboxed and every step can be audited.
 
 ## Key Features
 ### **Activities**
