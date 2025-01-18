@@ -107,7 +107,6 @@
                 trunk
                 wasm-bindgen-cli
               ];
-            PROTOC = "${pkgs.protobuf}/bin/protoc";
           };
           packages = rec {
             obeliskGlibcNix = makeObelisk pkgs false "release";
