@@ -1126,7 +1126,7 @@ async fn start_webhooks(
             info!(
                 "HTTP server `{}` is listening on http://{server_addr}",
                 http_server.name,
-            )
+            );
         });
         let server = AbortOnDropHandle(
             tokio::spawn(
