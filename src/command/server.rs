@@ -1121,20 +1121,26 @@ async fn start_webhooks(
                 )
             })?;
         let server_addr = tcp_listener.local_addr()?;
-        info!(
-            "HTTP server `{}` is listening on http://{server_addr}",
-            http_server.name,
-        );
+        let http_server_span = info_span!("http_server", http_server = http_server.name);
+        http_server_span.in_scope(|| {
+            info!(
+                "HTTP server `{}` is listening on http://{server_addr}",
+                http_server.name,
+            )
+        });
         let server = AbortOnDropHandle(
-            tokio::spawn(webhook_trigger::server(
-                tcp_listener,
-                engine.clone(),
-                router,
-                db_pool.clone(),
-                Now,
-                fn_registry.clone(),
-                http_server.max_inflight_requests.into(),
-            ))
+            tokio::spawn(
+                webhook_trigger::server(
+                    tcp_listener,
+                    engine.clone(),
+                    router,
+                    db_pool.clone(),
+                    Now,
+                    fn_registry.clone(),
+                    http_server.max_inflight_requests.into(),
+                )
+                .instrument(http_server_span),
+            )
             .abort_handle(),
         );
         abort_handles.push(server);

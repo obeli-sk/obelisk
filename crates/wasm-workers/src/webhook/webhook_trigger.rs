@@ -316,11 +316,11 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                         )
                         .await;
                     if let Err(err) = res {
-                        error!("Error serving connection: {err:?}");
+                        info!("Error serving connection: {err:?}");
                     }
                     drop(task_limiter_guard);
                 }
-            });
+                }.instrument(Span::current()));
         } else {
             let _ = http1::Builder::new()
                 .serve_connection(
