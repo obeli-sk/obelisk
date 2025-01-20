@@ -1,5 +1,5 @@
 use crate::wasm_tools::{ComponentExportsType, ExIm};
-use anyhow::bail;
+use anyhow::{bail, Context};
 use concepts::{FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT};
 use hashbrown::HashMap;
 use id_arena::Arena;
@@ -230,8 +230,8 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
             };
 
         for (ifc_fqn, fns) in ifc_to_fns {
-            let (_, original_ifc) =
-                find_interface(&ifc_fqn, &resolve, &resolve.interfaces).expect("TODO");
+            let (_, original_ifc) = find_interface(&ifc_fqn, &resolve, &resolve.interfaces)
+                .with_context(|| format!("cannot find interface {ifc_fqn}"))?;
             let mut types = original_ifc.types.clone();
             types.insert("execution-id".to_string(), type_id_execution_id);
             types.insert("join-set-id".to_string(), type_id_join_set_id);
@@ -247,7 +247,10 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
                 package: Some(ext_pkg_id),
             };
             for fn_name in fns {
-                let original_fn = original_ifc.functions.get(fn_name.deref()).expect("TODO");
+                let original_fn = original_ifc
+                    .functions
+                    .get(fn_name.deref())
+                    .with_context(|| format!("cannot find function {ifc_fqn}.{fn_name}"))?;
                 // -submit: func(join-set-id: borrow<join-set-id>, <params>) -> execution-id;
                 {
                     let fn_name = format!("{fn_name}-submit");

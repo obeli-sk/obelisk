@@ -161,7 +161,7 @@ fn status_to_string(status: &grpc_client::execution_status::Status) -> Html {
             html! { "Blocked by join set"}
         }
         grpc_client::execution_status::Status::Finished(Finished { result_kind, .. }) => {
-            match ResultKind::try_from(*result_kind).expect("TODO") {
+            match ResultKind::try_from(*result_kind).expect("ResultKind must be convertible from i32") {
                 ResultKind::Ok => html! {"Finished OK"},
                 ResultKind::Timeout => {
                     html! {"Finished with Timeout"}

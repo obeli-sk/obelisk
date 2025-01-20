@@ -62,7 +62,7 @@ impl From<FunctionFqn> for grpc_client::FunctionName {
 impl From<grpc_client::FunctionName> for FunctionFqn {
     fn from(value: grpc_client::FunctionName) -> Self {
         Self {
-            ifc_fqn: IfcFqn::from_str(&value.interface_name).expect("TODO"),
+            ifc_fqn: IfcFqn::from_str(&value.interface_name).expect("ffqn must be parseable"),
             function_name: value.function_name,
         }
     }
