@@ -23,28 +23,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - id: git-info
-        run: |
-          git fetch --tags
-          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
-      - name: Install Nix
-        uses: cachix/install-nix-action@v30
+
+      - uses: nixbuild/nix-quick-install-action@v29
         with:
-          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          nix_conf: |
+            extra-substituters = https://cache.garnix.io
+            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g
+
+      - name: Restore and cache Nix store
+        uses: nix-community/cache-nix-action@v5
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+
       - name: Populate the nix store
         run: nix develop --command echo
+
       - name: Build tests
         run: nix develop --command cargo nextest run --workspace --all-features --no-run
+
       - name: Populate the codegen cache
         run: nix develop --command cargo nextest run --workspace --all-features --profile ci-test-populate-codegen-cache populate_codegen_cache --test-threads 1
         env:
           CI: true
+
       - name: cargo test
         env:
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
           CI: true
         run: nix develop --command cargo nextest run --workspace --all-features  --profile ${{ github.job }} --test-threads 1
+
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
@@ -57,28 +65,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - id: git-info
-        run: |
-          git fetch --tags
-          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
-      - name: Install Nix
-        uses: cachix/install-nix-action@v30
+
+      - uses: nixbuild/nix-quick-install-action@v29
         with:
-          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          nix_conf: |
+            extra-substituters = https://cache.garnix.io
+            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g
+
+      - name: Restore and cache Nix store
+        uses: nix-community/cache-nix-action@v5
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+
       - name: Populate the nix store
         run: nix develop --command echo
+
       - name: Build tests
         env:
           RUSTFLAGS: "--cfg madsim"
           MADSIM_ALLOW_SYSTEM_THREAD: "1"
         run: nix develop --command cargo nextest run --workspace --all-features --no-run
+
       - name: Populate the codegen cache
         run: nix develop --command cargo nextest run --workspace --all-features --profile ci-test-populate-codegen-cache populate_codegen_cache --test-threads 1
         env:
           RUSTFLAGS: "--cfg madsim"
           MADSIM_ALLOW_SYSTEM_THREAD: "1"
           CI: true
+
       - name: cargo test
         env:
           RUSTFLAGS: "--cfg madsim"
@@ -86,6 +101,7 @@ jobs:
           MADSIM_ALLOW_SYSTEM_THREAD: "1"
           CI: true
         run: nix develop --command cargo nextest run --workspace --all-features --profile ${{ github.job }} --test-threads 1
+
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()

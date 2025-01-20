@@ -27,32 +27,45 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@v30
+      - uses: nixbuild/nix-quick-install-action@v29
         with:
-          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          nix_conf: |
+            extra-substituters = https://cache.garnix.io
+            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g
+
+      - name: Restore and cache Nix store
+        uses: nix-community/cache-nix-action@v5
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+
       - name: Populate the nix store
         run: nix develop --command echo
-      - name: Download obelisk
+
+      - name: Download obelisk # TODO: Consider using nix run github:obeli-sk/obelisk
         run: |
           nix develop --command cargo binstall obelisk --install-path . -y
           echo $(pwd) >> $GITHUB_PATH
+
       - name: Log in to Docker Hub
         run: |
           echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
         env:
           DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
           DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+
       - name: Push test components
         run: |
           which obelisk
           nix develop --command ./scripts/push-test-components.sh $TAG
         env:
           TAG: ${{ github.event.inputs.tag }}
+
       - name: Configure git before push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Push obelisk-oci.toml
         run: |
           git add obelisk.toml

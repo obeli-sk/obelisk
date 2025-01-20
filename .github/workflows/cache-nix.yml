@@ -1,0 +1,35 @@
+name: Cache Nix Store
+on:
+  push:
+    paths:
+      - "flake.lock" # Trigger only when flake.lock changes
+  pull_request:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  cache-nix-store:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nixbuild/nix-quick-install-action@v29
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          nix_conf: |
+            extra-substituters = https://cache.garnix.io
+            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g
+
+      - run: nix show-config --json | jq
+
+      - name: Restore and cache Nix store
+        uses: nix-community/cache-nix-action@v5
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+
+      - name: Populate the nix store
+        if: steps.nix-cache.outputs.cache-hit != 'true'
+        run: nix develop --command echo
