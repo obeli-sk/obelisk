@@ -230,13 +230,26 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
             };
 
         for (ifc_fqn, fns) in ifc_to_fns {
-            let (_, original_ifc) = find_interface(&ifc_fqn, &resolve, &resolve.interfaces)
-                .with_context(|| format!("cannot find interface {ifc_fqn}"))?;
-            let mut types = original_ifc.types.clone();
+            let (original_ifc_id, original_ifc) =
+                find_interface(&ifc_fqn, &resolve, &resolve.interfaces)
+                    .with_context(|| format!("cannot find interface {ifc_fqn}"))?;
+            let mut types = IndexMap::new();
             types.insert("execution-id".to_string(), type_id_execution_id);
             types.insert("join-set-id".to_string(), type_id_join_set_id);
             types.insert("schedule-at".to_string(), type_id_schedule_at);
             types.insert("execution-error".to_string(), type_id_execution_error);
+
+            for (original_type_name, original_type_id) in &original_ifc.types {
+                // Create a reference to the type.
+                let reference_type_def = resolve.types.alloc(TypeDef {
+                    name: None,
+                    kind: TypeDefKind::Type(Type::Id(*original_type_id)),
+                    owner: TypeOwner::Interface(original_ifc_id),
+                    docs: wit_parser::Docs::default(),
+                    stability: wit_parser::Stability::default(),
+                });
+                types.insert(original_type_name.clone(), reference_type_def);
+            }
 
             let mut ext_ifc = Interface {
                 name: Some(ifc_fqn.ifc_name().to_string()),

@@ -409,16 +409,7 @@ package testing:http-obelisk-ext {
     use obelisk:types/execution.{execution-id, join-set-id};
     use obelisk:types/time.{schedule-at};
     use obelisk:types/execution.{execution-error};
-
-    record response {
-      body: list<u8>,
-      status-code: u16,
-    }
-
-    record stargazers {
-      logins: string,
-      cursor: string,
-    }
+    use testing:http/http-get.{response, stargazers};
 
     get-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
