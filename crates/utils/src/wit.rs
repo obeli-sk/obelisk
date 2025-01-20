@@ -1,11 +1,10 @@
-use std::{ops::Deref, path::PathBuf};
-
 use crate::wasm_tools::{ComponentExportsType, ExIm};
 use anyhow::bail;
 use concepts::{FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT};
 use hashbrown::HashMap;
 use id_arena::Arena;
 use indexmap::IndexMap;
+use std::{ops::Deref, path::PathBuf};
 use tracing::{error, warn};
 use wit_component::{DecodedWasm, WitPrinter};
 use wit_parser::{
@@ -481,4 +480,44 @@ fn from_pkg_fqn_to_wit_package_name(pkg_fqn: PkgFqn) -> Result<PackageName, semv
             .transpose()
             .inspect_err(|err| error!("Cannot convert version {:?} - {err:?}", pkg_fqn.version))?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::wasm_tools::tests::engine;
+    use crate::wasm_tools::{ComponentExportsType, WasmComponent};
+    use rstest::rstest;
+    use std::path::PathBuf;
+
+    #[rstest]
+    #[test]
+    #[case(
+        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+        ComponentExportsType::Enrichable
+    )]
+    #[case(
+        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+        ComponentExportsType::Enrichable
+    )]
+    #[case(
+        test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
+        ComponentExportsType::Plain
+    )]
+    #[case(
+        test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+        ComponentExportsType::Enrichable
+    )]
+    fn wit_should_contain_extensions(
+        #[case] wasm_path: &'static str,
+        #[case] exports_type: ComponentExportsType,
+    ) {
+        test_utils::set_up();
+
+        let engine = engine();
+        let component = WasmComponent::new(wasm_path, &engine, Some(exports_type)).unwrap();
+        let wasm_path = PathBuf::from(wasm_path);
+        let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
+        let wit = component.wit().unwrap();
+        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit")}, {insta::assert_snapshot!(wit)});
+    }
 }

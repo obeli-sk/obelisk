@@ -41,6 +41,7 @@ serde.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-webhook-builder.workspace = true
+test-programs-http-get-activity-builder.workspace = true
 test-programs-http-get-workflow-builder.workspace = true
 test-utils.workspace = true
 tokio.workspace = true

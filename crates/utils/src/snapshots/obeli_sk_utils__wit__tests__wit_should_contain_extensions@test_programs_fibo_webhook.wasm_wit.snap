@@ -1,5 +1,5 @@
 ---
-source: crates/utils/src/wasm_tools.rs
+source: crates/utils/src/wit.rs
 expression: wit
 ---
 package root:component;
