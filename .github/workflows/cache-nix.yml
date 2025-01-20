@@ -19,9 +19,6 @@ jobs:
       - uses: nixbuild/nix-quick-install-action@v29
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            extra-substituters = https://cache.garnix.io
-            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g
 
       - run: nix show-config --json | jq
 
