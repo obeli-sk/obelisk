@@ -7,6 +7,7 @@
 ## Server configuration
 api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
 webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
+# Note: listening on all interfaces using [::]:port is not advised, as there is no auth yet.
 
 # sqlite.file = "${DATA_DIR}/obelisk.sqlite" # Path to sqlite database. Supports path prefixes.
 
