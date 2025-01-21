@@ -3,6 +3,47 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/obeli-sk/obelisk/compare/v0.12.0...v0.13.0)
+
+### ⛰️ Features
+
+- *(cli)* Use `--imports` instead of `-v` to show imports - ([c803ed4](https://github.com/obeli-sk/obelisk/commit/c803ed426eb82b19e11c8bda9f2acf2bb930b0aa))
+- Propagate the execution error into exit code - ([4992b1a](https://github.com/obeli-sk/obelisk/commit/4992b1afb7b775543fb311db7846a861c5e61abd))
+- Add `install.sh` - ([fccf514](https://github.com/obeli-sk/obelisk/commit/fccf5144e3295b5e75427d6ba3f33d94be86f439))
+
+### 🐛 Bug Fixes
+
+- *(cli)* Handle `None` in `ResultDetail::ResultDetail::return_value` - ([c482775](https://github.com/obeli-sk/obelisk/commit/c4827753b59f10a18eae5a375dae1e863796d0c0))
+- Avoid equality footgun of `indexmap` in `TypeWrapper`, `WastVal` - ([9285c74](https://github.com/obeli-sk/obelisk/commit/9285c743bf072682e851db0733407243f649fe80))
+- Do not drop `EpochTicker` prematurely - ([3c9d639](https://github.com/obeli-sk/obelisk/commit/3c9d63924794cc743ade782719a80604eea135f5))
+- Remove all `serde_json::Value` occurrences from `sqlite_dao` - ([1b33e6d](https://github.com/obeli-sk/obelisk/commit/1b33e6d80a2b4858b32f1dd71f151b036e38fe3e))
+- Print references of types in original interface in -ext interface's WIT - ([5c73859](https://github.com/obeli-sk/obelisk/commit/5c73859d28fa764bd47b6cc1ca3b2fdfad5a1105))
+- Sort nested packages when printing WIT - ([0f19019](https://github.com/obeli-sk/obelisk/commit/0f190194b88310e1cf5d3e35e583c9a14059b280))
+- Improve error when input contains more tuple elements than expected - ([ba2e52c](https://github.com/obeli-sk/obelisk/commit/ba2e52c558e2bd11976e1b2a4af30b6db8ac1240))
+
+### 📚 Documentation
+
+- Add a security note to `obelisk.toml` - ([1479b25](https://github.com/obeli-sk/obelisk/commit/1479b25496fb12d692666e1c8e5b4cc542714651))
+- Improve readme - ([23365f4](https://github.com/obeli-sk/obelisk/commit/23365f46317e50ef49d2161d1f391d960c0b73a7))
+- Simplify the readme - ([73750d7](https://github.com/obeli-sk/obelisk/commit/73750d7e1ae065008de7311e84ff7725f1915fcf))
+- Remove note about madsim - ([d7e04ab](https://github.com/obeli-sk/obelisk/commit/d7e04ab40dda02ad8d216aa74c8fa80710289e5b))
+- Expand stargazers section - ([332da14](https://github.com/obeli-sk/obelisk/commit/332da1486f39addd13fbb45ac98231daac6a3b82))
+- Update the readme - ([d4d58fa](https://github.com/obeli-sk/obelisk/commit/d4d58fa5c26d6d186850ba821397aa8ba9e6f4a1))
+
+### 🧪 Testing
+
+- Verify `obelisk-local.toml` - ([20c7ae4](https://github.com/obeli-sk/obelisk/commit/20c7ae451859b704851d174ebc9d4022505aa4fe))
+- Move wit tests to `wit` module - ([e84d85c](https://github.com/obeli-sk/obelisk/commit/e84d85c2861fbdb9047a44a270878371ccf3ef97))
+- Stop using `serde_json::Value` in `wast_val_ser` tests - ([a74ca39](https://github.com/obeli-sk/obelisk/commit/a74ca3998fb1f3e046c5ee10f34d8259ee1c39f2))
+
+### 🚜 Refactor
+
+- *(wit)* [**breaking**] Rename `host-activities` to `workflow-support` - ([b51a389](https://github.com/obeli-sk/obelisk/commit/b51a389825dfe895e86c7510232c1c2e2d17b927))
+- Move obelisk WIT files to the `wit` folder - ([7dbdaac](https://github.com/obeli-sk/obelisk/commit/7dbdaac43141c7f2380f7a2bba76d1e62ca508f7))
+- Instrument the webhook server task - ([7e1df07](https://github.com/obeli-sk/obelisk/commit/7e1df0730b1cec7bfe0554f8b4fe8cbc895c7f9d))
+- Improve error messages - ([d73866b](https://github.com/obeli-sk/obelisk/commit/d73866ba3c780793d923229876e235c6811aefd7))
+
+
 ## [0.12.0](https://github.com/obeli-sk/obelisk/compare/v0.11.0...v0.12.0) - 2025-01-15
 
 ### Added
