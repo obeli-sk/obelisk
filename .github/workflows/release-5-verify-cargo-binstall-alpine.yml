@@ -1,5 +1,3 @@
-# FIXME: TAG
-
 name: release-5-verify-cargo-binstall-alpine
 
 on:
