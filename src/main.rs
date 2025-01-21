@@ -68,26 +68,34 @@ async fn main() -> Result<(), anyhow::Error> {
             match command {
                 ClientSubcommand::Component(args::Component::Inspect {
                     path,
-                    verbosity,
+                    imports,
                     extensions,
                     convert_core_module,
                 }) => {
                     command::component::inspect(
                         path,
-                        FunctionMetadataVerbosity::from(verbosity),
+                        if imports {
+                            FunctionMetadataVerbosity::ExportsAndImports
+                        } else {
+                            FunctionMetadataVerbosity::ExportsOnly
+                        },
                         extensions,
                         convert_core_module,
                     )
                     .await
                 }
                 ClientSubcommand::Component(args::Component::List {
-                    verbosity,
+                    imports,
                     extensions,
                 }) => {
                     let client = get_fn_repository_client(api_url).await?;
                     command::component::list_components(
                         client,
-                        FunctionMetadataVerbosity::from(verbosity),
+                        if imports {
+                            FunctionMetadataVerbosity::ExportsAndImports
+                        } else {
+                            FunctionMetadataVerbosity::ExportsOnly
+                        },
                         extensions,
                     )
                     .await
@@ -167,13 +175,4 @@ async fn get_fn_repository_client(url: String) -> Result<FunctionRepositoryClien
 enum FunctionMetadataVerbosity {
     ExportsOnly,
     ExportsAndImports,
-}
-
-impl From<u8> for FunctionMetadataVerbosity {
-    fn from(verbosity: u8) -> Self {
-        match verbosity {
-            0 => FunctionMetadataVerbosity::ExportsOnly,
-            _ => FunctionMetadataVerbosity::ExportsAndImports,
-        }
-    }
 }

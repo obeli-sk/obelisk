@@ -86,8 +86,8 @@ pub(crate) enum Component {
     Inspect {
         #[arg(required(true))]
         path: PathBuf,
-        #[arg(short, long, action = clap::ArgAction::Count)]
-        verbosity: u8,
+        #[arg(short, long)]
+        imports: bool,
         #[arg(short, long)]
         extensions: bool,
         #[arg(short, long)]
@@ -95,8 +95,8 @@ pub(crate) enum Component {
     },
     /// List components.
     List {
-        #[arg(short, long, action = clap::ArgAction::Count)]
-        verbosity: u8,
+        #[arg(short, long)]
+        imports: bool,
         #[arg(short, long)]
         extensions: bool,
     },
