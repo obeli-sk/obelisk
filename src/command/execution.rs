@@ -3,6 +3,7 @@ use super::grpc::execution_status::BlockedByJoinSet;
 use crate::command::grpc::execution_status::Finished;
 use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use crate::ExecutionRepositoryClient;
+use anyhow::anyhow;
 use anyhow::Context;
 use chrono::DateTime;
 use concepts::{ExecutionId, FunctionFqn};
@@ -43,7 +44,10 @@ pub(crate) async fn submit(
     Ok(())
 }
 
-fn print_status(response: grpc::GetStatusResponse, old_pending_status: &mut String) {
+fn print_status(
+    response: grpc::GetStatusResponse,
+    old_pending_status: &mut String,
+) -> anyhow::Result<()> {
     use grpc::get_status_response::Message;
     match response.message.expect("message expected") {
         Message::Summary(summary) => {
@@ -60,9 +64,10 @@ fn print_status(response: grpc::GetStatusResponse, old_pending_status: &mut Stri
             print_pending_status(pending_status, old_pending_status);
         }
         Message::FinishedStatus(finished_sattus) => {
-            print_finished_status(finished_sattus, old_pending_status);
+            print_finished_status(finished_sattus)?;
         }
     }
+    Ok(())
 }
 
 fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_status: &mut String) {
@@ -77,7 +82,8 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_statu
             "BlockedByJoinSetClosing".to_string()
         }
         Status::Finished(Finished { .. }) => {
-            return; // Skip, the final result will be sent in the next message, since we set `send_finished_status` to true.
+            // Skip, the final result will be sent in the next message, since we set `send_finished_status` to true.
+            return;
         }
     };
     if *old_pending_status != new_pending_status {
@@ -86,79 +92,80 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_statu
     }
 }
 
-fn print_finished_status(finished_status: grpc::FinishedStatus, old_pending_status: &mut String) {
-    let new_pending_status = {
-        let created_at = DateTime::from(
-            finished_status
-                .created_at
-                .expect("`created_at` is sent by the server"),
-        );
-        let finished_at = DateTime::from(
-            finished_status
-                .finished_at
-                .expect("`finished_at` is sent by the server"),
-        );
+fn print_finished_status(finished_status: grpc::FinishedStatus) -> anyhow::Result<()> {
+    let created_at = DateTime::from(
+        finished_status
+            .created_at
+            .expect("`created_at` is sent by the server"),
+    );
+    let finished_at = DateTime::from(
+        finished_status
+            .finished_at
+            .expect("`finished_at` is sent by the server"),
+    );
 
-        let new_pending_status = match finished_status
-            .result_detail
-            .expect("`result_detail` is sent by the server")
-            .value
-        {
-            Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
-                return_value: Some(return_value),
-            })) => {
-                let return_value = String::from_utf8_lossy(&return_value.value);
-                format!("OK: {return_value}")
-            }
-            Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
-                return_value: None,
-            })) => "OK: (no return value)".to_string(),
-            Some(grpc::result_detail::Value::FallibleError(
-                grpc::result_detail::FallibleError {
-                    return_value: Some(return_value),
-                },
-            )) => {
-                let return_value = String::from_utf8_lossy(&return_value.value);
-                format!("Err: {return_value}")
-            }
-            Some(grpc::result_detail::Value::Timeout(_)) => "Timeout".to_string(),
-            Some(grpc::result_detail::Value::ExecutionFailure(
-                grpc::result_detail::ExecutionFailure {
-                    reason,
-                    detail: Some(detail),
-                },
-            )) => {
-                format!("Execution failure: {reason}\ndetail: {detail}")
-            }
-            Some(grpc::result_detail::Value::ExecutionFailure(
-                grpc::result_detail::ExecutionFailure {
-                    reason,
-                    detail: None,
-                },
-            )) => {
-                format!("Execution failure: {reason}")
-            }
-            Some(grpc::result_detail::Value::NondeterminismDetected(
-                grpc::result_detail::NondeterminismDetected { reason },
-            )) => {
-                format!("Nondeterminism detected: {reason}")
-            }
-            other => unreachable!("unexpected variant {other:?}"),
-        };
-        let mut new_pending_status = format!("Execution finished: {new_pending_status}");
-
-        new_pending_status.push_str(&format!(
-            "\nExecution took {since_created:?}.",
-            since_created = (finished_at - created_at)
-                .to_std()
-                .expect("must be non-negative")
-        ));
-        new_pending_status
+    let (new_pending_status, res) = match finished_status
+        .result_detail
+        .expect("`result_detail` is sent by the server")
+        .value
+    {
+        Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
+            return_value: Some(return_value),
+        })) => {
+            let return_value = String::from_utf8_lossy(&return_value.value);
+            (format!("OK: {return_value}"), Ok(()))
+        }
+        Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok { return_value: None })) => {
+            ("OK: (no return value)".to_string(), Ok(()))
+        }
+        Some(grpc::result_detail::Value::FallibleError(grpc::result_detail::FallibleError {
+            return_value: Some(return_value),
+        })) => {
+            let return_value = String::from_utf8_lossy(&return_value.value);
+            (
+                format!("Err: {return_value}"),
+                Err(anyhow!("fallible error")),
+            )
+        }
+        Some(grpc::result_detail::Value::Timeout(_)) => {
+            ("Timeout".to_string(), Err(anyhow!("timeout")))
+        }
+        Some(grpc::result_detail::Value::ExecutionFailure(
+            grpc::result_detail::ExecutionFailure {
+                reason,
+                detail: Some(detail),
+            },
+        )) => (
+            format!("Execution failure: {reason}\ndetail: {detail}"),
+            Err(anyhow!("failure")),
+        ),
+        Some(grpc::result_detail::Value::ExecutionFailure(
+            grpc::result_detail::ExecutionFailure {
+                reason,
+                detail: None,
+            },
+        )) => (
+            format!("Execution failure: {reason}"),
+            Err(anyhow!("failure")),
+        ),
+        Some(grpc::result_detail::Value::NondeterminismDetected(
+            grpc::result_detail::NondeterminismDetected { reason },
+        )) => (
+            format!("Nondeterminism detected: {reason}"),
+            Err(anyhow!("nondeterminism")),
+        ),
+        other => unreachable!("unexpected variant {other:?}"),
     };
-    if *old_pending_status != new_pending_status {
-        println!("{new_pending_status}");
-        let _ = std::mem::replace(old_pending_status, new_pending_status);
-    }
+
+    println!("Execution finished: {new_pending_status}");
+    println!(
+        "\nExecution took {since_created:?}.",
+        since_created = (finished_at - created_at)
+            .to_std()
+            .expect("must be non-negative")
+    );
+
+    res
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -196,7 +203,7 @@ pub(crate) async fn get(
         .into_inner();
     let mut pending_status_cache = String::new();
     while let Some(status) = stream.message().await? {
-        print_status(status, &mut pending_status_cache);
+        print_status(status, &mut pending_status_cache)?;
     }
     Ok(())
 }
