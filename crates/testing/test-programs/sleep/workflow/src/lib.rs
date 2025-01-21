@@ -2,7 +2,7 @@ use exports::testing::sleep_workflow::workflow::Guest;
 use obelisk::types::execution::ExecutionId;
 use obelisk::types::time::Duration as DurationEnum;
 use obelisk::types::time::ScheduleAt;
-use obelisk::workflow::host_activities::{self, new_join_set};
+use obelisk::workflow::workflow_support::{self, new_join_set};
 use testing::sleep::sleep as sleep_activity;
 use testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
 use testing::sleep_workflow_obelisk_ext::workflow as workflow_ext;
@@ -14,7 +14,7 @@ export!(Component);
 
 impl Guest for Component {
     fn sleep_host_activity(duration: DurationEnum) {
-        host_activities::sleep(duration);
+        workflow_support::sleep(duration);
     }
 
     fn sleep_activity(duration: DurationEnum) {

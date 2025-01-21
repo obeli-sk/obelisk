@@ -97,7 +97,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
     ) -> Result<WorkflowWorkerLinked<C, DB, P>, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
 
-        // Link obelisk: host-activities and log
+        // Link obelisk: workflow-support and log
         WorkflowCtx::add_to_linker(&mut linker)?;
 
         // Mock imported functions

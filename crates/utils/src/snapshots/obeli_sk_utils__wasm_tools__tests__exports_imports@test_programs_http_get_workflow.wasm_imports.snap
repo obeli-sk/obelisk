@@ -3,9 +3,9 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:workflow/host-activities.new-join-set": {
+  "obelisk:workflow/workflow-support.new-join-set": {
     "ffqn": {
-      "ifc_fqn": "obelisk:workflow/host-activities",
+      "ifc_fqn": "obelisk:workflow/workflow-support",
       "function_name": "new-join-set"
     },
     "parameter_types": [],

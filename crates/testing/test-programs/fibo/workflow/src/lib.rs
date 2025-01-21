@@ -1,5 +1,5 @@
 use exports::testing::fibo_workflow::{workflow::Guest, workflow_nesting::Guest as GuestNesting};
-use obelisk::workflow::host_activities::new_join_set;
+use obelisk::workflow::workflow_support::new_join_set;
 use testing::{
     fibo::fibo::fibo as fibo_activity,
     fibo_obelisk_ext::fibo::{fibo_await_next, fibo_submit},

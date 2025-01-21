@@ -1683,15 +1683,15 @@ impl ComponentConfigRegistry {
                     || import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
             }
             ComponentType::Workflow => {
-                // host activities + log
+                // workflow-support + log
                 import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
-                    || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/host-activities"
+                    || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/workflow-support"
             }
             ComponentType::WebhookEndpoint => {
                 // wasi + host activities + log
                 import.ffqn.ifc_fqn.namespace() == "wasi"
                     || import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
-                    || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/host-activities"
+                    || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/workflow-support"
             }
         }
     }

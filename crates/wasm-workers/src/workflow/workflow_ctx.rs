@@ -216,7 +216,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
-        host_exports::obelisk::workflow::host_activities::add_to_linker(
+        host_exports::obelisk::workflow::workflow_support::add_to_linker(
             linker,
             |state: &mut Self| state,
         )
@@ -354,7 +354,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 }
 
-mod host_activities {
+mod workflow_support {
     use wasmtime::component::Resource;
 
     use super::{
@@ -383,7 +383,7 @@ mod host_activities {
 
     #[async_trait]
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
-        host_exports::obelisk::workflow::host_activities::Host for WorkflowCtx<C, DB, P>
+        host_exports::obelisk::workflow::workflow_support::Host for WorkflowCtx<C, DB, P>
     {
         // TODO: Apply jitter, should be configured on the component level
         async fn sleep(&mut self, duration: DurationEnum) -> wasmtime::Result<()> {

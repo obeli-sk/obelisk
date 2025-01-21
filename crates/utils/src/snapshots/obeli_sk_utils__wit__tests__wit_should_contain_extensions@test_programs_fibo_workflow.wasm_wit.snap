@@ -6,7 +6,7 @@ package root:component;
 
 world root {
   import obelisk:types/execution;
-  import obelisk:workflow/host-activities;
+  import obelisk:workflow/workflow-support;
   import testing:fibo-obelisk-ext/fibo;
   import testing:fibo-workflow-obelisk-ext/workflow;
   import testing:fibo-workflow/workflow-nesting;
@@ -57,7 +57,7 @@ package obelisk:types {
 
 
 package obelisk:workflow {
-  interface host-activities {
+  interface workflow-support {
     use obelisk:types/execution.{join-set-id};
 
     new-join-set: func() -> join-set-id;

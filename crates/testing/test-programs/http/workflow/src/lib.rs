@@ -1,5 +1,5 @@
 use exports::testing::http_workflow::workflow::Guest;
-use obelisk::workflow::host_activities::new_join_set;
+use obelisk::workflow::workflow_support::new_join_set;
 use testing::{
     http::http_get,
     http_obelisk_ext::http_get::{get_successful_await_next, get_successful_submit},

@@ -1,7 +1,6 @@
 package obelisk:workflow;
 
-// FIXME: Rename to workflow-support
-interface host-activities {
+interface workflow-support {
     use obelisk:types/time.{duration};
     use obelisk:types/execution.{join-set-id};
 
