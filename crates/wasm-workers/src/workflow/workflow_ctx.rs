@@ -4,7 +4,6 @@ use crate::component_logger::{log_activities, ComponentLogger};
 use crate::host_exports::{SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT};
 use crate::{host_exports, WasmFileError};
 use assert_matches::assert_matches;
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
@@ -358,15 +357,14 @@ mod workflow_support {
     use wasmtime::component::Resource;
 
     use super::{
-        assert_matches, async_trait, ClockFn, DbConnection, DbPool, Duration, EventCall, JoinSetId,
-        WorkflowCtx, WorkflowFunctionError,
+        assert_matches, ClockFn, DbConnection, DbPool, Duration, EventCall, JoinSetId, WorkflowCtx,
+        WorkflowFunctionError,
     };
     use crate::{
         host_exports::{self, DurationEnum},
         workflow::event_history::{ChildReturnValue, HostActionResp},
     };
 
-    #[async_trait]
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
         host_exports::obelisk::types::execution::HostJoinSetId for WorkflowCtx<C, DB, P>
     {
@@ -381,7 +379,6 @@ mod workflow_support {
     {
     }
 
-    #[async_trait]
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
         host_exports::obelisk::workflow::workflow_support::Host for WorkflowCtx<C, DB, P>
     {
