@@ -63,7 +63,7 @@ jobs:
           docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
           mkdir tmp
           cd tmp
-          wget -q https://github.com/obeli-sk/obelisk/releases/download/${{ matrix.tarfile }}
+          wget -q https://github.com/obeli-sk/obelisk/releases/download/${TAG}/${{ matrix.tarfile }}
           tar xvfz ${{ matrix.tarfile }}
           cp ../obelisk.toml obelisk.toml
           IMAGE_BASE="getobelisk/obelisk"
