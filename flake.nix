@@ -82,15 +82,12 @@
               [
                 (pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                 cargo-binstall
-                cargo-dist
                 cargo-edit
                 cargo-expand
                 cargo-generate
                 cargo-insta
                 cargo-nextest
                 cargo-semver-checks
-                dive
-                git-cliff
                 litecli
                 lldb
                 nixd
