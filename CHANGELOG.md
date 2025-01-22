@@ -3,6 +3,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/obeli-sk/obelisk/compare/v0.13.0...v0.13.1)
+
+### ⛰️ Features
+
+- *(sqlite)* Add `t_metadata` table - ([69788e8](https://github.com/obeli-sk/obelisk/commit/69788e84f71993e3fca6c8a922732850f42cabc0))
+
+### 🚜 Refactor
+
+- *(sqlite)* Extract `init_thread`,`connection_rpc` - ([691ff8e](https://github.com/obeli-sk/obelisk/commit/691ff8e0815e1e2a35df4510cf0aa6d9ddd590ec))
+
+
 ## [0.13.0](https://github.com/obeli-sk/obelisk/compare/v0.12.0...v0.13.0)
 
 ### ⛰️ Features
