@@ -52,27 +52,6 @@
               inherit buildType;
               doCheck = false;
             };
-          makeDocker = pkgs: obelisk: binSh:
-            pkgs.dockerTools.buildImage {
-              name = "obelisk";
-              copyToRoot = pkgs.buildEnv {
-                name = "image-root";
-                paths = [ obelisk ] ++ (if binSh then [
-                  pkgs.dockerTools.usrBinEnv
-                  pkgs.dockerTools.binSh
-                  pkgs.dockerTools.caCertificates
-                ] else [ ]);
-                pathsToLink = [ "/bin" ];
-              };
-              runAsRoot = ''
-                #!${pkgs.runtimeShell}
-                mkdir -p /data
-              '';
-              config = {
-                Entrypoint = [ "/bin/obelisk" ];
-                WorkingDir = "/data";
-              };
-            };
           pkgs = makePkgs null;
           pkgsMusl = makePkgs "x86_64-unknown-linux-musl";
         in
@@ -112,12 +91,6 @@
             obeliskGlibcGenericDev = makeObelisk pkgs true "dev";
             obeliskMusl = makeObelisk pkgsMusl false "release";
             obeliskMuslDev = makeObelisk pkgsMusl false "dev";
-            # Docker images
-            dockerGlibcNixDev = makeDocker pkgs obeliskGlibcNixDev true;
-            dockerMuslDev = makeDocker pkgs obeliskMuslDev true;
-            # `dockerGlibcGeneric*` will not run unless FROM ubuntu
-            dockerGlibcGeneric = makeDocker pkgs obeliskGlibcGeneric false;
-            dockerGlibcGenericDev = makeDocker pkgs obeliskGlibcGenericDev true;
             default = obeliskGlibcNix;
           };
         }
