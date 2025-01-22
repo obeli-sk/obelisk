@@ -19,7 +19,7 @@ use hdrhistogram::{Counter, Histogram};
 use rusqlite::{
     named_params,
     types::{FromSql, FromSqlError},
-    Connection, OpenFlags, OptionalExtension, ToSql, Transaction,
+    Connection, OpenFlags, OptionalExtension, Params, ToSql, Transaction,
 };
 use std::{
     cmp::max,
@@ -69,7 +69,15 @@ PRAGMA journal_size_limit = 67108864;
 const PRAGMA_JOURNAL_MODE: &str = "journal_mode";
 const PRAGMA_JOURNAL_MODE_WAL: &str = "wal";
 
-// TODO metadata table with current schema version, migrations
+const CREATE_TABLE_T_METADATA: &str = r"
+CREATE TABLE IF NOT EXISTS t_metadata (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    schema_version INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+";
+const T_METADATA_SINGLETON: u32 = 1;
+const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 1;
 
 /// Stores execution history. Append only.
 const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
@@ -471,58 +479,111 @@ impl SqlitePool {
                     Err(err) => {
                         error!("Cannot open the connection - {err:?}");
                         init_tx
-                            .send(Err(err))
+                            .send(Err(()))
                             .expect("sending init error must succeed");
                         return;
                     }
                 };
-                let init = |init_tx: oneshot::Sender<_>, pragma| {
-                    trace!("Executing `{pragma}`");
-                    if let Err(err) = conn.execute(pragma, []) {
-                        error!("Cannot run `{pragma}` - {err:?}");
+                fn init<P: Params>(
+                    conn: &Connection,
+                    init_tx: oneshot::Sender<Result<(), ()>>,
+                    sql: &str,
+                    params: P,
+                ) -> oneshot::Sender<Result<(), ()>> {
+                    trace!("Executing `{sql}`");
+                    let res = conn.execute(sql, params);
+                    if let Err(err) = res {
+                        error!("Cannot run `{sql}` - {err:?}");
                         init_tx
-                            .send(Err(err))
+                            .send(Err(()))
                             .expect("sending init error must succeed");
                         panic!("initialization error")
                     }
                     init_tx
-                };
+                }
                 if let Err(err) =
                     conn.pragma_update(None, PRAGMA_JOURNAL_MODE, PRAGMA_JOURNAL_MODE_WAL)
                 {
                     error!("Cannot set journal_mode - {err:?}");
                     init_tx
-                        .send(Err(err))
+                        .send(Err(()))
                         .expect("sending init error must succeed");
-                    return;
+                    panic!("initialization error");
                 }
-                let init_tx = init(init_tx, PRAGMA);
+                let init_tx = init(&conn, init_tx, PRAGMA, []);
+
+                // t_metadata
+                let init_tx = init(&conn, init_tx, CREATE_TABLE_T_METADATA, []);
+                // Insert row if not exists.
+                let init_tx = init(
+                    &conn,
+                    init_tx,
+                    &format!(
+                        "INSERT INTO t_metadata (id, schema_version, created_at) VALUES
+                            ({T_METADATA_SINGLETON}, {T_METADATA_EXPECTED_SCHEMA_VERSION}, ?) ON CONFLICT DO NOTHING"
+                    ),
+                    [Utc::now()],
+                );
+                // Fail on unexpected `schema_version`.
+                let actual_version = match conn.prepare("SELECT schema_version FROM t_metadata") {
+                    Ok(mut stmt) => stmt.query_row([], |row| row.get::<_, u32>("schema_version")),
+                    Err(err) => {
+                        error!("Cannot select schema version - {err:?}");
+                        init_tx
+                            .send(Err(()))
+                            .expect("sending init error must succeed");
+                        panic!("schema matching error")
+                    }
+                };
+                let actual_version = match actual_version {
+                    Ok(actual_version) => actual_version,
+                    Err(err) => {
+                        error!("Cannot read the schema version - {err:?}");
+                        init_tx
+                            .send(Err(()))
+                            .expect("sending init error must succeed");
+                        panic!()
+                    }
+                };
+                if actual_version != T_METADATA_EXPECTED_SCHEMA_VERSION {
+                    error!("Wrong schema version, expected {T_METADATA_EXPECTED_SCHEMA_VERSION}, got {actual_version}");
+                    init_tx
+                        .send(Err(()))
+                        .expect("sending init error must succeed");
+                    panic!("schema matching error")
+                }
 
                 // t_execution_log
-                let init_tx = init(init_tx, CREATE_TABLE_T_EXECUTION_LOG);
+                let init_tx = init(&conn, init_tx, CREATE_TABLE_T_EXECUTION_LOG, []);
                 let init_tx = init(
+                    &conn,
                     init_tx,
                     CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION,
+                    [],
                 );
                 let init_tx = init(
+                    &conn,
                     init_tx,
                     CREATE_INDEX_IDX_T_EXECUTION_ID_EXECUTION_ID_VARIANT,
+                    [],
                 );
                 // t_join_set_response
-                let init_tx = init(init_tx, CREATE_TABLE_T_JOIN_SET_RESPONSE);
+                let init_tx = init(&conn, init_tx, CREATE_TABLE_T_JOIN_SET_RESPONSE, []);
                 let init_tx = init(
+                    &conn,
                     init_tx,
                     CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID,
+                    [],
                 );
                 // t_state
-                let init_tx = init(init_tx, CREATE_TABLE_T_STATE);
-                let init_tx = init(init_tx, IDX_T_STATE_LOCK_PENDING);
-                let init_tx = init(init_tx, IDX_T_STATE_EXPIRED_TIMERS);
-                let init_tx = init(init_tx, IDX_T_STATE_EXECUTION_ID);
-                let init_tx = init(init_tx, IDX_T_STATE_FFQN);
-                let init_tx = init(init_tx, IDX_T_STATE_CREATED_AT);
+                let init_tx = init(&conn, init_tx, CREATE_TABLE_T_STATE, []);
+                let init_tx = init(&conn, init_tx, IDX_T_STATE_LOCK_PENDING, []);
+                let init_tx = init(&conn, init_tx, IDX_T_STATE_EXPIRED_TIMERS, []);
+                let init_tx = init(&conn, init_tx, IDX_T_STATE_EXECUTION_ID, []);
+                let init_tx = init(&conn, init_tx, IDX_T_STATE_FFQN, []);
+                let init_tx = init(&conn, init_tx, IDX_T_STATE_CREATED_AT, []);
                 // t_delay
-                let init_tx = init(init_tx, CREATE_TABLE_T_DELAY);
+                let init_tx = init(&conn, init_tx, CREATE_TABLE_T_DELAY, []);
                 init_tx.send(Ok(())).expect("sending init OK must succeed");
 
                 let mut vec: Vec<ThreadCommand> = Vec::with_capacity(config.queue_capacity);
