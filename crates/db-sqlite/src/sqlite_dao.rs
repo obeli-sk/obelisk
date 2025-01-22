@@ -463,229 +463,191 @@ pub struct SqliteConfig {
 }
 
 impl SqlitePool {
-    #[expect(clippy::items_after_statements)]
+    fn init_thread(path: &Path) -> Connection {
+        // No need to log errors - propagate error messages via panic.
+        // It is OK to panic here - spawned on blocking thread pool, panic will error the initialization.
+        fn execute<P: Params>(conn: &Connection, sql: &str, params: P) {
+            conn.execute(sql, params)
+                .unwrap_or_else(|err| panic!("cannot run `{sql}` - {err:?}"));
+        }
+
+        let conn = Connection::open_with_flags(path, OpenFlags::default())
+            .unwrap_or_else(|err| panic!("cannot open the connection - {err:?}"));
+
+        conn.pragma_update(None, PRAGMA_JOURNAL_MODE, PRAGMA_JOURNAL_MODE_WAL)
+            .unwrap_or_else(|err| panic!("cannot set journal_mode - {err:?}"));
+        execute(&conn, PRAGMA, []);
+
+        // t_metadata
+        execute(&conn, CREATE_TABLE_T_METADATA, []);
+        // Insert row if not exists.
+        execute(
+            &conn,
+            &format!(
+                "INSERT INTO t_metadata (id, schema_version, created_at) VALUES
+                    ({T_METADATA_SINGLETON}, {T_METADATA_EXPECTED_SCHEMA_VERSION}, ?) ON CONFLICT DO NOTHING"
+            ),
+            [Utc::now()],
+        );
+        // Fail on unexpected `schema_version`.
+        let actual_version = conn
+            .prepare("SELECT schema_version FROM t_metadata")
+            .unwrap_or_else(|err| panic!("cannot select schema version - {err:?}"))
+            .query_row([], |row| row.get::<_, u32>("schema_version"));
+
+        let actual_version = actual_version.unwrap_or_else(|err| {
+            panic!("Cannot read the schema version - {err:?}");
+        });
+        assert!(actual_version == T_METADATA_EXPECTED_SCHEMA_VERSION,
+            "wrong schema version, expected {T_METADATA_EXPECTED_SCHEMA_VERSION}, got {actual_version}");
+
+        // t_execution_log
+        execute(&conn, CREATE_TABLE_T_EXECUTION_LOG, []);
+        execute(
+            &conn,
+            CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION,
+            [],
+        );
+        execute(
+            &conn,
+            CREATE_INDEX_IDX_T_EXECUTION_ID_EXECUTION_ID_VARIANT,
+            [],
+        );
+        // t_join_set_response
+        execute(&conn, CREATE_TABLE_T_JOIN_SET_RESPONSE, []);
+        execute(
+            &conn,
+            CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID,
+            [],
+        );
+        // t_state
+        execute(&conn, CREATE_TABLE_T_STATE, []);
+        execute(&conn, IDX_T_STATE_LOCK_PENDING, []);
+        execute(&conn, IDX_T_STATE_EXPIRED_TIMERS, []);
+        execute(&conn, IDX_T_STATE_EXECUTION_ID, []);
+        execute(&conn, IDX_T_STATE_FFQN, []);
+        execute(&conn, IDX_T_STATE_CREATED_AT, []);
+        // t_delay
+        execute(&conn, CREATE_TABLE_T_DELAY, []);
+        conn
+    }
+
+    fn connection_rpc(
+        mut conn: Connection,
+        shutdown: &Arc<AtomicBool>,
+        mut command_rx: mpsc::Receiver<ThreadCommand>,
+        config: SqliteConfig,
+    ) {
+        const METRIC_DUMPING_TRESHOLD: usize = 0; // 0 to disable histogram dumping
+        let mut vec: Vec<ThreadCommand> = Vec::with_capacity(config.queue_capacity);
+        // measure how long it takes to receive the `ThreadCommand`. 1us-1s
+        let mut send_hist = Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap();
+        let mut func_histograms = hashbrown::HashMap::new();
+        let mut metric_dumping_counter = 0;
+        let print_histogram = |name, histogram: &Histogram<u32>, trailing_coma| {
+            print!(
+                "\"{name}\": {mean}, \"{name}_len\": {len}, \"{name}_meanlen\": {meanlen} {coma}",
+                mean = histogram.mean(),
+                len = histogram.len(),
+                meanlen = histogram.mean() * histogram.len().as_f64(),
+                coma = if trailing_coma { "," } else { "" }
+            );
+        };
+        loop {
+            vec.clear();
+            metric_dumping_counter += 1;
+            vec.push(
+                command_rx
+                    .blocking_recv()
+                    .expect("command channel must be open"),
+            );
+            while let Ok(more) = command_rx.try_recv() {
+                vec.push(more);
+            }
+            if shutdown.load(Ordering::SeqCst) {
+                // Ignore everything except the shutdown command
+                for item in &mut vec {
+                    if matches!(item, ThreadCommand::Shutdown(_)) {
+                        let item =
+                            std::mem::replace(item, ThreadCommand::Shutdown(oneshot::channel().0));
+                        let callback =
+                            assert_matches!(item, ThreadCommand::Shutdown(callback) => callback);
+                        callback.send(()).expect("shutdown callback must be open");
+                        return;
+                    }
+                }
+            }
+
+            let mut execute = |expected: CommandPriority| {
+                let mut processed = 0;
+                for item in &mut vec {
+                    if matches!(item, ThreadCommand::Func { priority, .. } if *priority == expected )
+                    {
+                        let item =
+                            std::mem::replace(item, ThreadCommand::Shutdown(oneshot::channel().0));
+                        let (func, sent_at, name) = assert_matches!(item, ThreadCommand::Func{func, sent_at, name, ..} => (func, sent_at, name));
+                        let sent_at = sent_at.elapsed();
+                        let started_at = Instant::now();
+                        func(&mut conn);
+                        let started_at = started_at.elapsed();
+                        processed += 1;
+                        // update hdr metrics
+                        send_hist
+                            .record(u64::from(sent_at.subsec_micros()))
+                            .unwrap();
+                        func_histograms
+                            .entry(name)
+                            .or_insert_with(|| {
+                                Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap()
+                            })
+                            .record(u64::from(started_at.subsec_micros()))
+                            .unwrap();
+                    }
+                }
+                processed
+            };
+            let processed = execute(CommandPriority::High) + execute(CommandPriority::Medium);
+            if processed < config.low_prio_threshold {
+                execute(CommandPriority::Low);
+            }
+
+            if metric_dumping_counter == METRIC_DUMPING_TRESHOLD {
+                print!("{{");
+                metric_dumping_counter = 0;
+                func_histograms.iter_mut().for_each(|(name, h)| {
+                    print_histogram(*name, h, true);
+                    h.clear();
+                });
+                print_histogram("send", &send_hist, false);
+                send_hist.clear();
+                println!("}}");
+            }
+        } // Loop until shutdown is set to true.
+    }
+
     #[instrument(level = Level::DEBUG, skip_all, name = "sqlite_new")]
     pub async fn new<P: AsRef<Path>>(path: P, config: SqliteConfig) -> Result<Self, DbError> {
         let path = path.as_ref().to_owned();
-        let (init_tx, init_rx) = oneshot::channel();
         let shutdown = Arc::new(AtomicBool::new(false));
-        let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(config.queue_capacity);
+        let (command_tx, command_rx) = tokio::sync::mpsc::channel(config.queue_capacity);
         {
+            let init_task = {
+                let path = path.clone();
+                #[cfg_attr(madsim, allow(deprecated))]
+                tokio::task::spawn_blocking(move || Self::init_thread(&path)).await
+            };
+            let conn = match init_task {
+                Ok(conn) => conn,
+                Err(err) => {
+                    error!("Initialization error - {err:?}");
+                    return Err(DbError::Specific(SpecificError::GenericError(
+                        StrVariant::Static("initialization error"),
+                    )));
+                }
+            };
             let shutdown = shutdown.clone();
-            let path = path.clone();
-            std::thread::spawn(move || {
-                let mut conn = match Connection::open_with_flags(path, OpenFlags::default()) {
-                    Ok(conn) => conn,
-                    Err(err) => {
-                        error!("Cannot open the connection - {err:?}");
-                        init_tx
-                            .send(Err(()))
-                            .expect("sending init error must succeed");
-                        return;
-                    }
-                };
-                fn init<P: Params>(
-                    conn: &Connection,
-                    init_tx: oneshot::Sender<Result<(), ()>>,
-                    sql: &str,
-                    params: P,
-                ) -> oneshot::Sender<Result<(), ()>> {
-                    trace!("Executing `{sql}`");
-                    let res = conn.execute(sql, params);
-                    if let Err(err) = res {
-                        error!("Cannot run `{sql}` - {err:?}");
-                        init_tx
-                            .send(Err(()))
-                            .expect("sending init error must succeed");
-                        panic!("initialization error")
-                    }
-                    init_tx
-                }
-                if let Err(err) =
-                    conn.pragma_update(None, PRAGMA_JOURNAL_MODE, PRAGMA_JOURNAL_MODE_WAL)
-                {
-                    error!("Cannot set journal_mode - {err:?}");
-                    init_tx
-                        .send(Err(()))
-                        .expect("sending init error must succeed");
-                    panic!("initialization error");
-                }
-                let init_tx = init(&conn, init_tx, PRAGMA, []);
-
-                // t_metadata
-                let init_tx = init(&conn, init_tx, CREATE_TABLE_T_METADATA, []);
-                // Insert row if not exists.
-                let init_tx = init(
-                    &conn,
-                    init_tx,
-                    &format!(
-                        "INSERT INTO t_metadata (id, schema_version, created_at) VALUES
-                            ({T_METADATA_SINGLETON}, {T_METADATA_EXPECTED_SCHEMA_VERSION}, ?) ON CONFLICT DO NOTHING"
-                    ),
-                    [Utc::now()],
-                );
-                // Fail on unexpected `schema_version`.
-                let actual_version = match conn.prepare("SELECT schema_version FROM t_metadata") {
-                    Ok(mut stmt) => stmt.query_row([], |row| row.get::<_, u32>("schema_version")),
-                    Err(err) => {
-                        error!("Cannot select schema version - {err:?}");
-                        init_tx
-                            .send(Err(()))
-                            .expect("sending init error must succeed");
-                        panic!("schema matching error")
-                    }
-                };
-                let actual_version = match actual_version {
-                    Ok(actual_version) => actual_version,
-                    Err(err) => {
-                        error!("Cannot read the schema version - {err:?}");
-                        init_tx
-                            .send(Err(()))
-                            .expect("sending init error must succeed");
-                        panic!()
-                    }
-                };
-                if actual_version != T_METADATA_EXPECTED_SCHEMA_VERSION {
-                    error!("Wrong schema version, expected {T_METADATA_EXPECTED_SCHEMA_VERSION}, got {actual_version}");
-                    init_tx
-                        .send(Err(()))
-                        .expect("sending init error must succeed");
-                    panic!("schema matching error")
-                }
-
-                // t_execution_log
-                let init_tx = init(&conn, init_tx, CREATE_TABLE_T_EXECUTION_LOG, []);
-                let init_tx = init(
-                    &conn,
-                    init_tx,
-                    CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION,
-                    [],
-                );
-                let init_tx = init(
-                    &conn,
-                    init_tx,
-                    CREATE_INDEX_IDX_T_EXECUTION_ID_EXECUTION_ID_VARIANT,
-                    [],
-                );
-                // t_join_set_response
-                let init_tx = init(&conn, init_tx, CREATE_TABLE_T_JOIN_SET_RESPONSE, []);
-                let init_tx = init(
-                    &conn,
-                    init_tx,
-                    CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID,
-                    [],
-                );
-                // t_state
-                let init_tx = init(&conn, init_tx, CREATE_TABLE_T_STATE, []);
-                let init_tx = init(&conn, init_tx, IDX_T_STATE_LOCK_PENDING, []);
-                let init_tx = init(&conn, init_tx, IDX_T_STATE_EXPIRED_TIMERS, []);
-                let init_tx = init(&conn, init_tx, IDX_T_STATE_EXECUTION_ID, []);
-                let init_tx = init(&conn, init_tx, IDX_T_STATE_FFQN, []);
-                let init_tx = init(&conn, init_tx, IDX_T_STATE_CREATED_AT, []);
-                // t_delay
-                let init_tx = init(&conn, init_tx, CREATE_TABLE_T_DELAY, []);
-                init_tx.send(Ok(())).expect("sending init OK must succeed");
-
-                let mut vec: Vec<ThreadCommand> = Vec::with_capacity(config.queue_capacity);
-                // measure how long it takes to receive the `ThreadCommand`. 1us-1s
-                let mut send_hist = Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap();
-                let mut func_histograms = hashbrown::HashMap::new();
-                let mut metric_dumping_counter = 0;
-                let print_histogram = |name, histogram: &Histogram<u32>, trailing_coma| {
-                    print!(
-                        "\"{name}\": {mean}, \"{name}_len\": {len}, \"{name}_meanlen\": {meanlen} {coma}",
-                        mean = histogram.mean(),
-                        len = histogram.len(),
-                        meanlen = histogram.mean() * histogram.len().as_f64(),
-                        coma = if trailing_coma { "," } else { "" }
-                    );
-                };
-                const METRIC_DUMPING_TRESHOLD: usize = 0; // 0 to disable histogram dumping
-                loop {
-                    vec.clear();
-                    metric_dumping_counter += 1;
-                    vec.push(
-                        command_rx
-                            .blocking_recv()
-                            .expect("command channel must be open"),
-                    );
-                    while let Ok(more) = command_rx.try_recv() {
-                        vec.push(more);
-                    }
-                    if shutdown.load(Ordering::SeqCst) {
-                        // Ignore everything except the shutdown command
-                        for item in &mut vec {
-                            if matches!(item, ThreadCommand::Shutdown(_)) {
-                                let item = std::mem::replace(
-                                    item,
-                                    ThreadCommand::Shutdown(oneshot::channel().0),
-                                );
-                                let callback = assert_matches!(item, ThreadCommand::Shutdown(callback) => callback);
-                                callback.send(()).expect("shutdown callback must be open");
-                                return;
-                            }
-                        }
-                    }
-
-                    let mut execute = |expected: CommandPriority| {
-                        let mut processed = 0;
-                        for item in &mut vec {
-                            if matches!(item, ThreadCommand::Func { priority, .. } if *priority == expected )
-                            {
-                                let item = std::mem::replace(
-                                    item,
-                                    ThreadCommand::Shutdown(oneshot::channel().0),
-                                );
-                                let (func, sent_at, name) = assert_matches!(item, ThreadCommand::Func{func, sent_at, name, ..} => (func, sent_at, name));
-                                let sent_at = sent_at.elapsed();
-                                let started_at = Instant::now();
-                                func(&mut conn);
-                                let started_at = started_at.elapsed();
-                                processed += 1;
-                                // update hdr metrics
-                                send_hist
-                                    .record(u64::from(sent_at.subsec_micros()))
-                                    .unwrap();
-                                func_histograms
-                                    .entry(name)
-                                    .or_insert_with(|| {
-                                        Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap()
-                                    })
-                                    .record(u64::from(started_at.subsec_micros()))
-                                    .unwrap();
-                            }
-                        }
-                        processed
-                    };
-                    let processed =
-                        execute(CommandPriority::High) + execute(CommandPriority::Medium);
-                    if processed < config.low_prio_threshold {
-                        execute(CommandPriority::Low);
-                    }
-
-                    if metric_dumping_counter == METRIC_DUMPING_TRESHOLD {
-                        print!("{{");
-                        metric_dumping_counter = 0;
-                        func_histograms.iter_mut().for_each(|(name, h)| {
-                            print_histogram(*name, h, true);
-                            h.clear();
-                        });
-                        print_histogram("send", &send_hist, false);
-                        send_hist.clear();
-                        println!("}}");
-                    }
-                } // /loop
-            })
+            std::thread::spawn(move || Self::connection_rpc(conn, &shutdown, command_rx, config));
         };
-        match init_rx.await {
-            Ok(Ok(())) => {}
-            other => {
-                error!("Initialization error - {other:?}");
-                return Err(DbError::Specific(SpecificError::GenericError(
-                    StrVariant::Static("initialization error"),
-                )));
-            }
-        }
         info!("Sqlite database location: {path:?}");
         Ok(Self {
             shutdown,
