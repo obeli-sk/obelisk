@@ -58,6 +58,7 @@ use concepts::PackageIfcFns;
 use concepts::ParameterType;
 use concepts::Params;
 use concepts::ReturnType;
+use concepts::StrVariant;
 use db_sqlite::sqlite_dao::SqliteConfig;
 use db_sqlite::sqlite_dao::SqlitePool;
 use directories::ProjectDirs;
@@ -1121,26 +1122,21 @@ async fn start_webhooks(
                 )
             })?;
         let server_addr = tcp_listener.local_addr()?;
-        let http_server_span = info_span!("http_server", http_server = http_server.name);
-        http_server_span.in_scope(|| {
-            info!(
-                "HTTP server `{}` is listening on http://{server_addr}",
-                http_server.name,
-            );
-        });
+        info!(
+            "HTTP server `{}` is listening on http://{server_addr}",
+            http_server.name,
+        );
         let server = AbortOnDropHandle(
-            tokio::spawn(
-                webhook_trigger::server(
-                    tcp_listener,
-                    engine.clone(),
-                    router,
-                    db_pool.clone(),
-                    Now,
-                    fn_registry.clone(),
-                    http_server.max_inflight_requests.into(),
-                )
-                .instrument(http_server_span),
-            )
+            tokio::spawn(webhook_trigger::server(
+                StrVariant::from(http_server.name),
+                tcp_listener,
+                engine.clone(),
+                router,
+                db_pool.clone(),
+                Now,
+                fn_registry.clone(),
+                http_server.max_inflight_requests.into(),
+            ))
             .abort_handle(),
         );
         abort_handles.push(server);

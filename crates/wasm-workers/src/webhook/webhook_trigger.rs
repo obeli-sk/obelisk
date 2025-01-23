@@ -27,7 +27,7 @@ use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, instrument, trace, warn, Instrument, Level, Span};
+use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Level, Span};
 use utils::time::ClockFn;
 use utils::wasm_tools::{ExIm, WasmComponent, HTTP_HANDLER_FFQN};
 use val_json::wast_val::WastVal;
@@ -265,7 +265,9 @@ impl<T> Default for MethodAwareRouter<T> {
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    http_server: StrVariant,
     listener: TcpListener,
     engine: Arc<Engine>,
     router: MethodAwareRouter<WebhookEndpointInstance<C, DB, P>>,
@@ -295,6 +297,8 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                 let clock_fn = clock_fn.clone();
                 let db_pool = db_pool.clone();
                 let fn_registry = fn_registry.clone();
+                let http_server = http_server.clone();
+                let connection_span = info_span!("webhook_endpoint", %http_server);
                 async move {
                     let res = http1::Builder::new()
                         .serve_connection(
@@ -312,11 +316,11 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                                     phantom_data: PhantomData,
                                 }
                                 .handle_request(req)
-                            }),
+                                }.instrument(connection_span.clone())),
                         )
                         .await;
                     if let Err(err) = res {
-                        info!("Error serving connection: {err:?}");
+                        info!(%http_server, "Error serving connection: {err:?}");
                     }
                     drop(task_limiter_guard);
                 }
@@ -881,7 +885,7 @@ pub(crate) mod tests {
             storage::{DbConnection, DbPool},
             ExecutionId,
         };
-        use concepts::{ComponentId, ComponentType, SupportedFunctionReturnValue};
+        use concepts::{ComponentId, ComponentType, StrVariant, SupportedFunctionReturnValue};
         use db_tests::{Database, DbGuard, DbPoolEnum};
         use executor::executor::ExecutorTaskHandle;
         use std::net::SocketAddr;
@@ -972,6 +976,7 @@ pub(crate) mod tests {
 
                 let server = AbortOnDrop(
                     tokio::spawn(webhook_trigger::server(
+                        StrVariant::Static("test"),
                         tcp_listener,
                         engine,
                         router,
