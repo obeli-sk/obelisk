@@ -50,6 +50,15 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 ### **Work Stealing Executor**
 - Concurrency limits and customizable retry handling.
 
+## Obelisk in Action
+![webui animation](assets/images/stargazers-webui.gif "Web UI")
+
+The [Stargazers](https://github.com/obeli-sk/demo-stargazers) app features:
+- A webhook listening to GitHub star events.
+- Activities for interacting with Turso DB, ChatGPT, and GitHub.
+- A workflow orchestrating the activities.
+
+
 ## Installation
 ### Supported Platforms
 - Linux x64 (musl, glibc v2.35+, NixOS)
@@ -81,11 +90,6 @@ nix run github:obeli-sk/obelisk/latest
 ```
 
 ## Getting Started
-### Demo: Stargazers
-The [demo-stargazers](https://github.com/obeli-sk/demo-stargazers) app features:
-- A webhook listening to GitHub star events.
-- Activities for interacting with Turso DB, ChatGPT, and GitHub.
-- A workflow orchestrating the activities.
 
 ### Create Components from a Template
 See [obelisk-templates](https://github.com/obeli-sk/obelisk-templates/).
