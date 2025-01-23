@@ -14,4 +14,4 @@ backend = "http://127.0.0.1:8080/api"
 
 [tools]
 wasm_opt = "version_120"
-wasm_bindgen = "0.2.95"
+wasm_bindgen = "0.2.100"

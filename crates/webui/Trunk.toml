@@ -5,4 +5,4 @@ cargo_profile = "release_trunk"
 
 [tools]
 wasm_opt = "version_120"
-wasm_bindgen = "0.2.95"
+wasm_bindgen = "0.2.100"
