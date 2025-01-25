@@ -14,7 +14,6 @@ use concepts::{
     },
     ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
 };
-use derivative::Derivative;
 use hdrhistogram::{Counter, Histogram};
 use rusqlite::{
     named_params,
@@ -392,11 +391,10 @@ enum CommandPriority {
     Low,
 }
 
-#[derive(derivative::Derivative)]
-#[derivative(Debug)]
+#[derive(derive_more::Debug)]
 enum ThreadCommand {
     Func {
-        #[derivative(Debug = "ignore")]
+        #[debug(skip)]
         func: Box<dyn FnOnce(&mut Connection) + Send>,
         priority: CommandPriority,
         sent_at: Instant,
@@ -453,13 +451,18 @@ impl DbPool<SqlitePool> for SqlitePool {
     }
 }
 
-#[derive(Debug, Derivative, Clone, Copy)]
-#[derivative(Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct SqliteConfig {
-    #[derivative(Default(value = "100"))]
     pub queue_capacity: usize,
-    #[derivative(Default(value = "100"))]
     pub low_prio_threshold: usize,
+}
+impl Default for SqliteConfig {
+    fn default() -> Self {
+        Self {
+            queue_capacity: 100,
+            low_prio_threshold: 100,
+        }
+    }
 }
 
 impl SqlitePool {

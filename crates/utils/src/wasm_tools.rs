@@ -41,13 +41,12 @@ impl From<ComponentType> for ComponentExportsType {
     }
 }
 
-#[derive(derivative::Derivative)]
-#[derivative(Debug)]
+#[derive(derive_more::Debug)]
 pub struct WasmComponent {
-    #[derivative(Debug = "ignore")]
+    #[debug(skip)]
     pub wasmtime_component: Component,
     pub exim: ExIm,
-    #[derivative(Debug = "ignore")]
+    #[debug(skip)]
     pub decoded: DecodedWasm,
     exports_type: ComponentExportsType,
 }

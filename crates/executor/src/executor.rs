@@ -11,7 +11,6 @@ use concepts::{
     FinishedExecutionError,
 };
 use concepts::{ComponentId, FinishedExecutionResult, FunctionMetadata, StrVariant};
-use derivative::Derivative;
 use std::marker::PhantomData;
 use std::{
     sync::{
@@ -43,10 +42,9 @@ pub struct ExecTask<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     ffqns: Arc<[FunctionFqn]>,
 }
 
-#[derive(Derivative, Default)]
-#[derivative(Debug)]
+#[derive(derive_more::Debug, Default)]
 pub struct ExecutionProgress {
-    #[derivative(Debug = "ignore")]
+    #[debug(skip)]
     #[allow(dead_code)]
     executions: Vec<(ExecutionId, JoinHandle<()>)>,
 }

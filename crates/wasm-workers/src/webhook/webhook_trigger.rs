@@ -198,11 +198,10 @@ impl WebhookEndpointCompiled {
     }
 }
 
-#[derive(Derivative)]
+#[derive(Derivative, derive_more::Debug)]
 #[derivative(Clone(bound = ""))] // Clone only because of potentially registering 2 paths via `route-recognizer`
-#[derivative(Debug)]
 pub struct WebhookEndpointInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
-    #[derivative(Debug = "ignore")]
+    #[debug(skip)]
     proxy_pre: Arc<ProxyPre<WebhookEndpointCtx<C, DB, P>>>,
     pub component_id: ComponentId,
     forward_stdout: Option<StdOutput>,

@@ -17,7 +17,6 @@ arbitrary.workspace = true
 assert_matches.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
-derivative.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
 hdrhistogram.workspace = true

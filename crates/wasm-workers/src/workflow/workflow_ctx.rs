@@ -458,7 +458,6 @@ pub(crate) mod tests {
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
-    use derivative::Derivative;
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
@@ -492,20 +491,20 @@ pub(crate) mod tests {
         Call { ffqn: FunctionFqn },
     }
 
-    #[derive(Clone, Derivative)]
-    #[derivative(Debug)]
+    #[derive(Clone, derive_more::Debug)]
     struct WorkflowWorkerMock<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
-        ffqn: FunctionFqn,
+        #[expect(dead_code)]
+        ffqn: FunctionFqn, // For debugging
         steps: Vec<WorkflowStep>,
-        #[derivative(Debug = "ignore")]
+        #[debug(skip)]
         clock_fn: C,
-        #[derivative(Debug = "ignore")]
+        #[debug(skip)]
         db_pool: P,
-        #[derivative(Debug = "ignore")]
+        #[debug(skip)]
         fn_registry: Arc<dyn FunctionRegistry>,
-        #[derivative(Debug = "ignore")]
+        #[debug(skip)]
         phantom_data: PhantomData<DB>,
-        #[derivative(Debug = "ignore")]
+        #[debug(skip)]
         exports: [FunctionMetadata; 1],
     }
 

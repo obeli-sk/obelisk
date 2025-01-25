@@ -19,7 +19,6 @@ assert_matches.workspace = true
 async-channel.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
-derivative.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
 indexmap.workspace = true
