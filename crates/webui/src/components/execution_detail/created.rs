@@ -7,7 +7,6 @@ use crate::grpc::grpc_client;
 use crate::grpc::grpc_client::ExecutionId;
 use chrono::{DateTime, Utc};
 use grpc_client::execution_event::Created;
-use indexmap::IndexMap;
 use log::debug;
 use serde_json::Value;
 use yew::prelude::*;
@@ -40,17 +39,17 @@ impl CreatedEventProps {
         let scheduled_by = scheduled_by.clone();
         let params = match app_state.submittable_ffqns_to_details.get(&ffqn) {
             Some((function_detail, _)) if function_detail.params.len() == params.len() => {
-                let param_tuples =
-                    function_detail.params.iter().zip(params.iter()).map(
-                        |(fn_param, param_value)| (fn_param.name.clone(), param_value.clone()),
-                    );
-                IndexMap::from_iter(param_tuples)
-            }
-            _ => IndexMap::from_iter(
-                params
+                function_detail
+                    .params
                     .iter()
-                    .map(|param_value| ("(unknown)".to_string(), param_value.clone())),
-            ),
+                    .zip(params.iter())
+                    .map(|(fn_param, param_value)| (fn_param.name.clone(), param_value.clone()))
+                    .collect()
+            }
+            _ => params
+                .iter()
+                .map(|param_value| ("(unknown)".to_string(), param_value.clone()))
+                .collect(),
         };
         ProcessedProps {
             params,
@@ -62,7 +61,7 @@ impl CreatedEventProps {
 }
 
 struct ProcessedProps {
-    params: IndexMap<String, Value>,
+    params: Vec<(String, Value)>,
     scheduled_at: DateTime<Utc>,
     ffqn: FunctionFqn,
     scheduled_by: Option<ExecutionId>,
