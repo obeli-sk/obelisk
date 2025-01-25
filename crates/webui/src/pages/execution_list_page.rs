@@ -200,10 +200,11 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                 <p><Link<Route> to={Route::ExecutionList}>{"Remove filter"}</Link<Route>></p>
             }
             <ComponentTree config={ComponentTreeConfig::ExecutionListFiltering} />
-            <table>
+            <table class="execution_list">
                 <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
                 { rows }
             </table>
+            <div class="pagination">
             <Link<Route> to={Route::ExecutionList}>
                 {"<< Latest"}
             </Link<Route>>
@@ -224,6 +225,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                     {"< Next"}
                 </Link<Route>>
             }
+            </div>
         </>}
     } else {
         html! {

@@ -42,16 +42,21 @@ h3 .highlight {
     color: #8be9fd;
 }
 
-/* h3 .pink {
-    color: #ff79c6;
-} */
+table.execution_list {
+    width: 100%;
+}
+
+div.pagination a {
+    padding: 10px;
+}
 
 .label {
     background-color: #6272a4;
     color: #ffffff;
-    padding: 2px 6px;
+    padding: 4px 6px 4px 6px;
     border-radius: 4px;
     font-size: 14px;
+    margin: 10px;
 }
 
 .code-block {
