@@ -59,7 +59,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
       - name: Push webui-version.txt
         run: |
-          git add webui-version.txt
+          git add assets/webui-version.txt
           git commit -m "chore: Bump webui to $TAG"
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
           git push origin main

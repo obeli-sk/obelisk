@@ -109,7 +109,7 @@ use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 
 const EPOCH_MILLIS: u64 = 10;
-const WEBUI_OCI_REFERENCE: &str = include_str!("../../webui-version.txt");
+const WEBUI_OCI_REFERENCE: &str = include_str!("../../assets/webui-version.txt");
 
 #[derive(Debug)]
 struct GrpcServer<DB: DbConnection, P: DbPool<DB>> {
