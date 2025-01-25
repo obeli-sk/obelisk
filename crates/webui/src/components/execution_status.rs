@@ -22,6 +22,17 @@ pub struct ExecutionStatusProps {
     #[prop_or_default]
     pub print_finished_status: bool,
 }
+
+fn status_as_message(
+    status: Option<&grpc_client::execution_status::Status>,
+) -> Option<get_status_response::Message> {
+    status.map(|s| {
+        get_status_response::Message::CurrentStatus(GExecutionStatus {
+            status: Some(s.clone()),
+        })
+    })
+}
+
 #[function_component(ExecutionStatus)]
 pub fn execution_status(
     ExecutionStatusProps {
@@ -37,76 +48,86 @@ pub fn execution_status(
     );
     // If the status was passed in props, store it inside `status_state`.
     let status_state = use_state(move || {
-        status.clone().map(|s| {
-            get_status_response::Message::CurrentStatus(GExecutionStatus { status: Some(s) })
-        })
+        debug!("ExecutionStatus {execution_id} use_state status:{status:?}");
+        status_as_message(status.as_ref())
     });
     {
         // Subscribe to GetStatus if needed.
         let status_state = status_state.clone();
         let execution_id = execution_id.clone();
         let connectin_id = random_string();
-        use_effect_with(execution_id.clone(), move |_| {
-            let (cancel_tx, cancel_rx) = if !is_finished || print_finished_status {
-                let (tx, rx) = futures::channel::oneshot::channel();
-                (Some(tx), Some(rx))
-            } else {
-                (None, None)
-            };
+        use_effect_with(
+            (execution_id.clone(), status.clone()),
+            move |(execution_id, status)| {
+                let execution_id = execution_id.clone();
+                status_state.set(status_as_message(status.as_ref())); // use_state is not called when parameters change.
+                let (cancel_tx, cancel_rx) = if !is_finished || print_finished_status {
+                    let (tx, rx) = futures::channel::oneshot::channel();
+                    (Some(tx), Some(rx))
+                } else {
+                    (None, None)
+                };
 
-            if let Some(cancel_rx) = cancel_rx {
-                debug!(
+                if let Some(cancel_rx) = cancel_rx {
+                    debug!(
                     "[{connectin_id}] <ExecutionStatus /> Subscribing to status of {execution_id}"
                 );
-                wasm_bindgen_futures::spawn_local({
-                    let connectin_id = connectin_id.clone();
-                    async move {
-                        let base_url = "/api";
-                        let mut execution_client =
+                    wasm_bindgen_futures::spawn_local({
+                        let status_state = status_state.clone();
+                        let connectin_id = connectin_id.clone();
+                        let execution_id = execution_id.clone();
+                        async move {
+                            let base_url = "/api";
+                            let mut execution_client =
                         grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
                             tonic_web_wasm_client::Client::new(base_url.to_string()),
                         );
-                        let mut response_stream = execution_client
-                            .get_status(grpc_client::GetStatusRequest {
-                                execution_id: Some(execution_id),
-                                follow: true,
-                                send_finished_status: print_finished_status,
-                            })
-                            .await
-                            .unwrap()
-                            .into_inner();
-                        let mut cancel_rx = cancel_rx.fuse();
-                        loop {
-                            let next_message = futures::select! {
-                                next_message = response_stream.message().fuse() => next_message,
-                                _ =  &mut cancel_rx => break,
-                            };
-                            match next_message {
-                                Ok(Some(status)) => {
-                                    let status = status
-                                        .message
-                                        .expect("GetStatusResponse.message is sent by the server");
-                                    trace!("[{connectin_id}] <ExecutionStatus /> Got {status:?}");
-                                    status_state.set(Some(status));
-                                }
-                                Ok(None) => break,
-                                Err(err) => {
-                                    error!("[{connectin_id}] Error wile listening to status updates: {err:?}");
-                                    break;
+                            let mut response_stream = execution_client
+                                .get_status(grpc_client::GetStatusRequest {
+                                    execution_id: Some(execution_id),
+                                    follow: true,
+                                    send_finished_status: print_finished_status,
+                                })
+                                .await
+                                .unwrap()
+                                .into_inner();
+                            let mut cancel_rx = cancel_rx.fuse();
+                            loop {
+                                let next_message = futures::select! {
+                                    next_message = response_stream.message().fuse() => next_message,
+                                    _ =  &mut cancel_rx => break,
+                                };
+                                match next_message {
+                                    Ok(Some(status)) => {
+                                        let status = status.message.expect(
+                                            "GetStatusResponse.message is sent by the server",
+                                        );
+                                        trace!(
+                                            "[{connectin_id}] <ExecutionStatus /> Got {status:?}"
+                                        );
+                                        status_state.set(Some(status));
+                                    }
+                                    Ok(None) => break,
+                                    Err(err) => {
+                                        error!("[{connectin_id}] Error wile listening to status updates: {err:?}");
+                                        break;
+                                    }
                                 }
                             }
+                            debug!("[{connectin_id}] <ExecutionStatus /> Ended subscription");
                         }
-                        debug!("[{connectin_id}] <ExecutionStatus /> Ended subscription");
-                    }
-                })
-            }
-            move || {
-                if let Some(cancel_tx) = cancel_tx {
-                    let res = cancel_tx.send(());
-                    debug!("[{connectin_id}] <ExecutionStatus /> cacelling: {res:?}");
+                    })
                 }
-            }
-        });
+                move || {
+                    debug!("Cleaning up {execution_id}");
+                    if let Some(cancel_tx) = cancel_tx {
+                        let res = cancel_tx.send(());
+                        debug!("[{connectin_id}] <ExecutionStatus /> cacelling: {res:?}");
+                    }
+                    status_state.set(None);
+                }
+            },
+        );
     }
     // Render `status_state`.
     match status_state.deref() {
