@@ -699,19 +699,19 @@ pub(crate) mod tests {
             .unwrap();
 
         let mut processed = Vec::new();
-        while let Some((join_set_id, req)) = wait_for_pending_state_fn(
+        while let Some((join_set_id, join_set_req)) = wait_for_pending_state_fn(
             &db_connection,
             &execution_id,
             |execution_log| match &execution_log.pending_state {
                 PendingState::BlockedByJoinSet { join_set_id, .. } => Some(Some((
                     *join_set_id,
                     execution_log
-                        .join_set_requests(*join_set_id)
+                        .find_join_set_request(*join_set_id)
                         .cloned()
-                        .collect::<Vec<_>>(),
-                ))),
-                PendingState::Finished { .. } => Some(None),
-                _ => None,
+                        .expect("must be found"),
+                ))), // Execution is currently blocked, unblock it in the loop body.
+                PendingState::Finished { .. } => Some(None), // Exit the while loop.
+                _ => None,                                   // Ignore other states.
             },
             None,
         )
@@ -721,21 +721,21 @@ pub(crate) mod tests {
             if processed.contains(&join_set_id) {
                 continue;
             }
-            assert_eq!(1, req.len());
-            match req.first().unwrap() {
+
+            match join_set_req {
                 JoinSetRequest::DelayRequest {
                     delay_id,
                     expires_at,
                 } => {
                     info!("Moving time to {expires_at} - {delay_id}");
                     assert!(delay_request_count > 0);
-                    sim_clock.move_time_to(*expires_at).await;
+                    sim_clock.move_time_to(expires_at).await;
                     delay_request_count -= 1;
                 }
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
                     info!("Executing child {child_execution_id}");
                     assert!(child_execution_count > 0);
-                    let child_log = db_connection.get(child_execution_id).await.unwrap();
+                    let child_log = db_connection.get(&child_execution_id).await.unwrap();
                     assert_eq!(
                         Some((execution_id.clone(), join_set_id)),
                         child_log.parent()
@@ -767,7 +767,7 @@ pub(crate) mod tests {
                     };
                     assert_eq!(child_exec_tick.wait_for_tasks().await.unwrap(), 1);
                     child_execution_count -= 1;
-                    let child_log = db_connection.get(child_execution_id).await.unwrap();
+                    let child_log = db_connection.get(&child_execution_id).await.unwrap();
                     let child_res = child_log.into_finished_result().unwrap();
                     assert_matches!(child_res, Ok(SupportedFunctionReturnValue::None));
                 }

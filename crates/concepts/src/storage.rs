@@ -123,13 +123,12 @@ impl ExecutionLog {
         })
     }
 
-    pub fn join_set_requests(
-        &self,
-        join_set_id: JoinSetId,
-    ) -> impl Iterator<Item = &JoinSetRequest> {
+    #[cfg(feature = "test")]
+    #[must_use]
+    pub fn find_join_set_request(&self, join_set_id: JoinSetId) -> Option<&JoinSetRequest> {
         self.events
             .iter()
-            .filter_map(move |event| match &event.event {
+            .find_map(move |event| match &event.event {
                 ExecutionEventInner::HistoryEvent {
                     event:
                         HistoryEvent::JoinSetRequest {
