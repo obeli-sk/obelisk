@@ -540,31 +540,25 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     }
 
     async fn close_join_sets(workflow_ctx: &mut WorkflowCtx<C, DB, P>) -> Result<(), WorkerResult> {
-        loop {
-            match workflow_ctx.close_opened_join_set().await {
-                Ok(None) => return Ok(()),
-                Err(apply_err) => {
-                    match apply_err {
-                        ApplyError::NondeterminismDetected(reason) => {
-                            return Err(WorkerResult::Err(WorkerError::FatalError(
-                                FatalError::NondeterminismDetected(reason),
-                                workflow_ctx.version.clone(),
-                            )));
-                        }
-                        ApplyError::ChildExecutionError(_) => {
-                            unreachable!("direct call to child execution does not happen on closing join sets")
-                        }
-                        ApplyError::InterruptRequested => {
-                            return Err(WorkerResult::DbUpdatedByWorker);
-                        }
-                        ApplyError::DbError(db_error) => {
-                            return Err(WorkerResult::Err(WorkerError::DbError(db_error)));
-                        }
-                    };
+        workflow_ctx
+            .close_opened_join_sets()
+            .await
+            .map_err(|apply_err| match apply_err {
+                ApplyError::NondeterminismDetected(reason) => {
+                    WorkerResult::Err(WorkerError::FatalError(
+                        FatalError::NondeterminismDetected(reason),
+                        workflow_ctx.version.clone(),
+                    ))
                 }
-                Ok(Some(())) => {}
-            }
-        }
+                ApplyError::ChildExecutionError(_) => {
+                    // Only `JoinNextKind::DirectCall` can cause this error.
+                    unreachable!(
+                        "direct call to child execution does not happen on closing join sets"
+                    )
+                }
+                ApplyError::InterruptRequested => WorkerResult::DbUpdatedByWorker,
+                ApplyError::DbError(db_error) => WorkerResult::Err(WorkerError::DbError(db_error)),
+            })
     }
 }
 

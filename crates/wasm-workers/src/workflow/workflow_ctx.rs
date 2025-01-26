@@ -236,9 +236,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         Ok(())
     }
 
-    pub(crate) async fn close_opened_join_set(&mut self) -> Result<Option<()>, ApplyError> {
+    pub(crate) async fn close_opened_join_sets(&mut self) -> Result<(), ApplyError> {
         self.event_history
-            .close_opened_join_set(
+            .close_opened_join_sets(
                 &self.db_pool.connection(),
                 &mut self.version,
                 self.fn_registry.as_ref(),

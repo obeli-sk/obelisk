@@ -245,16 +245,17 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
-    /// Find an open join set, emit `EventCall::BlockingChildAwaitNext` if found.
-    /// Open here means there are more `JoinSetRequest::ChildExecutionRequest`-s than corresponding responses.
+    /// Scan the execution log for join sets containing more `[JoinSetRequest::ChildExecutionRequest]`-s
+    /// than responses.
+    /// For each open join set emit `EventCall::BlockingChildAwaitNext` and wait for the response.
     /// MUST NOT add items to `NonBlockingCache`, as only `EventCall::BlockingChildAwaitNext` and their
     /// processed responses are appended.
-    pub(crate) async fn close_opened_join_set<DB: DbConnection>(
+    pub(crate) async fn close_opened_join_sets<DB: DbConnection>(
         &mut self,
         db_connection: &DB,
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
-    ) -> Result<Option<()>, ApplyError> {
+    ) -> Result<(), ApplyError> {
         let mut join_set_to_child_exec_count = IndexMap::new();
         for (event, _processing_sattus) in &self.event_history {
             match event {
@@ -271,7 +272,7 @@ impl<C: ClockFn> EventHistory<C> {
                         .expect("join set must have been created");
                     *val += 1;
                 }
-                _ => {} // delay requests are ignored
+                _ => {} // delay requests are ignored if there is no interest awaiting them.
             }
         }
         for processed_response in self.responses.iter().filter_map(|(resp, status)| {
@@ -292,11 +293,11 @@ impl<C: ClockFn> EventHistory<C> {
                 *val -= 1;
             }
         }
-        if let Some(join_set_id) = join_set_to_child_exec_count
+        // Keep only the join sets that have unanswered requests.
+        let unanswered = join_set_to_child_exec_count
             .into_iter()
-            .find(|(_, unanswered)| *unanswered > 0)
-            .map(|found| found.0)
-        {
+            .filter(|(_, unanswered)| *unanswered > 0);
+        for (join_set_id, _) in unanswered {
             self.apply(
                 EventCall::BlockingChildAwaitNext {
                     join_set_id,
@@ -306,11 +307,10 @@ impl<C: ClockFn> EventHistory<C> {
                 version,
                 fn_registry,
             )
-            .await
-            .map(|_| Some(())) // The actual child response is not needed, just the fact that there may be more left.
-        } else {
-            Ok(None) // Done closing join sets.
+            .await?;
+            // The actual child response is not needed, just the fact that there may be more left.
         }
+        Ok(())
     }
 
     fn find_matching_atomic(
