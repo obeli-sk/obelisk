@@ -21,6 +21,7 @@ use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
+use indexmap::IndexMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tracing::instrument;
@@ -254,7 +255,7 @@ impl<C: ClockFn> EventHistory<C> {
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<Option<()>, ApplyError> {
-        let mut join_set_to_child_exec_count = hashbrown::HashMap::new();
+        let mut join_set_to_child_exec_count = IndexMap::new();
         for (event, _processing_sattus) in &self.event_history {
             match event {
                 HistoryEvent::JoinSet { join_set_id } => {
