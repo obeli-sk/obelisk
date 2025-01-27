@@ -3,6 +3,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.2](https://github.com/obeli-sk/obelisk/compare/v0.13.1...v0.13.2)
+
+### 🐛 Bug Fixes
+
+- *(sqlite)* Flush the cache before writing `CreateJoinSet` - ([a2a6787](https://github.com/obeli-sk/obelisk/commit/a2a6787e4e1110e97da9bc39197123ded4909368))
+- Fix duplicate `JoinNext` if the response did not arrive yet - ([84b6f29](https://github.com/obeli-sk/obelisk/commit/84b6f29354e7f9de1d6fbda3710cfad2c3a3f17c))
+- Make `close_opened_join_set` deterministic - ([398148d](https://github.com/obeli-sk/obelisk/commit/398148d14834e873b43f601600b1e755c0aa5182))
+
+### 📚 Documentation
+
+- Add screenshot - ([a7519ce](https://github.com/obeli-sk/obelisk/commit/a7519ce608c74b636f7346a481a32000fa88558a))
+
+### 🧪 Testing
+
+- Replace `join_set_requests` with `find_join_set_request` - ([2a2ab2e](https://github.com/obeli-sk/obelisk/commit/2a2ab2e59cbbedcc4ec469384210506da1a7da4c))
+
+### 🚜 Refactor
+
+- Use `derive_more` for `Debug` instead of `derivative` - ([2858f82](https://github.com/obeli-sk/obelisk/commit/2858f82637598ea568054f03c15be391fbf612b9))
+- Replace `ValToJoinSetIdError` with a `String` - ([2212ec2](https://github.com/obeli-sk/obelisk/commit/2212ec2e7893279c212001cd0f5bf5a8365feaf0))
+- Close all join sets in `event_history` - ([cd1ef49](https://github.com/obeli-sk/obelisk/commit/cd1ef49f63cf6003c259c7764f381ecf08df6d88))
+
+
 ## [0.13.1](https://github.com/obeli-sk/obelisk/compare/v0.13.0...v0.13.1)
 
 ### ⛰️ Features
