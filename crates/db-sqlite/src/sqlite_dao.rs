@@ -858,6 +858,7 @@ impl SqlitePool {
         appending_version: &Version,
     ) -> Result<(), DbError> {
         if *expected_version != *appending_version {
+            error!("Version mismatch - expected: {expected_version:?}, appending: {appending_version:?}");
             return Err(DbError::Specific(SpecificError::VersionMismatch {
                 appending_version: appending_version.clone(),
                 expected_version: expected_version.clone(),
@@ -2126,7 +2127,6 @@ impl DbConnection for SqlitePool {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError> {
-        trace!("lock_pending");
         let execution_ids_versions = self
             .conn_low_prio(
                 move |conn| Self::get_pending(conn, batch_size, pending_at_or_sooner, &ffqns),
@@ -2496,7 +2496,6 @@ impl DbConnection for SqlitePool {
     /// Get currently expired locks and async timers (delay requests)
     #[instrument(level = Level::TRACE, skip(self))]
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
-        trace!("get_expired_timers");
         self.conn_low_prio(
             move |conn| {
                 let mut expired_timers = conn.prepare(
@@ -2592,7 +2591,6 @@ impl DbConnection for SqlitePool {
                 trace!("Received a notification");
             }
             () = tokio::time::sleep_until(sleep_until) => {
-                trace!("Did not receive a notification");
             }
         }
     }
