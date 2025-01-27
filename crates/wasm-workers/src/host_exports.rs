@@ -44,29 +44,27 @@ impl From<DurationEnum> for Duration {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("cannot get join set from the first parameter")]
-pub(crate) struct ValToJoinSetIdError;
-
 pub(crate) fn val_to_join_set_id<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
     join_set_id: &Val,
     mut store_ctx: &mut wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-) -> Result<JoinSetId, ValToJoinSetIdError> {
+) -> Result<JoinSetId, String> {
     if let Val::Resource(resource) = join_set_id {
         let resource: Resource<JoinSetId> = resource
             .try_into_resource(&mut store_ctx)
             .inspect_err(|err| error!("Cannot turn `ResourceAny` into a `Resource` - {err:?}"))
-            .map_err(|_| ValToJoinSetIdError)?;
+            .map_err(|err| format!("cannot turn `ResourceAny` into a `Resource` - {err:?}"))?;
         let join_set_id = store_ctx
             .data()
             .resource_table
             .get(&resource)
             .inspect_err(|err| error!("Cannot get resource - {err:?}"))
-            .map_err(|_| ValToJoinSetIdError)?;
+            .map_err(|err| format!("cannot get resource - {err:?}"))?;
         Ok(*join_set_id)
     } else {
         error!("Wrong type for JoinSetId, expected join-set-id, got `{join_set_id:?}`");
-        Err(ValToJoinSetIdError)
+        Err(format!(
+            "wrong type for JoinSetId, expected join-set-id, got `{join_set_id:?}`"
+        ))
     }
 }
 
