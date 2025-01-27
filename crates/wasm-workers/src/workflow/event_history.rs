@@ -166,7 +166,7 @@ impl<C: ClockFn> EventHistory<C> {
         if let FindMatchingResponse::Found(resp) = found_atomic {
             return Ok(resp);
         }
-        // If not found in the history, persisting the request
+
         let called_at = self.clock_fn.now();
         let lock_expires_at =
             if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
@@ -723,6 +723,7 @@ impl<C: ClockFn> EventHistory<C> {
         lock_expires_at: DateTime<Utc>,
         version: &mut Version,
     ) -> Result<Vec<HistoryEvent>, DbError> {
+        // NB: Flush the cache before writing to the DB.
         trace!(%version, "append_to_db");
         match event_call {
             EventCall::CreateJoinSet { join_set_id } => {
@@ -733,6 +734,8 @@ impl<C: ClockFn> EventHistory<C> {
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
+                self.flush_non_blocking_event_cache(db_connection, called_at)
+                    .await?;
                 *version = db_connection
                     .append(self.execution_id.clone(), version.clone(), join_set)
                     .await?;
