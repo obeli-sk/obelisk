@@ -1,7 +1,9 @@
 use super::event_history::{ApplyError, EventCall, EventHistory};
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::component_logger::{log_activities, ComponentLogger};
-use crate::host_exports::{SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT};
+use crate::host_exports::{
+    val_to_join_set_id, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
+};
 use crate::{host_exports, WasmFileError};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
@@ -17,7 +19,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, instrument, trace, Span};
+use tracing::{error, instrument, trace, Span};
 use utils::time::ClockFn;
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Val};
@@ -31,7 +33,7 @@ pub(crate) enum WorkflowFunctionError {
     #[error("child finished with an execution error: {0}")]
     ChildExecutionError(FinishedExecutionError), // only on direct call
     #[error("uncategorized error - {0}")]
-    UncategorizedError(&'static str), // Mostly used when an extension function cannot be called. Traps are handled in `RunError::Trap`.
+    UncategorizedError(StrVariant), // Mostly used when an extension function cannot be called. Traps are handled in `RunError::Trap`.
     // retriable errors:
     #[error("interrupt requested")]
     InterruptRequested,
@@ -99,6 +101,148 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     phantom_data: PhantomData<DB>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum ImportedFnCall<'a> {
+    Direct {
+        ffqn: FunctionFqn,
+        params: &'a [Val],
+    },
+    Schedule {
+        target_ffqn: FunctionFqn,
+        scheduled_at: HistoryEventScheduledAt,
+        target_params: &'a [Val],
+    },
+    Submit {
+        target_ffqn: FunctionFqn,
+        join_set_id: JoinSetId,
+        target_params: &'a [Val],
+    },
+    AwaitNext {
+        target_ffqn: FunctionFqn,
+        join_set_id: JoinSetId,
+    },
+}
+
+impl<'a> ImportedFnCall<'a> {
+    fn extract_join_set_id<'ctx, C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
+        called_ffqn: &FunctionFqn,
+        store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C, DB, P>>,
+        params: &'a [Val],
+    ) -> Result<(JoinSetId, &'a [Val]), String> {
+        let Some((join_set_id, params)) = params.split_first() else {
+            error!("Got empty params, expected JoinSetId");
+            return Err(format!(
+                "error running {called_ffqn} extension function: exepcted at least one parameter with JoinSetId, got empty parameter list"));
+        };
+        let join_set_id = val_to_join_set_id(join_set_id, store_ctx)
+            .map_err(|err| format!("error running {called_ffqn} extension function: {err:?}"))?;
+        Ok((join_set_id, params))
+    }
+
+    #[instrument(skip_all, fields(ffqn = %called_ffqn))]
+    pub(crate) fn new<'ctx, C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
+        called_ffqn: FunctionFqn,
+        store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C, DB, P>>,
+        params: &'a [Val],
+    ) -> Result<ImportedFnCall<'a>, WorkflowFunctionError> {
+        if let Some(package_name) = called_ffqn.ifc_fqn.package_strip_extension_suffix() {
+            let ifc_fqn = IfcFqnName::from_parts(
+                called_ffqn.ifc_fqn.namespace(),
+                package_name,
+                called_ffqn.ifc_fqn.ifc_name(),
+                called_ffqn.ifc_fqn.version(),
+            );
+
+            if let Some(function_name) = called_ffqn.function_name.strip_suffix(SUFFIX_FN_SUBMIT) {
+                let target_ffqn =
+                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
+                let (join_set_id, params) =
+                    Self::extract_join_set_id(&called_ffqn, store_ctx, params).map_err(|err| {
+                        WorkflowFunctionError::UncategorizedError(StrVariant::from(err))
+                    })?;
+                Ok(ImportedFnCall::Submit {
+                    target_ffqn,
+                    join_set_id,
+                    target_params: params,
+                })
+            } else if let Some(function_name) =
+                called_ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
+            {
+                let target_ffqn =
+                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
+                let (join_set_id, params) =
+                    Self::extract_join_set_id(&called_ffqn, store_ctx, params).map_err(|err| {
+                        WorkflowFunctionError::UncategorizedError(StrVariant::from(err))
+                    })?;
+                if !params.is_empty() {
+                    return Err(WorkflowFunctionError::UncategorizedError(
+                        StrVariant::from(format!("error running {called_ffqn}: wrong parameter length, expected single string parameter containing join-set-id, got {} other parameters", params.len()
+                    ))));
+                };
+                Ok(ImportedFnCall::AwaitNext {
+                    target_ffqn,
+                    join_set_id,
+                })
+            } else if let Some(function_name) =
+                called_ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
+            {
+                let target_ffqn =
+                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
+                let Some((scheduled_at, params)) = params.split_first() else {
+                    return Err(WorkflowFunctionError::UncategorizedError(
+                        StrVariant::from(format!("error running {called_ffqn}: exepcted at least one parameter of type `scheduled-at`, got empty parameter list"))
+                    ));
+                };
+                let scheduled_at =
+                    WastVal::try_from(scheduled_at.clone()).map_err(|err| {
+                        WorkflowFunctionError::UncategorizedError(
+                            StrVariant::from(format!("error running {called_ffqn}: cannot convert to internal representation - {err:?}"))
+                        )
+                    })?;
+                let scheduled_at = match HistoryEventScheduledAt::try_from(&scheduled_at) {
+                    Ok(scheduled_at) => scheduled_at,
+                    Err(err) => {
+                        return Err(WorkflowFunctionError::UncategorizedError(
+                            StrVariant::from(format!("error running {called_ffqn}: wrong first parameter type, expected `scheduled-at`, got `{scheduled_at:?}` - {err:?}"))
+                        ));
+                    }
+                };
+
+                Ok(ImportedFnCall::Schedule {
+                    target_ffqn,
+                    scheduled_at,
+                    target_params: params,
+                })
+            } else {
+                error!("Unrecognized extension function {called_ffqn}");
+                return Err(WorkflowFunctionError::UncategorizedError(StrVariant::from(
+                    format!("unrecognized extension function {called_ffqn}"),
+                )));
+            }
+        } else {
+            Ok(ImportedFnCall::Direct {
+                ffqn: called_ffqn,
+                params,
+            })
+        }
+    }
+
+    fn ffqn(&self) -> &FunctionFqn {
+        match self {
+            Self::Direct { ffqn, .. }
+            | Self::Schedule {
+                target_ffqn: ffqn, ..
+            }
+            | Self::Submit {
+                target_ffqn: ffqn, ..
+            }
+            | Self::AwaitNext {
+                target_ffqn: ffqn, ..
+            } => ffqn,
+        }
+    }
+}
+
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -151,16 +295,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         self.event_history.flush(&self.db_pool.connection()).await
     }
 
-    #[instrument(level = tracing::Level::DEBUG, skip_all, fields(%ffqn))]
+    #[instrument(level = tracing::Level::DEBUG, skip_all, fields(ffqn = %imported_fn_call.ffqn()))]
     pub(crate) async fn call_imported_fn(
         &mut self,
-        ffqn: FunctionFqn,
-        join_set_id: Option<JoinSetId>,
-        params: &[Val],
+        imported_fn_call: ImportedFnCall<'_>,
         results: &mut [Val],
     ) -> Result<(), WorkflowFunctionError> {
-        trace!(?params, "call_imported_fn start");
-        let event_call = self.imported_fn_to_event_call(ffqn, join_set_id, params)?;
+        trace!(?imported_fn_call, "call_imported_fn start");
+        let event_call = self.imported_fn_to_event_call(imported_fn_call);
         let res = self
             .event_history
             .apply(
@@ -181,11 +323,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     "Unexpected result length or type, runtime expects {expected}, got: {got:?}",
                 );
                 return Err(WorkflowFunctionError::UncategorizedError(
-                    "Unexpected result length or type",
+                    StrVariant::Static("unexpected result length or type"),
                 ));
             }
         }
-        trace!(?params, ?results, "call_imported_fn finish");
+        trace!(?results, "call_imported_fn finish");
         Ok(())
     }
 
@@ -246,109 +388,55 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             .await
     }
 
-    fn imported_fn_to_event_call(
-        &mut self,
-        ffqn: FunctionFqn,
-        join_set_id: Option<JoinSetId>,
-        params: &[Val],
-    ) -> Result<EventCall, WorkflowFunctionError> {
-        if let Some(package_name) = ffqn.ifc_fqn.package_strip_extension_suffix() {
-            let ifc_fqn = IfcFqnName::from_parts(
-                ffqn.ifc_fqn.namespace(),
-                package_name,
-                ffqn.ifc_fqn.ifc_name(),
-                ffqn.ifc_fqn.version(),
-            );
-            if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SUBMIT) {
-                let ffqn =
-                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
-                debug!("Got `-submit` extension for {ffqn}");
-                let Some((_join_set_id, params)) = params.split_first() else {
-                    error!("Got empty params, expected JoinSetId");
-                    return Err(WorkflowFunctionError::UncategorizedError(
-                        "error running `-submit` extension function: exepcted at least one parameter with JoinSetId, got empty parameter list",
-                    ));
-                };
-                let join_set_id = join_set_id.ok_or(WorkflowFunctionError::UncategorizedError(
-                    "error running `-submit` extension function: cannot get join-set-id",
-                ))?;
+    fn imported_fn_to_event_call(&mut self, imported_fn_call: ImportedFnCall) -> EventCall {
+        match imported_fn_call {
+            ImportedFnCall::Direct { ffqn, params } => {
+                let join_set_id =
+                    JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
                 let child_execution_id = self.get_and_increment_child_id();
-                Ok(EventCall::StartAsync {
+                EventCall::BlockingChildDirectCall {
                     ffqn,
                     join_set_id,
                     params: Params::from_wasmtime(Arc::from(params)),
                     child_execution_id,
-                })
-            } else if let Some(function_name) =
-                ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
-            {
-                debug!("Got await-next extension for function `{function_name}`");
-                if params.len() != 1 {
-                    error!("Expected single parameter with join-set-id got {params:?}");
-                    return Err(WorkflowFunctionError::UncategorizedError(
-                        "error running `-await-next` extension function: wrong parameter length, expected single string parameter containing join-set-id"
-                    ));
-                };
-                let join_set_id = join_set_id.ok_or(WorkflowFunctionError::UncategorizedError(
-                    "error running `-await-next` extension function: cannot get join-set-id",
-                ))?;
-                Ok(EventCall::BlockingChildAwaitNext {
-                    join_set_id,
-                    closing: false,
-                })
-            } else if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
-            {
-                let ffqn =
-                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
-                debug!("Got `-schedule` extension for {ffqn}");
-                let Some((scheduled_at, params)) = params.split_first() else {
-                    error!("Error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list");
-                    return Err(WorkflowFunctionError::UncategorizedError(
-                        "error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list",
-                    ));
-                };
-                let scheduled_at =
-                    WastVal::try_from(scheduled_at.clone()).map_err(|err| {
-                        error!("Error running `-schedule` extension function: cannot convert to internal representation - {err:?}");
-                        WorkflowFunctionError::UncategorizedError(
-                            "error running `-schedule` extension function: cannot convert to internal representation",
-                        )
-                    })?;
-                let scheduled_at = match HistoryEventScheduledAt::try_from(&scheduled_at) {
-                    Ok(scheduled_at) => scheduled_at,
-                    Err(err) => {
-                        error!("Wrong type for the first `-scheduled-at` parameter, expected `scheduled-at`, got `{scheduled_at:?}` - {err:?}");
-                        return Err(WorkflowFunctionError::UncategorizedError(
-                                "error running `-schedule` extension function: wrong first parameter type"
-                            ));
-                    }
-                };
+                }
+            }
+            ImportedFnCall::Schedule {
+                target_ffqn,
+                scheduled_at,
+                target_params,
+            } => {
                 // TODO(edge case): handle ExecutionId conflict: This does not have to be deterministicly generated. Remove execution_id from EventCall::ScheduleRequest
                 // and add retries.
                 let execution_id =
                     ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
-                Ok(EventCall::ScheduleRequest {
+                EventCall::ScheduleRequest {
                     scheduled_at,
                     execution_id,
-                    ffqn,
-                    params: Params::from_wasmtime(Arc::from(params)),
-                })
-            } else {
-                error!("unrecognized extension function {ffqn}");
-                return Err(WorkflowFunctionError::UncategorizedError(
-                    "unrecognized extension function",
-                ));
+                    ffqn: target_ffqn,
+                    params: Params::from_wasmtime(Arc::from(target_params)),
+                }
             }
-        } else {
-            let join_set_id =
-                JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
-            let child_execution_id = self.get_and_increment_child_id();
-            Ok(EventCall::BlockingChildDirectCall {
-                ffqn,
+            ImportedFnCall::Submit {
+                target_ffqn,
                 join_set_id,
-                params: Params::from_wasmtime(Arc::from(params)),
-                child_execution_id,
-            })
+                target_params,
+            } => {
+                let child_execution_id = self.get_and_increment_child_id();
+                EventCall::StartAsync {
+                    ffqn: target_ffqn,
+                    join_set_id,
+                    params: Params::from_wasmtime(Arc::from(target_params)),
+                    child_execution_id,
+                }
+            }
+            ImportedFnCall::AwaitNext {
+                target_ffqn: _, // Currently multiple functions are not supported in one join set.
+                join_set_id,
+            } => EventCall::BlockingChildAwaitNext {
+                join_set_id,
+                closing: false,
+            },
         }
     }
 }
@@ -440,21 +528,22 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::
 #[cfg(madsim)]
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::workflow::workflow_ctx::WorkerPartialResult;
+    use crate::host_exports::obelisk::workflow::workflow_support::Host as _;
+    use crate::workflow::workflow_ctx::ApplyError;
+    use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
     use crate::{
         tests::fn_registry_dummy, workflow::workflow_ctx::WorkflowCtx,
         workflow::workflow_worker::JoinNextBlockingStrategy,
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::{
-        storage::{
-            wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
-            JoinSetRequest, PendingState,
-        },
-        FinishedExecutionResult,
+    use concepts::prefixed_ulid::RunId;
+    use concepts::storage::ExecutionLog;
+    use concepts::storage::{
+        wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
+        JoinSetRequest, PendingState,
     };
-    use concepts::{ComponentId, FunctionRegistry};
+    use concepts::{ComponentId, ExecutionMetadata, FunctionRegistry};
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
@@ -465,8 +554,9 @@ pub(crate) mod tests {
     };
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
-    use tracing::info;
+    use tracing::{info, info_span};
     use utils::time::{ClockFn, Now};
+    use wasmtime::component::Val;
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const FFQN_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
@@ -489,6 +579,7 @@ pub(crate) mod tests {
     enum WorkflowStep {
         Sleep { millis: u32 },
         Call { ffqn: FunctionFqn },
+        SubmitWithoutAwait { target_ffqn: FunctionFqn },
     }
 
     #[derive(Clone, derive_more::Debug)]
@@ -511,10 +602,10 @@ pub(crate) mod tests {
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerMock<C, DB, P> {
         fn new(
             ffqn: FunctionFqn,
+            fn_registry: Arc<dyn FunctionRegistry>,
             steps: Vec<WorkflowStep>,
             clock_fn: C,
             db_pool: P,
-            fn_registry: Arc<dyn FunctionRegistry>,
         ) -> Self {
             Self {
                 exports: [FunctionMetadata {
@@ -565,7 +656,30 @@ pub(crate) mod tests {
                     }
                     WorkflowStep::Call { ffqn } => {
                         workflow_ctx
-                            .call_imported_fn(ffqn.clone(), None, &[], &mut [])
+                            .call_imported_fn(
+                                ImportedFnCall::Direct {
+                                    ffqn: ffqn.clone(),
+                                    params: &[],
+                                },
+                                &mut [],
+                            )
+                            .await
+                    }
+                    WorkflowStep::SubmitWithoutAwait { target_ffqn } => {
+                        // Create new join set
+                        let join_set_resource = workflow_ctx.new_join_set().await.unwrap();
+                        let join_set_id =
+                            *workflow_ctx.resource_table.get(&join_set_resource).unwrap();
+                        let mut ret_val = vec![Val::Bool(false)];
+                        workflow_ctx
+                            .call_imported_fn(
+                                ImportedFnCall::Submit {
+                                    target_ffqn: target_ffqn.clone(),
+                                    join_set_id,
+                                    target_params: &[],
+                                },
+                                &mut ret_val,
+                            )
                             .await
                     }
                 };
@@ -574,8 +688,18 @@ pub(crate) mod tests {
                     return err.into_worker_partial_result(workflow_ctx.version).into();
                 }
             }
-            info!("Finishing");
-            WorkerResult::Ok(SupportedFunctionReturnValue::None, workflow_ctx.version)
+            info!("Closing opened join sets");
+            match workflow_ctx.close_opened_join_sets().await {
+                Ok(()) => {
+                    info!("Finishing");
+                    WorkerResult::Ok(SupportedFunctionReturnValue::None, workflow_ctx.version)
+                }
+                Err(ApplyError::InterruptRequested) => {
+                    info!("Interrupting");
+                    return WorkerResult::DbUpdatedByWorker;
+                }
+                other => panic!("Unexpected error: {other:?}"),
+            }
         }
 
         fn exported_functions(&self) -> &[FunctionMetadata] {
@@ -607,31 +731,153 @@ pub(crate) mod tests {
         builder_b.check = false;
         builder_b.seed = builder_a.seed;
 
+        let closure = || async move {
+            let (_guard, db_pool) = Database::Memory.set_up().await;
+            let res = execute_steps(generate_steps(), &db_pool).await;
+            db_pool.close().await.unwrap();
+            res
+        };
+        assert_eq!(builder_a.run(closure), builder_b.run(closure));
+    }
+
+    const FFQN_CHILD_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn-child");
+
+    #[tokio::test]
+    async fn check_determinism_closing_multiple_join_sets() {
+        test_utils::set_up();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let sim_clock = SimClock::new(Now.now());
+        let db_connection = db_pool.connection();
+
+        // Create an execution.
+        let execution_id = ExecutionId::generate();
+        let version = db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: FFQN_MOCK,
+                params: Params::default(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+                component_id: ComponentId::dummy_activity(),
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        let steps: Vec<_> = std::iter::repeat_n(
+            WorkflowStep::SubmitWithoutAwait {
+                target_ffqn: FFQN_CHILD_MOCK,
+            },
+            10,
+        )
+        .collect();
+        let worker = Arc::new(WorkflowWorkerMock::new(
+            FFQN_MOCK,
+            steps_to_registry(&steps),
+            steps,
+            sim_clock.clone(),
+            db_pool.clone(),
+        ));
+        // Run it the first time, should end up in Interrupted state with a closing join set.
+        let worker_result = worker
+            .run(WorkerContext {
+                execution_id: execution_id.clone(),
+                metadata: ExecutionMetadata::empty(),
+                ffqn: FFQN_MOCK,
+                params: Params::empty(),
+                event_history: vec![],
+                responses: vec![],
+                version,
+                execution_deadline: sim_clock.now() + Duration::from_secs(1),
+                can_be_retried: false,
+                run_id: RunId::generate(),
+                worker_span: info_span!("check_determinism"),
+            })
+            .await;
+        assert_matches!(worker_result, WorkerResult::DbUpdatedByWorker);
+        let execution_log = db_connection.get(&execution_id).await.unwrap();
+        let closing_join_nexts = execution_log
+            .event_history()
+            .filter_map(|event| match event {
+                HistoryEvent::JoinNext { closing: true, .. } => Some(()),
+                _ => None,
+            })
+            .count();
+        assert_eq!(1, closing_join_nexts);
+
+        info!("Run again to test determinism");
+        let worker_result = worker
+            .run(WorkerContext {
+                execution_id: execution_id.clone(),
+                metadata: ExecutionMetadata::empty(),
+                ffqn: FFQN_MOCK,
+                params: Params::empty(),
+                event_history: execution_log.event_history().collect(),
+                responses: execution_log
+                    .responses
+                    .clone()
+                    .into_iter()
+                    .map(|outer| outer.event)
+                    .collect(),
+                version: execution_log.next_version.clone(),
+                execution_deadline: sim_clock.now() + Duration::from_secs(1),
+                can_be_retried: false,
+                run_id: RunId::generate(),
+                worker_span: info_span!("check_determinism"),
+            })
+            .await;
+        assert_matches!(worker_result, WorkerResult::DbUpdatedByWorker);
         assert_eq!(
-            builder_a.run(|| async move { execute_steps().await }),
-            builder_b.run(|| async move { execute_steps().await })
+            execution_log,
+            db_connection.get(&execution_id).await.unwrap()
         );
+        db_pool.close().await.unwrap();
+    }
+
+    fn generate_steps() -> Vec<WorkflowStep> {
+        let unstructured_holder = UnstructuredHolder::new();
+        let mut unstructured = unstructured_holder.unstructured();
+        unstructured
+            .arbitrary_iter()
+            .unwrap()
+            .map(std::result::Result::unwrap)
+            .collect::<Vec<_>>()
+    }
+
+    fn steps_to_registry(steps: &[WorkflowStep]) -> Arc<dyn FunctionRegistry> {
+        let ffqns = steps
+            .iter()
+            .filter_map(|step| match step {
+                WorkflowStep::Call { ffqn }
+                | WorkflowStep::SubmitWithoutAwait { target_ffqn: ffqn } => Some(ffqn.clone()),
+                WorkflowStep::Sleep { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        fn_registry_dummy(ffqns.as_slice())
     }
 
     #[expect(clippy::too_many_lines)]
-    async fn execute_steps() -> (Vec<HistoryEvent>, FinishedExecutionResult) {
-        let unstructured_holder = UnstructuredHolder::new();
-        let mut unstructured = unstructured_holder.unstructured();
-        let steps = {
-            unstructured
-                .arbitrary_iter()
-                .unwrap()
-                .map(std::result::Result::unwrap)
-                .collect::<Vec<_>>()
-        };
+    async fn execute_steps<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+        steps: Vec<WorkflowStep>,
+        db_pool: &P,
+    ) -> (ExecutionId, ExecutionLog) {
         let created_at = Now.now();
-        info!(now = %created_at, "Generated steps: {steps:?}");
+        info!(now = %created_at, "Steps: {steps:?}");
         let execution_id = ExecutionId::generate();
         let sim_clock = SimClock::new(created_at);
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+
         let mut child_execution_count = steps
             .iter()
-            .filter(|step| matches!(step, WorkflowStep::Call { .. }))
+            .filter(|step| {
+                matches!(
+                    step,
+                    WorkflowStep::Call { .. } | WorkflowStep::SubmitWithoutAwait { .. }
+                )
+            })
             .count();
         let mut delay_request_count = steps
             .iter()
@@ -647,22 +893,15 @@ pub(crate) mod tests {
         );
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        let ffqns = steps
-            .iter()
-            .filter_map(|step| match step {
-                WorkflowStep::Call { ffqn } => Some(ffqn.clone()),
-                WorkflowStep::Sleep { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        let fn_registry = fn_registry_dummy(ffqns.as_slice());
+        let fn_registry = steps_to_registry(&steps);
 
         let workflow_exec_task = {
             let worker = Arc::new(WorkflowWorkerMock::new(
                 FFQN_MOCK,
+                fn_registry.clone(),
                 steps,
                 sim_clock.clone(),
                 db_pool.clone(),
-                fn_registry.clone(),
             ));
             let exec_config = ExecConfig {
                 batch_size: 1,
@@ -680,7 +919,6 @@ pub(crate) mod tests {
             )
         };
         // Create an execution.
-
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -740,14 +978,14 @@ pub(crate) mod tests {
                         Some((execution_id.clone(), join_set_id)),
                         child_log.parent()
                     );
-                    // execute
+                    // Execute the submitted child.
                     let child_exec_tick = {
                         let worker = Arc::new(WorkflowWorkerMock::new(
                             child_log.ffqn().clone(),
+                            fn_registry.clone(),
                             vec![],
                             sim_clock.clone(),
                             db_pool.clone(),
-                            fn_registry.clone(),
                         ));
                         let exec_config = ExecConfig {
                             batch_size: 1,
@@ -765,7 +1003,7 @@ pub(crate) mod tests {
                         );
                         exec_task.tick2(sim_clock.now()).await.unwrap()
                     };
-                    assert_eq!(child_exec_tick.wait_for_tasks().await.unwrap(), 1);
+                    assert_eq!(1, child_exec_tick.wait_for_tasks().await.unwrap());
                     child_execution_count -= 1;
                     let child_log = db_connection.get(&child_execution_id).await.unwrap();
                     let child_res = child_log.into_finished_result().unwrap();
@@ -782,10 +1020,6 @@ pub(crate) mod tests {
         drop(db_connection);
         workflow_exec_task.close().await;
         timers_watcher_task.close().await;
-        db_pool.close().await.unwrap();
-        (
-            execution_log.event_history().collect(),
-            execution_log.into_finished_result().unwrap(),
-        )
+        (execution_id, execution_log)
     }
 }

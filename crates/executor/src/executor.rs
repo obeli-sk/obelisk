@@ -237,7 +237,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     async move {
                         let res = Self::run_worker(
                             worker,
-                            db_pool,
+                            &db_pool,
                             execution_deadline,
                             clock_fn,
                             locked_execution,
@@ -259,7 +259,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
     async fn run_worker(
         worker: Arc<dyn Worker>,
-        db_pool: P,
+        db_pool: &P,
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
         locked_execution: LockedExecution,

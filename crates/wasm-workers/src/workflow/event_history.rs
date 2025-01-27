@@ -5,6 +5,7 @@ use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::host_exports::delay_id_into_wast_val;
 use crate::host_exports::execution_id_into_wast_val;
 use crate::host_exports::join_set_id_into_wast_val;
+use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::HistoryEventScheduledAt;
@@ -104,6 +105,13 @@ enum NonBlockingCache {
     },
 }
 
+#[derive(Debug)]
+enum FindMatchingResponse {
+    Found(ChildReturnValue),
+    NotFound,
+    FoundRequestButNotResponse,
+}
+
 impl<C: ClockFn> EventHistory<C> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -144,6 +152,7 @@ impl<C: ClockFn> EventHistory<C> {
 
     /// Apply the event and wait if new, replay if already in the event history, or
     /// apply with an interrupt.
+    #[instrument(skip_all)]
     pub(crate) async fn apply<DB: DbConnection>(
         &mut self,
         event_call: EventCall,
@@ -151,11 +160,13 @@ impl<C: ClockFn> EventHistory<C> {
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<ChildReturnValue, ApplyError> {
-        trace!("replay_or_interrupt: {event_call:?}");
-        if let Some(accept_resp) = self.find_matching_atomic(&event_call)? {
-            return Ok(accept_resp);
+        let found_atomic = self.find_matching_atomic(&event_call)?;
+        trace!("{event_call:?} {found_atomic:?}");
+
+        if let FindMatchingResponse::Found(resp) = found_atomic {
+            return Ok(resp);
         }
-        // not found in the history, persisting the request
+        // If not found in the history, persisting the request
         let called_at = self.clock_fn.now();
         let lock_expires_at =
             if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
@@ -163,57 +174,64 @@ impl<C: ClockFn> EventHistory<C> {
             } else {
                 self.execution_deadline
             };
-        let poll_variant = match event_call.poll_variant() {
-            None => {
-                // events that cannot block
-                // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
-                let cloned_non_blocking = event_call.clone();
-                let history_events = self
-                    .append_to_db(
-                        event_call,
-                        db_connection,
-                        fn_registry,
-                        called_at,
-                        lock_expires_at,
-                        version,
-                    )
-                    .await
-                    .map_err(ApplyError::DbError)?;
-                self.event_history
-                    .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
-                return Ok(self
-                    .find_matching_atomic(&cloned_non_blocking)?
-                    .expect("non-blocking EventCall must return the response"));
-            }
-            Some(poll_variant) => {
-                let keys = event_call.as_keys();
-                let history_events = self
-                    .append_to_db(
-                        event_call,
-                        db_connection,
-                        fn_registry,
-                        called_at,
-                        lock_expires_at,
-                        version,
-                    )
-                    .await
-                    .map_err(ApplyError::DbError)?;
-                self.event_history
-                    .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
-                let keys_len = keys.len();
-                for (idx, key) in keys.into_iter().enumerate() {
-                    let res = self.process_event_by_key(&key)?;
-                    if idx == keys_len - 1 {
-                        if let Some(res) = res {
-                            // Last key was replayed.
-                            return Ok(res);
-                        }
-                    }
+        let poll_variant = event_call.poll_variant();
+        if poll_variant.is_none() {
+            // Cannot be FoundRequestButNotResponse, this is not blocking.
+            assert_matches!(found_atomic, FindMatchingResponse::NotFound);
+            // Events that cannot block, e.g. creating new join sets.
+            // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
+            let cloned_non_blocking = event_call.clone();
+            let history_events = self
+                .append_to_db(
+                    event_call,
+                    db_connection,
+                    fn_registry,
+                    called_at,
+                    lock_expires_at,
+                    version,
+                )
+                .await
+                .map_err(ApplyError::DbError)?;
+            self.event_history
+                .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
+            let non_blocking_resp = self.find_matching_atomic(&cloned_non_blocking)?;
+            // Now it must be found.
+            let non_blocking_resp =
+                assert_matches!(non_blocking_resp, FindMatchingResponse::Found(r) => r);
+            return Ok(non_blocking_resp);
+        }
+        let poll_variant = poll_variant.unwrap();
+
+        let keys = event_call.as_keys();
+        if matches!(found_atomic, FindMatchingResponse::NotFound) {
+            // Persist
+            let history_events = self
+                .append_to_db(
+                    event_call,
+                    db_connection,
+                    fn_registry,
+                    called_at,
+                    lock_expires_at,
+                    version,
+                )
+                .await
+                .map_err(ApplyError::DbError)?;
+            self.event_history
+                .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
+        }
+        let last_key_idx = keys.len() - 1;
+        for (idx, key) in keys.into_iter().enumerate() {
+            let res = self.process_event_by_key(&key)?;
+            if idx == last_key_idx {
+                if let FindMatchingResponse::Found(res) = res {
+                    // Last key was replayed.
+                    return Ok(res);
                 }
-                // FIXME: perf: if start_from_index was at top, it should move forward to n - 1
-                poll_variant
             }
-        };
+        }
+        // Now either wait or interrupt.
+        // FIXME: perf: if start_from_index was at top, it should move forward to n - 1
+
         if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Await {
             // JoinNext was written, wait for next response.
             let join_set_id = poll_variant.join_set_id();
@@ -234,7 +252,7 @@ impl<C: ClockFn> EventHistory<C> {
                         .map(|outer| (outer.event, Unprocessed)),
                 );
                 trace!("All responses: {:?}", self.responses);
-                if let Some(accept_resp) = self.process_event_by_key(&key)? {
+                if let FindMatchingResponse::Found(accept_resp) = self.process_event_by_key(&key)? {
                     debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
                     return Ok(accept_resp);
                 }
@@ -246,69 +264,89 @@ impl<C: ClockFn> EventHistory<C> {
     }
 
     /// Scan the execution log for join sets containing more `[JoinSetRequest::ChildExecutionRequest]`-s
-    /// than responses.
-    /// For each open join set emit `EventCall::BlockingChildAwaitNext` and wait for the response.
+    /// than corresponding awaits.
+    /// For each open join set deterministically emit `EventCall::BlockingChildAwaitNext` and wait for the response.
     /// MUST NOT add items to `NonBlockingCache`, as only `EventCall::BlockingChildAwaitNext` and their
     /// processed responses are appended.
+    // TODO: Refactor err - ApplyError::ChildExecutionError is never returned.
+    #[instrument(skip_all)]
     pub(crate) async fn close_opened_join_sets<DB: DbConnection>(
         &mut self,
         db_connection: &DB,
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<(), ApplyError> {
-        let mut join_set_to_child_exec_count = IndexMap::new();
+        // We want to end with the same actions when called again.
+        // Count the iteractions not counting the delay requests and closing JoinNext-s.
+        // Every counted JoinNext must have been awaited at this point.
+        let mut join_set_to_child_created_and_awaitd = IndexMap::new(); // Must be deterministic.
+        let delay_join_sets: hashbrown::HashSet<_> = self // Does not have to be deterministic.
+            .event_history
+            .iter()
+            .filter_map(|(event, _processing_sattus)| {
+                if let HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request: JoinSetRequest::DelayRequest { .. },
+                } = event
+                {
+                    Some(*join_set_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
         for (event, _processing_sattus) in &self.event_history {
             match event {
-                HistoryEvent::JoinSet { join_set_id } => {
-                    let old = join_set_to_child_exec_count.insert(*join_set_id, 0);
+                HistoryEvent::JoinSet { join_set_id } if !delay_join_sets.contains(join_set_id) => {
+                    let old = join_set_to_child_created_and_awaitd.insert(*join_set_id, (0, 0));
                     assert!(old.is_none());
                 }
                 HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::ChildExecutionRequest { .. },
-                } => {
-                    let val = join_set_to_child_exec_count
+                } if !delay_join_sets.contains(join_set_id) => {
+                    let (req_count, _) = join_set_to_child_created_and_awaitd
                         .get_mut(join_set_id)
                         .expect("join set must have been created");
-                    *val += 1;
+                    *req_count += 1;
                 }
-                _ => {} // delay requests are ignored if there is no interest awaiting them.
-            }
-        }
-        for processed_response in self.responses.iter().filter_map(|(resp, status)| {
-            if *status == ProcessingStatus::Processed {
-                Some(resp)
-            } else {
-                None
-            }
-        }) {
-            if let JoinSetResponseEvent {
-                join_set_id,
-                event: JoinSetResponse::ChildExecutionFinished { .. },
-            } = processed_response
-            {
-                let val = join_set_to_child_exec_count
-                    .get_mut(join_set_id)
-                    .expect("join set must have been created");
-                *val -= 1;
-            }
-        }
-        // Keep only the join sets that have unanswered requests.
-        let unanswered = join_set_to_child_exec_count
-            .into_iter()
-            .filter(|(_, unanswered)| *unanswered > 0);
-        for (join_set_id, _) in unanswered {
-            self.apply(
-                EventCall::BlockingChildAwaitNext {
+                HistoryEvent::JoinNext {
                     join_set_id,
-                    closing: true,
-                },
-                db_connection,
-                version,
-                fn_registry,
-            )
-            .await?;
-            // The actual child response is not needed, just the fact that there may be more left.
+                    closing: false,
+                    ..
+                } if !delay_join_sets.contains(join_set_id) => {
+                    let (_, await_count) = join_set_to_child_created_and_awaitd
+                        .get_mut(join_set_id)
+                        .expect("join set must have been created");
+                    *await_count += 1;
+                }
+                _ => {}
+            }
+        }
+
+        for (join_set_id, remaining) in join_set_to_child_created_and_awaitd.iter().filter_map(
+            |(join_set, (created, awaited))| {
+                let remaining = *created - *awaited;
+                if remaining > 0 {
+                    Some((join_set, remaining))
+                } else {
+                    None
+                }
+            },
+        ) {
+            for _ in 0..remaining {
+                debug!("Adding BlockingChildAwaitNext to join set {join_set_id}");
+                self.apply(
+                    EventCall::BlockingChildAwaitNext {
+                        join_set_id: *join_set_id,
+                        closing: true,
+                    },
+                    db_connection,
+                    version,
+                    fn_registry,
+                )
+                .await?;
+            }
         }
         Ok(())
     }
@@ -316,22 +354,30 @@ impl<C: ClockFn> EventHistory<C> {
     fn find_matching_atomic(
         &mut self,
         event_call: &EventCall,
-    ) -> Result<Option<ChildReturnValue>, ApplyError> {
-        // None means no progress
+    ) -> Result<FindMatchingResponse, ApplyError> {
         let keys = event_call.as_keys();
         assert!(!keys.is_empty());
-        let mut last = None;
+        let last_key_idx = keys.len() - 1;
         for (idx, key) in keys.into_iter().enumerate() {
-            last = self.process_event_by_key(&key)?;
-            if last.is_none() {
-                assert_eq!(
-                    idx, 0,
-                    "EventCall must be processed in an all or be not found from the beginning"
-                );
-                return Ok(None);
+            let resp = self.process_event_by_key(&key)?;
+            match resp {
+                FindMatchingResponse::NotFound => {
+                    assert_eq!(idx, 0, "NotFound must be returned on the first key");
+                    return Ok(resp);
+                }
+                FindMatchingResponse::FoundRequestButNotResponse => {
+                    // Noop, do not store anything just wait for the response.
+                    assert_eq!(idx, last_key_idx, "FoundRequestButNotResponse is returned on EventHistoryKey::JoinNextChild or EventHistoryKey::JoinNextDelay which must be the last returned by EventCall.as_keys");
+                    return Ok(resp);
+                }
+                FindMatchingResponse::Found(_) => {
+                    if idx == last_key_idx {
+                        return Ok(resp);
+                    }
+                }
             }
         }
-        Ok(Some(last.unwrap()))
+        unreachable!()
     }
 
     fn next_unprocessed_request(&self) -> Option<(usize, &(HistoryEvent, ProcessingStatus))> {
@@ -374,9 +420,9 @@ impl<C: ClockFn> EventHistory<C> {
     fn process_event_by_key(
         &mut self,
         key: &EventHistoryKey,
-    ) -> Result<Option<ChildReturnValue>, ApplyError> {
+    ) -> Result<FindMatchingResponse, ApplyError> {
         let Some((found_idx, (found_request_event, _))) = self.next_unprocessed_request() else {
-            return Ok(None);
+            return Ok(FindMatchingResponse::NotFound);
         };
         trace!("Finding match for {key:?}, [{found_idx}] {found_request_event:?}");
         match (key, found_request_event) {
@@ -389,9 +435,11 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%join_set_id, "Matched JoinSet");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
-                Ok(Some(ChildReturnValue::HostActionResp(
-                    HostActionResp::CreateJoinSetResp(*join_set_id),
-                )))
+                Ok(FindMatchingResponse::Found(
+                    ChildReturnValue::HostActionResp(HostActionResp::CreateJoinSetResp(
+                        *join_set_id,
+                    )),
+                ))
             }
 
             (
@@ -408,9 +456,9 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::StartAsync`] , return execution id
-                Ok(Some(ChildReturnValue::WastVal(execution_id_into_wast_val(
-                    execution_id,
-                ))))
+                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                    execution_id_into_wast_val(execution_id),
+                )))
             }
 
             (
@@ -430,9 +478,9 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%delay_id, %join_set_id, "Matched JoinSetRequest::DelayRequest");
                 self.event_history[found_idx].1 = Processed;
                 // return delay id
-                Ok(Some(ChildReturnValue::WastVal(delay_id_into_wast_val(
-                    *delay_id,
-                ))))
+                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                    delay_id_into_wast_val(*delay_id),
+                )))
             }
 
             (
@@ -457,9 +505,11 @@ impl<C: ClockFn> EventHistory<C> {
                         trace!(%join_set_id, "Matched JoinNext & ChildExecutionFinished");
                         match kind {
                             JoinNextKind::DirectCall => match result {
-                                Ok(result) => Ok(Some(ChildReturnValue::from_wast_val_or_none(
-                                    result.clone().into_value(),
-                                ))),
+                                Ok(result) => Ok(FindMatchingResponse::Found(
+                                    ChildReturnValue::from_wast_val_or_none(
+                                        result.clone().into_value(),
+                                    ),
+                                )),
                                 Err(err) => {
                                     error!(%child_execution_id,
                                             %join_set_id,
@@ -471,23 +521,25 @@ impl<C: ClockFn> EventHistory<C> {
                                 match result {
                                     Ok(SupportedFunctionReturnValue::None) => {
                                         // result<execution-id, tuple<execution-id, execution-error>>
-                                        Ok(Some(ChildReturnValue::WastVal(WastVal::Result(Ok(
-                                            Some(Box::new(execution_id_into_wast_val(
-                                                child_execution_id,
-                                            ))),
-                                        )))))
+                                        Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                                            WastVal::Result(Ok(Some(Box::new(
+                                                execution_id_into_wast_val(child_execution_id),
+                                            )))),
+                                        )))
                                     }
                                     Ok(
                                         SupportedFunctionReturnValue::InfallibleOrResultOk(v)
                                         | SupportedFunctionReturnValue::FallibleResultErr(v),
                                     ) => {
                                         // result<(execution-id, inner>, tuple<execution-id, execution-error>>
-                                        Ok(Some(ChildReturnValue::WastVal(WastVal::Result(Ok(
-                                            Some(Box::new(WastVal::Tuple(vec![
-                                                execution_id_into_wast_val(child_execution_id),
-                                                v.value.clone(),
-                                            ]))),
-                                        )))))
+                                        Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                                            WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(
+                                                vec![
+                                                    execution_id_into_wast_val(child_execution_id),
+                                                    v.value.clone(),
+                                                ],
+                                            ))))),
+                                        )))
                                     }
                                     Err(err) => {
                                         match kind {
@@ -510,16 +562,16 @@ impl<C: ClockFn> EventHistory<C> {
                                                         Some(Box::new(WastVal::String(reason.to_string()))),
                                                     ),
                                                 };
-                                                Ok(Some(ChildReturnValue::WastVal(
-                                                    WastVal::Result(Err(Some(Box::new(
-                                                        WastVal::Tuple(vec![
+                                                Ok(FindMatchingResponse::Found(
+                                                    ChildReturnValue::WastVal(WastVal::Result(
+                                                        Err(Some(Box::new(WastVal::Tuple(vec![
                                                             execution_id_into_wast_val(
                                                                 child_execution_id,
                                                             ),
                                                             variant,
-                                                        ]),
-                                                    )))),
-                                                )))
+                                                        ])))),
+                                                    )),
+                                                ))
                                             }
                                         }
                                     }
@@ -527,7 +579,7 @@ impl<C: ClockFn> EventHistory<C> {
                             }
                         }
                     }
-                    None => Ok(None), // no progress, still at JoinNext
+                    None => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
                     Some(
                         delay_event @ JoinSetResponseEvent {
                             event: JoinSetResponse::DelayFinished { .. },
@@ -555,9 +607,9 @@ impl<C: ClockFn> EventHistory<C> {
                         ..
                     }) => {
                         trace!(%join_set_id, "Matched JoinNext & DelayFinished");
-                        Ok(Some(ChildReturnValue::None))
+                        Ok(FindMatchingResponse::Found(ChildReturnValue::None))
                     }
-                    _ => Ok(None), // no progress, still at JoinNext
+                    _ => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
                 }
             }
 
@@ -570,9 +622,9 @@ impl<C: ClockFn> EventHistory<C> {
             ) if *execution_id == *found_execution_id => {
                 trace!(%execution_id, "Matched Schedule");
                 // return execution id
-                Ok(Some(ChildReturnValue::WastVal(execution_id_into_wast_val(
-                    execution_id,
-                ))))
+                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                    execution_id_into_wast_val(execution_id),
+                )))
             }
 
             (key, found) => Err(ApplyError::NondeterminismDetected(StrVariant::Arc(

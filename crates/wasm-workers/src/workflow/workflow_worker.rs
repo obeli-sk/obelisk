@@ -1,8 +1,7 @@
 use super::event_history::ApplyError;
 use super::workflow_ctx::InterruptRequested;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
-use crate::host_exports::{val_to_join_set_id, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SUBMIT};
-use crate::workflow::workflow_ctx::WorkerPartialResult;
+use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use crate::WasmFileError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -125,27 +124,20 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                         >,
                               params: &[Val],
                               results: &mut [Val]| {
-                            let ffqn = ffqn.clone();
-                            let join_set_id = if !params.is_empty()
-                                && ffqn.ifc_fqn.is_extension()
-                                && (ffqn.function_name.ends_with(SUFFIX_FN_SUBMIT)
-                                    || ffqn.function_name.ends_with(SUFFIX_FN_AWAIT_NEXT))
-                            {
-                                match val_to_join_set_id(&params[0], &mut store_ctx) {
-                                    Ok(join_set_id) => Some(join_set_id),
+                            let imported_fn_call =
+                                match ImportedFnCall::new(ffqn.clone(), &mut store_ctx, params) {
+                                    Ok(imported_fn_call) => imported_fn_call,
                                     Err(err) => {
                                         return Box::new(future::ready(Result::Err(
                                             wasmtime::Error::new(err),
-                                        )))
+                                        )));
                                     }
-                                }
-                            } else {
-                                None
-                            };
+                                };
+
                             Box::new(async move {
                                 Ok(store_ctx
                                     .data_mut()
-                                    .call_imported_fn(ffqn, join_set_id, params, results)
+                                    .call_imported_fn(imported_fn_call, results)
                                     .await?)
                             })
                         }
