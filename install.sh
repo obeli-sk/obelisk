@@ -14,11 +14,12 @@ base_url="https://github.com/obeli-sk/obelisk/releases/latest/download/obelisk-"
 os="$(uname -s)"
 if [ "$os" = "Linux" ]; then
     machine="$(uname -m)"
-    if [ "$machine" != "x86_64" ]; then
-        echo "Unsupported architecture ${machine}"
-        exit 1
-    fi
-    target="${machine}-unknown-linux-"
+    case "$machine" in
+        x86_64)   target="x86_64-unknown-linux-" ;;
+        aarch64)  target="aarch64-unknown-linux-" ;;
+        *)        echo "Unsupported architecture ${machine}" && exit 1 ;;
+    esac
+
     # Check for musl or glibc
     ldd_version=$(ldd --version 2>&1 || true)
     issue=$(cat /etc/issue 2>/dev/null || true)
