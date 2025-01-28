@@ -1,6 +1,12 @@
 builds:
-  branch: main
-  include:
-    - "packages.x86_64-linux.default"
-    - "packages.x86_64-linux.obeliskMusl"
-    - "packages.x86_64-linux.obeliskLibcGeneric"
+  - include:
+      - "packages.x86_64-linux.default"
+      - "packages.aarch64-linux.default"
+    branch: main
+
+  - include:
+      - "packages.x86_64-linux.default"
+      - "packages.x86_64-linux.obeliskMusl"
+      - "packages.aarch64-linux.default"
+      - "packages.aarch64-linux.obeliskMusl"
+    branch: latest
