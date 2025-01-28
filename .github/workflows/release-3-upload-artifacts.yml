@@ -76,7 +76,10 @@ jobs:
         if: ${{ endsWith(matrix.target, '-musl') }}
         uses: cachix/install-nix-action@v30
         with:
-          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            extra-substituters = https://cache.garnix.io                                                         │
+            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g
       - name: Build Obelisk with Nix
         if: ${{ endsWith(matrix.target, '-musl') }}
         run: nix build '.#obeliskMusl'
