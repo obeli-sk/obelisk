@@ -38,7 +38,7 @@ jobs:
 
       - name: Build the binary
         working-directory: temp
-        run: nix build ${{ matrix.target }}
+        run: nix build ${{ matrix.target }} --log-lines 0 --print-build-logs
 
       - name: Run the binary
         working-directory: temp
