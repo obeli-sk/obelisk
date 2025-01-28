@@ -2,7 +2,6 @@ builds:
   - include:
       - "packages.x86_64-linux.default"
       - "packages.aarch64-linux.default"
-      - "packages.aarch64-linux.obeliskMusl"
     branch: main
 
   - include:
