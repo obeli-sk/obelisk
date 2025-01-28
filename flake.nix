@@ -19,11 +19,11 @@
               {
                 inherit system overlays;
                 crossSystem =
-                  if config == "x86_64-unknown-linux-musl" then {
+                if config != null then { # the parameter is not null only when building -musl targets.
                     inherit config;
                     rustc = { inherit config; };
                     isStatic = true;
-                  } else null;
+                    } else null;
               };
           makeObelisk = pkgs: patch-for-generic-linux: buildType:
             pkgs.rustPlatform.buildRustPackage {
@@ -53,7 +53,9 @@
               doCheck = false;
             };
           pkgs = makePkgs null;
-          pkgsMusl = makePkgs "x86_64-unknown-linux-musl";
+          pkgsMusl = if system == "x86_64-linux" then makePkgs "x86_64-unknown-linux-musl"
+                     else if system == "aarch64-linux" then makePkgs "aarch64-unknown-linux-musl"
+                     else null;
         in
         {
           devShells.default = pkgs.mkShell {
@@ -89,10 +91,11 @@
             obeliskGlibcNixDev = makeObelisk pkgs false "dev";
             obeliskGlibcGeneric = makeObelisk pkgs true "release";
             obeliskGlibcGenericDev = makeObelisk pkgs true "dev";
+            default = obeliskGlibcNix;
+          } // (if pkgsMusl != null then {
             obeliskMusl = makeObelisk pkgsMusl false "release";
             obeliskMuslDev = makeObelisk pkgsMusl false "dev";
-            default = obeliskGlibcNix;
-          };
+          } else {});
         }
       );
 }
