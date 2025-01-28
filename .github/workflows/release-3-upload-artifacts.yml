@@ -38,11 +38,11 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-22.04 # Make sure to use the old glibc for native build.
+            os: ubuntu-22.04 # Make sure to use the old libc for native build.
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04 # Does not matter as musl is built with Nix.
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04-arm # Make sure to use the old glibc for native build.
+            os: ubuntu-22.04-arm # Make sure to use the old libc for native build.
           - target: aarch64-unknown-linux-musl
             os: ubuntu-22.04-arm # Does not matter as musl is built with Nix.
           - target: x86_64-apple-darwin
@@ -89,7 +89,7 @@ jobs:
         if: ${{ !endsWith(matrix.target, '-musl') }}
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-      - name: Install dependencies - Ubuntu GLIBC
+      - name: Install dependencies - Ubuntu GNU libc
         if: ${{ endsWith(matrix.target, '-gnu') }}
         run: |
           sudo apt update

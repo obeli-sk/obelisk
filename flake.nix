@@ -87,11 +87,11 @@
               ];
           };
           packages = rec {
-            obeliskGlibcNix = makeObelisk pkgs false "release";
-            obeliskGlibcNixDev = makeObelisk pkgs false "dev";
-            obeliskGlibcGeneric = makeObelisk pkgs true "release";
-            obeliskGlibcGenericDev = makeObelisk pkgs true "dev";
-            default = obeliskGlibcNix;
+            obeliskLibcNix = makeObelisk pkgs false "release";
+            obeliskLibcNixDev = makeObelisk pkgs false "dev";
+            obeliskLibcGeneric = makeObelisk pkgs true "release";
+            obeliskLibcGenericDev = makeObelisk pkgs true "dev";
+            default = obeliskLibcNix;
           } // (if pkgsMusl != null then {
             obeliskMusl = makeObelisk pkgsMusl false "release";
             obeliskMuslDev = makeObelisk pkgsMusl false "dev";

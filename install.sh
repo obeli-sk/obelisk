@@ -20,11 +20,14 @@ if [ "$os" = "Linux" ]; then
         *)        echo "Unsupported architecture ${machine}" && exit 1 ;;
     esac
 
-    # Check for musl or glibc
+    # Use musl on NixOS and musl-based systems.
     ldd_version=$(ldd --version 2>&1 || true)
     issue=$(cat /etc/issue 2>/dev/null || true)
     if echo "$ldd_version" | grep -q "musl" || echo "$issue" | grep -q "NixOS"; then
         lib="musl"
+        if echo "$issue" | grep -q "NixOS"; then
+            echo "Using musl on NixOS. If you want to use glibc, please use run with `nix profile install github:obeli-sk/obelisk/latest`"
+        fi
     else
         lib="gnu"
     fi
