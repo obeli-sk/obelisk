@@ -74,12 +74,9 @@ jobs:
       # Build the musl binary with Nix
       - name: Install Nix
         if: ${{ endsWith(matrix.target, '-musl') }}
-        uses: nixbuild/nix-quick-install-action@v29
+        uses: cachix/install-nix-action@v30
         with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            extra-substituters = https://cache.garnix.io
-            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g
+          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
       - name: Build Obelisk with Nix
         if: ${{ endsWith(matrix.target, '-musl') }}
         run: nix build '.#obeliskMusl'
