@@ -41,6 +41,10 @@ jobs:
             os: ubuntu-22.04 # Make sure to use the old glibc for native build.
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04 # Does not matter as musl is built with Nix.
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm # Make sure to use the old glibc for native build.
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-22.04-arm # Does not matter as musl is built with Nix.
           - target: x86_64-apple-darwin
             os: macos-13
           - target: aarch64-apple-darwin
@@ -69,24 +73,24 @@ jobs:
 
       # Build the musl binary with Nix
       - name: Install Nix
-        if: ${{ matrix.target == 'x86_64-unknown-linux-musl' }}
+        if: ${{ endsWith(matrix.target, '-musl') }}
         uses: cachix/install-nix-action@v30
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
-      - name: Build obelisk with Nix
-        if: ${{ matrix.target == 'x86_64-unknown-linux-musl' }}
+      - name: Build Obelisk with Nix
+        if: ${{ endsWith(matrix.target, '-musl') }}
         run: nix build '.#obeliskMusl'
       - name: Create a tar.gz archive
-        if: ${{ matrix.target == 'x86_64-unknown-linux-musl' }}
+        if: ${{ endsWith(matrix.target, '-musl') }}
         run: tar czf archive.tar.gz --transform='s/^result\/bin\///' result/bin/obelisk
 
       # Build natively for !musl
       - name: Install Rust
-        if: ${{ matrix.target != 'x86_64-unknown-linux-musl' }}
+        if: ${{ !endsWith(matrix.target, '-musl') }}
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-      - name: Install dependencies - Ubuntu
-        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
+      - name: Install dependencies - Ubuntu GLIBC
+        if: ${{ endsWith(matrix.target, '-gnu') }}
         run: |
           sudo apt update
           sudo apt install wget gcc protobuf-compiler libprotobuf-dev -y
@@ -95,8 +99,8 @@ jobs:
         run: |
           brew install protobuf
           brew install gnu-tar
-      - name: Install obelisk from crates.io
-        if: ${{ matrix.target != 'x86_64-unknown-linux-musl' }}
+      - name: Install Obelisk from crates.io - macos and linux-gnu = all non-musl targets
+        if: ${{ !endsWith(matrix.target, '-musl') }}
         run: |
           source "$HOME/.cargo/env"
           TAG=${{ steps.git-info.outputs.tag }}
