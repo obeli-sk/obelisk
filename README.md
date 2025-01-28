@@ -14,7 +14,7 @@ and webhook endpoints, persisting steps in execution log using SQLite.
 ## How It Works
 - **Schema-first design with end-to-end type safety**:
 Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
-[WIT IDL](https://component-model.bytecodealliance.org/design/wit.html) for API bindings.
+[WIT IDL](https://component-model.bytecodealliance.org/design/wit.html) for generating API bindings.
 - **Resilient Activities**: Automatic retries on errors and timeouts, with persistent input and results.
 - **Replayable Workflows**: Deterministic execution ensures reliable recovery, debugging, and auditing.
 
@@ -61,7 +61,7 @@ The [Stargazers](https://github.com/obeli-sk/demo-stargazers) app features:
 
 ## Installation
 ### Supported Platforms
-- Linux x64 (musl, glibc v2.35+, NixOS)
+- Linux x64, arm64 (musl, glibc v2.35+, NixOS)
 - macOS 13 x64
 - macOS 14 arm64
 
