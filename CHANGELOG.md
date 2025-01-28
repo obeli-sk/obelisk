@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.3](https://github.com/obeli-sk/obelisk/compare/v0.13.2...v0.13.3)
+
+### 📚 Documentation
+
+- Add arm64-linux to supported targets - ([0ee1e67](https://github.com/obeli-sk/obelisk/commit/0ee1e677fb44361f0d3e2d31d172bdcb416ef57a))
+
+
 ## [0.13.2](https://github.com/obeli-sk/obelisk/compare/v0.13.1...v0.13.2)
 
 ### 🐛 Bug Fixes
