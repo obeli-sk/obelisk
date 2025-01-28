@@ -27,6 +27,7 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-22.04
+          - runner: ubuntu-22.04-arm
           - runner: macos-13
           - runner: macos-14
     steps:
