@@ -633,9 +633,10 @@ impl SqlitePool {
         let path = path.as_ref().to_owned();
         let shutdown = Arc::new(AtomicBool::new(false));
         let (command_tx, command_rx) = tokio::sync::mpsc::channel(config.queue_capacity);
+        info!("Sqlite database location: {path:?}");
         {
+            // Initialize the `Connection`.
             let init_task = {
-                let path = path.clone();
                 #[cfg_attr(madsim, allow(deprecated))]
                 tokio::task::spawn_blocking(move || Self::init_thread(&path)).await
             };
@@ -649,9 +650,9 @@ impl SqlitePool {
                 }
             };
             let shutdown = shutdown.clone();
+            // Start the RPC thread.
             std::thread::spawn(move || Self::connection_rpc(conn, &shutdown, command_rx, config));
         };
-        info!("Sqlite database location: {path:?}");
         Ok(Self {
             shutdown,
             command_tx,

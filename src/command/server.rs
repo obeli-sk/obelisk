@@ -15,6 +15,7 @@ use crate::config::toml::StdOutput;
 use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
+use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::ComponentConfig;
 use crate::config::ComponentConfigImportable;
 use crate::config::ComponentLocation;
@@ -735,9 +736,9 @@ async fn verify_internal(
     params: VerifyParams,
 ) -> Result<ServerVerified, anyhow::Error> {
     debug!("Using toml config: {config:#?}");
-    let db_file = config
+    let db_dir = config
         .sqlite
-        .get_sqlite_file(config_holder.project_dirs.as_ref())
+        .get_sqlite_dir(config_holder.project_dirs.as_ref())
         .await?;
     let wasm_cache_dir = config
         .get_wasm_cache_directory(config_holder.project_dirs.as_ref())
@@ -761,30 +762,13 @@ async fn verify_internal(
         }
     };
     if params.clean_db {
-        tokio::fs::remove_file(&db_file)
+        tokio::fs::remove_dir_all(&db_dir)
             .await
             .or_else(ignore_not_found)
-            .with_context(|| format!("cannot delete database file `{db_file:?}`"))?;
-        let with_suffix = |suffix: &str| {
-            let db_file_name = db_file.file_name().expect("db_file must be a file");
-            let mut wal_file_name = db_file_name.to_owned();
-            wal_file_name.push(suffix);
-            if let Some(parent) = db_file.parent() {
-                parent.join(wal_file_name)
-            } else {
-                PathBuf::from(wal_file_name)
-            }
-        };
-        let wal_file = with_suffix("-wal");
-        tokio::fs::remove_file(&wal_file)
+            .with_context(|| format!("cannot delete database directory `{db_dir:?}`"))?;
+        tokio::fs::create_dir_all(&db_dir)
             .await
-            .or_else(ignore_not_found)
-            .with_context(|| format!("cannot delete database file `{wal_file:?}`"))?;
-        let shm_file = with_suffix("-shm");
-        tokio::fs::remove_file(&shm_file)
-            .await
-            .or_else(ignore_not_found)
-            .with_context(|| format!("cannot delete database file `{shm_file:?}`"))?;
+            .with_context(|| format!("cannot create database directory {db_dir:?}"))?;
     }
     if params.clean_cache {
         tokio::fs::remove_dir_all(&wasm_cache_dir)
@@ -794,11 +778,12 @@ async fn verify_internal(
     }
     if params.clean_cache || params.clean_codegen_cache {
         if let Some(codegen_cache) = &codegen_cache {
+            // delete codegen_cache
             tokio::fs::remove_dir_all(codegen_cache)
                 .await
                 .or_else(ignore_not_found)
                 .with_context(|| {
-                    format!("cannot delete codegen cache directory {wasm_cache_dir:?}")
+                    format!("cannot delete codegen cache directory {codegen_cache:?}")
                 })?;
             tokio::fs::create_dir_all(codegen_cache)
                 .await
@@ -820,7 +805,7 @@ async fn verify_internal(
         codegen_cache.as_deref(),
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
-        db_file,
+        db_dir,
         params.ignore_missing_env_vars,
     )
     .await?;
@@ -911,7 +896,7 @@ impl ServerVerified {
         codegen_cache: Option<&Path>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        db_file: PathBuf,
+        db_dir: PathBuf,
         ignore_missing_env_vars: bool,
     ) -> Result<Self, anyhow::Error> {
         let engines = {
@@ -987,7 +972,7 @@ impl ServerVerified {
             http_servers_to_webhook_names: config.http_servers_to_webhook_names,
             engines,
             sqlite_config,
-            db_file,
+            db_file: db_dir.join(SQLITE_FILE_NAME),
         })
     }
 }

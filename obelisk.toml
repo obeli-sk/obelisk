@@ -9,7 +9,7 @@ api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API serv
 webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
 # Note: listening on all interfaces using [::]:port is not advised, as there is no auth yet.
 
-# sqlite.file = "${DATA_DIR}/obelisk.sqlite" # Path to sqlite database. Supports path prefixes.
+# sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
 
 # wasm_cache_directory = "${CACHE_DIR}/wasm" # Path to directory where downloaded or transformed WASM files are stored. Supports path prefixes.
 
