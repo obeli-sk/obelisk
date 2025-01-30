@@ -145,23 +145,18 @@ fn get_oci_auth(reference: &Reference) -> Result<oci_client::secrets::RegistryAu
     Ok(oci_client::secrets::RegistryAuth::Anonymous)
 }
 
-pub(crate) async fn push(
-    wasm_path: PathBuf,
-    reference: &Reference,
-    convert_core_module: bool,
-) -> Result<(), anyhow::Error> {
+pub(crate) async fn push(wasm_path: PathBuf, reference: &Reference) -> Result<(), anyhow::Error> {
     if reference.digest().is_some() {
         bail!("cannot push a digest reference");
     }
-    let wasm_path = if convert_core_module {
+    let wasm_path = {
+        // Attempt to convert the core module to a component if needed.
         let output_parent = wasm_path
             .parent()
             .expect("direct parent of a file is never None");
         WasmComponent::convert_core_module_to_component(&wasm_path, output_parent)
             .await?
             .unwrap_or(wasm_path)
-    } else {
-        wasm_path
     };
     let engine = {
         let mut wasmtime_config = wasmtime::Config::new();

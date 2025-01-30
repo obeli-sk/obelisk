@@ -100,11 +100,9 @@ async fn main() -> Result<(), anyhow::Error> {
                     )
                     .await
                 }
-                ClientSubcommand::Component(args::Component::Push {
-                    path,
-                    image_name,
-                    convert_core_module,
-                }) => oci::push(path, &image_name, convert_core_module).await,
+                ClientSubcommand::Component(args::Component::Push { path, image_name }) => {
+                    oci::push(path, &image_name).await
+                }
                 ClientSubcommand::Execution(args::Execution::Submit {
                     ffqn,
                     params,

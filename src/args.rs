@@ -108,8 +108,6 @@ pub(crate) enum Component {
         /// OCI reference. Example: docker.io/repo/image:tag
         #[arg(required(true))]
         image_name: oci_client::Reference,
-        #[arg(short, long)]
-        convert_core_module: bool,
     },
 }
 
