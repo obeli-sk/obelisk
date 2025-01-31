@@ -4,6 +4,7 @@ use concepts::{FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT};
 use hashbrown::HashMap;
 use id_arena::Arena;
 use indexmap::IndexMap;
+use semver::{BuildMetadata, Prerelease, Version};
 use std::{ops::Deref, path::PathBuf};
 use tracing::{error, warn};
 use wit_component::{DecodedWasm, WitPrinter};
@@ -12,46 +13,7 @@ use wit_parser::{
     TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup,
 };
 
-// Keep in sync with the wit file
-const OBELISK_TYPES_PACKAGE: &str = "
-    package obelisk:types {
-      interface time {
-        variant duration {
-          milliseconds(u64),
-          seconds(u64),
-          minutes(u32),
-          hours(u32),
-          days(u32),
-        }
-        record datetime {
-          seconds: u64,
-          nanoseconds: u32,
-        }
-        variant schedule-at {
-          now,
-          at(datetime),
-          in(duration),
-        }
-      }
-      interface execution {
-          resource join-set-id {
-          }
-          record execution-id {
-              id: string,
-          }
-
-          record delay-id {
-              id: string,
-          }
-
-          variant execution-error {
-              permanent-failure(string),
-              permanent-timeout,
-              nondeterminism,
-          }
-      }
-    }
-    ";
+const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!("../../../wit/obelisk_types/types.wit");
 
 pub(crate) fn wit(
     enrich: ComponentExportsType,
@@ -76,10 +38,20 @@ pub(crate) fn wit(
     }
 }
 
+fn obelisk_types_with_nesting() -> String {
+    // Replace last character of the first line from ; to {
+    let mut nesting = OBELISK_TYPES_PACKAGE_NO_NESTING.replacen(';', "{", 1);
+    nesting.push('}');
+    nesting
+}
+
 #[expect(clippy::too_many_lines)]
 fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
-    let wit = remove_nested_package(wit, "package obelisk:types {");
-    let wit = format!("{wit}\n{OBELISK_TYPES_PACKAGE}");
+    let wit = remove_nested_package(wit, "package obelisk:types@1.0.0 {");
+    let wit = format!(
+        "{wit}\n{types_nesting}",
+        types_nesting = obelisk_types_with_nesting()
+    );
 
     let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit)?;
     let mut resolve = Resolve::new();
@@ -91,7 +63,13 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
     let obelisk_types_package_name = PackageName {
         namespace: "obelisk".to_string(),
         name: "types".to_string(),
-        version: None,
+        version: Some(Version {
+            major: 1,
+            minor: 0,
+            patch: 0,
+            pre: Prerelease::EMPTY,
+            build: BuildMetadata::EMPTY,
+        }),
     };
     let obelisk_types_pkg_id =
         if let Some(id) = resolve.package_names.get(&obelisk_types_package_name) {
@@ -108,7 +86,7 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
             resolve.package_names.insert(package_name, ext_pkg_id);
             ext_pkg_id
         };
-    // Get obelisk:types/time
+    // Get obelisk:types/time@VERSION
     let time_ifc_id = *resolve.packages[obelisk_types_pkg_id]
         .interfaces
         .get("time")
@@ -116,13 +94,13 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
     let time_ifc = &resolve.interfaces[time_ifc_id];
 
     let (execution_ifc_id, execution_ifc) = find_interface(
-        &IfcFqnName::from_parts("obelisk", "types", "execution", None),
+        &IfcFqnName::from_parts("obelisk", "types", "execution", Some("1.0.0")),
         &resolve,
         &resolve.interfaces,
     )
-    .expect("`obelisk:types/execution` must be found");
+    .expect("`obelisk:types/execution@1.0.0` must be found");
     let type_id_execution_id = {
-        // obelisk:types/execution.{execution-id}
+        // obelisk:types/execution@VERSION.{execution-id}
         let actual_type_id = *execution_ifc
             .types
             .get("execution-id")
@@ -137,7 +115,7 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
         })
     };
     let (type_id_join_set_id, type_id_join_set_id_borrow_handle) = {
-        // obelisk:types/execution.{join-set-id}
+        // obelisk:types/execution@VERSION.{join-set-id}
         let actual_type_id = *execution_ifc
             .types
             .get("join-set-id")

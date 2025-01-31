@@ -1,4 +1,4 @@
-package obelisk:log;
+package obelisk:log@1.0.0;
 
 interface log {
     trace: func(message: string);

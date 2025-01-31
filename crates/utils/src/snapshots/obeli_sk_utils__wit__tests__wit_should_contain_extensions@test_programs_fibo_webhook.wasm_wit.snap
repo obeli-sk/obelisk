@@ -5,9 +5,9 @@ expression: wit
 package root:component;
 
 world root {
-  import obelisk:log/log;
-  import obelisk:types/execution;
-  import obelisk:types/time;
+  import obelisk:log/log@1.0.0;
+  import obelisk:types/execution@1.0.0;
+  import obelisk:types/time@1.0.0;
   import testing:fibo-workflow-obelisk-ext/workflow;
   import testing:fibo-workflow/workflow;
   import wasi:io/poll@0.2.2;
@@ -26,14 +26,14 @@ world root {
 
   export wasi:http/incoming-handler@0.2.2;
 }
-package obelisk:log {
+package obelisk:log@1.0.0 {
   interface log {
     info: func(message: string);
   }
 }
 
 
-package obelisk:types {
+package obelisk:types@1.0.0 {
   interface execution {
     record execution-id {
       id: string,
@@ -64,8 +64,8 @@ package obelisk:types {
 
 package testing:fibo-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/time.{schedule-at};
-    use obelisk:types/execution.{execution-id};
+    use obelisk:types/time@1.0.0.{schedule-at};
+    use obelisk:types/execution@1.0.0.{execution-id};
 
     fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
   }

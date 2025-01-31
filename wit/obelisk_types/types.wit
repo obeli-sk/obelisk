@@ -1,4 +1,4 @@
-package obelisk:types;
+package obelisk:types@1.0.0;
 
 interface time {
 

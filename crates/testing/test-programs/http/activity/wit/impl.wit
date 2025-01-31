@@ -2,5 +2,5 @@ package any:any;
 
 world any {
     export testing:http/http-get;
-    import obelisk:log/log;
+    import obelisk:log/log@1.0.0;
 }

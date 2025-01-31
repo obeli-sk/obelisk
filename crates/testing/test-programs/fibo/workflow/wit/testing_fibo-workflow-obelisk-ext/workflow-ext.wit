@@ -1,8 +1,9 @@
+
 package testing:fibo-workflow-obelisk-ext;
 
 interface workflow {
-    use obelisk:types/execution.{execution-id, join-set-id, execution-error};
-    use obelisk:types/time.{schedule-at};
+    use obelisk:types/execution@1.0.0.{execution-id, join-set-id, execution-error};
+    use obelisk:types/time@1.0.0.{schedule-at};
 
     fiboa-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
     fiboa-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;

@@ -2,10 +2,10 @@
 wasmtime::component::bindgen!({
     path: "host-wit/",
     async: true,
-    // interfaces: "import obelisk:workflow/workflow-support;", // Broken in 26.0.0
+    // interfaces: "import obelisk:workflow/workflow-support@1.0.0;", // Broken in 26.0.0
     inline: "package any:any;
                 world bindings {
-                    import obelisk:workflow/workflow-support;
+                    import obelisk:workflow/workflow-support@1.0.0;
                 }",
     world: "any:any/bindings",
     trappable_imports: true,
