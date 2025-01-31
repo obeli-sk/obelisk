@@ -3,12 +3,18 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:workflow/workflow-support@1.0.0.new-join-set": {
+  "obelisk:workflow/workflow-support@1.0.0.join-set": {
     "ffqn": {
       "ifc_fqn": "obelisk:workflow/workflow-support@1.0.0",
-      "function_name": "new-join-set"
+      "function_name": "join-set"
     },
-    "parameter_types": [],
+    "parameter_types": [
+      {
+        "type_wrapper": "string",
+        "name": "name",
+        "wit_type": "string"
+      }
+    ],
     "return_type": {
       "type_wrapper": "own",
       "wit_type": "join-set-id"

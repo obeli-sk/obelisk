@@ -478,7 +478,7 @@ mod workflow_support {
                 .map_err(WorkflowFunctionError::from)?)
         }
 
-        async fn new_join_set(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
+        async fn join_set(&mut self, _name: String) -> wasmtime::Result<Resource<JoinSetId>> {
             // TODO(edge case): handle JoinSetId conflict: This does not have to be deterministicly generated.
             // Figure out caching, add retries.
             // Another strategy to consider is to add hierarchy similar to ExecutionId.
@@ -667,7 +667,7 @@ pub(crate) mod tests {
                     }
                     WorkflowStep::SubmitWithoutAwait { target_ffqn } => {
                         // Create new join set
-                        let join_set_resource = workflow_ctx.new_join_set().await.unwrap();
+                        let join_set_resource = workflow_ctx.join_set(String::new()).await.unwrap();
                         let join_set_id =
                             *workflow_ctx.resource_table.get(&join_set_resource).unwrap();
                         let mut ret_val = vec![Val::Bool(false)];

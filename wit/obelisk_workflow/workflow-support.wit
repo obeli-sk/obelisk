@@ -6,9 +6,10 @@ interface workflow-support {
 
     /// Persistent sleep.
     sleep: func(duration: duration);
+    // TODO: sleep-submit
 
     /// Create new join set. Closing the join set at the execution finish will block until all child executions are finished.
-    new-join-set: func() -> join-set-id; // TODO: rename to new-join-set-awaiting
+    join-set: func(name: string) -> join-set-id;
 
-    // TODO: `new-join-set-terminating` that cancels all remaining child executions on close
+    // TODO: `join-set-cancelling(name: string)` that cancels all remaining child executions on close
 }

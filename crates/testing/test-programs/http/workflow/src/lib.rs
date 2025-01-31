@@ -1,5 +1,5 @@
 use exports::testing::http_workflow::workflow::Guest;
-use obelisk::workflow::workflow_support::new_join_set;
+use obelisk::workflow::workflow_support::join_set;
 use testing::{
     http::http_get,
     http_obelisk_ext::http_get::{get_successful_await_next, get_successful_submit},
@@ -25,7 +25,7 @@ impl Guest for Component {
     }
 
     fn get_successful_concurrently(urls: Vec<String>) -> Result<Vec<String>, String> {
-        let join_set_id = new_join_set();
+        let join_set_id = join_set("");
         let length = urls.len();
         for url in urls {
             let _execution_id = get_successful_submit(&join_set_id, &url);
@@ -43,7 +43,7 @@ impl Guest for Component {
         url: String,
         concurrency: u32,
     ) -> Result<Vec<String>, String> {
-        let join_set_id = new_join_set();
+        let join_set_id = join_set("");
         for _ in 0..concurrency {
             let _execution_id = get_successful_submit(&join_set_id, &url);
         }
