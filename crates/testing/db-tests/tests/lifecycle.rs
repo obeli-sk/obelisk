@@ -2,8 +2,8 @@ use assert_matches::assert_matches;
 use concepts::prefixed_ulid::{DelayId, JoinSetId, RunId};
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
-    JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, PendingState, SpecificError,
-    Version,
+    JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, PendingState, PersistKind,
+    SpecificError, Version,
 };
 use concepts::storage::{DbPool, JoinSetResponseEvent};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
@@ -396,6 +396,10 @@ async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             event: ExecutionEventInner::HistoryEvent {
                 event: HistoryEvent::Persist {
                     value: Vec::from("hello".as_bytes()),
+                    kind: PersistKind::RandomString {
+                        min_length: 1,
+                        max_length_exclusive: 6,
+                    },
                 },
             },
             created_at,
@@ -460,8 +464,8 @@ async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             .await
             .unwrap();
         assert_eq!(1, event_history.len());
-        let value =
-            assert_matches!(event_history.last(), Some(HistoryEvent::Persist { value }) => value );
+        let value = assert_matches!(event_history.last(),
+            Some(HistoryEvent::Persist { value, kind: PersistKind::RandomString { .. } }) => value );
         assert_eq!(Vec::from("hello".as_bytes()), *value);
         version = current_version;
     }

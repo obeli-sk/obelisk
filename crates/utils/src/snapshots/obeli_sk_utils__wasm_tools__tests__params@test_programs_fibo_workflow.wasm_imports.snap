@@ -3,18 +3,13 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:workflow/workflow-support@1.0.0.join-set": [
+  "obelisk:workflow/workflow-support@1.0.0.join-set-random": [
     {
-      "params": [
-        {
-          "name": "name",
-          "wit_type": "string"
-        }
-      ],
+      "params": [],
       "return_type": "join-set-id"
     },
     "obelisk:workflow/workflow-support@1.0.0",
-    "join-set"
+    "join-set-random"
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": [
     {

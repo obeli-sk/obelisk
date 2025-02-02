@@ -276,7 +276,18 @@ message ExecutionEvent {
     message HistoryEvent {
 
         message Persist {
+            message PersistKind {
+                message RandomString {
+                }
+                message RandomU64 {
+                }
+                oneof variant {
+                    RandomString random_string = 1;
+                    RandomU64 random_u64 = 2;
+                }
+            }
             google.protobuf.Any data = 1;
+            PersistKind kind = 2;
         }
 
         message JoinSetCreated {

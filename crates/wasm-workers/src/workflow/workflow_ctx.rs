@@ -14,7 +14,7 @@ use concepts::{ExecutionId, FinishedExecutionError, FunctionRegistry, IfcFqnName
 use concepts::{FunctionFqn, Params};
 use executor::worker::FatalError;
 use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
+use rand::SeedableRng;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -243,6 +243,9 @@ impl<'a> ImportedFnCall<'a> {
     }
 }
 
+const CHARSET_ALPHANUMERIC: &[u8] =
+    b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -350,10 +353,22 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         Ok(())
     }
 
-    pub(crate) fn next_u128(&mut self) -> u128 {
-        let mut bytes = [0; 16];
-        self.rng.fill_bytes(&mut bytes);
-        u128::from_be_bytes(bytes)
+    // Must be persisted by the caller.
+    fn next_u128(&mut self) -> u128 {
+        rand::Rng::random(&mut self.rng)
+    }
+
+    // Must be persisted by the caller.
+    fn next_random_string(&mut self, min_length: u16, max_length_exclusive: u16) -> String {
+        let length_inclusive =
+            rand::Rng::random_range(&mut self.rng, min_length..max_length_exclusive);
+
+        (0..=length_inclusive)
+            .map(|_| {
+                let idx = rand::Rng::random_range(&mut self.rng, 0..CHARSET_ALPHANUMERIC.len());
+                CHARSET_ALPHANUMERIC[idx] as char
+            })
+            .collect()
     }
 
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
@@ -442,6 +457,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 }
 
 mod workflow_support {
+    use concepts::storage::{self, PersistKind};
+    use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
 
     use super::{
@@ -450,7 +467,7 @@ mod workflow_support {
     };
     use crate::{
         host_exports::{self, DurationEnum},
-        workflow::event_history::{ChildReturnValue, HostActionResp},
+        workflow::event_history::{ChildReturnValue, HostResource},
     };
 
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
@@ -470,6 +487,64 @@ mod workflow_support {
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
         host_exports::obelisk::workflow::workflow_support::Host for WorkflowCtx<C, DB, P>
     {
+        async fn random_u64(&mut self, min: u64, max_exclusive: u64) -> wasmtime::Result<u64> {
+            self.random_u64_inclusive(min, max_exclusive + 1).await
+        }
+
+        async fn random_u64_inclusive(
+            &mut self,
+            min: u64,
+            max_inclusive: u64,
+        ) -> wasmtime::Result<u64> {
+            let value = rand::Rng::random_range(&mut self.rng, min..=max_inclusive);
+            let value = Vec::from(storage::from_u64_to_bytes(value));
+            let value = self
+                .event_history
+                .apply(
+                    EventCall::Persist {
+                        value,
+                        kind: PersistKind::RandomU64 { min, max_inclusive },
+                    },
+                    &self.db_pool.connection(),
+                    &mut self.version,
+                    self.fn_registry.as_ref(),
+                )
+                .await
+                .map_err(WorkflowFunctionError::from)?;
+            let value =
+                assert_matches!(value, ChildReturnValue::WastVal(WastVal::U64(value)) => value);
+            Ok(value)
+        }
+
+        async fn random_string(
+            &mut self,
+            min_length: u16,
+            max_length_exclusive: u16,
+        ) -> wasmtime::Result<String> {
+            let value = self.next_random_string(min_length, max_length_exclusive);
+            // Persist
+            let value = Vec::from_iter(value.bytes());
+            let value = self
+                .event_history
+                .apply(
+                    EventCall::Persist {
+                        value,
+                        kind: PersistKind::RandomString {
+                            min_length: u64::from(min_length),
+                            max_length_exclusive: u64::from(max_length_exclusive),
+                        },
+                    },
+                    &self.db_pool.connection(),
+                    &mut self.version,
+                    self.fn_registry.as_ref(),
+                )
+                .await
+                .map_err(WorkflowFunctionError::from)?;
+            let value =
+                assert_matches!(value, ChildReturnValue::WastVal(WastVal::String(value)) => value);
+            Ok(value)
+        }
+
         // TODO: Apply jitter, should be configured on the component level
         async fn sleep(&mut self, duration: DurationEnum) -> wasmtime::Result<()> {
             Ok(self
@@ -494,9 +569,15 @@ mod workflow_support {
                 )
                 .await
                 .map_err(WorkflowFunctionError::from)?;
-            let join_set_id = assert_matches!(res, ChildReturnValue::HostActionResp(HostActionResp::CreateJoinSetResp(join_set_id)) => join_set_id);
+            let join_set_id = assert_matches!(res,
+                ChildReturnValue::HostResource(HostResource::CreateJoinSetResp(join_set_id)) => join_set_id);
             let join_set_id = self.resource_table.push(join_set_id)?;
             Ok(join_set_id)
+        }
+
+        async fn join_set_random(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
+            let random_string = self.random_string(5, 11).await?;
+            self.join_set(random_string).await
         }
     }
 }
@@ -554,7 +635,7 @@ pub(crate) mod tests {
     };
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
-    use tracing::{info, info_span};
+    use tracing::{debug, info, info_span};
     use utils::time::{ClockFn, Now};
     use wasmtime::component::Val;
 
@@ -577,9 +658,36 @@ pub(crate) mod tests {
 
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
     enum WorkflowStep {
-        Sleep { millis: u32 },
-        Call { ffqn: FunctionFqn },
-        SubmitWithoutAwait { target_ffqn: FunctionFqn },
+        Sleep {
+            millis: u32,
+        },
+        Call {
+            ffqn: FunctionFqn,
+        },
+        SubmitWithoutAwait {
+            target_ffqn: FunctionFqn,
+        },
+        RandomU64 {
+            min: u64,
+            max_inclusive: u64,
+        },
+        RandomString {
+            min_length: u16,
+            max_length_exclusive: u16,
+        },
+    }
+
+    impl WorkflowStep {
+        fn is_valid(&self) -> bool {
+            match self {
+                Self::RandomU64 { min, max_inclusive } => min <= max_inclusive,
+                Self::RandomString {
+                    min_length,
+                    max_length_exclusive,
+                } => min_length < max_length_exclusive,
+                _ => true,
+            }
+        }
     }
 
     #[derive(Clone, derive_more::Debug)]
@@ -682,6 +790,27 @@ pub(crate) mod tests {
                             )
                             .await
                     }
+                    WorkflowStep::RandomU64 { min, max_inclusive } => {
+                        let value = workflow_ctx
+                            .random_u64_inclusive(*min, *max_inclusive)
+                            .await
+                            .unwrap();
+                        assert!(value > *min);
+                        assert!(value <= *max_inclusive);
+                        Ok(())
+                    }
+                    WorkflowStep::RandomString {
+                        min_length,
+                        max_length_exclusive,
+                    } => {
+                        let value = workflow_ctx
+                            .random_string(*min_length, *max_length_exclusive)
+                            .await
+                            .unwrap();
+                        assert!(value.len() > *min_length as usize);
+                        assert!(value.len() < usize::from(*max_length_exclusive));
+                        Ok(())
+                    }
                 };
                 if let Err(err) = res {
                     info!("Sending {err:?}");
@@ -689,7 +818,7 @@ pub(crate) mod tests {
                 }
             }
             info!("Closing opened join sets");
-            match workflow_ctx.close_opened_join_sets().await {
+            let res = match workflow_ctx.close_opened_join_sets().await {
                 Ok(()) => {
                     info!("Finishing");
                     WorkerResult::Ok(SupportedFunctionReturnValue::None, workflow_ctx.version)
@@ -699,7 +828,9 @@ pub(crate) mod tests {
                     return WorkerResult::DbUpdatedByWorker;
                 }
                 other => panic!("Unexpected error: {other:?}"),
-            }
+            };
+            info!("Done");
+            res
         }
 
         fn exported_functions(&self) -> &[FunctionMetadata] {
@@ -841,11 +972,24 @@ pub(crate) mod tests {
     fn generate_steps() -> Vec<WorkflowStep> {
         let unstructured_holder = UnstructuredHolder::new();
         let mut unstructured = unstructured_holder.unstructured();
-        unstructured
+        let mut steps = unstructured
             .arbitrary_iter()
             .unwrap()
             .map(std::result::Result::unwrap)
-            .collect::<Vec<_>>()
+            .filter(|step: &WorkflowStep| step.is_valid())
+            .collect::<Vec<_>>();
+        // FIXME: the test harness supports a single child/delay request per join set
+        let mut join_sets = hashbrown::HashSet::new();
+        steps.retain(|step| match step {
+            WorkflowStep::Call { ffqn }
+            | WorkflowStep::SubmitWithoutAwait { target_ffqn: ffqn } => {
+                let new = join_sets.insert(ffqn.clone());
+                !new
+            }
+            _ => true,
+        });
+
+        steps
     }
 
     fn steps_to_registry(steps: &[WorkflowStep]) -> Arc<dyn FunctionRegistry> {
@@ -854,7 +998,7 @@ pub(crate) mod tests {
             .filter_map(|step| match step {
                 WorkflowStep::Call { ffqn }
                 | WorkflowStep::SubmitWithoutAwait { target_ffqn: ffqn } => Some(ffqn.clone()),
-                WorkflowStep::Sleep { .. } => None,
+                _ => None,
             })
             .collect::<Vec<_>>();
         fn_registry_dummy(ffqns.as_slice())
@@ -1006,6 +1150,10 @@ pub(crate) mod tests {
                     assert_eq!(1, child_exec_tick.wait_for_tasks().await.unwrap());
                     child_execution_count -= 1;
                     let child_log = db_connection.get(&child_execution_id).await.unwrap();
+                    debug!(
+                        "Child execution {child_execution_id} should be finished: {:?}",
+                        &child_log.events
+                    );
                     let child_res = child_log.into_finished_result().unwrap();
                     assert_matches!(child_res, Ok(SupportedFunctionReturnValue::None));
                 }

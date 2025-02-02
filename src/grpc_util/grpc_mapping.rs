@@ -424,11 +424,19 @@ pub(crate) fn from_execution_event_to_grpc(
                 }),
                 ExecutionEventInner::HistoryEvent { event } => grpc::execution_event::Event::HistoryVariant(grpc::execution_event::HistoryEvent {
                     event: Some(match event {
-                        HistoryEvent::Persist { value } => grpc::execution_event::history_event::Event::Persist(grpc::execution_event::history_event::Persist {
+                        HistoryEvent::Persist { value, kind } => grpc::execution_event::history_event::Event::Persist(grpc::execution_event::history_event::Persist {
                             data: Some(prost_wkt_types::Any {
                                 type_url: "unknown".to_string(),
                                 value,
                             }),
+                            kind: Some(grpc::execution_event::history_event::persist::PersistKind { variant: Some(match kind {
+                                concepts::storage::PersistKind::RandomU64 { .. } =>
+                                grpc::execution_event::history_event::persist::persist_kind::Variant::RandomU64(
+                                    grpc::execution_event::history_event::persist::persist_kind::RandomU64 {  }),
+                                concepts::storage::PersistKind::RandomString { .. } =>
+                                grpc::execution_event::history_event::persist::persist_kind::Variant::RandomString(
+                                    grpc::execution_event::history_event::persist::persist_kind::RandomString {  }),
+                            }) })
                         }),
                         HistoryEvent::JoinSet { join_set_id } => grpc::execution_event::history_event::Event::JoinSetCreated(grpc::execution_event::history_event::JoinSetCreated {
                             join_set_id: Some(grpc::JoinSetId { id: join_set_id.to_string() }),

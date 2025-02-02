@@ -8,7 +8,10 @@ use crate::host_exports::join_set_id_into_wast_val;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
+use concepts::storage;
 use concepts::storage::HistoryEventScheduledAt;
+use concepts::storage::PersistKind;
+use concepts::storage::SpecificError;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse,
     JoinSetResponseEvent, Version,
@@ -36,11 +39,11 @@ use val_json::wast_val::WastVal;
 pub(crate) enum ChildReturnValue {
     None,
     WastVal(WastVal),
-    HostActionResp(HostActionResp),
+    HostResource(HostResource),
 }
 
 #[derive(Debug)]
-pub(crate) enum HostActionResp {
+pub(crate) enum HostResource {
     CreateJoinSetResp(JoinSetId), // response to `CreateJoinSet`
 }
 
@@ -57,7 +60,7 @@ impl ChildReturnValue {
         match self {
             Self::None => None,
             Self::WastVal(wast_val) => Some(wast_val),
-            Self::HostActionResp(HostActionResp::CreateJoinSetResp(join_set_id)) => {
+            Self::HostResource(HostResource::CreateJoinSetResp(join_set_id)) => {
                 Some(join_set_id_into_wast_val(join_set_id))
             }
         }
@@ -435,11 +438,46 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%join_set_id, "Matched JoinSet");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
-                Ok(FindMatchingResponse::Found(
-                    ChildReturnValue::HostActionResp(HostActionResp::CreateJoinSetResp(
-                        *join_set_id,
-                    )),
-                ))
+                Ok(FindMatchingResponse::Found(ChildReturnValue::HostResource(
+                    HostResource::CreateJoinSetResp(*join_set_id),
+                )))
+            }
+
+            (
+                EventHistoryKey::Persist { value, kind },
+                HistoryEvent::Persist {
+                    value: found_value,
+                    kind: found_kind,
+                },
+            ) if *value == *found_value && *kind == *found_kind => {
+                trace!("Matched Persist");
+                self.event_history[found_idx].1 = Processed;
+                // if this is a [`EventCall::CreateJoinSet`] , return join set id
+                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                    match kind {
+                        PersistKind::RandomString { .. } => {
+                            WastVal::String(String::from_utf8(value.clone()).map_err(|err| {
+                                ApplyError::DbError(DbError::Specific(
+                                    SpecificError::ConsistencyError(StrVariant::from(format!(
+                                        "string must be UTF-8 - {err:?}"
+                                    ))),
+                                ))
+                            })?)
+                        }
+                        PersistKind::RandomU64 { .. } => {
+                            if value.len() != 8 {
+                                return Err(ApplyError::DbError(DbError::Specific(
+                                    SpecificError::ConsistencyError(StrVariant::Static(
+                                        "value cannot be deserialized to u64",
+                                    )),
+                                )));
+                            }
+                            let value: [u8; 8] = value[..8].try_into().expect("size checked above");
+                            let value = storage::from_bytes_to_u64(value);
+                            WastVal::U64(value)
+                        }
+                    },
+                )))
             }
 
             (
@@ -734,6 +772,21 @@ impl<C: ClockFn> EventHistory<C> {
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
+                self.flush_non_blocking_event_cache(db_connection, called_at)
+                    .await?;
+                *version = db_connection
+                    .append(self.execution_id.clone(), version.clone(), join_set)
+                    .await?;
+                Ok(history_events)
+            }
+
+            EventCall::Persist { value, kind } => {
+                let event = HistoryEvent::Persist { value, kind };
+                let history_events = vec![event.clone()];
+                let join_set = AppendRequest {
+                    created_at: called_at,
+                    event: ExecutionEventInner::HistoryEvent { event },
+                };
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 *version = db_connection
@@ -1085,6 +1138,10 @@ pub(crate) enum EventCall {
         delay_id: DelayId,
         expires_at_if_new: DateTime<Utc>,
     },
+    Persist {
+        value: Vec<u8>,
+        kind: PersistKind,
+    },
 }
 
 impl EventCall {
@@ -1109,7 +1166,8 @@ impl EventCall {
             }
             EventCall::CreateJoinSet { .. }
             | EventCall::StartAsync { .. }
-            | EventCall::ScheduleRequest { .. } => None, // continue the execution
+            | EventCall::ScheduleRequest { .. }
+            | EventCall::Persist { .. } => None, // continue the execution
         }
     }
 }
@@ -1118,6 +1176,10 @@ impl EventCall {
 enum EventHistoryKey {
     CreateJoinSet {
         join_set_id: JoinSetId,
+    },
+    Persist {
+        value: Vec<u8>,
+        kind: PersistKind,
     },
     ChildExecutionRequest {
         join_set_id: JoinSetId,
@@ -1152,6 +1214,12 @@ impl EventCall {
             EventCall::CreateJoinSet { join_set_id } => {
                 vec![EventHistoryKey::CreateJoinSet {
                     join_set_id: *join_set_id,
+                }]
+            }
+            EventCall::Persist { value, kind } => {
+                vec![EventHistoryKey::Persist {
+                    value: value.clone(),
+                    kind: *kind,
                 }]
             }
             EventCall::StartAsync {

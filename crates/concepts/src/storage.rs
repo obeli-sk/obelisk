@@ -358,26 +358,56 @@ impl ExecutionEventInner {
 }
 
 #[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    arbitrary::Arbitrary,
+    Serialize,
+    Deserialize,
+)]
+#[serde(tag = "type")]
+pub enum PersistKind {
+    #[display("RandomU64({min}, {max_inclusive})")]
+    RandomU64 { min: u64, max_inclusive: u64 },
+    #[display("RandomString({min_length}, {max_length_exclusive})")]
+    RandomString {
+        min_length: u64,
+        max_length_exclusive: u64,
+    },
+}
+
+#[must_use]
+pub fn from_u64_to_bytes(value: u64) -> [u8; 8] {
+    value.to_be_bytes()
+}
+
+#[must_use]
+pub fn from_bytes_to_u64(bytes: [u8; 8]) -> u64 {
+    u64::from_be_bytes(bytes)
+}
+
+#[derive(
     Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
 )]
 #[serde(tag = "type")]
+/// Must be created by the executor in [`PendingState::Locked`].
 pub enum HistoryEvent {
     #[display("Persist")]
-    /// Must be created by the executor in [`PendingState::Locked`].
-    Persist { value: Vec<u8> },
-    /// Must be created by the executor in [`PendingState::Locked`].
+    Persist { value: Vec<u8>, kind: PersistKind },
     #[display("JoinSet({join_set_id})")]
     JoinSet {
         join_set_id: JoinSetId,
-        // TODO: add JoinSetKind (unordered, ordered)
+        // TODO: add JoinSetKind (unordered, ordered), cancellation policy
     },
     #[display("JoinSetRequest({join_set_id}, {request})")]
     JoinSetRequest {
         join_set_id: JoinSetId,
         request: JoinSetRequest,
     },
-    /// Must be created by the executor in [`PendingState::Locked`].
-    /// Pending state is set to [`PendingState::BlockedByJoinSet`].
+    /// Sets the pending state to [`PendingState::BlockedByJoinSet`].
     /// When the response arrives at `resp_time`:
     /// The execution is [`PendingState::PendingAt`]`(max(resp_time, lock_expires_at)`, so that the
     /// original executor can continue. After the expiry any executor can continue without

@@ -314,6 +314,8 @@ clippy.missing_panics_doc = "allow" # Allow missing docs for now
 clippy.trivially_copy_pass_by_ref = "allow" # Lots of false positives.
 # lower the priority to allow overriding later
 clippy.module_name_repetitions = "allow"
+# Vec::from_iter is more readable than collect::<Vec<_>>
+clippy.from_iter_instead_of_collect = "allow"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(madsim)'] }
