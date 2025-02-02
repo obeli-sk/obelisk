@@ -1165,7 +1165,7 @@ async fn fetch_and_verify_all(
         if http_servers.len()
             > http_servers
                 .iter()
-                .map(|it| concepts::check_name(&it.name))
+                .map(|it| concepts::check_name::<webhook::HttpServer, _>(&it.name))
                 .collect::<Result<hashbrown::HashSet<_>, _>>()?
                 .len()
         {

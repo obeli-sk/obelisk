@@ -1174,7 +1174,7 @@ impl ComponentId {
         component_type: ComponentType,
         name: StrVariant,
         hash: StrVariant,
-    ) -> Result<Self, ConfigIdError> {
+    ) -> Result<Self, InvalidNameError<ComponentId>> {
         Ok(Self {
             component_type,
             name: check_name(name)?,
@@ -1201,15 +1201,16 @@ impl ComponentId {
     }
 }
 
-pub fn check_name<T: AsRef<str>>(name: T) -> Result<T, InvalidNameError> {
+pub fn check_name<T, N: AsRef<str>>(name: N) -> Result<N, InvalidNameError<T>> {
     if let Some(invalid) = name
         .as_ref()
         .chars()
         .find(|c| !c.is_ascii_alphanumeric() && *c != '_')
     {
-        Err(InvalidNameError::InvalidName {
+        Err(InvalidNameError {
             invalid,
             name: name.as_ref().to_string(),
+            phantom_data: PhantomData::default(),
         })
     } else {
         Ok(name)
@@ -1217,15 +1218,11 @@ pub fn check_name<T: AsRef<str>>(name: T) -> Result<T, InvalidNameError> {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum InvalidNameError {
-    #[error("name must only contain alphanumeric characters and underscore, found invalid character `{invalid}` in: {name}")]
-    InvalidName { invalid: char, name: String },
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigIdError {
-    #[error(transparent)]
-    InvalidName(#[from] InvalidNameError),
+#[error("name of {} must only contain alphanumeric characters and underscore, found invalid character `{invalid}` in: {name}", std::any::type_name::<T>().rsplit("::").next().unwrap())]
+pub struct InvalidNameError<T> {
+    invalid: char,
+    name: String,
+    phantom_data: PhantomData<T>,
 }
 
 #[derive(Debug, thiserror::Error)]
