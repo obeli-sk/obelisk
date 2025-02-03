@@ -9,11 +9,11 @@ use concepts::storage::{
     AppendRequest, ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
     HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
 };
-use concepts::JoinSetId;
 use concepts::{
     ComponentId, ComponentType, ExecutionId, ExecutionMetadata, FinishedExecutionError,
     FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, Params, StrVariant,
 };
+use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
@@ -612,9 +612,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             })?;
         Ok(())
     }
-}
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
     #[must_use]
     #[expect(clippy::too_many_arguments)]
     fn new<'a>(
@@ -663,6 +661,27 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
         let mut store = Store::new(engine, ctx);
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
         store
+    }
+
+    async fn close(self, res: wasmtime::Result<()>) -> wasmtime::Result<()> {
+        if let Some(version) = self.version {
+            let created_at = self.clock_fn.now();
+            let req = AppendRequest {
+                created_at,
+                event: ExecutionEventInner::Finished {
+                    result: res
+                        .as_ref()
+                        .map(|()| SupportedFunctionReturnValue::None)
+                        .map_err(|err| FinishedExecutionError::PermanentFailure {
+                            reason: err.to_string(),
+                            detail: Some(format!("{err:?}")),
+                        }),
+                },
+            };
+            let conn = self.db_pool.connection();
+            conn.append(self.execution_id, version, req).await?;
+        }
+        res
     }
 }
 
@@ -811,11 +830,13 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
 
             let task = tokio::task::spawn(
                 async move {
-                    proxy
+                    let res = proxy
                         .wasi_http_incoming_handler()
-                        .call_handle(store, req, out)
+                        .call_handle(&mut store, req, out)
                         .await
-                        .inspect_err(|err| error!("Webhook instance returned error: {err:?}"))
+                        .inspect_err(|err| error!("Webhook instance returned error: {err:?}"));
+                    let ctx = store.into_data();
+                    ctx.close(res).await
                 }
                 .instrument(request_span),
             );
