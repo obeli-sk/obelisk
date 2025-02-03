@@ -1,1 +1,1 @@
-docker.io/getobelisk/webui:parallel-2025-01-25@sha256:3a188875db9fddad4643e22b777c581fd24c2f1a2d32c84758a81d0b96f27153
+docker.io/getobelisk/webui:2025-02-02@sha256:9dae8ea6f505203a60e30168e672a17715b5603b6aa82cc96a96e9f849050cee
