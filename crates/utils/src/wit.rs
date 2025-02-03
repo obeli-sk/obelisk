@@ -13,7 +13,10 @@ use wit_parser::{
     TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup,
 };
 
-const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!("../../../wit/obelisk_types/types.wit");
+const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!(concat!(
+    env!("CARGO_WORKSPACE_DIR"),
+    "/wit/obelisk_types/types.wit"
+));
 
 pub(crate) fn wit(
     enrich: ComponentExportsType,
@@ -38,6 +41,9 @@ pub(crate) fn wit(
     }
 }
 
+// Include the whole types.wit - the original component may use some interfaces (if any),
+// but the extensions need all of them. Declaring each type using wit_parser would be
+// error prone.
 fn obelisk_types_with_nesting() -> String {
     // Replace last character of the first line from ; to {
     let mut nesting = OBELISK_TYPES_PACKAGE_NO_NESTING.replacen(';', "{", 1);
