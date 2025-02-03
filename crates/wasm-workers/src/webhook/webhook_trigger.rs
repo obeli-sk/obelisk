@@ -674,21 +674,25 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
 
     async fn close(self, res: wasmtime::Result<()>) -> wasmtime::Result<()> {
         if let Some(version) = self.version {
-            let created_at = self.clock_fn.now();
-            let req = AppendRequest {
-                created_at,
-                event: ExecutionEventInner::Finished {
-                    result: res
-                        .as_ref()
-                        .map(|()| SupportedFunctionReturnValue::None)
-                        .map_err(|err| FinishedExecutionError::PermanentFailure {
-                            reason: err.to_string(),
-                            detail: Some(format!("{err:?}")),
-                        }),
-                },
-            };
-            let conn = self.db_pool.connection();
-            conn.append(self.execution_id, version, req).await?;
+            self.db_pool
+                .connection()
+                .append(
+                    self.execution_id,
+                    version,
+                    AppendRequest {
+                        created_at: self.clock_fn.now(),
+                        event: ExecutionEventInner::Finished {
+                            result: res
+                                .as_ref()
+                                .map(|()| SupportedFunctionReturnValue::None)
+                                .map_err(|err| FinishedExecutionError::PermanentFailure {
+                                    reason: err.to_string(),
+                                    detail: Some(format!("{err:?}")),
+                                }),
+                        },
+                    },
+                )
+                .await?;
         }
         res
     }
@@ -839,13 +843,13 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
 
             let task = tokio::task::spawn(
                 async move {
-                    let res = proxy
+                    let result = proxy
                         .wasi_http_incoming_handler()
                         .call_handle(&mut store, req, out)
                         .await
                         .inspect_err(|err| error!("Webhook instance returned error: {err:?}"));
                     let ctx = store.into_data();
-                    ctx.close(res).await
+                    ctx.close(result).await
                 }
                 .instrument(request_span),
             );
