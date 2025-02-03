@@ -3,6 +3,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/obeli-sk/obelisk/compare/v0.13.3...v0.14.0)
+
+### ⛰️ Features
+
+- *(grpc,db,wit)* [**breaking**] Add support for random values in workflows - ([098351e](https://github.com/obeli-sk/obelisk/commit/098351e35173dd2b1a28aee60005f9bca203e9ae))
+- *(toml)* [**breaking**] Replace `sqlite.file` with `sqlite.directory` - ([57c37f8](https://github.com/obeli-sk/obelisk/commit/57c37f8622a52d87ce1398adf89edb237d277fdb))
+- *(webhook)* Persist `JoinNext` - ([f27eb35](https://github.com/obeli-sk/obelisk/commit/f27eb35fa966e6658cf8202f9f0ce9c0d020e7c1))
+- *(webhook)* Persist finished status - ([8a8dbc7](https://github.com/obeli-sk/obelisk/commit/8a8dbc724f951c55e838b39c1f203051f7c7a63d))
+- *(wit)* [**breaking**] Rename `new-join-set()` to `join-set(name:string)` - ([ae1a67f](https://github.com/obeli-sk/obelisk/commit/ae1a67fca0fb387c8cd36a4370002ffa02779805))
+- *(wit)* [**breaking**] Add version 1.0.0 to Obelisk WIT files - ([b05b586](https://github.com/obeli-sk/obelisk/commit/b05b58636bb99e8e0f95d54aeb612fcd0be5d5f5))
+- *(wit,grpc,sqlite)* [**breaking**] Implement named join sets - ([c99d71f](https://github.com/obeli-sk/obelisk/commit/c99d71fcdb420bb38a65ea01cf5e1aab91d7b82e))
+- Get rid of `convert_core_module` in `client component push` - ([0943ada](https://github.com/obeli-sk/obelisk/commit/0943ada140ff66018caf97f8a2fc9af324b993a9))
+- Create a dummy join set in webhook - ([5a40379](https://github.com/obeli-sk/obelisk/commit/5a40379512f9a6c2e3d93f7f840f8ec20082f477))
+
+### 🚜 Refactor
+
+- Remove `ConfigIdError` - ([50c5b26](https://github.com/obeli-sk/obelisk/commit/50c5b260ebbc0af0cdb572a5e3f53904ffdd5d8c))
+
+
 ## [0.13.3](https://github.com/obeli-sk/obelisk/compare/v0.13.2...v0.13.3)
 
 ### 📚 Documentation
