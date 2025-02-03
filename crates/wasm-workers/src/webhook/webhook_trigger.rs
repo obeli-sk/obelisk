@@ -531,7 +531,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             let join_set_id =
                 JoinSetId::new(self.execution_id.clone(), StrVariant::empty()).unwrap();
 
-            let join_set_created = AppendRequest {
+            let req_join_set_created = AppendRequest {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSet {
@@ -539,8 +539,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                     },
                 },
             };
-
-            let child_exec_req = AppendRequest {
+            let req_child_exec = AppendRequest {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
@@ -551,7 +550,17 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                     },
                 },
             };
-            let create_child_req = CreateRequest {
+            let req_join_next = AppendRequest {
+                created_at,
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinNext {
+                        join_set_id: join_set_id.clone(),
+                        run_expires_at: created_at, // does not matter what the pending state is.
+                        closing: false,
+                    },
+                },
+            };
+            let req_create_child = CreateRequest {
                 created_at,
                 execution_id: child_execution_id.clone(),
                 ffqn,
@@ -568,10 +577,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             let version = db_connection
                 .append_batch_create_new_execution(
                     created_at,
-                    vec![join_set_created, child_exec_req],
+                    vec![req_join_set_created, req_child_exec, req_join_next],
                     self.execution_id.clone(),
                     version.clone(),
-                    vec![create_child_req],
+                    vec![req_create_child],
                 )
                 .await?;
             self.version = Some(version);

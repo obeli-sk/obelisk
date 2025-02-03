@@ -419,6 +419,7 @@ pub enum HistoryEvent {
     JoinNext {
         join_set_id: JoinSetId,
         /// Set to a future time if the worker is keeping the execution invocation warm waiting for the result.
+        /// The pending status will be kept in Locked state until `run_expires_at`.
         run_expires_at: DateTime<Utc>,
         /// Is the joinset being closed?
         closing: bool,
