@@ -111,7 +111,7 @@ impl EngineConfig {
             cache_config_file: Some(temp_file),
         }
     }
-
+    #[cfg(not(madsim))]
     #[cfg(test)]
     pub(crate) fn pooling_nocache_testing(opts: PoolingOptions) -> Self {
         Self {
