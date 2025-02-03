@@ -528,8 +528,17 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             else {
                 return Err(WebhookEndpointFunctionError::FunctionMetadataNotFound { ffqn });
             };
-            let join_set_id = JoinSetId::new(self.execution_id.clone(), StrVariant::empty())
-                .expect("empty name must be valid");
+            let join_set_id =
+                JoinSetId::new(self.execution_id.clone(), StrVariant::empty()).unwrap();
+
+            let join_set_created = AppendRequest {
+                created_at,
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSet {
+                        join_set_id: join_set_id.clone(),
+                    },
+                },
+            };
 
             let child_exec_req = AppendRequest {
                 created_at,
@@ -559,7 +568,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             let version = db_connection
                 .append_batch_create_new_execution(
                     created_at,
-                    vec![child_exec_req],
+                    vec![join_set_created, child_exec_req],
                     self.execution_id.clone(),
                     version.clone(),
                     vec![create_child_req],
