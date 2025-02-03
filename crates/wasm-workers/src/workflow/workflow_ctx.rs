@@ -355,17 +355,17 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 
     // Must be persisted by the caller.
     fn next_u128(&mut self) -> u128 {
-        rand::Rng::random(&mut self.rng)
+        rand::Rng::gen(&mut self.rng)
     }
 
     // Must be persisted by the caller.
     fn next_string_random(&mut self, min_length: u16, max_length_exclusive: u16) -> String {
         let length_inclusive =
-            rand::Rng::random_range(&mut self.rng, min_length..max_length_exclusive);
+            rand::Rng::gen_range(&mut self.rng, min_length..max_length_exclusive);
 
         (0..=length_inclusive)
             .map(|_| {
-                let idx = rand::Rng::random_range(&mut self.rng, 0..CHARSET_ALPHANUMERIC.len());
+                let idx = rand::Rng::gen_range(&mut self.rng, 0..CHARSET_ALPHANUMERIC.len());
                 CHARSET_ALPHANUMERIC[idx] as char
             })
             .collect()
@@ -515,7 +515,7 @@ mod workflow_support {
             min: u64,
             max_inclusive: u64,
         ) -> wasmtime::Result<u64> {
-            let value = rand::Rng::random_range(&mut self.rng, min..=max_inclusive);
+            let value = rand::Rng::gen_range(&mut self.rng, min..=max_inclusive);
             let value = Vec::from(storage::from_u64_to_bytes(value));
             let value = self
                 .event_history

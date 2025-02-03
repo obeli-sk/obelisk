@@ -211,7 +211,7 @@ oci-wasm = { version = "0.2.0", default-features = false, features = [ # Depende
 ] }
 prost = "0.13.4"
 prost-wkt-types = "0.6"
-rand = "0.9"
+rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",
