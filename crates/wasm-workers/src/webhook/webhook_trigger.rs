@@ -5,11 +5,11 @@ use crate::host_exports::{
 };
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::WasmFileError;
-use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
     AppendRequest, ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
     HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
 };
+use concepts::JoinSetId;
 use concepts::{
     ComponentId, ComponentType, ExecutionId, ExecutionMetadata, FinishedExecutionError,
     FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, Params, StrVariant,
@@ -528,12 +528,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             else {
                 return Err(WebhookEndpointFunctionError::FunctionMetadataNotFound { ffqn });
             };
-            let join_set_id = JoinSetId::generate();
+            let join_set_id = JoinSetId::new(self.execution_id.clone(), StrVariant::empty())
+                .expect("empty name must be valid");
+
             let child_exec_req = AppendRequest {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
-                        join_set_id,
+                        join_set_id: join_set_id.clone(),
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
                         },

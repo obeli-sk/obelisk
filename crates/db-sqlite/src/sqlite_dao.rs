@@ -2,7 +2,7 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    prefixed_ulid::{DelayId, ExecutorId, JoinSetId, PrefixedUlid, RunId},
+    prefixed_ulid::{DelayId, ExecutorId, PrefixedUlid, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
         DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
@@ -12,7 +12,7 @@ use concepts::{
         PendingStateFinishedResultKind, ResponseWithCursor, SpecificError, Version, VersionType,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_TEMPORARILY_FAILED, DUMMY_TEMPORARILY_TIMED_OUT,
     },
-    ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
+    ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, JoinSetId, StrVariant,
 };
 use hdrhistogram::{Counter, Histogram};
 use rusqlite::{
@@ -39,7 +39,7 @@ use tokio::{
 };
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Level, Span};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct DelayReq {
     join_set_id: JoinSetId,
     delay_id: DelayId,
@@ -210,7 +210,6 @@ type ResponseSubscribers = Arc<
 
 struct PrefixedUlidWrapper<T: 'static>(PrefixedUlid<T>);
 type ExecutorIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::Exr>;
-type JoinSetIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::JoinSet>;
 type RunIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::Run>;
 type DelayIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::Delay>;
 
@@ -341,7 +340,7 @@ impl CombinedState {
                 join_set_closing: Some(join_set_closing),
                 result_kind: None,
             } if state == STATE_BLOCKED_BY_JOIN_SET => Ok(PendingState::BlockedByJoinSet {
-                join_set_id: *join_set_id,
+                join_set_id: join_set_id.clone(),
                 closing: *join_set_closing,
                 lock_expires_at: *lock_expires_at,
             }),
@@ -898,7 +897,7 @@ impl SqlitePool {
             ":version": version.0,
             ":json_value": event_ser,
             ":variant": event.variant(),
-            ":join_set_id": event.join_set_id().map(|join_set_id| join_set_id.to_string()),
+            ":join_set_id": event.join_set_id().map(std::string::ToString::to_string),
         })
         .map_err(convert_err)?;
         let next_version = Version::new(version.0 + 1);
@@ -937,7 +936,7 @@ impl SqlitePool {
     ) -> Result<IndexUpdated, DbError> {
         debug!("update_index");
 
-        match pending_state {
+        match &pending_state {
             PendingState::PendingAt { scheduled_at } => {
                 debug!("Setting state `Pending(`{scheduled_at:?}`)");
                 let updated = tx
@@ -974,7 +973,10 @@ impl SqlitePool {
                 };
                 Ok(IndexUpdated {
                     temporary_event_count: None,
-                    pending_at: Some(PendingAt { scheduled_at, ffqn }),
+                    pending_at: Some(PendingAt {
+                        scheduled_at: *scheduled_at,
+                        ffqn,
+                    }),
                 })
             }
             PendingState::Locked {
@@ -1079,7 +1081,7 @@ impl SqlitePool {
                     },
             } => {
                 debug!("Setting state `Finished`");
-                assert_eq!(finished_version, expected_current_version.0);
+                assert_eq!(*finished_version, expected_current_version.0);
                 let updated = tx
                     .prepare(
                         "UPDATE t_state SET \
@@ -1184,9 +1186,7 @@ impl SqlitePool {
                             .get::<_, Option<ExecutorIdW>>("executor_id")?
                             .map(|w| w.0),
                         run_id: row.get::<_, Option<RunIdW>>("run_id")?.map(|w| w.0),
-                        join_set_id: row
-                            .get::<_, Option<JoinSetIdW>>("join_set_id")?
-                            .map(|w| w.0),
+                        join_set_id: row.get::<_, Option<JoinSetId>>("join_set_id")?,
                         join_set_closing: row.get::<_, Option<bool>>("join_set_closing")?,
                         result_kind: row
                             .get::<_, Option<FromStrWrapper<PendingStateFinishedResultKind>>>(
@@ -1295,9 +1295,7 @@ impl SqlitePool {
                                 .get::<_, Option<ExecutorIdW>>("executor_id")?
                                 .map(|w| w.0),
                             run_id: row.get::<_, Option<RunIdW>>("run_id")?.map(|w| w.0),
-                            join_set_id: row
-                                .get::<_, Option<JoinSetIdW>>("join_set_id")?
-                                .map(|w| w.0),
+                            join_set_id: row.get::<_, Option<JoinSetId>>("join_set_id")?,
                             join_set_closing: row.get::<_, Option<bool>>("join_set_closing")?,
                             result_kind: row
                                 .get::<_, Option<FromStrWrapper<PendingStateFinishedResultKind>>>(
@@ -1486,7 +1484,7 @@ impl SqlitePool {
     fn count_join_next(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        join_set_id: JoinSetId,
+        join_set_id: &JoinSetId,
     ) -> Result<u64, DbError> {
         let mut stmt = tx.prepare(
             "SELECT COUNT(*) as count FROM t_execution_log WHERE execution_id = :execution_id AND join_set_id = :join_set_id \
@@ -1559,7 +1557,7 @@ impl SqlitePool {
             ":json_value": event_ser,
             ":version": appending_version.0,
             ":variant": req.event.variant(),
-            ":join_set_id": req.event.join_set_id().map(|join_set_id | join_set_id.to_string()),
+            ":join_set_id": req.event.join_set_id().map(std::string::ToString::to_string),
         })
         .map_err(convert_err)?;
         // Calculate current pending state
@@ -1613,7 +1611,7 @@ impl SqlitePool {
                             },
                     },
             } => IndexAction::NoPendingStateChange(Some(DelayReq {
-                join_set_id: *join_set_id,
+                join_set_id: join_set_id.clone(),
                 delay_id: *delay_id,
                 expires_at: *expires_at,
             })),
@@ -1627,9 +1625,9 @@ impl SqlitePool {
                     },
             } => {
                 // Did the response arrive already?
-                let join_next_count = Self::count_join_next(tx, execution_id, *join_set_id)?;
+                let join_next_count = Self::count_join_next(tx, execution_id, join_set_id)?;
                 let nth_response =
-                    Self::nth_response(tx, execution_id, *join_set_id, join_next_count - 1)?; // Skip n-1 rows
+                    Self::nth_response(tx, execution_id, join_set_id, join_next_count - 1)?; // Skip n-1 rows
                 trace!("join_next_count: {join_next_count}, nth_response: {nth_response:?}");
                 assert!(join_next_count > 0);
                 if let Some(JoinSetResponseEventOuter {
@@ -1642,7 +1640,7 @@ impl SqlitePool {
                     IndexAction::PendingStateChanged(PendingState::PendingAt { scheduled_at })
                 } else {
                     IndexAction::PendingStateChanged(PendingState::BlockedByJoinSet {
-                        join_set_id: *join_set_id,
+                        join_set_id: join_set_id.clone(),
                         lock_expires_at: *run_expires_at,
                         closing: *closing,
                     })
@@ -1702,7 +1700,7 @@ impl SqlitePool {
             "INSERT INTO t_join_set_response (execution_id, created_at, json_value, join_set_id, delay_id, child_execution_id) \
                     VALUES (:execution_id, :created_at, :json_value, :join_set_id, :delay_id, :child_execution_id)",
         ).map_err(convert_err)?;
-        let join_set_id = req.event.join_set_id;
+        let join_set_id = &req.event.join_set_id;
         let event_ser = serde_json::to_string(&req.event.event)
             .map_err(|err| {
                 error!("Cannot serialize {:?} - {err:?}", req.event.event);
@@ -1726,7 +1724,7 @@ impl SqlitePool {
                 join_set_id: found_join_set_id,
                 lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
                 closing: _,
-            } if join_set_id == found_join_set_id => {
+            } if *join_set_id == found_join_set_id => {
                 // update the pending state.
                 let pending_state = PendingState::PendingAt {
                     scheduled_at: lock_expires_at, // TODO: test this
@@ -1747,7 +1745,7 @@ impl SqlitePool {
         if let JoinSetResponseEvent {
             join_set_id,
             event: JoinSetResponse::DelayFinished { delay_id },
-        } = req.event
+        } = &req.event
         {
             debug!(%join_set_id, %delay_id, "Deleting from `t_delay`");
             let mut stmt =
@@ -1930,7 +1928,7 @@ impl SqlitePool {
                 |row| {
                     let cursor = row.get("id")?;
                     let created_at: DateTime<Utc> = row.get("created_at")?;
-                    let join_set_id = row.get::<_, JoinSetIdW>("join_set_id")?.0;
+                    let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
                     let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
                     Ok(ResponseWithCursor {
                         cursor,
@@ -1949,7 +1947,7 @@ impl SqlitePool {
     fn nth_response(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        join_set_id: JoinSetId,
+        join_set_id: &JoinSetId,
         skip_rows: u64,
     ) -> Result<Option<JoinSetResponseEventOuter>, DbError> {
         tx.prepare(
@@ -1966,7 +1964,7 @@ impl SqlitePool {
             },
             |row| {
                 let created_at: DateTime<Utc> = row.get("created_at")?;
-                let join_set_id = row.get::<_, JoinSetIdW>("join_set_id")?.0;
+                let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
                 let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
                 Ok(JoinSetResponseEventOuter {
                     event: JoinSetResponseEvent { join_set_id, event },
@@ -1998,7 +1996,7 @@ impl SqlitePool {
             },
             |row| {
                 let created_at: DateTime<Utc> = row.get("created_at")?;
-                let join_set_id = row.get::<_, JoinSetIdW>("join_set_id")?.0;
+                let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
                 let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
                 Ok(JoinSetResponseEventOuter {
                     event: JoinSetResponseEvent { join_set_id, event },
@@ -2507,7 +2505,7 @@ impl DbConnection for SqlitePool {
                         },
                         |row| {
                             let execution_id = row.get("execution_id")?;
-                            let join_set_id = row.get::<_, JoinSetIdW>("join_set_id")?.0;
+                            let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
                             let delay_id = row.get::<_, DelayIdW>("delay_id")?.0;
                             Ok(ExpiredTimer::AsyncDelay { execution_id, join_set_id, delay_id })
                         },
@@ -2531,7 +2529,7 @@ impl DbConnection for SqlitePool {
                                 let max_retries = row.get::<_, u32>("max_retries")?;
                                 let retry_exp_backoff = Duration::from_millis(row.get::<_, u64>("retry_exp_backoff_millis")?);
                                 let parent_execution_id = row.get::<_, Option<ExecutionId>>("parent_execution_id")?;
-                                let parent_join_set_id = row.get::<_, Option<JoinSetIdW>>("parent_join_set_id")?.map(|it|it.0);
+                                let parent_join_set_id = row.get::<_, Option<JoinSetId>>("parent_join_set_id")?;
 
                                 Ok(ExpiredTimer::Lock { execution_id, version, temporary_event_count, max_retries,
                                     retry_exp_backoff, parent: parent_execution_id.and_then(|pexe| parent_join_set_id.map(|pjs| (pexe, pjs)))})

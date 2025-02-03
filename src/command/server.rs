@@ -333,7 +333,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let current_pending_state = conn.get_pending_state(&execution_id).await.to_status()?;
         let (create_request, mut current_pending_state, grpc_pending_status) = {
             let create_request = conn.get_create_request(&execution_id).await.to_status()?;
-            let grpc_pending_status = grpc::ExecutionStatus::from(current_pending_state);
+            let grpc_pending_status = grpc::ExecutionStatus::from(current_pending_state.clone());
             (create_request, current_pending_state, grpc_pending_status)
         };
         let summary = grpc::GetStatusResponse {
@@ -397,7 +397,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                             Ok(pending_state) => {
                                 if pending_state != current_pending_state {
                                     let grpc_pending_status =
-                                        grpc::ExecutionStatus::from(pending_state);
+                                        grpc::ExecutionStatus::from(pending_state.clone());
 
                                     let message = grpc::GetStatusResponse {
                                         message: Some(Message::CurrentStatus(grpc_pending_status)),

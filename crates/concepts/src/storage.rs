@@ -1,12 +1,12 @@
 use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::ExecutorId;
-use crate::prefixed_ulid::JoinSetId;
 use crate::prefixed_ulid::RunId;
 use crate::ComponentId;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
 use crate::FinishedExecutionResult;
 use crate::FunctionFqn;
+use crate::JoinSetId;
 use crate::Params;
 use crate::StrVariant;
 use crate::SupportedFunctionReturnValue;
@@ -125,7 +125,7 @@ impl ExecutionLog {
 
     #[cfg(feature = "test")]
     #[must_use]
-    pub fn find_join_set_request(&self, join_set_id: JoinSetId) -> Option<&JoinSetRequest> {
+    pub fn find_join_set_request(&self, join_set_id: &JoinSetId) -> Option<&JoinSetRequest> {
         self.events
             .iter()
             .find_map(move |event| match &event.event {
@@ -136,7 +136,7 @@ impl ExecutionLog {
                             request,
                         },
                     ..
-                } if join_set_id == *found => Some(request),
+                } if *join_set_id == *found => Some(request),
                 _ => None,
             })
     }
@@ -234,7 +234,10 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
 };
 pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
     event: HistoryEvent::JoinSet {
-        join_set_id: JoinSetId::from_parts(0, 0),
+        join_set_id: JoinSetId {
+            execution_id: ExecutionId::from_parts(0, 0),
+            name: StrVariant::empty(),
+        },
     },
 };
 pub const DUMMY_TEMPORARILY_TIMED_OUT: ExecutionEventInner =
@@ -340,18 +343,18 @@ impl ExecutionEventInner {
     }
 
     #[must_use]
-    pub fn join_set_id(&self) -> Option<JoinSetId> {
+    pub fn join_set_id(&self) -> Option<&JoinSetId> {
         match self {
             Self::Created {
                 parent: Some((_parent_id, join_set_id)),
                 ..
-            } => Some(*join_set_id),
+            } => Some(join_set_id),
             Self::HistoryEvent {
                 event:
                     HistoryEvent::JoinSet { join_set_id }
                     | HistoryEvent::JoinSetRequest { join_set_id, .. }
                     | HistoryEvent::JoinNext { join_set_id, .. },
-            } => Some(*join_set_id),
+            } => Some(join_set_id),
             _ => None,
         }
     }
@@ -946,7 +949,7 @@ pub enum ExpiredTimer {
     },
 }
 
-#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum PendingState {
     #[display("Locked(`{lock_expires_at}`, {executor_id}, {run_id})")]

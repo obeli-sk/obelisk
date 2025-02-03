@@ -1,11 +1,12 @@
 use assert_matches::assert_matches;
-use concepts::prefixed_ulid::{DelayId, JoinSetId, RunId};
+use concepts::prefixed_ulid::{DelayId, RunId};
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
     JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, PendingState, PersistKind,
     SpecificError, Version,
 };
 use concepts::storage::{DbPool, JoinSetResponseEvent};
+use concepts::JoinSetId;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
 use concepts::{storage::HistoryEvent, FinishedExecutionResult};
 use concepts::{ComponentId, Params, StrVariant};
@@ -698,7 +699,7 @@ pub async fn append_batch_respond_to_parent(
         .await
         .unwrap();
     // Create joinset
-    let join_set_id = JoinSetId::generate();
+    let join_set_id = JoinSetId::new(parent_id.clone(), StrVariant::empty()).unwrap();
     let mut version = db_connection
         .append(
             parent_id.clone(),
@@ -706,7 +707,9 @@ pub async fn append_batch_respond_to_parent(
             AppendRequest {
                 created_at: sim_clock.now(),
                 event: ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinSet { join_set_id },
+                    event: HistoryEvent::JoinSet {
+                        join_set_id: join_set_id.clone(),
+                    },
                 },
             },
         )
@@ -748,7 +751,7 @@ pub async fn append_batch_respond_to_parent(
                     created_at: sim_clock.now(),
                     event: ExecutionEventInner::HistoryEvent {
                         event: HistoryEvent::JoinNext {
-                            join_set_id,
+                            join_set_id: join_set_id.clone(),
                             run_expires_at: sim_clock.now(),
                             closing: false,
                         },
@@ -780,7 +783,7 @@ pub async fn append_batch_respond_to_parent(
                 JoinSetResponseEventOuter {
                     created_at: sim_clock.now(),
                     event: JoinSetResponseEvent {
-                        join_set_id,
+                        join_set_id: join_set_id.clone(),
                         event: JoinSetResponse::ChildExecutionFinished {
                             child_execution_id: child_id.clone(),
                             result: Ok(concepts::SupportedFunctionReturnValue::None),
@@ -833,7 +836,7 @@ pub async fn append_batch_respond_to_parent(
                 JoinSetResponseEventOuter {
                     created_at: sim_clock.now(),
                     event: JoinSetResponseEvent {
-                        join_set_id,
+                        join_set_id: join_set_id.clone(),
                         event: JoinSetResponse::ChildExecutionFinished {
                             child_execution_id: child_id.clone(),
                             result: Ok(concepts::SupportedFunctionReturnValue::None),
@@ -853,7 +856,7 @@ pub async fn append_batch_respond_to_parent(
                     created_at: sim_clock.now(),
                     event: ExecutionEventInner::HistoryEvent {
                         event: HistoryEvent::JoinNext {
-                            join_set_id,
+                            join_set_id: join_set_id.clone(),
                             run_expires_at: sim_clock.now(),
                             closing: false,
                         },
@@ -874,7 +877,7 @@ pub async fn append_batch_respond_to_parent(
         JoinSetResponseEventOuter {
             created_at: sim_clock.now(),
             event: JoinSetResponseEvent {
-                join_set_id,
+                join_set_id: join_set_id.clone(),
                 event: JoinSetResponse::ChildExecutionFinished {
                     child_execution_id: child_a,
                     result: Ok(concepts::SupportedFunctionReturnValue::None),
@@ -887,7 +890,7 @@ pub async fn append_batch_respond_to_parent(
         JoinSetResponseEventOuter {
             created_at: sim_clock.now(),
             event: JoinSetResponseEvent {
-                join_set_id,
+                join_set_id: join_set_id.clone(),
                 event: JoinSetResponse::ChildExecutionFinished {
                     child_execution_id: child_b,
                     result: Ok(concepts::SupportedFunctionReturnValue::None),
@@ -1007,7 +1010,8 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
                 created_at: sim_clock.now(),
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
-                        join_set_id: JoinSetId::generate(),
+                        join_set_id: JoinSetId::new(execution_id.clone(), StrVariant::empty())
+                            .unwrap(),
                         request: JoinSetRequest::DelayRequest {
                             delay_id: DelayId::generate(),
                             expires_at: sim_clock.now(),
@@ -1126,7 +1130,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
         .await
         .unwrap();
 
-    let join_set_id = JoinSetId::generate();
+    let join_set_id = JoinSetId::new(execution_id.clone(), StrVariant::empty()).unwrap();
     let delay_id = DelayId::generate();
     db_connection
         .append(
@@ -1136,7 +1140,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
                 created_at: Now.now(),
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
-                        join_set_id,
+                        join_set_id: join_set_id.clone(),
                         request: JoinSetRequest::DelayRequest {
                             delay_id,
                             expires_at: sim_clock.now() + lock_expiry,

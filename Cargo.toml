@@ -316,6 +316,8 @@ clippy.trivially_copy_pass_by_ref = "allow" # Lots of false positives.
 clippy.module_name_repetitions = "allow"
 # Vec::from_iter is more readable than collect::<Vec<_>>
 clippy.from_iter_instead_of_collect = "allow"
+# Happy path should be first no matter the condition.
+clippy.if_not_else = "allow"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(madsim)'] }

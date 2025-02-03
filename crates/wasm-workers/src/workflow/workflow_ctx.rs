@@ -7,9 +7,10 @@ use crate::host_exports::{
 use crate::{host_exports, WasmFileError};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{DelayId, JoinSetId};
+use concepts::prefixed_ulid::DelayId;
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
+use concepts::JoinSetId;
 use concepts::{ExecutionId, FinishedExecutionError, FunctionRegistry, IfcFqnName, StrVariant};
 use concepts::{FunctionFqn, Params};
 use executor::worker::FatalError;
@@ -335,8 +336,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 
     async fn call_sleep(&mut self, duration: Duration) -> Result<(), WorkflowFunctionError> {
-        let join_set_id =
-            JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+        let join_set_id = self.next_join_set_random();
         let delay_id = DelayId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
         self.event_history
             .apply(
@@ -359,7 +359,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 
     // Must be persisted by the caller.
-    fn next_random_string(&mut self, min_length: u16, max_length_exclusive: u16) -> String {
+    fn next_string_random(&mut self, min_length: u16, max_length_exclusive: u16) -> String {
         let length_inclusive =
             rand::Rng::random_range(&mut self.rng, min_length..max_length_exclusive);
 
@@ -369,6 +369,23 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 CHARSET_ALPHANUMERIC[idx] as char
             })
             .collect()
+    }
+
+    fn next_join_set_name_random(&mut self) -> String {
+        loop {
+            let name = self.next_string_random(5, 11);
+            if !self.event_history.join_set_name_exists(&name) {
+                return name;
+            }
+        }
+    }
+
+    fn next_join_set_random(&mut self) -> JoinSetId {
+        JoinSetId::new(
+            self.execution_id.clone(),
+            StrVariant::from(self.next_join_set_name_random()),
+        )
+        .expect("next_string_random returns valid join set name")
     }
 
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
@@ -406,8 +423,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     fn imported_fn_to_event_call(&mut self, imported_fn_call: ImportedFnCall) -> EventCall {
         match imported_fn_call {
             ImportedFnCall::Direct { ffqn, params } => {
-                let join_set_id =
-                    JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+                let join_set_id = self.next_join_set_random();
                 let child_execution_id = self.get_and_increment_child_id();
                 EventCall::BlockingChildDirectCall {
                     ffqn,
@@ -457,12 +473,15 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 }
 
 mod workflow_support {
-    use concepts::storage::{self, PersistKind};
+    use concepts::{
+        storage::{self, PersistKind},
+        JoinSetId, StrVariant,
+    };
     use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
 
     use super::{
-        assert_matches, ClockFn, DbConnection, DbPool, Duration, EventCall, JoinSetId, WorkflowCtx,
+        assert_matches, ClockFn, DbConnection, DbPool, Duration, EventCall, WorkflowCtx,
         WorkflowFunctionError,
     };
     use crate::{
@@ -521,7 +540,7 @@ mod workflow_support {
             min_length: u16,
             max_length_exclusive: u16,
         ) -> wasmtime::Result<String> {
-            let value = self.next_random_string(min_length, max_length_exclusive);
+            let value = self.next_string_random(min_length, max_length_exclusive);
             // Persist
             let value = Vec::from_iter(value.bytes());
             let value = self
@@ -553,31 +572,36 @@ mod workflow_support {
                 .map_err(WorkflowFunctionError::from)?)
         }
 
-        async fn join_set(&mut self, _name: String) -> wasmtime::Result<Resource<JoinSetId>> {
-            // TODO(edge case): handle JoinSetId conflict: This does not have to be deterministicly generated.
-            // Figure out caching, add retries.
-            // Another strategy to consider is to add hierarchy similar to ExecutionId.
-            let join_set_id =
-                JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
-            let res = self
-                .event_history
-                .apply(
-                    EventCall::CreateJoinSet { join_set_id },
-                    &self.db_pool.connection(),
-                    &mut self.version,
-                    self.fn_registry.as_ref(),
-                )
-                .await
-                .map_err(WorkflowFunctionError::from)?;
-            let join_set_id = assert_matches!(res,
-                ChildReturnValue::HostResource(HostResource::CreateJoinSetResp(join_set_id)) => join_set_id);
-            let join_set_id = self.resource_table.push(join_set_id)?;
-            Ok(join_set_id)
+        async fn join_set(&mut self, name: String) -> wasmtime::Result<Resource<JoinSetId>> {
+            if !self.event_history.join_set_name_exists(&name) {
+                let join_set_id =
+                    JoinSetId::new(self.execution_id.clone(), StrVariant::from(name))?;
+                let res = self
+                    .event_history
+                    .apply(
+                        EventCall::CreateJoinSet { join_set_id },
+                        &self.db_pool.connection(),
+                        &mut self.version,
+                        self.fn_registry.as_ref(),
+                    )
+                    .await
+                    .map_err(WorkflowFunctionError::from)?;
+                let join_set_id = assert_matches!(res,
+                    ChildReturnValue::HostResource(HostResource::CreateJoinSetResp(join_set_id)) => join_set_id);
+                let join_set_id = self.resource_table.push(join_set_id)?;
+                Ok(join_set_id)
+            } else {
+                Err(wasmtime::Error::new(
+                    WorkflowFunctionError::UncategorizedError(StrVariant::from(format!(
+                        "join set already exists with name `{name}`"
+                    ))),
+                ))
+            }
         }
 
         async fn join_set_random(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
-            let random_string = self.random_string(5, 11).await?;
-            self.join_set(random_string).await
+            let name = self.next_join_set_name_random();
+            self.join_set(name).await
         }
     }
 }
@@ -775,9 +799,12 @@ pub(crate) mod tests {
                     }
                     WorkflowStep::SubmitWithoutAwait { target_ffqn } => {
                         // Create new join set
-                        let join_set_resource = workflow_ctx.join_set(String::new()).await.unwrap();
-                        let join_set_id =
-                            *workflow_ctx.resource_table.get(&join_set_resource).unwrap();
+                        let join_set_resource = workflow_ctx.join_set_random().await.unwrap();
+                        let join_set_id = workflow_ctx
+                            .resource_table
+                            .get(&join_set_resource)
+                            .unwrap()
+                            .clone();
                         let mut ret_val = vec![Val::Bool(false)];
                         workflow_ctx
                             .call_imported_fn(
@@ -983,12 +1010,10 @@ pub(crate) mod tests {
         steps.retain(|step| match step {
             WorkflowStep::Call { ffqn }
             | WorkflowStep::SubmitWithoutAwait { target_ffqn: ffqn } => {
-                let new = join_sets.insert(ffqn.clone());
-                !new
+                join_sets.insert(ffqn.clone()) // Retain only the first step for a given ffqn
             }
             _ => true,
         });
-
         steps
     }
 
@@ -1086,9 +1111,9 @@ pub(crate) mod tests {
             &execution_id,
             |execution_log| match &execution_log.pending_state {
                 PendingState::BlockedByJoinSet { join_set_id, .. } => Some(Some((
-                    *join_set_id,
+                    join_set_id.clone(),
                     execution_log
-                        .find_join_set_request(*join_set_id)
+                        .find_join_set_request(join_set_id)
                         .cloned()
                         .expect("must be found"),
                 ))), // Execution is currently blocked, unblock it in the loop body.
@@ -1119,7 +1144,7 @@ pub(crate) mod tests {
                     assert!(child_execution_count > 0);
                     let child_log = db_connection.get(&child_execution_id).await.unwrap();
                     assert_eq!(
-                        Some((execution_id.clone(), join_set_id)),
+                        Some((execution_id.clone(), join_set_id.clone())),
                         child_log.parent()
                     );
                     // Execute the submitted child.

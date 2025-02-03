@@ -222,22 +222,19 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::engines::{EngineConfig, Engines, PoolingOptions};
-
     use super::*;
+    use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
     use concepts::{
-        prefixed_ulid::{ExecutorId, RunId},
-        storage::{CreateRequest, DbConnection, DbPool, Version},
+        prefixed_ulid::ExecutorId,
+        storage::{CreateRequest, DbConnection, DbPool},
         ComponentType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use serde_json::json;
     use std::{path::Path, time::Duration};
-    use test_utils::{env_or_default, sim_clock::SimClock};
-    use tracing::info_span;
-    use utils::time::Now;
+    use test_utils::sim_clock::SimClock;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -379,77 +376,17 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[tokio::test]
-    async fn limit_reached() {
-        const FIBO_INPUT: u8 = 10;
-        const LOCK_EXPIRY_MILLIS: u64 = 1100;
-        const TASKS: u32 = 10;
-        const MAX_INSTANCES: u32 = 1;
-
-        test_utils::set_up();
-        let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
-        let lock_expiry =
-            Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
-        let tasks = env_or_default("TASKS", TASKS);
-        let max_instances = env_or_default("MAX_INSTANCES", MAX_INSTANCES);
-
-        let pool_opts = PoolingOptions {
-            pooling_total_component_instances: Some(max_instances),
-            pooling_total_stacks: Some(max_instances),
-            pooling_total_core_instances: Some(max_instances),
-            pooling_total_memories: Some(max_instances),
-            pooling_total_tables: Some(max_instances),
-            ..Default::default()
-        };
-
-        let engine =
-            Engines::get_activity_engine(EngineConfig::pooling_nocache_testing(pool_opts)).unwrap();
-
-        let (fibo_worker, _) = new_activity_worker(
-            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-            engine,
-            Now,
-        );
-        let execution_deadline = Now.now() + lock_expiry;
-        // create executions
-        let join_handles = (0..tasks)
-            .map(|_| {
-                let fibo_worker = fibo_worker.clone();
-                let execution_id = ExecutionId::generate();
-                let ctx = WorkerContext {
-                    execution_id: execution_id.clone(),
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    ffqn: FIBO_ACTIVITY_FFQN,
-                    params: Params::from_json_values(vec![json!(fibo_input)]),
-                    event_history: Vec::new(),
-                    responses: Vec::new(),
-                    version: Version::new(0),
-                    execution_deadline,
-                    can_be_retried: false,
-                    run_id: RunId::generate(),
-                    worker_span: info_span!("worker-test"),
-                };
-                tokio::spawn(async move { fibo_worker.run(ctx).await })
-            })
-            .collect::<Vec<_>>();
-        let mut limit_reached = 0;
-        for jh in join_handles {
-            if matches!(
-                jh.await.unwrap(),
-                WorkerResult::Err(WorkerError::LimitReached(..))
-            ) {
-                limit_reached += 1;
-            }
-        }
-        assert!(limit_reached > 0, "Limit was not reached");
-    }
-
     #[cfg(not(madsim))] // Requires madsim support in wasmtime
     pub mod wasmtime_nosim {
         use super::*;
-        use concepts::storage::ExecutionEventInner;
-        use test_utils::sim_clock::SimClock;
-        use tracing::{debug, info};
+        use crate::engines::PoolingOptions;
+        use concepts::{
+            prefixed_ulid::RunId,
+            storage::{ExecutionEventInner, Version},
+        };
+        use test_utils::{env_or_default, sim_clock::SimClock};
+        use tracing::{debug, info, info_span};
+        use utils::time::Now;
 
         const EPOCH_MILLIS: u64 = 10;
 
@@ -459,6 +396,72 @@ pub(crate) mod tests {
         pub const HTTP_GET_SUCCESSFUL_ACTIVITY :FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_http_get_activity_builder::exports::testing::http::http_get::GET_SUCCESSFUL,
         );
+
+        #[tokio::test]
+        async fn limit_reached() {
+            const FIBO_INPUT: u8 = 10;
+            const LOCK_EXPIRY_MILLIS: u64 = 1100;
+            const TASKS: u32 = 10;
+            const MAX_INSTANCES: u32 = 1;
+
+            test_utils::set_up();
+            let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
+            let lock_expiry =
+                Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
+            let tasks = env_or_default("TASKS", TASKS);
+            let max_instances = env_or_default("MAX_INSTANCES", MAX_INSTANCES);
+
+            let pool_opts = PoolingOptions {
+                pooling_total_component_instances: Some(max_instances),
+                pooling_total_stacks: Some(max_instances),
+                pooling_total_core_instances: Some(max_instances),
+                pooling_total_memories: Some(max_instances),
+                pooling_total_tables: Some(max_instances),
+                ..Default::default()
+            };
+
+            let engine =
+                Engines::get_activity_engine(EngineConfig::pooling_nocache_testing(pool_opts))
+                    .unwrap();
+
+            let (fibo_worker, _) = new_activity_worker(
+                test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+                engine,
+                Now,
+            );
+            let execution_deadline = Now.now() + lock_expiry;
+            // create executions
+            let join_handles = (0..tasks)
+                .map(|_| {
+                    let fibo_worker = fibo_worker.clone();
+                    let execution_id = ExecutionId::generate();
+                    let ctx = WorkerContext {
+                        execution_id: execution_id.clone(),
+                        metadata: concepts::ExecutionMetadata::empty(),
+                        ffqn: FIBO_ACTIVITY_FFQN,
+                        params: Params::from_json_values(vec![json!(fibo_input)]),
+                        event_history: Vec::new(),
+                        responses: Vec::new(),
+                        version: Version::new(0),
+                        execution_deadline,
+                        can_be_retried: false,
+                        run_id: RunId::generate(),
+                        worker_span: info_span!("worker-test"),
+                    };
+                    tokio::spawn(async move { fibo_worker.run(ctx).await })
+                })
+                .collect::<Vec<_>>();
+            let mut limit_reached = 0;
+            for jh in join_handles {
+                if matches!(
+                    jh.await.unwrap(),
+                    WorkerResult::Err(WorkerError::LimitReached(..))
+                ) {
+                    limit_reached += 1;
+                }
+            }
+            assert!(limit_reached > 0, "Limit was not reached");
+        }
 
         #[rstest::rstest]
         #[case(10, 100, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout

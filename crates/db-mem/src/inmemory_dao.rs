@@ -7,7 +7,7 @@ use self::index::JournalsIndex;
 use crate::journal::ExecutionJournal;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
+use concepts::prefixed_ulid::{ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest, DbConnection,
     DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
@@ -16,6 +16,7 @@ use concepts::storage::{
     ResponseWithCursor, SpecificError, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
+use concepts::JoinSetId;
 use concepts::{ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
@@ -360,7 +361,7 @@ mod index {
             self.timers
                 .range(..=at)
                 .flat_map(|(_scheduled_at, id_map)| id_map.iter())
-                .map(|(id, is_async_delay)| (id.clone(), *is_async_delay))
+                .map(|(id, is_async_delay)| (id.clone(), is_async_delay.clone()))
         }
 
         fn purge(&mut self, execution_id: &ExecutionId) {
@@ -422,7 +423,7 @@ mod index {
             // Keep only open
             for responded in journal.responses.iter().filter_map(|e| {
                 if let JoinSetResponse::DelayFinished { delay_id } = e.event.event {
-                    Some((e.event.join_set_id, delay_id))
+                    Some((e.event.join_set_id.clone(), delay_id))
                 } else {
                     None
                 }
@@ -434,7 +435,7 @@ mod index {
                 self.timers
                     .entry(expires_at)
                     .or_default()
-                    .insert(execution_id.clone(), Some((join_set_id, delay_id)));
+                    .insert(execution_id.clone(), Some((join_set_id.clone(), delay_id)));
                 self.timers_rev
                     .entry(execution_id.clone())
                     .or_default()

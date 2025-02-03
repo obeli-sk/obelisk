@@ -175,7 +175,7 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                     )
                     .await;
                 if let Err(err) = res {
-                    debug!(%execution_id, %join_set_id, %delay_id, "Failed to update expired async timer - {err:?}");
+                    debug!(%execution_id, %delay_id, "Failed to update expired async timer - {err:?}");
                 } else {
                     expired_async_timers += 1;
                 }

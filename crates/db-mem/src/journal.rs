@@ -1,11 +1,11 @@
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
     CreateRequest, ExecutionEvent, ExecutionEventInner, HistoryEvent, JoinSetResponseEvent,
     JoinSetResponseEventOuter, PendingStateFinished, PendingStateFinishedResultKind, VersionType,
 };
 use concepts::storage::{ExecutionLog, PendingState, SpecificError, Version};
+use concepts::JoinSetId;
 use concepts::{ExecutionId, ExecutionMetadata};
 use concepts::{FunctionFqn, Params, StrVariant};
 use std::cmp::max;
@@ -225,7 +225,7 @@ impl ExecutionJournal {
                     } else {
                         // Still waiting for response
                         Some(PendingState::BlockedByJoinSet {
-                            join_set_id: *expected_join_set_id,
+                            join_set_id: expected_join_set_id.clone(),
                             lock_expires_at: *lock_expires_at,
                             closing: *closing,
                         })
@@ -295,7 +295,7 @@ impl ExecutionJournal {
             execution_id: self.execution_id.clone(),
             events: self.execution_events.iter().cloned().collect(),
             next_version: self.version(),
-            pending_state: self.pending_state,
+            pending_state: self.pending_state.clone(),
             responses: self.responses.clone(),
         }
     }

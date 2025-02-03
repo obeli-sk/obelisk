@@ -24,8 +24,9 @@ impl HistoryJoinSetCreatedEventProps {
                     icon: Icon::History,
                     label: html! {
                         <>
-                            {"Join Set Created: "}
-                            {&join_set_id.id}
+                            {"Join Set Created: `"}
+                            {&join_set_id.name}
+                            {"`"}
                         </>
                     },
                     ..Default::default()

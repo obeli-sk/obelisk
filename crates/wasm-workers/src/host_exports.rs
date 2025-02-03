@@ -10,13 +10,14 @@ wasmtime::component::bindgen!({
     world: "any:any/bindings",
     trappable_imports: true,
     with: {
-        "obelisk:types/execution/join-set-id": concepts::prefixed_ulid::JoinSetId,
+        "obelisk:types/execution/join-set-id": concepts::JoinSetId,
     }
 });
 
 use crate::workflow::workflow_ctx::WorkflowCtx;
+use concepts::JoinSetId;
 use concepts::{
-    prefixed_ulid::{DelayId, JoinSetId},
+    prefixed_ulid::DelayId,
     storage::{DbConnection, DbPool},
     ExecutionId,
 };
@@ -59,7 +60,7 @@ pub(crate) fn val_to_join_set_id<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
             .get(&resource)
             .inspect_err(|err| error!("Cannot get resource - {err:?}"))
             .map_err(|err| format!("cannot get resource - {err:?}"))?;
-        Ok(*join_set_id)
+        Ok(join_set_id.clone())
     } else {
         error!("Wrong type for JoinSetId, expected join-set-id, got `{join_set_id:?}`");
         Err(format!(
@@ -78,7 +79,7 @@ pub(crate) fn execution_id_into_val(execution_id: &ExecutionId) -> Val {
     )])
 }
 
-pub(crate) fn join_set_id_into_wast_val(join_set_id: JoinSetId) -> WastVal {
+pub(crate) fn join_set_id_into_wast_val(join_set_id: &JoinSetId) -> WastVal {
     WastVal::Record(indexmap! {"id".to_string() => WastVal::String(join_set_id.to_string())})
 }
 

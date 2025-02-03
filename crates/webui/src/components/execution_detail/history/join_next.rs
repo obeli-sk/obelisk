@@ -49,8 +49,9 @@ impl HistoryJoinNextEventProps {
                         icon,
                         label: html! {
                             <>
-                                {"Join Next: "}
-                                {&join_set_id.id}
+                                {"Join Next: `"}
+                                {&join_set_id.name}
+                                {"`"}
                             </>
                         },
                         has_caret: true,

@@ -1,7 +1,8 @@
 use crate::command::grpc::{self};
 use anyhow::anyhow;
+use concepts::JoinSetId;
 use concepts::{
-    prefixed_ulid::{DelayId, JoinSetId, RunId},
+    prefixed_ulid::{DelayId, RunId},
     storage::{
         DbError, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, HistoryEvent,
         HistoryEventScheduledAt, JoinSetRequest, Pagination, PendingState, PendingStateFinished,
@@ -30,9 +31,10 @@ impl From<DelayId> for grpc::DelayId {
 }
 
 impl From<JoinSetId> for grpc::JoinSetId {
-    fn from(value: JoinSetId) -> Self {
+    fn from(join_set_id: JoinSetId) -> Self {
         Self {
-            id: value.to_string(),
+            execution_id: Some(join_set_id.execution_id.into()),
+            name: join_set_id.name.to_string(),
         }
     }
 }
@@ -439,10 +441,10 @@ pub(crate) fn from_execution_event_to_grpc(
                             }) })
                         }),
                         HistoryEvent::JoinSet { join_set_id } => grpc::execution_event::history_event::Event::JoinSetCreated(grpc::execution_event::history_event::JoinSetCreated {
-                            join_set_id: Some(grpc::JoinSetId { id: join_set_id.to_string() }),
+                            join_set_id: Some(join_set_id.into()),
                         }),
                         HistoryEvent::JoinSetRequest { join_set_id, request } => grpc::execution_event::history_event::Event::JoinSetRequest(grpc::execution_event::history_event::JoinSetRequest {
-                            join_set_id: Some(grpc::JoinSetId { id: join_set_id.to_string() }),
+                            join_set_id: Some(join_set_id.into()),
                             join_set_request: match request {
                                 JoinSetRequest::DelayRequest { delay_id, expires_at } => {
                                     Some(grpc::execution_event::history_event::join_set_request::JoinSetRequest::DelayRequest(
@@ -462,7 +464,7 @@ pub(crate) fn from_execution_event_to_grpc(
                             },
                         }),
                         HistoryEvent::JoinNext { join_set_id, run_expires_at, closing } => grpc::execution_event::history_event::Event::JoinNext(grpc::execution_event::history_event::JoinNext {
-                            join_set_id: Some(grpc::JoinSetId { id: join_set_id.to_string() }),
+                            join_set_id: Some(join_set_id.into()),
                             run_expires_at: Some(prost_wkt_types::Timestamp::from(run_expires_at)),
                             closing,
                         }),

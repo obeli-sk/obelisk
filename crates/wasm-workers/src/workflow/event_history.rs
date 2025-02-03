@@ -7,7 +7,7 @@ use crate::host_exports::execution_id_into_wast_val;
 use crate::host_exports::join_set_id_into_wast_val;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{DelayId, JoinSetId};
+use concepts::prefixed_ulid::DelayId;
 use concepts::storage;
 use concepts::storage::HistoryEventScheduledAt;
 use concepts::storage::PersistKind;
@@ -23,6 +23,7 @@ use concepts::ExecutionMetadata;
 use concepts::FinishedExecutionError;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
+use concepts::JoinSetId;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use indexmap::IndexMap;
@@ -61,7 +62,7 @@ impl ChildReturnValue {
             Self::None => None,
             Self::WastVal(wast_val) => Some(wast_val),
             Self::HostResource(HostResource::CreateJoinSetResp(join_set_id)) => {
-                Some(join_set_id_into_wast_val(join_set_id))
+                Some(join_set_id_into_wast_val(&join_set_id))
             }
         }
     }
@@ -153,6 +154,15 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
+    pub(crate) fn join_set_name_exists(&self, join_set_name: &str) -> bool {
+        // TODO: optimize
+        self.event_history.iter().any(|(event, processing_status)|
+            // Do not look into the future as it would break replay.
+            *processing_status == ProcessingStatus::Processed &&
+            matches!(event, HistoryEvent::JoinSet { join_set_id: found } if found.name.as_ref() == join_set_name)
+        )
+    }
+
     /// Apply the event and wait if new, replay if already in the event history, or
     /// apply with an interrupt.
     #[instrument(skip_all)]
@@ -237,8 +247,7 @@ impl<C: ClockFn> EventHistory<C> {
 
         if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Await {
             // JoinNext was written, wait for next response.
-            let join_set_id = poll_variant.join_set_id();
-            debug!(%join_set_id,  "Waiting for {poll_variant:?}");
+            debug!(join_set_id = %poll_variant.join_set_id(), "Waiting for {poll_variant:?}");
             *self.interrupt_on_timeout_container.lock().unwrap() = Some(InterruptRequested);
             let key = poll_variant.as_key();
 
@@ -282,7 +291,7 @@ impl<C: ClockFn> EventHistory<C> {
         // We want to end with the same actions when called again.
         // Count the iteractions not counting the delay requests and closing JoinNext-s.
         // Every counted JoinNext must have been awaited at this point.
-        let mut join_set_to_child_created_and_awaitd = IndexMap::new(); // Must be deterministic.
+        let mut join_set_to_child_created_and_awaited = IndexMap::new(); // Must be deterministic.
         let delay_join_sets: hashbrown::HashSet<_> = self // Does not have to be deterministic.
             .event_history
             .iter()
@@ -292,7 +301,7 @@ impl<C: ClockFn> EventHistory<C> {
                     request: JoinSetRequest::DelayRequest { .. },
                 } = event
                 {
-                    Some(*join_set_id)
+                    Some(join_set_id.clone())
                 } else {
                     None
                 }
@@ -301,14 +310,15 @@ impl<C: ClockFn> EventHistory<C> {
         for (event, _processing_sattus) in &self.event_history {
             match event {
                 HistoryEvent::JoinSet { join_set_id } if !delay_join_sets.contains(join_set_id) => {
-                    let old = join_set_to_child_created_and_awaitd.insert(*join_set_id, (0, 0));
+                    let old =
+                        join_set_to_child_created_and_awaited.insert(join_set_id.clone(), (0, 0));
                     assert!(old.is_none());
                 }
                 HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::ChildExecutionRequest { .. },
                 } if !delay_join_sets.contains(join_set_id) => {
-                    let (req_count, _) = join_set_to_child_created_and_awaitd
+                    let (req_count, _) = join_set_to_child_created_and_awaited
                         .get_mut(join_set_id)
                         .expect("join set must have been created");
                     *req_count += 1;
@@ -318,7 +328,7 @@ impl<C: ClockFn> EventHistory<C> {
                     closing: false,
                     ..
                 } if !delay_join_sets.contains(join_set_id) => {
-                    let (_, await_count) = join_set_to_child_created_and_awaitd
+                    let (_, await_count) = join_set_to_child_created_and_awaited
                         .get_mut(join_set_id)
                         .expect("join set must have been created");
                     *await_count += 1;
@@ -327,7 +337,7 @@ impl<C: ClockFn> EventHistory<C> {
             }
         }
 
-        for (join_set_id, remaining) in join_set_to_child_created_and_awaitd.iter().filter_map(
+        for (join_set_id, remaining) in join_set_to_child_created_and_awaited.iter().filter_map(
             |(join_set, (created, awaited))| {
                 let remaining = *created - *awaited;
                 if remaining > 0 {
@@ -341,7 +351,7 @@ impl<C: ClockFn> EventHistory<C> {
                 debug!("Adding BlockingChildAwaitNext to join set {join_set_id}");
                 self.apply(
                     EventCall::BlockingChildAwaitNext {
-                        join_set_id: *join_set_id,
+                        join_set_id: join_set_id.clone(),
                         closing: true,
                     },
                     db_connection,
@@ -394,7 +404,7 @@ impl<C: ClockFn> EventHistory<C> {
     fn mark_next_unprocessed_response(
         &mut self,
         parent_event_idx: usize, // needs to be marked as Processed as well
-        join_set_id: JoinSetId,
+        join_set_id: &JoinSetId,
     ) -> Option<&JoinSetResponseEvent> {
         if let Some(idx) = self
             .responses
@@ -406,7 +416,7 @@ impl<C: ClockFn> EventHistory<C> {
                     JoinSetResponseEvent {
                         join_set_id: found, ..
                     },
-                ) if *found == join_set_id => Some(idx),
+                ) if found == join_set_id => Some(idx),
                 _ => None,
             })
         {
@@ -439,7 +449,7 @@ impl<C: ClockFn> EventHistory<C> {
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
                 Ok(FindMatchingResponse::Found(ChildReturnValue::HostResource(
-                    HostResource::CreateJoinSetResp(*join_set_id),
+                    HostResource::CreateJoinSetResp(join_set_id.clone()),
                 )))
             }
 
@@ -531,7 +541,7 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%join_set_id, "Peeked at JoinNext - Child");
                 // TODO: If the child execution succeeded, perform type check between `SupportedFunctionReturnValue`
                 // and what is expected by the `FunctionRegistry`
-                match self.mark_next_unprocessed_response(found_idx, *join_set_id) {
+                match self.mark_next_unprocessed_response(found_idx, join_set_id) {
                     Some(JoinSetResponseEvent {
                         event:
                             JoinSetResponse::ChildExecutionFinished {
@@ -636,7 +646,7 @@ impl<C: ClockFn> EventHistory<C> {
             ) if *join_set_id == *found_join_set_id => {
                 trace!(
                     %join_set_id, "Peeked at JoinNext - Delay");
-                match self.mark_next_unprocessed_response(found_idx, *join_set_id) {
+                match self.mark_next_unprocessed_response(found_idx, join_set_id) {
                     Some(JoinSetResponseEvent {
                         event:
                             JoinSetResponse::DelayFinished {
@@ -765,13 +775,13 @@ impl<C: ClockFn> EventHistory<C> {
         trace!(%version, "append_to_db");
         match event_call {
             EventCall::CreateJoinSet { join_set_id } => {
+                debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
                 let event = HistoryEvent::JoinSet { join_set_id };
                 let history_events = vec![event.clone()];
                 let join_set = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 *version = db_connection
@@ -801,8 +811,9 @@ impl<C: ClockFn> EventHistory<C> {
                 child_execution_id,
                 params,
             } => {
+                debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
                 let event = HistoryEvent::JoinSetRequest {
-                    join_set_id,
+                    join_set_id: join_set_id.clone(),
                     request: JoinSetRequest::ChildExecutionRequest {
                         child_execution_id: child_execution_id.clone(),
                     },
@@ -812,7 +823,6 @@ impl<C: ClockFn> EventHistory<C> {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
                 let (
                     FunctionMetadata {
                         ffqn,
@@ -932,6 +942,7 @@ impl<C: ClockFn> EventHistory<C> {
                 join_set_id,
                 closing,
             } => {
+                debug!(%join_set_id, "BlockingChildJoinNext: Flushing and appending JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let event = HistoryEvent::JoinNext {
@@ -944,7 +955,6 @@ impl<C: ClockFn> EventHistory<C> {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                debug!(%join_set_id, "BlockingChildJoinNext: appending JoinNext");
                 *version = db_connection
                     .append(self.execution_id.clone(), version.clone(), join_next)
                     .await?;
@@ -957,17 +967,20 @@ impl<C: ClockFn> EventHistory<C> {
                 child_execution_id,
                 params,
             } => {
+                debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Flushing and appending JoinSet,ChildExecutionRequest,JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let mut history_events = Vec::with_capacity(3);
-                let event = HistoryEvent::JoinSet { join_set_id };
+                let event = HistoryEvent::JoinSet {
+                    join_set_id: join_set_id.clone(),
+                };
                 history_events.push(event.clone());
                 let join_set = AppendRequest {
                     event: ExecutionEventInner::HistoryEvent { event },
                     created_at: called_at,
                 };
                 let event = HistoryEvent::JoinSetRequest {
-                    join_set_id,
+                    join_set_id: join_set_id.clone(),
                     request: JoinSetRequest::ChildExecutionRequest {
                         child_execution_id: child_execution_id.clone(),
                     },
@@ -978,7 +991,7 @@ impl<C: ClockFn> EventHistory<C> {
                     created_at: called_at,
                 };
                 let event = HistoryEvent::JoinNext {
-                    join_set_id,
+                    join_set_id: join_set_id.clone(),
                     run_expires_at: lock_expires_at,
                     closing: false,
                 };
@@ -987,7 +1000,7 @@ impl<C: ClockFn> EventHistory<C> {
                     event: ExecutionEventInner::HistoryEvent { event },
                     created_at: called_at,
                 };
-                debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Appending JoinSet,ChildExecutionRequest,JoinNext");
+
                 let (
                     FunctionMetadata {
                         ffqn,
@@ -1030,17 +1043,20 @@ impl<C: ClockFn> EventHistory<C> {
                 delay_id,
                 expires_at_if_new,
             } => {
+                debug!(%delay_id, %join_set_id, "BlockingDelayRequest: Flushing and appending JoinSet,DelayRequest,JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let mut history_events = Vec::with_capacity(3);
-                let event = HistoryEvent::JoinSet { join_set_id };
+                let event = HistoryEvent::JoinSet {
+                    join_set_id: join_set_id.clone(),
+                };
                 history_events.push(event.clone());
                 let join_set = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
                 let event = HistoryEvent::JoinSetRequest {
-                    join_set_id,
+                    join_set_id: join_set_id.clone(),
                     request: JoinSetRequest::DelayRequest {
                         delay_id,
                         expires_at: expires_at_if_new,
@@ -1061,7 +1077,7 @@ impl<C: ClockFn> EventHistory<C> {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                debug!(%delay_id, %join_set_id, "BlockingDelayRequest: appending JoinSet,DelayRequest,JoinNext");
+
                 *version = db_connection
                     .append_batch(
                         called_at,
@@ -1085,20 +1101,20 @@ enum PollVariant {
     JoinNextDelay(JoinSetId),
 }
 impl PollVariant {
-    fn join_set_id(&self) -> JoinSetId {
+    fn join_set_id(&self) -> &JoinSetId {
         match self {
             PollVariant::JoinNextChild { join_set_id, .. }
-            | PollVariant::JoinNextDelay(join_set_id) => *join_set_id,
+            | PollVariant::JoinNextDelay(join_set_id) => join_set_id,
         }
     }
     fn as_key(&self) -> EventHistoryKey {
         match self {
             PollVariant::JoinNextChild { join_set_id, kind } => EventHistoryKey::JoinNextChild {
-                join_set_id: *join_set_id,
+                join_set_id: join_set_id.clone(),
                 kind: *kind,
             },
             PollVariant::JoinNextDelay(join_set_id) => EventHistoryKey::JoinNextDelay {
-                join_set_id: *join_set_id,
+                join_set_id: join_set_id.clone(),
             },
         }
     }
@@ -1150,7 +1166,7 @@ impl EventCall {
             // Blocking calls can be polled for JoinSetResponse
             EventCall::BlockingChildDirectCall { join_set_id, .. } => {
                 Some(PollVariant::JoinNextChild {
-                    join_set_id: *join_set_id,
+                    join_set_id: join_set_id.clone(),
                     kind: JoinNextKind::DirectCall,
                 })
             }
@@ -1158,11 +1174,11 @@ impl EventCall {
                 join_set_id,
                 closing: _,
             } => Some(PollVariant::JoinNextChild {
-                join_set_id: *join_set_id,
+                join_set_id: join_set_id.clone(),
                 kind: JoinNextKind::AwaitNext,
             }),
             EventCall::BlockingDelayRequest { join_set_id, .. } => {
-                Some(PollVariant::JoinNextDelay(*join_set_id))
+                Some(PollVariant::JoinNextDelay(join_set_id.clone()))
             }
             EventCall::CreateJoinSet { .. }
             | EventCall::StartAsync { .. }
@@ -1213,7 +1229,7 @@ impl EventCall {
         match self {
             EventCall::CreateJoinSet { join_set_id } => {
                 vec![EventHistoryKey::CreateJoinSet {
-                    join_set_id: *join_set_id,
+                    join_set_id: join_set_id.clone(),
                 }]
             }
             EventCall::Persist { value, kind } => {
@@ -1227,7 +1243,7 @@ impl EventCall {
                 child_execution_id,
                 ..
             } => vec![EventHistoryKey::ChildExecutionRequest {
-                join_set_id: *join_set_id,
+                join_set_id: join_set_id.clone(),
                 child_execution_id: child_execution_id.clone(),
             }],
             EventCall::BlockingChildAwaitNext {
@@ -1235,7 +1251,7 @@ impl EventCall {
                 closing: _,
             } => {
                 vec![EventHistoryKey::JoinNextChild {
-                    join_set_id: *join_set_id,
+                    join_set_id: join_set_id.clone(),
                     kind: JoinNextKind::AwaitNext,
                 }]
             }
@@ -1245,14 +1261,14 @@ impl EventCall {
                 ..
             } => vec![
                 EventHistoryKey::CreateJoinSet {
-                    join_set_id: *join_set_id,
+                    join_set_id: join_set_id.clone(),
                 },
                 EventHistoryKey::ChildExecutionRequest {
-                    join_set_id: *join_set_id,
+                    join_set_id: join_set_id.clone(),
                     child_execution_id: child_execution_id.clone(),
                 },
                 EventHistoryKey::JoinNextChild {
-                    join_set_id: *join_set_id,
+                    join_set_id: join_set_id.clone(),
                     kind: JoinNextKind::DirectCall,
                 },
             ],
@@ -1262,14 +1278,14 @@ impl EventCall {
                 ..
             } => vec![
                 EventHistoryKey::CreateJoinSet {
-                    join_set_id: *join_set_id,
+                    join_set_id: join_set_id.clone(),
                 },
                 EventHistoryKey::DelayRequest {
-                    join_set_id: *join_set_id,
+                    join_set_id: join_set_id.clone(),
                     delay_id: *delay_id,
                 },
                 EventHistoryKey::JoinNextDelay {
-                    join_set_id: *join_set_id,
+                    join_set_id: join_set_id.clone(),
                 },
             ],
             EventCall::ScheduleRequest { execution_id, .. } => {
@@ -1290,13 +1306,13 @@ mod tests {
     use crate::workflow::event_history::ApplyError;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
-    use concepts::prefixed_ulid::JoinSetId;
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::{
         ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params,
         SupportedFunctionReturnValue,
     };
+    use concepts::{JoinSetId, StrVariant};
     use db_tests::Database;
     use rstest::rstest;
     use std::sync::Arc;
@@ -1379,58 +1395,65 @@ mod tests {
         )
         .await;
 
-        let join_set_id = JoinSetId::generate();
+        let join_set_id = JoinSetId::new(execution_id.clone(), StrVariant::empty()).unwrap();
         let child_execution_id = ExecutionId::generate();
 
-        let blocking_join_first =
-            |mut event_history: EventHistory<_>,
-             mut version: Version,
-             fn_registry: Arc<dyn FunctionRegistry>| {
-                let db_pool = db_pool.clone();
-                let child_execution_id = child_execution_id.clone();
-                async move {
-                    event_history
-                        .apply(
-                            EventCall::CreateJoinSet { join_set_id },
-                            &db_pool.connection(),
-                            &mut version,
-                            fn_registry.as_ref(),
-                        )
-                        .await
-                        .unwrap();
+        let blocking_join_first = |mut event_history: EventHistory<_>,
+                                   mut version: Version,
+                                   fn_registry: Arc<dyn FunctionRegistry>,
+                                   join_set_id: JoinSetId| {
+            let db_pool = db_pool.clone();
+            let child_execution_id = child_execution_id.clone();
+            async move {
+                event_history
+                    .apply(
+                        EventCall::CreateJoinSet {
+                            join_set_id: join_set_id.clone(),
+                        },
+                        &db_pool.connection(),
+                        &mut version,
+                        fn_registry.as_ref(),
+                    )
+                    .await
+                    .unwrap();
 
-                    event_history
-                        .apply(
-                            EventCall::StartAsync {
-                                ffqn: MOCK_FFQN,
-                                join_set_id,
-                                child_execution_id: child_execution_id.clone(),
-                                params: Params::empty(),
-                            },
-                            &db_pool.connection(),
-                            &mut version,
-                            fn_registry.as_ref(),
-                        )
-                        .await
-                        .unwrap();
-                    event_history
-                        .apply(
-                            EventCall::BlockingChildAwaitNext {
-                                join_set_id,
-                                closing: false,
-                            },
-                            &db_pool.connection(),
-                            &mut version,
-                            fn_registry.as_ref(),
-                        )
-                        .await
-                }
-            };
+                event_history
+                    .apply(
+                        EventCall::StartAsync {
+                            ffqn: MOCK_FFQN,
+                            join_set_id: join_set_id.clone(),
+                            child_execution_id: child_execution_id.clone(),
+                            params: Params::empty(),
+                        },
+                        &db_pool.connection(),
+                        &mut version,
+                        fn_registry.as_ref(),
+                    )
+                    .await
+                    .unwrap();
+                event_history
+                    .apply(
+                        EventCall::BlockingChildAwaitNext {
+                            join_set_id,
+                            closing: false,
+                        },
+                        &db_pool.connection(),
+                        &mut version,
+                        fn_registry.as_ref(),
+                    )
+                    .await
+            }
+        };
 
         assert_matches!(
-            blocking_join_first(event_history, version, fn_registry.clone())
-                .await
-                .unwrap_err(),
+            blocking_join_first(
+                event_history,
+                version,
+                fn_registry.clone(),
+                join_set_id.clone()
+            )
+            .await
+            .unwrap_err(),
             ApplyError::InterruptRequested,
             "should have ended with an interrupt"
         );
@@ -1439,7 +1462,7 @@ mod tests {
                 sim_clock.now(),
                 execution_id.clone(),
                 JoinSetResponseEvent {
-                    join_set_id,
+                    join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id.clone(),
                         result: Ok(SupportedFunctionReturnValue::None),
@@ -1459,7 +1482,7 @@ mod tests {
             batching,
         )
         .await;
-        blocking_join_first(event_history, version, fn_registry.clone())
+        blocking_join_first(event_history, version, fn_registry.clone(), join_set_id)
             .await
             .expect("should finish successfuly");
 
@@ -1490,7 +1513,9 @@ mod tests {
         ) {
             event_history
                 .apply(
-                    EventCall::CreateJoinSet { join_set_id },
+                    EventCall::CreateJoinSet {
+                        join_set_id: join_set_id.clone(),
+                    },
                     &db_pool.connection(),
                     version,
                     fn_registry,
@@ -1548,14 +1573,14 @@ mod tests {
         )
         .await;
 
-        let join_set_id = JoinSetId::generate();
+        let join_set_id = JoinSetId::new(execution_id.clone(), StrVariant::empty()).unwrap();
         let child_execution_id = ExecutionId::generate();
 
         start_async(
             &mut event_history,
             &mut version,
             &db_pool,
-            join_set_id,
+            join_set_id.clone(),
             child_execution_id.clone(),
             fn_registry.as_ref(),
         )
@@ -1567,7 +1592,7 @@ mod tests {
                 sim_clock.now(),
                 execution_id.clone(),
                 JoinSetResponseEvent {
-                    join_set_id,
+                    join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id.clone(),
                         result: Ok(CHILD_RESP),
@@ -1593,7 +1618,7 @@ mod tests {
             &mut event_history,
             &mut version,
             &db_pool,
-            join_set_id,
+            join_set_id.clone(),
             child_execution_id.clone(),
             fn_registry.as_ref(),
         )
@@ -1652,7 +1677,9 @@ mod tests {
         ) -> Result<Option<WastVal>, ApplyError> {
             event_history
                 .apply(
-                    EventCall::CreateJoinSet { join_set_id },
+                    EventCall::CreateJoinSet {
+                        join_set_id: join_set_id.clone(),
+                    },
                     &db_pool.connection(),
                     version,
                     fn_registry,
@@ -1663,7 +1690,7 @@ mod tests {
                 .apply(
                     EventCall::StartAsync {
                         ffqn: MOCK_FFQN,
-                        join_set_id,
+                        join_set_id: join_set_id.clone(),
                         child_execution_id: child_execution_id_a,
                         params: Params::empty(),
                     },
@@ -1677,7 +1704,7 @@ mod tests {
                 .apply(
                     EventCall::StartAsync {
                         ffqn: MOCK_FFQN,
-                        join_set_id,
+                        join_set_id: join_set_id.clone(),
                         child_execution_id: child_execution_id_b,
                         params: Params::empty(),
                     },
@@ -1737,7 +1764,7 @@ mod tests {
         )
         .await;
 
-        let join_set_id = JoinSetId::generate();
+        let join_set_id = JoinSetId::new(execution_id.clone(), StrVariant::empty()).unwrap();
         let child_execution_id_a = ExecutionId::generate();
         let child_execution_id_b = ExecutionId::generate();
 
@@ -1747,7 +1774,7 @@ mod tests {
                 &mut version,
                 &db_pool,
                 fn_registry.as_ref(),
-                join_set_id,
+                join_set_id.clone(),
                 child_execution_id_a.clone(),
                 child_execution_id_b.clone()
             )
@@ -1761,7 +1788,7 @@ mod tests {
                 sim_clock.now(),
                 execution_id.clone(),
                 JoinSetResponseEvent {
-                    join_set_id,
+                    join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id_a.clone(),
                         result: Ok(KID_A),
@@ -1775,7 +1802,7 @@ mod tests {
                 sim_clock.now(),
                 execution_id.clone(),
                 JoinSetResponseEvent {
-                    join_set_id,
+                    join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id_b.clone(),
                         result: Ok(KID_B),
@@ -1802,7 +1829,7 @@ mod tests {
             &mut version,
             &db_pool,
             fn_registry.as_ref(),
-            join_set_id,
+            join_set_id.clone(),
             child_execution_id_a.clone(),
             child_execution_id_b.clone(),
         )

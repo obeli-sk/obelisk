@@ -1,4 +1,5 @@
 use ::serde::{Deserialize, Serialize};
+use arbitrary::Arbitrary;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use derivative::Derivative;
@@ -6,6 +7,7 @@ pub use indexmap;
 use indexmap::IndexMap;
 use opentelemetry::propagation::{Extractor, Injector};
 pub use prefixed_ulid::ExecutionId;
+use prefixed_ulid::ExecutionIdParseError;
 use serde_json::Value;
 use std::{
     borrow::Borrow,
@@ -25,6 +27,9 @@ use val_json::{
     wast_val_ser::params,
 };
 use wasmtime::component::{Type, Val};
+
+#[cfg(feature = "rusqlite")]
+mod rusqlite_ext;
 pub mod storage;
 
 pub const NAMESPACE_OBELISK: &str = "obelisk";
@@ -947,7 +952,6 @@ pub mod prefixed_ulid {
     }
 
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
-    pub type JoinSetId = PrefixedUlid<prefix::JoinSet>;
     pub type TopLevelExecutionId = PrefixedUlid<prefix::E>;
     pub type RunId = PrefixedUlid<prefix::Run>;
     pub type DelayId = PrefixedUlid<prefix::Delay>;
@@ -996,7 +1000,7 @@ pub mod prefixed_ulid {
         }
 
         #[must_use]
-        pub fn from_parts(timestamp_ms: u64, random_part: u128) -> Self {
+        pub const fn from_parts(timestamp_ms: u64, random_part: u128) -> Self {
             ExecutionId(ExecutionIdInner::TopLevel(TopLevelExecutionId::from_parts(
                 timestamp_ms,
                 random_part,
@@ -1099,36 +1103,60 @@ pub mod prefixed_ulid {
             )))
         }
     }
+}
 
-    #[cfg(feature = "rusqlite")]
-    mod rusqlite_ext {
-        use rusqlite::{
-            types::{FromSql, FromSqlError, ToSqlOutput},
-            ToSql,
-        };
-        use tracing::error;
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, Serialize, Deserialize)]
+#[non_exhaustive] // force using the constructor as much as possible due to validation
+#[display("{execution_id}{JOIN_SET_ID_INFIX}{name}")]
+pub struct JoinSetId {
+    pub execution_id: ExecutionId,
+    pub name: StrVariant,
+}
 
-        use super::ExecutionId;
-        impl FromSql for ExecutionId {
-            fn column_result(
-                value: rusqlite::types::ValueRef<'_>,
-            ) -> rusqlite::types::FromSqlResult<Self> {
-                let str = value.as_str()?;
-                str.parse::<ExecutionId>().map_err(|err| {
-                    error!(
-                        backtrace = %std::backtrace::Backtrace::capture(),
-                        "Cannot convert to ExecutionId value:`{str}` - {err:?}"
-                    );
-                    FromSqlError::InvalidType
-                })
-            }
+impl JoinSetId {
+    pub fn new(
+        execution_id: ExecutionId,
+        name: StrVariant,
+    ) -> Result<Self, InvalidNameError<Self>> {
+        Ok(Self {
+            execution_id,
+            name: check_name(name)?,
+        })
+    }
+}
+
+const JOIN_SET_ID_INFIX: char = ':';
+
+impl FromStr for JoinSetId {
+    type Err = JoinSetIdParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        if let Some((execution_id, name)) = input.split_once(JOIN_SET_ID_INFIX) {
+            let execution_id = ExecutionId::from_str(execution_id)?;
+            Ok(JoinSetId {
+                execution_id,
+                name: StrVariant::from(name.to_string()),
+            })
+        } else {
+            Err(JoinSetIdParseError::InfixNotFound)
         }
+    }
+}
 
-        impl ToSql for ExecutionId {
-            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-                Ok(ToSqlOutput::from(self.to_string()))
-            }
-        }
+#[derive(Debug, thiserror::Error)]
+pub enum JoinSetIdParseError {
+    #[error(transparent)]
+    ExecutionIdParseError(#[from] ExecutionIdParseError),
+    #[error("infix {JOIN_SET_ID_INFIX} not found")]
+    InfixNotFound,
+}
+
+impl<'a> Arbitrary<'a> for JoinSetId {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(Self {
+            execution_id: ExecutionId::arbitrary(u)?,
+            name: StrVariant::from(String::arbitrary(u)?),
+        })
     }
 }
 
@@ -1210,7 +1238,7 @@ pub fn check_name<T, N: AsRef<str>>(name: N) -> Result<N, InvalidNameError<T>> {
         Err(InvalidNameError {
             invalid,
             name: name.as_ref().to_string(),
-            phantom_data: PhantomData::default(),
+            phantom_data: PhantomData,
         })
     } else {
         Ok(name)

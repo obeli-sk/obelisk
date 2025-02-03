@@ -1,10 +1,10 @@
 use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
     AppendRequest, DbPool, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
     LockedExecution,
 };
+use concepts::JoinSetId;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn};
 use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
@@ -1076,7 +1076,7 @@ mod tests {
         )
         .await;
 
-        let join_set_id = JoinSetId::generate();
+        let join_set_id = JoinSetId::new(parent_execution_id.clone(), StrVariant::empty()).unwrap();
         let child_execution_id = ExecutionId::generate();
         // executor does not append anything, this should have been written by the worker:
         {
@@ -1085,7 +1085,7 @@ mod tests {
                 execution_id: child_execution_id.clone(),
                 ffqn: FFQN_CHILD,
                 params: Params::empty(),
-                parent: Some((parent_execution_id.clone(), join_set_id)),
+                parent: Some((parent_execution_id.clone(), join_set_id.clone())),
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
@@ -1097,14 +1097,16 @@ mod tests {
             let join_set = AppendRequest {
                 created_at: current_time,
                 event: ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinSet { join_set_id },
+                    event: HistoryEvent::JoinSet {
+                        join_set_id: join_set_id.clone(),
+                    },
                 },
             };
             let child_exec_req = AppendRequest {
                 created_at: current_time,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
-                        join_set_id,
+                        join_set_id: join_set_id.clone(),
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
                         },
@@ -1115,7 +1117,7 @@ mod tests {
                 created_at: current_time,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinNext {
-                        join_set_id,
+                        join_set_id: join_set_id.clone(),
                         run_expires_at: sim_clock.now(),
                         closing: false,
                     },
@@ -1207,9 +1209,9 @@ mod tests {
                 }
             })
              if *at == sim_clock.now()
-            => (*found_join_set_id, found_child_execution_id, found_result)
+            => (found_join_set_id, found_child_execution_id, found_result)
         );
-        assert_eq!(join_set_id, found_join_set_id);
+        assert_eq!(join_set_id, *found_join_set_id);
         assert_eq!(child_execution_id, *found_child_execution_id);
         assert!(found_result.is_err());
 

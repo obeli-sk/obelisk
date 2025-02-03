@@ -125,7 +125,8 @@ message RunId {
 }
 
 message JoinSetId {
-    string id = 1;
+    ExecutionId execution_id = 1;
+    string name = 2;
 }
 
 message DelayId {

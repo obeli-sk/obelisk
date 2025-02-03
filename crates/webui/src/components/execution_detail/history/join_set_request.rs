@@ -31,8 +31,9 @@ impl HistoryJoinSetRequestEventProps {
                         icon: Icon::History,
                         label: html! {
                             <>
-                                {"Join Set Request: "}
-                                {&join_set_id.id}
+                                {"Join Set Request: `"}
+                                {&join_set_id.name}
+                                {"`"}
                             </>
                         },
                         has_caret: true,
