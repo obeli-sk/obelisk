@@ -4,6 +4,7 @@ use crate::components::execution_detail::tree_component::TreeComponent;
 use crate::components::ffqn_with_links::FfqnWithLinks;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::grpc_client;
+use crate::grpc::grpc_client::ComponentId;
 use crate::grpc::grpc_client::ExecutionId;
 use chrono::{DateTime, Utc};
 use grpc_client::execution_event::Created;
@@ -25,11 +26,11 @@ impl CreatedEventProps {
             function_name: Some(function_name),
             params: Some(params),
             scheduled_at,
-            component_id: _,
+            component_id: Some(component_id),
             scheduled_by,
         } = &self.created
         else {
-            panic!()
+            panic!("created must contain required fields - {:?}", self.created)
         };
         let ffqn = FunctionFqn::from(function_name.clone());
         let params: Vec<serde_json::Value> =
@@ -56,6 +57,7 @@ impl CreatedEventProps {
             scheduled_at,
             ffqn,
             scheduled_by,
+            component_id: component_id.clone(),
         }
     }
 }
@@ -65,6 +67,7 @@ struct ProcessedProps {
     scheduled_at: DateTime<Utc>,
     ffqn: FunctionFqn,
     scheduled_by: Option<ExecutionId>,
+    component_id: ComponentId,
 }
 impl ProcessedProps {
     fn construct_tree(self) -> TreeData<u32> {
@@ -137,6 +140,19 @@ impl ProcessedProps {
             )
             .unwrap();
         }
+        // component id
+        tree.insert(
+            Node::new(NodeData {
+                icon: self.component_id.as_type().as_icon(),
+                label: html! {
+                    self.component_id
+                },
+                has_caret: false,
+                ..Default::default()
+            }),
+            InsertBehavior::UnderNode(&event_type),
+        )
+        .unwrap();
         // scheduled by
         if let Some(scheduled_by) = self.scheduled_by {
             tree

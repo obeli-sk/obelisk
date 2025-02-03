@@ -33,6 +33,19 @@ impl grpc_client::Component {
     }
 }
 
+impl grpc_client::ComponentId {
+    pub fn as_type(&self) -> ComponentType {
+        let ty = self
+            .id
+            .split_once(":")
+            .expect("ComponentId must contain `:` infix")
+            .0
+            .to_uppercase();
+        ComponentType::from_str_name(&ty)
+            .unwrap_or_else(|| panic!("ComponentType must be found for {ty}"))
+    }
+}
+
 impl yew::ToHtml for ComponentType {
     fn to_html(&self) -> yew::Html {
         match self {
