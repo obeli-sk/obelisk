@@ -21,7 +21,7 @@ pub struct CreatedEventProps {
     pub created: Created,
 }
 impl CreatedEventProps {
-    fn process(&self, app_state: &AppState) -> ProcessedProps {
+    fn process(&self, app_state: &AppState) -> TreeData<u32> {
         let Created {
             function_name: Some(function_name),
             params: Some(params),
@@ -52,13 +52,16 @@ impl CreatedEventProps {
                 .map(|param_value| ("(unknown)".to_string(), param_value.clone()))
                 .collect(),
         };
-        ProcessedProps {
+
+        let props = ProcessedProps {
             params,
             scheduled_at,
             ffqn,
             scheduled_by,
             component_id: component_id.clone(),
-        }
+            component_exists: app_state.components_by_id.contains_key(component_id),
+        };
+        props.construct_tree()
     }
 }
 
@@ -68,6 +71,7 @@ struct ProcessedProps {
     ffqn: FunctionFqn,
     scheduled_by: Option<ExecutionId>,
     component_id: ComponentId,
+    component_exists: bool,
 }
 impl ProcessedProps {
     fn construct_tree(self) -> TreeData<u32> {
@@ -145,7 +149,13 @@ impl ProcessedProps {
             Node::new(NodeData {
                 icon: self.component_id.as_type().as_icon(),
                 label: html! {
-                    self.component_id
+                    if self.component_exists {
+                        <Link<Route> to={Route::Component { component_id: self.component_id.clone() } }>
+                        { self.component_id.id }
+                        </Link<Route>>
+                    } else {
+                        { self.component_id.id }
+                    }
                 },
                 has_caret: false,
                 ..Default::default()
@@ -178,7 +188,7 @@ impl ProcessedProps {
 pub fn created_event(props: &CreatedEventProps) -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
-    let tree = props.process(&app_state).construct_tree();
+    let tree = props.process(&app_state);
     html! {
         <TreeComponent {tree} />
     }
