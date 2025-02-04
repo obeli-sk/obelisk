@@ -572,7 +572,7 @@ mod workflow_support {
                 .map_err(WorkflowFunctionError::from)?)
         }
 
-        async fn join_set(&mut self, name: String) -> wasmtime::Result<Resource<JoinSetId>> {
+        async fn new_join_set(&mut self, name: String) -> wasmtime::Result<Resource<JoinSetId>> {
             if !self.event_history.join_set_name_exists(&name) {
                 let join_set_id =
                     JoinSetId::new(self.execution_id.clone(), StrVariant::from(name))?;
@@ -599,9 +599,9 @@ mod workflow_support {
             }
         }
 
-        async fn join_set_random(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
+        async fn new_join_set_random(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
             let name = self.next_join_set_name_random();
-            self.join_set(name).await
+            self.new_join_set(name).await
         }
     }
 }
@@ -799,7 +799,7 @@ pub(crate) mod tests {
                     }
                     WorkflowStep::SubmitWithoutAwait { target_ffqn } => {
                         // Create new join set
-                        let join_set_resource = workflow_ctx.join_set_random().await.unwrap();
+                        let join_set_resource = workflow_ctx.new_join_set_random().await.unwrap();
                         let join_set_id = workflow_ctx
                             .resource_table
                             .get(&join_set_resource)

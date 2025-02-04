@@ -19,10 +19,10 @@ interface workflow-support {
 
     /// Create a new completing join set.
     /// Closing the join set at the execution finish will block until all child executions are finished.
-    join-set: func(name: string) -> join-set-id;
+    new-join-set: func(name: string) -> join-set-id;
 
     /// Create a new completing join set with a random name.
-    join-set-random: func() -> join-set-id;
+    new-join-set-random: func() -> join-set-id;
 
-    // TODO: `join-set-cancelling(name: string)` that cancels all remaining child executions on close
+    // TODO: `new-join-set-cancelling(name: string)` that cancels all remaining child executions on close
 }

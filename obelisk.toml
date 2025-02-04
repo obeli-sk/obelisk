@@ -94,38 +94,38 @@ listening_addr = "127.0.0.1:9090"
 
 [[activity_wasm]]
 name = "test_programs_fibo_activity"
-location.oci = "docker.io/getobelisk/test_programs_fibo_activity:2025-02-03@sha256:02582c17814b8a0fa7cdfe9c69fcf8a7f93bbd685f138eb37f3d96fcd19a8062"
+location.oci = "docker.io/getobelisk/test_programs_fibo_activity:2025-02-04@sha256:52194f6893cb5b9786dfcb5b67918dc4e234a3eb88838e956a50bde56702fe72"
 max_retries = 0
 
 [[workflow]]
 name = "test_programs_fibo_workflow"
-location.oci = "docker.io/getobelisk/test_programs_fibo_workflow:2025-02-03@sha256:d6d16e401a52d8675ebcee503b6beb0f21cabe992d59245a0218bb3f2bb6dd66"
+location.oci = "docker.io/getobelisk/test_programs_fibo_workflow:2025-02-04@sha256:27f151bb1e04d34a8ff67579602461853bf26ad12837b1532f7c7722a70f59f5"
 exec.lock_expiry.secs = 2
 
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
-location.oci = "docker.io/getobelisk/test_programs_fibo_webhook:2025-02-03@sha256:48f00d08fe9b6edb92e930802fc612e75b10c2023f7a4662ad4e18ee9f0ca356"
+location.oci = "docker.io/getobelisk/test_programs_fibo_webhook:2025-02-04@sha256:0672d43eeb0664ca72fd4b4be2df7a39197f1a73c3b4b45b16bf96adec3d7546"
 http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 
 [[activity_wasm]]
 name = "test_programs_http_get_activity"
-location.oci = "docker.io/getobelisk/test_programs_http_get_activity:2025-02-03@sha256:728ef54dc8f6dcb199bc50773c4ab6c37a50063e63927c40db73e71a3a8ac6cf"
+location.oci = "docker.io/getobelisk/test_programs_http_get_activity:2025-02-04@sha256:09f91418dd5c3048748df023ca8ba814a5f321c1854001f4f13dadd3b7fea60e"
 forward_stdout = "stderr"
 forward_stderr = "stderr"
 
 [[workflow]]
 name = "test_programs_http_get_workflow"
-location.oci = "docker.io/getobelisk/test_programs_http_get_workflow:2025-02-03@sha256:81699903913f795399f8e314dbe85675fb30948523c347d422340a4181a49793"
+location.oci = "docker.io/getobelisk/test_programs_http_get_workflow:2025-02-04@sha256:7c9ae288785e424e77a2d3fc267d4737b1d0871c4b0289890fd33d40fb5be545"
 
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
-location.oci = "docker.io/getobelisk/test_programs_sleep_activity:2025-02-03@sha256:bdc96543c9773ed82192699f0397379925755859c829821d9fe2f3ffc3d70e45"
+location.oci = "docker.io/getobelisk/test_programs_sleep_activity:2025-02-04@sha256:ee3cd6588009db88abd977062aaba16cd4b2687fdc272dd168f5fd8905833df6"
 exec.lock_expiry.secs = 10
 
 [[workflow]]
 name = "test_programs_sleep_workflow"
-location.oci = "docker.io/getobelisk/test_programs_sleep_workflow:2025-02-03@sha256:a9005d5768ad6e8bdd04df37938d74cb43faccd6bccfb1876f8ee1542f4228a9"
+location.oci = "docker.io/getobelisk/test_programs_sleep_workflow:2025-02-04@sha256:c41140a6cdc18862c291c7c7004b099b6f8a93c146bc9d851787da72bef4d98b"
 
 ### Send spans via gRPC to an OTLP collector.
 # [otlp]
