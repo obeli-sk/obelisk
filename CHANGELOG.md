@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/obeli-sk/obelisk/compare/v0.14.0...v0.14.1)
+
+### 🐛 Bug Fixes
+
+- Symlink wit path in `utils` - ([51c85c1](https://github.com/obeli-sk/obelisk/commit/51c85c111a3d133a0068436e57d3323afe9877c4))
+
+
 ## [0.14.0](https://github.com/obeli-sk/obelisk/compare/v0.13.3...v0.14.0)
 
 ### ⛰️ Features
