@@ -1140,11 +1140,11 @@ impl JoinSetId {
         min_length: u16,
         max_length_exclusive: u16,
     ) -> String {
-        const CHARSET_JOIN_SET_NAME: &str =
-            const_format::concatcp!(CHARSET_ALPHANUMERIC, ALLOWED_JSON_SET_CHARS);
         random_string(rng, min_length, max_length_exclusive, CHARSET_JOIN_SET_NAME)
     }
 }
+const CHARSET_JOIN_SET_NAME: &str =
+    const_format::concatcp!(CHARSET_ALPHANUMERIC, ALLOWED_JSON_SET_CHARS);
 
 pub const CHARSET_ALPHANUMERIC: &str =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
