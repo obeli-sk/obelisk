@@ -946,7 +946,6 @@ pub mod prefixed_ulid {
     pub mod prefix {
         pub struct E;
         pub struct Exr;
-        pub struct JoinSet;
         pub struct Run;
         pub struct Delay;
     }
@@ -1120,12 +1119,13 @@ impl JoinSetId {
     ) -> Result<Self, InvalidNameError<Self>> {
         Ok(Self {
             execution_id,
-            name: check_name(name)?,
+            name: check_name(name, ALLOWED_JSON_SET_CHARS)?,
         })
     }
 }
 
 const JOIN_SET_ID_INFIX: char = ':';
+const ALLOWED_JSON_SET_CHARS: &str = "_";
 
 impl FromStr for JoinSetId {
     type Err = JoinSetIdParseError;
@@ -1202,10 +1202,10 @@ impl ComponentId {
         component_type: ComponentType,
         name: StrVariant,
         hash: StrVariant,
-    ) -> Result<Self, InvalidNameError<ComponentId>> {
+    ) -> Result<Self, InvalidNameError<Self>> {
         Ok(Self {
             component_type,
-            name: check_name(name)?,
+            name: check_name(name, "_")?,
             hash,
         })
     }
@@ -1229,27 +1229,34 @@ impl ComponentId {
     }
 }
 
-pub fn check_name<T, N: AsRef<str>>(name: N) -> Result<N, InvalidNameError<T>> {
+pub fn check_name<T>(
+    name: StrVariant,
+    special: &'static str,
+) -> Result<StrVariant, InvalidNameError<T>> {
     if let Some(invalid) = name
         .as_ref()
         .chars()
-        .find(|c| !c.is_ascii_alphanumeric() && *c != '_')
+        .find(|c| !c.is_ascii_alphanumeric() && !special.contains(*c))
     {
-        Err(InvalidNameError {
+        Err(InvalidNameError::<T> {
             invalid,
             name: name.as_ref().to_string(),
-            phantom_data: PhantomData,
+            special,
+            phantom_data: PhantomData::default(),
         })
     } else {
         Ok(name)
     }
 }
-
 #[derive(Debug, thiserror::Error)]
-#[error("name of {} must only contain alphanumeric characters and underscore, found invalid character `{invalid}` in: {name}", std::any::type_name::<T>().rsplit("::").next().unwrap())]
+#[error(
+    "name of {} `{name}` contains invalid character `{invalid}`, must only contain alphanumeric characters and following characters {special}",
+    std::any::type_name::<T>().rsplit("::").next().unwrap()
+)]
 pub struct InvalidNameError<T> {
     invalid: char,
     name: String,
+    special: &'static str,
     phantom_data: PhantomData<T>,
 }
 
