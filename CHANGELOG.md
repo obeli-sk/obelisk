@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.2](https://github.com/obeli-sk/obelisk/compare/v0.14.1...v0.14.2)
+
+### 🐛 Bug Fixes
+
+- *(wit)* Readd missing `new-` prefix to join set WIT functions - ([aa17e42](https://github.com/obeli-sk/obelisk/commit/aa17e4213fd5ac3be008a72c55960d6c55de809c))
+
+
 ## [0.14.1](https://github.com/obeli-sk/obelisk/compare/v0.14.0...v0.14.1)
 
 ### 🐛 Bug Fixes
