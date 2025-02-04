@@ -1125,7 +1125,7 @@ impl JoinSetId {
 }
 
 const JOIN_SET_ID_INFIX: char = ':';
-const ALLOWED_JSON_SET_CHARS: &str = "_";
+const ALLOWED_JSON_SET_CHARS: &str = "_-/.:";
 
 impl FromStr for JoinSetId {
     type Err = JoinSetIdParseError;
