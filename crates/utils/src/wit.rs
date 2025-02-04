@@ -14,7 +14,7 @@ use wit_parser::{
 };
 
 const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!(concat!(
-    env!("CARGO_WORKSPACE_DIR"),
+    env!("CARGO_MANIFEST_DIR"),
     "/wit/obelisk_types/types.wit"
 ));
 
