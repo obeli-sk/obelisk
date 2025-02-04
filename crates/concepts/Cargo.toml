@@ -23,6 +23,7 @@ getrandom.workspace = true                       # Only needed for the madsim pa
 hashbrown.workspace = true
 indexmap.workspace = true
 opentelemetry.workspace = true
+rand.workspace = true
 rusqlite = { optional = true, workspace = true }
 serde.workspace = true
 serde_json.workspace = true

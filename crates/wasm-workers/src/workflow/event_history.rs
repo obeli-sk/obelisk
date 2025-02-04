@@ -1395,7 +1395,12 @@ mod tests {
         )
         .await;
 
-        let join_set_id = JoinSetId::new(execution_id.clone(), StrVariant::empty()).unwrap();
+        let join_set_id = JoinSetId::new(
+            execution_id.clone(),
+            concepts::JoinSetKind::OneOff,
+            StrVariant::empty(),
+        )
+        .unwrap();
         let child_execution_id = ExecutionId::generate();
 
         let blocking_join_first = |mut event_history: EventHistory<_>,
@@ -1573,7 +1578,12 @@ mod tests {
         )
         .await;
 
-        let join_set_id = JoinSetId::new(execution_id.clone(), StrVariant::empty()).unwrap();
+        let join_set_id = JoinSetId::new(
+            execution_id.clone(),
+            concepts::JoinSetKind::OneOff,
+            StrVariant::empty(),
+        )
+        .unwrap();
         let child_execution_id = ExecutionId::generate();
 
         start_async(
@@ -1764,7 +1774,12 @@ mod tests {
         )
         .await;
 
-        let join_set_id = JoinSetId::new(execution_id.clone(), StrVariant::empty()).unwrap();
+        let join_set_id = JoinSetId::new(
+            execution_id.clone(),
+            concepts::JoinSetKind::OneOff,
+            StrVariant::empty(),
+        )
+        .unwrap();
         let child_execution_id_a = ExecutionId::generate();
         let child_execution_id_b = ExecutionId::generate();
 

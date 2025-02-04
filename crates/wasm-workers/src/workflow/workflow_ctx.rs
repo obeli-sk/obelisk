@@ -1,4 +1,4 @@
-use super::event_history::{ApplyError, EventCall, EventHistory};
+use super::event_history::{ApplyError, ChildReturnValue, EventCall, EventHistory, HostResource};
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::component_logger::{log_activities, ComponentLogger};
 use crate::host_exports::{
@@ -10,9 +10,9 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::DelayId;
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
-use concepts::JoinSetId;
 use concepts::{ExecutionId, FinishedExecutionError, FunctionRegistry, IfcFqnName, StrVariant};
 use concepts::{FunctionFqn, Params};
+use concepts::{JoinSetId, JoinSetKind};
 use executor::worker::FatalError;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -23,7 +23,7 @@ use std::time::Duration;
 use tracing::{error, instrument, trace, Span};
 use utils::time::ClockFn;
 use val_json::wast_val::WastVal;
-use wasmtime::component::{Linker, Val};
+use wasmtime::component::{Linker, Resource, Val};
 
 /// Result that is passed from guest to host as an error, must be downcast from anyhow.
 #[derive(thiserror::Error, Debug, Clone)]
@@ -244,9 +244,6 @@ impl<'a> ImportedFnCall<'a> {
     }
 }
 
-const CHARSET_ALPHANUMERIC: &[u8] =
-    b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -335,8 +332,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         Ok(())
     }
 
-    async fn call_sleep(&mut self, duration: Duration) -> Result<(), WorkflowFunctionError> {
-        let join_set_id = self.next_join_set_random();
+    async fn persist_sleep(&mut self, duration: Duration) -> Result<(), WorkflowFunctionError> {
+        let join_set_id = self.next_join_set_one_off();
         let delay_id = DelayId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
         self.event_history
             .apply(
@@ -358,34 +355,53 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         rand::Rng::gen(&mut self.rng)
     }
 
-    // Must be persisted by the caller.
-    fn next_string_random(&mut self, min_length: u16, max_length_exclusive: u16) -> String {
-        let length_inclusive =
-            rand::Rng::gen_range(&mut self.rng, min_length..max_length_exclusive);
-
-        (0..=length_inclusive)
-            .map(|_| {
-                let idx = rand::Rng::gen_range(&mut self.rng, 0..CHARSET_ALPHANUMERIC.len());
-                CHARSET_ALPHANUMERIC[idx] as char
-            })
-            .collect()
-    }
-
     fn next_join_set_name_random(&mut self) -> String {
         loop {
-            let name = self.next_string_random(5, 11);
+            let name = JoinSetId::random_name(&mut self.rng, 5, 11);
             if !self.event_history.join_set_name_exists(&name) {
                 return name;
             }
         }
     }
 
-    fn next_join_set_random(&mut self) -> JoinSetId {
+    fn next_join_set_one_off(&mut self) -> JoinSetId {
         JoinSetId::new(
             self.execution_id.clone(),
+            JoinSetKind::OneOff,
             StrVariant::from(self.next_join_set_name_random()),
         )
         .expect("next_string_random returns valid join set name")
+    }
+
+    async fn persist_join_set_with_kind(
+        &mut self,
+        name: String,
+        kind: JoinSetKind,
+    ) -> wasmtime::Result<Resource<JoinSetId>> {
+        if !self.event_history.join_set_name_exists(&name) {
+            let join_set_id =
+                JoinSetId::new(self.execution_id.clone(), kind, StrVariant::from(name))?;
+            let res = self
+                .event_history
+                .apply(
+                    EventCall::CreateJoinSet { join_set_id },
+                    &self.db_pool.connection(),
+                    &mut self.version,
+                    self.fn_registry.as_ref(),
+                )
+                .await
+                .map_err(WorkflowFunctionError::from)?;
+            let join_set_id = assert_matches!(res,
+                ChildReturnValue::HostResource(HostResource::CreateJoinSetResp(join_set_id)) => join_set_id);
+            let join_set_id = self.resource_table.push(join_set_id)?;
+            Ok(join_set_id)
+        } else {
+            Err(wasmtime::Error::new(
+                WorkflowFunctionError::UncategorizedError(StrVariant::from(format!(
+                    "join set already exists with name `{name}`"
+                ))),
+            ))
+        }
     }
 
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
@@ -423,7 +439,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     fn imported_fn_to_event_call(&mut self, imported_fn_call: ImportedFnCall) -> EventCall {
         match imported_fn_call {
             ImportedFnCall::Direct { ffqn, params } => {
-                let join_set_id = self.next_join_set_random();
+                let join_set_id = self.next_join_set_one_off();
                 let child_execution_id = self.get_and_increment_child_id();
                 EventCall::BlockingChildDirectCall {
                     ffqn,
@@ -473,21 +489,21 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 }
 
 mod workflow_support {
-    use concepts::{
-        storage::{self, PersistKind},
-        JoinSetId, StrVariant,
-    };
-    use val_json::wast_val::WastVal;
-    use wasmtime::component::Resource;
-
     use super::{
         assert_matches, ClockFn, DbConnection, DbPool, Duration, EventCall, WorkflowCtx,
         WorkflowFunctionError,
     };
     use crate::{
         host_exports::{self, DurationEnum},
-        workflow::event_history::{ChildReturnValue, HostResource},
+        workflow::event_history::ChildReturnValue,
     };
+    use concepts::{
+        random_string,
+        storage::{self, PersistKind},
+        JoinSetId, JoinSetKind, CHARSET_ALPHANUMERIC,
+    };
+    use val_json::wast_val::WastVal;
+    use wasmtime::component::Resource;
 
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
         host_exports::obelisk::types::execution::HostJoinSetId for WorkflowCtx<C, DB, P>
@@ -540,7 +556,12 @@ mod workflow_support {
             min_length: u16,
             max_length_exclusive: u16,
         ) -> wasmtime::Result<String> {
-            let value = self.next_string_random(min_length, max_length_exclusive);
+            let value = random_string(
+                &mut self.rng,
+                min_length,
+                max_length_exclusive,
+                CHARSET_ALPHANUMERIC,
+            );
             // Persist
             let value = Vec::from_iter(value.bytes());
             let value = self
@@ -567,41 +588,20 @@ mod workflow_support {
         // TODO: Apply jitter, should be configured on the component level
         async fn sleep(&mut self, duration: DurationEnum) -> wasmtime::Result<()> {
             Ok(self
-                .call_sleep(Duration::from(duration))
+                .persist_sleep(Duration::from(duration))
                 .await
                 .map_err(WorkflowFunctionError::from)?)
         }
 
         async fn new_join_set(&mut self, name: String) -> wasmtime::Result<Resource<JoinSetId>> {
-            if !self.event_history.join_set_name_exists(&name) {
-                let join_set_id =
-                    JoinSetId::new(self.execution_id.clone(), StrVariant::from(name))?;
-                let res = self
-                    .event_history
-                    .apply(
-                        EventCall::CreateJoinSet { join_set_id },
-                        &self.db_pool.connection(),
-                        &mut self.version,
-                        self.fn_registry.as_ref(),
-                    )
-                    .await
-                    .map_err(WorkflowFunctionError::from)?;
-                let join_set_id = assert_matches!(res,
-                    ChildReturnValue::HostResource(HostResource::CreateJoinSetResp(join_set_id)) => join_set_id);
-                let join_set_id = self.resource_table.push(join_set_id)?;
-                Ok(join_set_id)
-            } else {
-                Err(wasmtime::Error::new(
-                    WorkflowFunctionError::UncategorizedError(StrVariant::from(format!(
-                        "join set already exists with name `{name}`"
-                    ))),
-                ))
-            }
+            self.persist_join_set_with_kind(name, JoinSetKind::UserDefinedNamed)
+                .await
         }
 
         async fn new_join_set_random(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
             let name = self.next_join_set_name_random();
-            self.new_join_set(name).await
+            self.persist_join_set_with_kind(name, JoinSetKind::UserDefinedRandom)
+                .await
         }
     }
 }
@@ -783,7 +783,7 @@ pub(crate) mod tests {
                 let res = match step {
                     WorkflowStep::Sleep { millis } => {
                         workflow_ctx
-                            .call_sleep(Duration::from_millis(u64::from(*millis)))
+                            .persist_sleep(Duration::from_millis(u64::from(*millis)))
                             .await
                     }
                     WorkflowStep::Call { ffqn } => {

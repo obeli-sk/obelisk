@@ -699,7 +699,12 @@ pub async fn append_batch_respond_to_parent(
         .await
         .unwrap();
     // Create joinset
-    let join_set_id = JoinSetId::new(parent_id.clone(), StrVariant::empty()).unwrap();
+    let join_set_id = JoinSetId::new(
+        parent_id.clone(),
+        concepts::JoinSetKind::OneOff,
+        StrVariant::empty(),
+    )
+    .unwrap();
     let mut version = db_connection
         .append(
             parent_id.clone(),
@@ -1010,8 +1015,12 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
                 created_at: sim_clock.now(),
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
-                        join_set_id: JoinSetId::new(execution_id.clone(), StrVariant::empty())
-                            .unwrap(),
+                        join_set_id: JoinSetId::new(
+                            execution_id.clone(),
+                            concepts::JoinSetKind::OneOff,
+                            StrVariant::empty(),
+                        )
+                        .unwrap(),
                         request: JoinSetRequest::DelayRequest {
                             delay_id: DelayId::generate(),
                             expires_at: sim_clock.now(),
@@ -1130,7 +1139,12 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
         .await
         .unwrap();
 
-    let join_set_id = JoinSetId::new(execution_id.clone(), StrVariant::empty()).unwrap();
+    let join_set_id = JoinSetId::new(
+        execution_id.clone(),
+        concepts::JoinSetKind::OneOff,
+        StrVariant::empty(),
+    )
+    .unwrap();
     let delay_id = DelayId::generate();
     db_connection
         .append(

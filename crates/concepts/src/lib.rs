@@ -1104,57 +1104,144 @@ pub mod prefixed_ulid {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
 #[non_exhaustive] // force using the constructor as much as possible due to validation
-#[display("{execution_id}{JOIN_SET_ID_INFIX}{name}")]
+#[display("{execution_id}{JOIN_SET_ID_INFIX}{kind}{JOIN_SET_ID_INFIX}{name}")]
 pub struct JoinSetId {
     pub execution_id: ExecutionId,
+    pub kind: JoinSetKind,
     pub name: StrVariant,
 }
 
 impl JoinSetId {
     pub fn new(
         execution_id: ExecutionId,
+        kind: JoinSetKind,
         name: StrVariant,
-    ) -> Result<Self, InvalidNameError<Self>> {
+    ) -> Result<Self, InvalidNameError<JoinSetId>> {
         Ok(Self {
             execution_id,
+            kind,
             name: check_name(name, ALLOWED_JSON_SET_CHARS)?,
         })
+    }
+
+    pub fn random_name(
+        rng: &mut rand::rngs::StdRng,
+        min_length: u16,
+        max_length_exclusive: u16,
+    ) -> String {
+        const CHARSET_JOIN_SET_NAME: &str =
+            const_format::concatcp!(CHARSET_ALPHANUMERIC, ALLOWED_JSON_SET_CHARS);
+        random_string(rng, min_length, max_length_exclusive, CHARSET_JOIN_SET_NAME)
+    }
+}
+
+pub const CHARSET_ALPHANUMERIC: &str =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+pub fn random_string(
+    rng: &mut rand::rngs::StdRng,
+    min_length: u16,
+    max_length_exclusive: u16,
+    charset: &'static str,
+) -> String {
+    let length_inclusive = rand::Rng::gen_range(rng, min_length..max_length_exclusive);
+    (0..=length_inclusive)
+        .map(|_| {
+            let idx = rand::Rng::gen_range(rng, 0..charset.len());
+            charset.chars().nth(idx).expect("idx is < charset.len()")
+        })
+        .collect()
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    Serialize,
+    Deserialize,
+    strum::EnumIter,
+    Arbitrary,
+)]
+#[display("{}", self.as_code())]
+pub enum JoinSetKind {
+    OneOff,
+    UserDefinedNamed,
+    UserDefinedRandom,
+}
+impl JoinSetKind {
+    fn as_code(&self) -> &'static str {
+        match self {
+            JoinSetKind::OneOff => "oneoff",
+            JoinSetKind::UserDefinedNamed => "named",
+            JoinSetKind::UserDefinedRandom => "rnd",
+        }
+    }
+}
+impl FromStr for JoinSetKind {
+    type Err = &'static str;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        use strum::IntoEnumIterator;
+        Self::iter()
+            .find(|variant| s == variant.as_code())
+            .ok_or("unknown join set kind")
     }
 }
 
 const JOIN_SET_ID_INFIX: char = ':';
-const ALLOWED_JSON_SET_CHARS: &str = "_-/.:";
+const ALLOWED_JSON_SET_CHARS: &str = "_-/.";
 
 impl FromStr for JoinSetId {
     type Err = JoinSetIdParseError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        if let Some((execution_id, name)) = input.split_once(JOIN_SET_ID_INFIX) {
-            let execution_id = ExecutionId::from_str(execution_id)?;
-            Ok(JoinSetId {
-                execution_id,
-                name: StrVariant::from(name.to_string()),
-            })
-        } else {
-            Err(JoinSetIdParseError::InfixNotFound)
+        let parts: Vec<_> = input.splitn(3, JOIN_SET_ID_INFIX).collect();
+        if parts.len() != 3 {
+            return Err(JoinSetIdParseError::WrongParts);
         }
+        let execution_id = parts[0].parse()?;
+        let kind = parts[1]
+            .parse()
+            .map_err(JoinSetIdParseError::JoinSetKindParseError)?;
+        let name = parts[2]; // checked on the next line using the constructor
+        Ok(JoinSetId::new(
+            execution_id,
+            kind,
+            StrVariant::from(name.to_string()),
+        )?)
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum JoinSetIdParseError {
-    #[error(transparent)]
+    #[error("join set must consist of three parts separated by {JOIN_SET_ID_INFIX} ")]
+    WrongParts,
+    #[error("cannot parse join set id's execution id - {0}")]
     ExecutionIdParseError(#[from] ExecutionIdParseError),
-    #[error("infix {JOIN_SET_ID_INFIX} not found")]
-    InfixNotFound,
+    #[error("cannot parse join set kind - {0}")]
+    JoinSetKindParseError(&'static str),
+    #[error("cannot parse join set id - {0}")]
+    InvalidName(#[from] InvalidNameError<JoinSetId>),
 }
 
 impl<'a> Arbitrary<'a> for JoinSetId {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         Ok(Self {
             execution_id: ExecutionId::arbitrary(u)?,
+            kind: JoinSetKind::UserDefinedRandom,
             name: StrVariant::from(String::arbitrary(u)?),
         })
     }
@@ -1595,6 +1682,7 @@ impl opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'_
 
 #[cfg(test)]
 mod tests {
+
     use crate::{prefixed_ulid::ExecutorId, ExecutionId, StrVariant};
     use std::{
         hash::{DefaultHasher, Hash, Hasher},
@@ -1683,5 +1771,23 @@ mod tests {
         let right_hasher = right_hasher.finish();
         println!("left: {left_hasher:x}, right: {right_hasher:x}");
         assert_eq!(left_hasher, right_hasher);
+    }
+
+    #[cfg(madsim)]
+    #[tokio::test]
+    async fn join_set_serde_should_be_consistent() {
+        use crate::{JoinSetId, JoinSetKind};
+        use rand::{rngs::StdRng, SeedableRng as _};
+
+        let execution_id = ExecutionId::generate();
+        let raw_data: Vec<_> = (0..10).map(|_| madsim::rand::random::<u8>()).collect();
+        let mut unstructured = arbitrary::Unstructured::new(&raw_data);
+        let kind: JoinSetKind = unstructured.arbitrary().unwrap();
+        let mut rng = StdRng::seed_from_u64(madsim::rand::random::<u64>());
+        let name = JoinSetId::random_name(&mut rng, 0, 5);
+        let join_set_id = JoinSetId::new(execution_id, kind, StrVariant::from(name)).unwrap();
+        let ser = serde_json::to_string(&join_set_id).unwrap();
+        let deser = serde_json::from_str(&ser).unwrap();
+        assert_eq!(join_set_id, deser);
     }
 }

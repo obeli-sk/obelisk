@@ -236,6 +236,7 @@ pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::Histor
     event: HistoryEvent::JoinSet {
         join_set_id: JoinSetId {
             execution_id: ExecutionId::from_parts(0, 0),
+            kind: crate::JoinSetKind::OneOff,
             name: StrVariant::empty(),
         },
     },
@@ -1021,7 +1022,6 @@ impl From<&FinishedExecutionResult> for PendingStateFinishedResultKind {
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, derive_more::FromStr)]
-#[display("{_0}")]
 pub enum PendingStateFinishedError {
     Timeout,
     NondeterminismDetected,
