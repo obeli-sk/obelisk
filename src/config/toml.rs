@@ -1,10 +1,13 @@
 use super::{env_var::EnvVarConfig, ComponentLocation, ConfigStoreCommon};
 use anyhow::{anyhow, bail};
-use concepts::{ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, StrVariant};
+use concepts::{
+    check_name, ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, InvalidNameError,
+    StrVariant,
+};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use directories::ProjectDirs;
 use log::{LoggingConfig, LoggingStyle};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -156,10 +159,31 @@ impl CodegenCache {
     }
 }
 
+/// Activity, Webhook, Workflow or a Http server
+#[derive(Debug, Clone, Hash, PartialEq, Eq, derive_more::Display, derive_more::Into)]
+#[display("{_0}")]
+pub struct ConfigName(StrVariant);
+impl ConfigName {
+    pub fn new(name: StrVariant) -> Result<Self, InvalidNameError<ConfigName>> {
+        Ok(Self {
+            0: check_name(name, "_")?,
+        })
+    }
+}
+impl<'de> Deserialize<'de> for ConfigName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let name = String::deserialize(deserializer)?;
+        ConfigName::new(StrVariant::from(name)).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Deserialize, Hash)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentCommon {
-    pub(crate) name: String,
+    pub(crate) name: ConfigName,
     pub(crate) location: ComponentLocation,
 }
 
@@ -263,7 +287,7 @@ impl ActivityWasmConfigVerified {
 }
 
 impl ActivityWasmConfigToml {
-    #[instrument(skip_all, fields(component_name = self.common.name, component_id))]
+    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
@@ -341,7 +365,7 @@ impl WorkflowConfigVerified {
 }
 
 impl WorkflowConfigToml {
-    #[instrument(skip_all, fields(component_name = self.common.name, component_id))]
+    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
@@ -351,7 +375,7 @@ impl WorkflowConfigToml {
         if retry_exp_backoff == Duration::ZERO {
             bail!(
                 "invalid `retry_exp_backoff` setting for workflow `{}` - duration must not be zero",
-                self.common.name
+                self.common.name.0
             );
         }
         let mut hasher = std::hash::DefaultHasher::new();
@@ -664,7 +688,7 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 pub(crate) mod webhook {
     use crate::config::env_var::EnvVarConfig;
 
-    use super::{resolve_env_vars, ComponentCommon, InflightSemaphore, StdOutput};
+    use super::{resolve_env_vars, ComponentCommon, ConfigName, InflightSemaphore, StdOutput};
     use anyhow::Context;
     use concepts::{ComponentId, ComponentType, ContentDigest, StrVariant};
     use serde::Deserialize;
@@ -679,7 +703,7 @@ pub(crate) mod webhook {
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct HttpServer {
-        pub(crate) name: String,
+        pub(crate) name: ConfigName,
         pub(crate) listening_addr: SocketAddr,
         #[serde(default)]
         pub(crate) max_inflight_requests: InflightSemaphore,
@@ -691,7 +715,7 @@ pub(crate) mod webhook {
         // TODO: Rename to WebhookComponentConfigToml
         #[serde(flatten)]
         pub(crate) common: ComponentCommon,
-        pub(crate) http_server: String,
+        pub(crate) http_server: ConfigName,
         pub(crate) routes: Vec<WebhookRoute>,
         #[serde(default)]
         pub(crate) forward_stdout: StdOutput,
@@ -702,7 +726,7 @@ pub(crate) mod webhook {
     }
 
     impl WebhookComponent {
-        #[instrument(skip_all, fields(component_name = self.common.name, component_id), err)]
+        #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id), err)]
         pub(crate) async fn fetch_and_verify(
             self,
             wasm_cache_dir: Arc<Path>,

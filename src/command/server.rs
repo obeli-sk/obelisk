@@ -9,6 +9,7 @@ use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::config::toml::ActivityWasmConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ComponentCommon;
+use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
 use crate::config::toml::InflightSemaphore;
 use crate::config::toml::StdOutput;
@@ -883,7 +884,7 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 struct ServerVerified {
     component_registry_ro: ComponentConfigRegistryRO,
     compiled_components: LinkedComponents,
-    http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<String>)>,
+    http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     engines: Engines,
     sqlite_config: SqliteConfig,
     db_file: PathBuf,
@@ -921,9 +922,9 @@ impl ServerVerified {
         let mut http_servers = config.http_servers;
         let mut webhooks = config.webhooks;
         if let Some(webui_listening_addr) = config.webui.listening_addr {
-            let http_server_name = "webui";
+            let http_server_name = ConfigName::new(StrVariant::Static("webui")).unwrap();
             http_servers.push(webhook::HttpServer {
-                name: http_server_name.to_string(),
+                name: http_server_name.clone(),
                 listening_addr: webui_listening_addr
                     .parse()
                     .context("error converting `webui.listening_addr` to a socket address")?,
@@ -931,14 +932,14 @@ impl ServerVerified {
             });
             webhooks.push(webhook::WebhookComponent {
                 common: ComponentCommon {
-                    name: "obelisk_webui".to_string(),
+                    name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
                     location: ComponentLocation::Oci(
                         WEBUI_OCI_REFERENCE
                             .parse()
                             .expect("hard-coded webui reference must be parsed"),
                     ),
                 },
-                http_server: http_server_name.to_string(),
+                http_server: http_server_name,
                 routes: vec![WebhookRoute::default()],
                 forward_stdout: StdOutput::default(),
                 forward_stderr: StdOutput::default(),
@@ -1133,8 +1134,8 @@ async fn start_webhooks(
 struct ConfigVerified {
     wasm_activities: Vec<ActivityWasmConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
-    webhooks_by_names: hashbrown::HashMap<String, WebhookComponentVerified>,
-    http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<String>)>,
+    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
+    http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
 }
 
 #[instrument(skip_all)]
@@ -1165,8 +1166,8 @@ async fn fetch_and_verify_all(
         if http_servers.len()
             > http_servers
                 .iter()
-                .map(|it| concepts::check_name::<webhook::HttpServer, _>(&it.name))
-                .collect::<Result<hashbrown::HashSet<_>, _>>()?
+                .map(|it| &it.name)
+                .collect::<hashbrown::HashSet<_>>()
                 .len()
         {
             bail!("Each `http_server` must have a unique name");
@@ -1183,7 +1184,8 @@ async fn fetch_and_verify_all(
     }
     let http_servers_to_webhook_names = {
         let mut remaining_server_names_to_webhook_names = {
-            let mut map: hashbrown::HashMap<String, Vec<String>> = hashbrown::HashMap::default();
+            let mut map: hashbrown::HashMap<ConfigName, Vec<ConfigName>> =
+                hashbrown::HashMap::default();
             for webhook in &webhooks {
                 map.entry(webhook.http_server.clone())
                     .or_default()
@@ -1302,7 +1304,7 @@ async fn fetch_and_verify_all(
 /// Holds all the work that does not require a database connection.
 struct LinkedComponents {
     workers_linked: Vec<WorkerLinked>,
-    webhooks_by_names: hashbrown::HashMap<String, WebhookInstancesAndRoutes>,
+    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookInstancesAndRoutes>,
 }
 
 #[instrument(skip_all)]
@@ -1310,7 +1312,7 @@ async fn compile_and_verify(
     engines: &Engines,
     wasm_activities: Vec<ActivityWasmConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
-    webhooks_by_names: hashbrown::HashMap<String, WebhookComponentVerified>,
+    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
 ) -> Result<(LinkedComponents, ComponentConfigRegistryRO), anyhow::Error> {
     let mut component_registry = ComponentConfigRegistry::default();
     let pre_spawns: Vec<tokio::task::JoinHandle<Result<_, anyhow::Error>>> = wasm_activities

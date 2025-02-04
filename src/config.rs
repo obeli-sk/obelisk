@@ -13,6 +13,7 @@ use concepts::PackageIfcFns;
 use concepts::StrVariant;
 use serde_with::serde_as;
 use std::path::{Path, PathBuf};
+use toml::ConfigName;
 use tracing::instrument;
 use utils::sha256sum::calculate_sha256_file;
 
@@ -36,7 +37,7 @@ pub(crate) struct ComponentConfigImportable {
 
 #[derive(Debug, Clone, Hash)]
 pub(crate) struct ConfigStoreCommon {
-    pub(crate) name: String,
+    pub(crate) name: ConfigName,
     pub(crate) location: ComponentLocation,
     pub(crate) content_digest: ContentDigest,
 }
