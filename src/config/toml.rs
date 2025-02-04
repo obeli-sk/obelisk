@@ -165,9 +165,7 @@ impl CodegenCache {
 pub struct ConfigName(StrVariant);
 impl ConfigName {
     pub fn new(name: StrVariant) -> Result<Self, InvalidNameError<ConfigName>> {
-        Ok(Self {
-            0: check_name(name, "_")?,
-        })
+        Ok(Self(check_name(name, "_")?))
     }
 }
 impl<'de> Deserialize<'de> for ConfigName {

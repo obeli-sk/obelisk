@@ -1242,7 +1242,7 @@ pub fn check_name<T>(
             invalid,
             name: name.as_ref().to_string(),
             special,
-            phantom_data: PhantomData::default(),
+            phantom_data: PhantomData,
         })
     } else {
         Ok(name)
