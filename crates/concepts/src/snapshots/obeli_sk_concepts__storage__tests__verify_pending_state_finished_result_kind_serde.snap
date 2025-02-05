@@ -1,0 +1,11 @@
+---
+source: crates/concepts/src/storage.rs
+expression: ser
+---
+[
+  "timeout",
+  "nondeterminism_detected",
+  "execution_failure",
+  "fallible_error",
+  "ok"
+]

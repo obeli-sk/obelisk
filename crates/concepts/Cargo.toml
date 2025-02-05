@@ -38,6 +38,7 @@ ulid.workspace = true
 wasmtime.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 madsim.workspace = true
 rstest.workspace = true
 

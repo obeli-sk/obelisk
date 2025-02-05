@@ -2888,6 +2888,7 @@ dependencies = [
  "getrandom",
  "hashbrown 0.15.2",
  "indexmap 2.7.0",
+ "insta",
  "madsim",
  "madsim-tokio",
  "obeli-sk-val-json",

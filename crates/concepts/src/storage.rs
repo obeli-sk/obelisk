@@ -13,7 +13,6 @@ use crate::SupportedFunctionReturnValue;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use derive_more::FromStrError;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -987,9 +986,9 @@ pub struct PendingStateFinished {
     Debug, Clone, Copy, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
 )]
 pub struct PendingStateFinishedResultKind(pub Result<(), PendingStateFinishedError>);
-const OK_VARIANT: &str = "Ok";
+const OK_VARIANT: &str = "ok";
 impl FromStr for PendingStateFinishedResultKind {
-    type Err = FromStrError;
+    type Err = strum::ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == OK_VARIANT {
@@ -1021,7 +1020,9 @@ impl From<&FinishedExecutionResult> for PendingStateFinishedResultKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, derive_more::FromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString, strum::Display)]
+#[cfg_attr(test, derive(strum::VariantArray))]
+#[strum(serialize_all = "snake_case")]
 pub enum PendingStateFinishedError {
     Timeout,
     NondeterminismDetected,
@@ -1104,6 +1105,7 @@ mod tests {
     use rstest::rstest;
     use serde_json::json;
     use std::str::FromStr;
+    use strum::VariantArray as _;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::WastVal;
     use val_json::wast_val::WastValWithType;
@@ -1182,5 +1184,18 @@ mod tests {
             value: WastVal::Result(Ok(Some(Box::new(WastVal::Option(None))))),
         };
         assert_eq!(expected, wast_val_with_type);
+    }
+
+    #[test]
+    fn verify_pending_state_finished_result_kind_serde() {
+        let variants: Vec<_> = PendingStateFinishedError::VARIANTS
+            .into_iter()
+            .map(|var| PendingStateFinishedResultKind(Err(*var)))
+            .chain(std::iter::once(PendingStateFinishedResultKind(Ok(()))))
+            .collect();
+        let ser = serde_json::to_string_pretty(&variants).unwrap();
+        insta::assert_snapshot!(ser);
+        let deser: Vec<PendingStateFinishedResultKind> = serde_json::from_str(&ser).unwrap();
+        assert_eq!(variants, deser);
     }
 }
