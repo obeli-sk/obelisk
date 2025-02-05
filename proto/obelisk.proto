@@ -125,8 +125,15 @@ message RunId {
 }
 
 message JoinSetId {
+    enum JoinSetKind {
+        ONE_OFF = 0;
+        USER_DEFINED_NAMED = 1;
+        USER_DEFINED_RANDOM = 2;
+    }
+
     ExecutionId execution_id = 1;
-    string name = 2;
+    JoinSetKind kind = 2;
+    string name = 3;
 }
 
 message DelayId {

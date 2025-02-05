@@ -1,6 +1,5 @@
 use crate::command::grpc::{self};
 use anyhow::anyhow;
-use concepts::JoinSetId;
 use concepts::{
     prefixed_ulid::{DelayId, RunId},
     storage::{
@@ -11,6 +10,7 @@ use concepts::{
     ComponentId, ComponentType, ExecutionId, FinishedExecutionError, FinishedExecutionResult,
     FunctionFqn, SupportedFunctionReturnValue,
 };
+use concepts::{JoinSetId, JoinSetKind};
 use std::borrow::Borrow;
 use tracing::error;
 
@@ -34,7 +34,18 @@ impl From<JoinSetId> for grpc::JoinSetId {
     fn from(join_set_id: JoinSetId) -> Self {
         Self {
             execution_id: Some(join_set_id.execution_id.into()),
+            kind: grpc::join_set_id::JoinSetKind::from(join_set_id.kind) as i32,
             name: join_set_id.name.to_string(),
+        }
+    }
+}
+
+impl From<JoinSetKind> for grpc::join_set_id::JoinSetKind {
+    fn from(value: JoinSetKind) -> Self {
+        match value {
+            JoinSetKind::OneOff => grpc::join_set_id::JoinSetKind::OneOff,
+            JoinSetKind::UserDefinedNamed => grpc::join_set_id::JoinSetKind::UserDefinedNamed,
+            JoinSetKind::UserDefinedRandom => grpc::join_set_id::JoinSetKind::UserDefinedRandom,
         }
     }
 }
