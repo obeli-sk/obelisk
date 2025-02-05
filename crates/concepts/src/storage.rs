@@ -1189,7 +1189,7 @@ mod tests {
     #[test]
     fn verify_pending_state_finished_result_kind_serde() {
         let variants: Vec<_> = PendingStateFinishedError::VARIANTS
-            .into_iter()
+            .iter()
             .map(|var| PendingStateFinishedResultKind(Err(*var)))
             .chain(std::iter::once(PendingStateFinishedResultKind(Ok(()))))
             .collect();
