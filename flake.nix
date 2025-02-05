@@ -42,10 +42,15 @@
                 pkg-config
                 protobuf
               ];
-              installPhase = ''
+              installPhase = let
+                interpreter = if patch-for-generic-linux then
+                  if system == "x86_64-linux" then "/lib64/ld-linux-x86-64.so.2"
+                  else if system == "aarch64-linux" then "/lib/ld-linux-aarch64.so.1"
+                  else throw "Unsupported system for generic linux: ${system}"
+                else null;
+              in ''
                 BINARY=$(find target -name obelisk)
-                ${if patch-for-generic-linux then ''patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 $BINARY''
-                else '''' }
+                ${if patch-for-generic-linux then "patchelf --set-interpreter ${interpreter} $BINARY" else ""}
                 mkdir -p $out/bin/
                 cp $BINARY $out/bin/
               '';
@@ -89,12 +94,12 @@
           packages = rec {
             obeliskLibcNix = makeObelisk pkgs false "release";
             obeliskLibcNixDev = makeObelisk pkgs false "dev";
-            obeliskLibcGeneric = makeObelisk pkgs true "release";
-            obeliskLibcGenericDev = makeObelisk pkgs true "dev";
             default = obeliskLibcNix;
-          } // (if pkgsMusl != null then {
+          } // (if pkgsMusl != null then { # is !=null on linux only
             obeliskMusl = makeObelisk pkgsMusl false "release";
             obeliskMuslDev = makeObelisk pkgsMusl false "dev";
+            obeliskLibcGeneric = makeObelisk pkgs true "release";
+            obeliskLibcGenericDev = makeObelisk pkgs true "dev";
           } else {});
         }
       );
