@@ -23,26 +23,23 @@ defaults:
 jobs:
   release-plz-release:
     name: Release-plz-release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
           fetch-depth: 0
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      - name: Install protobuf
-        run: |
-          sudo apt update
-          sudo apt install -y protobuf-compiler libprotobuf-dev
+      - uses: nixbuild/nix-quick-install-action@v29
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run release-plz
-        uses: MarcoIeni/release-plz-action@v0.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
-        with:
-          command: release
+        run: |
+          nix develop --command release-plz release --backend github --git-token $GITHUB_TOKEN
 
       - name: Update `latest` branch
         if: ${{ github.event.inputs.latest }}

@@ -21,7 +21,7 @@ jobs:
           - target: .#obeliskLibcNixDev
             runner: ubuntu-24.04
           - target: .#obeliskMuslDev
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
 
     runs-on: ${{ matrix.runner }}
     steps:
