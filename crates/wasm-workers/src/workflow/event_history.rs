@@ -546,6 +546,7 @@ impl<C: ClockFn> EventHistory<C> {
                         event:
                             JoinSetResponse::ChildExecutionFinished {
                                 child_execution_id,
+                                finished_version: _, // Will be needed when lazy(optional) result is implemented
                                 result,
                             },
                         ..
@@ -1470,6 +1471,7 @@ mod tests {
                     join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id.clone(),
+                        finished_version: Version(0), // does not matter
                         result: Ok(SupportedFunctionReturnValue::None),
                     },
                 },
@@ -1605,6 +1607,7 @@ mod tests {
                     join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id.clone(),
+                        finished_version: Version(0), // does not matter
                         result: Ok(CHILD_RESP),
                     },
                 },
@@ -1806,6 +1809,7 @@ mod tests {
                     join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id_a.clone(),
+                        finished_version: Version(0), // does not matter
                         result: Ok(KID_A),
                     },
                 },
@@ -1820,6 +1824,7 @@ mod tests {
                     join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id_b.clone(),
+                        finished_version: Version(0), // does not matter
                         result: Ok(KID_B),
                     },
                 },

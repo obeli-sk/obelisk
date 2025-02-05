@@ -747,6 +747,7 @@ pub async fn append_batch_respond_to_parent(
             })
             .await
             .unwrap();
+        assert_eq!(Version(1), child_version);
         // Append JoinNext before receiving the response should make the parent BlockedByJoinSet
         db_connection
             .append(
@@ -783,7 +784,7 @@ pub async fn append_batch_respond_to_parent(
                         result: Ok(concepts::SupportedFunctionReturnValue::None),
                     },
                 }],
-                child_version,
+                child_version.clone(),
                 parent_id.clone(),
                 JoinSetResponseEventOuter {
                     created_at: sim_clock.now(),
@@ -791,6 +792,7 @@ pub async fn append_batch_respond_to_parent(
                         join_set_id: join_set_id.clone(),
                         event: JoinSetResponse::ChildExecutionFinished {
                             child_execution_id: child_id.clone(),
+                            finished_version: child_version, // will remain at 1.
                             result: Ok(concepts::SupportedFunctionReturnValue::None),
                         },
                     },
@@ -836,7 +838,7 @@ pub async fn append_batch_respond_to_parent(
                 child_id.clone(),
                 sim_clock.now(),
                 child_resp,
-                child_version,
+                child_version.clone(),
                 parent_id.clone(),
                 JoinSetResponseEventOuter {
                     created_at: sim_clock.now(),
@@ -844,6 +846,7 @@ pub async fn append_batch_respond_to_parent(
                         join_set_id: join_set_id.clone(),
                         event: JoinSetResponse::ChildExecutionFinished {
                             child_execution_id: child_id.clone(),
+                            finished_version: child_version,
                             result: Ok(concepts::SupportedFunctionReturnValue::None),
                         },
                     },
@@ -885,6 +888,7 @@ pub async fn append_batch_respond_to_parent(
                 join_set_id: join_set_id.clone(),
                 event: JoinSetResponse::ChildExecutionFinished {
                     child_execution_id: child_a,
+                    finished_version: Version(1),
                     result: Ok(concepts::SupportedFunctionReturnValue::None),
                 },
             }
@@ -898,6 +902,7 @@ pub async fn append_batch_respond_to_parent(
                 join_set_id: join_set_id.clone(),
                 event: JoinSetResponse::ChildExecutionFinished {
                     child_execution_id: child_b,
+                    finished_version: Version(1),
                     result: Ok(concepts::SupportedFunctionReturnValue::None),
                 },
             }

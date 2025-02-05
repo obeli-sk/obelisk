@@ -1,4 +1,5 @@
 use crate::executor::Append;
+use crate::executor::ChildFinishedResponse;
 use chrono::{DateTime, Utc};
 use concepts::storage::AppendRequest;
 use concepts::storage::DbConnection;
@@ -134,12 +135,18 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                         },
                         execution_id: execution_id.clone(),
                         version,
-                        parent: None,
+                        child_finished: None,
                     }
                 } else {
                     info!(%execution_id, "Marking execution with expired lock as permanently timed out");
                     let finished_exec_result = Err(FinishedExecutionError::PermanentTimeout);
-                    let parent = parent.map(|(p, j)| (p, j, finished_exec_result.clone()));
+                    let child_finished = parent.map(|(parent_execution_id, parent_join_set)| {
+                        ChildFinishedResponse {
+                            parent_execution_id,
+                            parent_join_set,
+                            result: finished_exec_result.clone(),
+                        }
+                    });
                     Append {
                         created_at: executed_at,
                         primary_event: AppendRequest {
@@ -150,7 +157,7 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                         },
                         execution_id: execution_id.clone(),
                         version,
-                        parent,
+                        child_finished,
                     }
                 };
                 let res = append.append(&db_connection).await;

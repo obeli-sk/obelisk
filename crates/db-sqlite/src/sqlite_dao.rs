@@ -101,15 +101,23 @@ CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_variant  ON t_execut
 ";
 
 /// Stores child execution return values. Append only.
+/// For `JoinSetResponse::DelayFinished`, column `delay_id` must not be null.
+/// For `JoinSetResponse::ChildExecutionFinished`, column `child_execution_id`,`finished_version`
+/// and `result` must not be null.
+// TODO: Do not store the `result` for large payloads, get it from `t_execution_log`
 const CREATE_TABLE_T_JOIN_SET_RESPONSE: &str = r"
 CREATE TABLE IF NOT EXISTS t_join_set_response (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
     execution_id TEXT NOT NULL,
-    json_value JSONB NOT NULL,
     join_set_id TEXT NOT NULL,
+
     delay_id TEXT,
+
     child_execution_id TEXT,
+    finished_version INTEGER,
+    result JSONB,
+
     UNIQUE (execution_id, join_set_id, delay_id, child_execution_id)
 );
 ";
@@ -1697,23 +1705,44 @@ impl SqlitePool {
         DbError,
     > {
         let mut stmt = tx.prepare(
-            "INSERT INTO t_join_set_response (execution_id, created_at, json_value, join_set_id, delay_id, child_execution_id) \
-                    VALUES (:execution_id, :created_at, :json_value, :join_set_id, :delay_id, :child_execution_id)",
+            "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, child_execution_id, finished_version, result) \
+                    VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :child_execution_id, :finished_version, :result)",
         ).map_err(convert_err)?;
         let join_set_id = &req.event.join_set_id;
-        let event_ser = serde_json::to_string(&req.event.event)
-            .map_err(|err| {
-                error!("Cannot serialize {:?} - {err:?}", req.event.event);
-                rusqlite::Error::ToSqlConversionFailure(err.into())
-            })
-            .map_err(convert_err)?;
+        let delay_id = match &req.event.event {
+            JoinSetResponse::DelayFinished { delay_id } => Some(delay_id.to_string()),
+            JoinSetResponse::ChildExecutionFinished { .. } => None,
+        };
+        let (child_execution_id, finished_version, result) = match &req.event.event {
+            JoinSetResponse::ChildExecutionFinished {
+                child_execution_id,
+                finished_version,
+                result,
+            } => {
+                let result = serde_json::to_string(result)
+                    .map_err(|err| {
+                        error!("Cannot serialize {result:?} - {err:?}");
+                        rusqlite::Error::ToSqlConversionFailure(err.into())
+                    })
+                    .map_err(convert_err)?;
+
+                (
+                    Some(child_execution_id.to_string()),
+                    Some(finished_version.0),
+                    Some(result),
+                )
+            }
+            JoinSetResponse::DelayFinished { .. } => (None, None, None),
+        };
+
         stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
             ":created_at": req.created_at,
-            ":json_value": event_ser,
             ":join_set_id": join_set_id.to_string(),
-            ":delay_id": req.event.event.delay_id().map(|id| id.to_string()),
-            ":child_execution_id": req.event.event.child_execution_id().map(|id|id.to_string()),
+            ":delay_id": delay_id,
+            ":child_execution_id": child_execution_id,
+            ":finished_version": finished_version,
+            ":result": result,
         })
         .map_err(convert_err)?;
 
@@ -1894,10 +1923,11 @@ impl SqlitePool {
         pagination: Option<Pagination<u32>>,
     ) -> Result<Vec<ResponseWithCursor>, DbError> {
         let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
-        let mut sql =
-            "SELECT id, created_at, join_set_id, json_value FROM t_join_set_response WHERE \
-            execution_id = :execution_id"
-                .to_string();
+        let mut sql = "SELECT id, created_at, join_set_id, \
+            delay_id, \
+            child_execution_id, finished_version, result \
+            FROM t_join_set_response WHERE execution_id = :execution_id"
+            .to_string();
         let limit = match &pagination {
             Some(
                 pagination @ (Pagination::NewerThan { cursor, .. }
@@ -1925,23 +1955,48 @@ impl SqlitePool {
                     .map(|(key, value)| (*key, value.as_ref()))
                     .collect::<Vec<_>>()
                     .as_ref(),
-                |row| {
-                    let cursor = row.get("id")?;
-                    let created_at: DateTime<Utc> = row.get("created_at")?;
-                    let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
-                    let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
-                    Ok(ResponseWithCursor {
-                        cursor,
-                        event: JoinSetResponseEventOuter {
-                            event: JoinSetResponseEvent { join_set_id, event },
-                            created_at,
-                        },
-                    })
-                },
+                Self::parse_response_with_cursor,
             )
             .map_err(convert_err)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(convert_err)
+            .collect::<Result<Result<Vec<_>, DbError>, rusqlite::Error>>()
+            .map_err(convert_err)?
+    }
+
+    fn parse_response_with_cursor(
+        row: &rusqlite::Row<'_>,
+    ) -> Result<Result<ResponseWithCursor, DbError>, rusqlite::Error> {
+        let id = row.get("id")?;
+        let created_at: DateTime<Utc> = row.get("created_at")?;
+        let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
+        let inner_res = match (
+            row.get::<_, Option<DelayIdW>>("delay_id")?,
+            row.get::<_, Option<ExecutionId>>("child_execution_id")?,
+            row.get::<_, Option<VersionType>>("finished_version")?,
+            row.get::<_, Option<JsonWrapper<FinishedExecutionResult>>>("result")?,
+        ) {
+            (Some(delay_id), None, None, None) => Ok(JoinSetResponse::DelayFinished {
+                delay_id: delay_id.0,
+            }),
+            (None, Some(child_execution_id), Some(finished_version), Some(result)) => {
+                Ok(JoinSetResponse::ChildExecutionFinished {
+                    child_execution_id,
+                    finished_version: Version(finished_version),
+                    result: result.0,
+                })
+            }
+            _ => Err(DbError::Specific(SpecificError::ConsistencyError(
+                StrVariant::from(format!("invalid row {id} in t_join_set_response")),
+            ))),
+        }
+        .map(|event| ResponseWithCursor {
+            cursor: id,
+            event: JoinSetResponseEventOuter {
+                event: JoinSetResponseEvent { join_set_id, event },
+                created_at,
+            },
+        });
+
+        Ok(inner_res)
     }
 
     fn nth_response(
@@ -1950,30 +2005,28 @@ impl SqlitePool {
         join_set_id: &JoinSetId,
         skip_rows: u64,
     ) -> Result<Option<JoinSetResponseEventOuter>, DbError> {
-        tx.prepare(
-            "SELECT created_at, join_set_id, json_value FROM t_join_set_response WHERE \
-            execution_id = :execution_id AND join_set_id = :join_set_id ORDER BY id
-            LIMIT 1 OFFSET :offset",
-        )
-        .map_err(convert_err)?
-        .query_row(
-            named_params! {
-                ":execution_id": execution_id.to_string(),
-                ":join_set_id": join_set_id.to_string(),
-                ":offset": skip_rows,
-            },
-            |row| {
-                let created_at: DateTime<Utc> = row.get("created_at")?;
-                let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
-                let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
-                Ok(JoinSetResponseEventOuter {
-                    event: JoinSetResponseEvent { join_set_id, event },
-                    created_at,
-                })
-            },
-        )
-        .optional()
-        .map_err(convert_err)
+        Ok(tx
+            .prepare(
+                "SELECT id, created_at, join_set_id, \
+                    delay_id, \
+                    child_execution_id, finished_version, result \
+                    FROM t_join_set_response WHERE \
+                    execution_id = :execution_id AND join_set_id = :join_set_id ORDER BY id
+                    LIMIT 1 OFFSET :offset",
+            )
+            .map_err(convert_err)?
+            .query_row(
+                named_params! {
+                    ":execution_id": execution_id.to_string(),
+                    ":join_set_id": join_set_id.to_string(),
+                    ":offset": skip_rows,
+                },
+                Self::parse_response_with_cursor,
+            )
+            .optional()
+            .map_err(convert_err)?
+            .transpose()?
+            .map(|resp| resp.event))
     }
 
     // TODO(perf): Instead of OFFSET an per-execution sequential ID could improve the read performance.
@@ -1984,7 +2037,10 @@ impl SqlitePool {
         skip_rows: usize,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
         tx.prepare(
-            "SELECT created_at, join_set_id, json_value FROM t_join_set_response WHERE \
+            "SELECT id, created_at, join_set_id, \
+            delay_id, \
+            child_execution_id, finished_version, result \
+            FROM t_join_set_response WHERE \
             execution_id = :execution_id ORDER BY id
             LIMIT -1 OFFSET :offset",
         )
@@ -1994,19 +2050,12 @@ impl SqlitePool {
                 ":execution_id": execution_id.to_string(),
                 ":offset": skip_rows,
             },
-            |row| {
-                let created_at: DateTime<Utc> = row.get("created_at")?;
-                let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
-                let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
-                Ok(JoinSetResponseEventOuter {
-                    event: JoinSetResponseEvent { join_set_id, event },
-                    created_at,
-                })
-            },
+            Self::parse_response_with_cursor,
         )
         .map_err(convert_err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(convert_err)
+        .collect::<Result<Result<Vec<_>, DbError>, _>>()
+        .map_err(convert_err)?
+        .map(|resp| resp.into_iter().map(|vec| vec.event).collect())
     }
 
     fn get_pending(

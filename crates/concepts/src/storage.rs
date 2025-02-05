@@ -192,6 +192,8 @@ pub enum JoinSetResponse {
     },
     ChildExecutionFinished {
         child_execution_id: ExecutionId,
+        #[arbitrary(value = Version(2))]
+        finished_version: Version,
         #[arbitrary(value = Ok(SupportedFunctionReturnValue::None))]
         result: FinishedExecutionResult,
     },
@@ -1097,6 +1099,7 @@ mod tests {
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
     use super::PendingStateFinishedResultKind;
+    use crate::storage::Version;
     use crate::ExecutionId;
     use crate::FinishedExecutionResult;
     use crate::SupportedFunctionReturnValue;
@@ -1145,6 +1148,7 @@ mod tests {
         let json = json!({
             "type": "ChildExecutionFinished",
             "child_execution_id": "E_01JGKY3WWV7Z24NP9BJF90JZHB.0",
+            "finished_version": 2,
             "result": {
                 "Ok": {
                     "InfallibleOrResultOk": {
@@ -1164,17 +1168,19 @@ mod tests {
             }
         });
         let actual: JoinSetResponse = serde_json::from_value(json).unwrap();
-        let (child_execution_id, wast_val_with_type) = assert_matches!(
+        let (child_execution_id, finished_version, wast_val_with_type) = assert_matches!(
             actual,
             JoinSetResponse::ChildExecutionFinished {
                 child_execution_id,
+                finished_version,
                 result: FinishedExecutionResult::Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(wast_val_with_type))
-            } => (child_execution_id, wast_val_with_type)
+            } => (child_execution_id, finished_version, wast_val_with_type)
         );
         assert_eq!(
             ExecutionId::from_str("E_01JGKY3WWV7Z24NP9BJF90JZHB.0").unwrap(),
             child_execution_id
         );
+        assert_eq!(Version(2), finished_version);
 
         let expected = WastValWithType {
             r#type: TypeWrapper::Result {

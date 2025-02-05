@@ -525,6 +525,7 @@ pub mod response {
                 }
                 JoinSetResponse::ChildExecutionFinished {
                     child_execution_id,
+                    finished_version: _,
                     result,
                 } => grpc::join_set_response_event::Response::ChildExecutionFinished(
                     grpc::join_set_response_event::ChildExecutionFinished {

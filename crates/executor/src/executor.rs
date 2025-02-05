@@ -1,4 +1,5 @@
 use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult};
+use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::storage::{
     AppendRequest, DbPool, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
@@ -336,22 +337,30 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     "Execution finished: {}",
                     result.as_pending_state_finished_result()
                 );
-                let parent = parent.map(|(p, j)| (p, j, Ok(result.clone())));
+                let child_finished =
+                    parent.map(
+                        |(parent_execution_id, parent_join_set)| ChildFinishedResponse {
+                            parent_execution_id,
+                            parent_join_set,
+                            result: Ok(result.clone()),
+                        },
+                    );
                 let primary_event = AppendRequest {
                     created_at: result_obtained_at,
                     event: ExecutionEventInner::Finished { result: Ok(result) },
                 };
+
                 Some(Append {
                     created_at: result_obtained_at,
                     primary_event,
                     execution_id,
                     version: new_version,
-                    parent,
+                    child_finished,
                 })
             }
             WorkerResult::DbUpdatedByWorker => None,
             WorkerResult::Err(err) => {
-                let (primary_event, parent, version) = match err {
+                let (primary_event, child_finished, version) = match err {
                     WorkerError::TemporaryTimeout => {
                         info!("Temporary timeout");
                         // Will be updated by `expired_timers_watcher`.
@@ -383,8 +392,19 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                                 reason: format!("permanently failed - {reason}"),
                                 detail,
                             });
-                            let parent = parent.map(|(p, j)| (p, j, result.clone()));
-                            (ExecutionEventInner::Finished { result }, parent, version)
+                            let child_finished =
+                                parent.map(|(parent_execution_id, parent_join_set)| {
+                                    ChildFinishedResponse {
+                                        parent_execution_id,
+                                        parent_join_set,
+                                        result: result.clone(),
+                                    }
+                                });
+                            (
+                                ExecutionEventInner::Finished { result },
+                                child_finished,
+                                version,
+                            )
                         }
                     }
                     WorkerError::LimitReached(reason, new_version) => {
@@ -405,8 +425,19 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     ) => {
                         info!("Nondeterminism detected - {reason}");
                         let result = Err(FinishedExecutionError::NondeterminismDetected(reason));
-                        let parent = parent.map(|(p, j)| (p, j, result.clone()));
-                        (ExecutionEventInner::Finished { result }, parent, version)
+                        let child_finished =
+                            parent.map(|(parent_execution_id, parent_join_set)| {
+                                ChildFinishedResponse {
+                                    parent_execution_id,
+                                    parent_join_set,
+                                    result: result.clone(),
+                                }
+                            });
+                        (
+                            ExecutionEventInner::Finished { result },
+                            child_finished,
+                            version,
+                        )
                     }
                     WorkerError::FatalError(FatalError::ParamsParsingError(err), version) => {
                         info!("Error parsing parameters - {err:?}");
@@ -414,8 +445,19 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             reason: format!("error parsing parameters: `{err}`"),
                             detail: Some(format!("{err:?}")),
                         });
-                        let parent = parent.map(|(p, j)| (p, j, result.clone()));
-                        (ExecutionEventInner::Finished { result }, parent, version)
+                        let child_finished =
+                            parent.map(|(parent_execution_id, parent_join_set)| {
+                                ChildFinishedResponse {
+                                    parent_execution_id,
+                                    parent_join_set,
+                                    result: result.clone(),
+                                }
+                            });
+                        (
+                            ExecutionEventInner::Finished { result },
+                            child_finished,
+                            version,
+                        )
                     }
                     WorkerError::FatalError(FatalError::ResultParsingError(err), version) => {
                         info!("Error parsing result - {err:?}");
@@ -423,8 +465,19 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             reason: format!("error parsing result: `{err}`"),
                             detail: Some(format!("{err:?}")),
                         });
-                        let parent = parent.map(|(p, j)| (p, j, result.clone()));
-                        (ExecutionEventInner::Finished { result }, parent, version)
+                        let child_finished =
+                            parent.map(|(parent_execution_id, parent_join_set)| {
+                                ChildFinishedResponse {
+                                    parent_execution_id,
+                                    parent_join_set,
+                                    result: result.clone(),
+                                }
+                            });
+                        (
+                            ExecutionEventInner::Finished { result },
+                            child_finished,
+                            version,
+                        )
                     }
                     WorkerError::FatalError(FatalError::ChildExecutionError(err), version) => {
                         info!("Child finished with an execution error - {err}");
@@ -447,8 +500,19 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             reason: format!("child finished with an execution error: {reason}"),
                             detail,
                         });
-                        let parent = parent.map(|(p, j)| (p, j, result.clone()));
-                        (ExecutionEventInner::Finished { result }, parent, version)
+                        let child_finished =
+                            parent.map(|(parent_execution_id, parent_join_set)| {
+                                ChildFinishedResponse {
+                                    parent_execution_id,
+                                    parent_join_set,
+                                    result: result.clone(),
+                                }
+                            });
+                        (
+                            ExecutionEventInner::Finished { result },
+                            child_finished,
+                            version,
+                        )
                     }
                     WorkerError::FatalError(
                         FatalError::UncategorizedError { reason, detail },
@@ -460,8 +524,19 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             reason: format!("uncategorized error - {reason}"),
                             detail: Some(detail),
                         });
-                        let parent = parent.map(|(p, j)| (p, j, result.clone()));
-                        (ExecutionEventInner::Finished { result }, parent, version)
+                        let child_finished =
+                            parent.map(|(parent_execution_id, parent_join_set)| {
+                                ChildFinishedResponse {
+                                    parent_execution_id,
+                                    parent_join_set,
+                                    result: result.clone(),
+                                }
+                            });
+                        (
+                            ExecutionEventInner::Finished { result },
+                            child_finished,
+                            version,
+                        )
                     }
                 };
                 Some(Append {
@@ -472,11 +547,18 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     },
                     execution_id,
                     version,
-                    parent,
+                    child_finished,
                 })
             }
         })
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ChildFinishedResponse {
+    pub(crate) parent_execution_id: ExecutionId,
+    pub(crate) parent_join_set: JoinSetId,
+    pub(crate) result: FinishedExecutionResult,
 }
 
 #[derive(Debug, Clone)]
@@ -485,26 +567,35 @@ pub(crate) struct Append {
     pub(crate) primary_event: AppendRequest,
     pub(crate) execution_id: ExecutionId,
     pub(crate) version: Version,
-    pub(crate) parent: Option<(ExecutionId, JoinSetId, FinishedExecutionResult)>,
+    pub(crate) child_finished: Option<ChildFinishedResponse>,
 }
 
 impl Append {
     pub(crate) async fn append(self, db_connection: &impl DbConnection) -> Result<(), DbError> {
-        if let Some((parent_id, join_set_id, result)) = self.parent {
+        if let Some(child_finished) = self.child_finished {
+            assert_matches!(
+                &self.primary_event,
+                AppendRequest {
+                    event: ExecutionEventInner::Finished { .. },
+                    ..
+                }
+            );
             db_connection
                 .append_batch_respond_to_parent(
                     self.execution_id.clone(),
                     self.created_at,
                     vec![self.primary_event],
-                    self.version,
-                    parent_id,
+                    self.version.clone(),
+                    child_finished.parent_execution_id,
                     JoinSetResponseEventOuter {
                         created_at: self.created_at,
                         event: JoinSetResponseEvent {
-                            join_set_id,
+                            join_set_id: child_finished.parent_join_set,
                             event: JoinSetResponse::ChildExecutionFinished {
                                 child_execution_id: self.execution_id,
-                                result,
+                                // Since self.primary_event is a finished event, the version will remain the same.
+                                finished_version: self.version,
+                                result: child_finished.result,
                             },
                         },
                     },
@@ -1185,6 +1276,11 @@ mod tests {
         let child_log = db_pool.connection().get(&child_execution_id).await.unwrap();
         assert!(child_log.pending_state.is_finished());
         assert_eq!(
+            Version(2),
+            child_log.next_version,
+            "created = 0, locked = 1, with_single_result = 2"
+        );
+        assert_eq!(
             ExecutionEventInner::Finished {
                 result: Err(expected_child_err)
             },
@@ -1202,23 +1298,25 @@ mod tests {
             } if scheduled_at == sim_clock.now(),
             "parent should be back to pending"
         );
-        let (found_join_set_id, found_child_execution_id, found_result) = assert_matches!(
+        let (found_join_set_id, found_child_execution_id, child_finished_version, found_result) = assert_matches!(
             parent_log.responses.last(),
             Some(JoinSetResponseEventOuter{
                 created_at: at,
                 event: JoinSetResponseEvent{
                     join_set_id: found_join_set_id,
-                    event: JoinSetResponse::ChildExecutionFinished{
+                    event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: found_child_execution_id,
+                        finished_version,
                         result: found_result,
                     }
                 }
             })
              if *at == sim_clock.now()
-            => (found_join_set_id, found_child_execution_id, found_result)
+            => (found_join_set_id, found_child_execution_id, finished_version, found_result)
         );
         assert_eq!(join_set_id, *found_join_set_id);
         assert_eq!(child_execution_id, *found_child_execution_id);
+        assert_eq!(child_log.next_version, *child_finished_version);
         assert!(found_result.is_err());
 
         db_pool.close().await.unwrap();
