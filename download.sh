@@ -2,7 +2,7 @@
 
 # Downloads the latest binary from GitHub Releases into the current directory.
 # Usage:
-# curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/install.sh | bash
+# curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
 
 set -eux
 

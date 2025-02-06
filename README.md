@@ -67,7 +67,7 @@ The [Stargazers](https://github.com/obeli-sk/demo-stargazers) app features:
 
 ### Pre-built Binary
 ```sh
-curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/install.sh | bash
+curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
 ```
 Or use [cargo-binstall](https://crates.io/crates/cargo-binstall):
 ```sh
