@@ -103,8 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_variant  ON t_execut
 /// Stores child execution return values. Append only.
 /// For `JoinSetResponse::DelayFinished`, column `delay_id` must not be null.
 /// For `JoinSetResponse::ChildExecutionFinished`, column `child_execution_id`,`finished_version`
-/// and `result` must not be null.
-// TODO: Do not store the `result` for large payloads, get it from `t_execution_log`
+/// must not be null.
 const CREATE_TABLE_T_JOIN_SET_RESPONSE: &str = r"
 CREATE TABLE IF NOT EXISTS t_join_set_response (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,7 +115,6 @@ CREATE TABLE IF NOT EXISTS t_join_set_response (
 
     child_execution_id TEXT,
     finished_version INTEGER,
-    result JSONB,
 
     UNIQUE (execution_id, join_set_id, delay_id, child_execution_id)
 );
@@ -1705,34 +1703,24 @@ impl SqlitePool {
         DbError,
     > {
         let mut stmt = tx.prepare(
-            "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, child_execution_id, finished_version, result) \
-                    VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :child_execution_id, :finished_version, :result)",
+            "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, child_execution_id, finished_version) \
+                    VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :child_execution_id, :finished_version)",
         ).map_err(convert_err)?;
         let join_set_id = &req.event.join_set_id;
         let delay_id = match &req.event.event {
             JoinSetResponse::DelayFinished { delay_id } => Some(delay_id.to_string()),
             JoinSetResponse::ChildExecutionFinished { .. } => None,
         };
-        let (child_execution_id, finished_version, result) = match &req.event.event {
+        let (child_execution_id, finished_version) = match &req.event.event {
             JoinSetResponse::ChildExecutionFinished {
                 child_execution_id,
                 finished_version,
-                result,
-            } => {
-                let result = serde_json::to_string(result)
-                    .map_err(|err| {
-                        error!("Cannot serialize {result:?} - {err:?}");
-                        rusqlite::Error::ToSqlConversionFailure(err.into())
-                    })
-                    .map_err(convert_err)?;
-
-                (
-                    Some(child_execution_id.to_string()),
-                    Some(finished_version.0),
-                    Some(result),
-                )
-            }
-            JoinSetResponse::DelayFinished { .. } => (None, None, None),
+                result: _,
+            } => (
+                Some(child_execution_id.to_string()),
+                Some(finished_version.0),
+            ),
+            JoinSetResponse::DelayFinished { .. } => (None, None),
         };
 
         stmt.execute(named_params! {
@@ -1742,7 +1730,6 @@ impl SqlitePool {
             ":delay_id": delay_id,
             ":child_execution_id": child_execution_id,
             ":finished_version": finished_version,
-            ":result": result,
         })
         .map_err(convert_err)?;
 
@@ -1923,10 +1910,11 @@ impl SqlitePool {
         pagination: Option<Pagination<u32>>,
     ) -> Result<Vec<ResponseWithCursor>, DbError> {
         let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
-        let mut sql = "SELECT id, created_at, join_set_id, \
-            delay_id, \
-            child_execution_id, finished_version, result \
-            FROM t_join_set_response WHERE execution_id = :execution_id"
+        let mut sql = "SELECT r.id, r.created_at, r.join_set_id, \
+            r.delay_id, \
+            r.child_execution_id, r.finished_version, l.json_value \
+            FROM t_join_set_response r, t_execution_log l WHERE r.execution_id = :execution_id AND \
+            r.child_execution_id = l.execution_id AND r.finished_version = l.version"
             .to_string();
         let limit = match &pagination {
             Some(
@@ -1934,7 +1922,7 @@ impl SqlitePool {
                 | Pagination::OlderThan { cursor, .. }),
             ) => {
                 params.push((":cursor", Box::new(cursor)));
-                sql.push_str(&format!(" AND id {rel} :cursor", rel = pagination.rel(),));
+                sql.push_str(&format!(" AND r.id {rel} :cursor", rel = pagination.rel(),));
                 Some(pagination.length())
             }
             None => None,
@@ -1972,17 +1960,24 @@ impl SqlitePool {
             row.get::<_, Option<DelayIdW>>("delay_id")?,
             row.get::<_, Option<ExecutionId>>("child_execution_id")?,
             row.get::<_, Option<VersionType>>("finished_version")?,
-            row.get::<_, Option<JsonWrapper<FinishedExecutionResult>>>("result")?,
+            row.get::<_, Option<JsonWrapper<ExecutionEventInner>>>("json_value")?,
         ) {
             (Some(delay_id), None, None, None) => Ok(JoinSetResponse::DelayFinished {
                 delay_id: delay_id.0,
             }),
             (None, Some(child_execution_id), Some(finished_version), Some(result)) => {
-                Ok(JoinSetResponse::ChildExecutionFinished {
-                    child_execution_id,
-                    finished_version: Version(finished_version),
-                    result: result.0,
-                })
+                match result.0 {
+                    ExecutionEventInner::Finished { result } => {
+                        Ok(JoinSetResponse::ChildExecutionFinished {
+                            child_execution_id,
+                            finished_version: Version(finished_version),
+                            result,
+                        })
+                    }
+                    _ => Err(DbError::Specific(SpecificError::ConsistencyError(
+                        StrVariant::from(format!("invalid row t_join_set_response.{id} - Finished event not found at finished_version")),
+                    ))),
+                }
             }
             _ => Err(DbError::Specific(SpecificError::ConsistencyError(
                 StrVariant::from(format!("invalid row {id} in t_join_set_response")),
@@ -1995,7 +1990,6 @@ impl SqlitePool {
                 created_at,
             },
         });
-
         Ok(inner_res)
     }
 
@@ -2007,11 +2001,13 @@ impl SqlitePool {
     ) -> Result<Option<JoinSetResponseEventOuter>, DbError> {
         Ok(tx
             .prepare(
-                "SELECT id, created_at, join_set_id, \
-                    delay_id, \
-                    child_execution_id, finished_version, result \
-                    FROM t_join_set_response WHERE \
-                    execution_id = :execution_id AND join_set_id = :join_set_id ORDER BY id
+                "SELECT r.id, r.created_at, r.join_set_id, \
+                    r.delay_id, \
+                    r.child_execution_id, r.finished_version, l.json_value \
+                    FROM t_join_set_response r, t_execution_log l WHERE \
+                    r.execution_id = :execution_id AND r.join_set_id = :join_set_id AND \
+                    r.child_execution_id = l.execution_id AND r.finished_version = l.version \
+                    ORDER BY id \
                     LIMIT 1 OFFSET :offset",
             )
             .map_err(convert_err)?
@@ -2037,11 +2033,13 @@ impl SqlitePool {
         skip_rows: usize,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
         tx.prepare(
-            "SELECT id, created_at, join_set_id, \
-            delay_id, \
-            child_execution_id, finished_version, result \
-            FROM t_join_set_response WHERE \
-            execution_id = :execution_id ORDER BY id
+            "SELECT r.id, r.created_at, r.join_set_id, \
+            r.delay_id, \
+            r.child_execution_id, r.finished_version, l.json_value \
+            FROM t_join_set_response r, t_execution_log l WHERE \
+            r.execution_id = :execution_id AND \
+            r.child_execution_id = l.execution_id AND r.finished_version = l.version \
+            ORDER BY id \
             LIMIT -1 OFFSET :offset",
         )
         .map_err(convert_err)?
