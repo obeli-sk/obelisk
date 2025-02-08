@@ -24,6 +24,7 @@ use concepts::FinishedExecutionError;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::JoinSetId;
+use concepts::PermanentFailureKind;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use indexmap::IndexMap;
@@ -77,8 +78,12 @@ enum ProcessingStatus {
 #[derive(Debug, Clone)]
 pub(crate) enum ApplyError {
     // fatal errors:
-    NondeterminismDetected(StrVariant),
-    ChildExecutionError(FinishedExecutionError), // only on direct call
+    NondeterminismDetected(String),
+    // Fatal unless when closing a join set
+    UnhandledChildExecutionError {
+        child_execution_id: ExecutionId,
+        root_cause_id: ExecutionId,
+    },
     // retriable errors:
     InterruptRequested,
     DbError(DbError),
@@ -97,6 +102,7 @@ pub(crate) struct EventHistory<C: ClockFn> {
     clock_fn: C,
     interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
     worker_span: Span,
+    forward_unhandled_child_errors_in_join_set_close: bool,
     // TODO: optimize using start_from_idx: usize,
 }
 
@@ -128,6 +134,7 @@ impl<C: ClockFn> EventHistory<C> {
         clock_fn: C,
         interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
         worker_span: Span,
+        forward_unhandled_child_errors_in_join_set_close: bool,
     ) -> Self {
         let non_blocking_event_batch_size = non_blocking_event_batching as usize;
         EventHistory {
@@ -151,6 +158,7 @@ impl<C: ClockFn> EventHistory<C> {
             clock_fn,
             interrupt_on_timeout_container,
             worker_span,
+            forward_unhandled_child_errors_in_join_set_close,
         }
     }
 
@@ -280,7 +288,6 @@ impl<C: ClockFn> EventHistory<C> {
     /// For each open join set deterministically emit `EventCall::BlockingChildAwaitNext` and wait for the response.
     /// MUST NOT add items to `NonBlockingCache`, as only `EventCall::BlockingChildAwaitNext` and their
     /// processed responses are appended.
-    // TODO: Refactor err - ApplyError::ChildExecutionError is never returned.
     #[instrument(skip_all)]
     pub(crate) async fn close_opened_join_sets<DB: DbConnection>(
         &mut self,
@@ -336,7 +343,7 @@ impl<C: ClockFn> EventHistory<C> {
                 _ => {}
             }
         }
-
+        let mut first_unhandled_child_execution_error = None;
         for (join_set_id, remaining) in join_set_to_child_created_and_awaited.iter().filter_map(
             |(join_set, (created, awaited))| {
                 let remaining = *created - *awaited;
@@ -349,21 +356,52 @@ impl<C: ClockFn> EventHistory<C> {
         ) {
             for _ in 0..remaining {
                 debug!("Adding BlockingChildAwaitNext to join set {join_set_id}");
-                self.apply(
-                    EventCall::BlockingChildAwaitNext {
-                        join_set_id: join_set_id.clone(),
-                        closing: true,
-                    },
-                    db_connection,
-                    version,
-                    fn_registry,
-                )
-                .await?;
+                match self
+                    .apply(
+                        EventCall::BlockingChildAwaitNext {
+                            join_set_id: join_set_id.clone(),
+                            closing: true,
+                        },
+                        db_connection,
+                        version,
+                        fn_registry,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        // continue
+                    }
+                    Err(ApplyError::UnhandledChildExecutionError {
+                        child_execution_id,
+                        root_cause_id,
+                    }) => {
+                        if first_unhandled_child_execution_error.is_none() {
+                            first_unhandled_child_execution_error =
+                                Some((child_execution_id, root_cause_id));
+                        }
+                    }
+                    Err(
+                        apply_err @ (ApplyError::NondeterminismDetected(_)
+                        | ApplyError::DbError(_)
+                        | ApplyError::InterruptRequested),
+                    ) => return Err(apply_err),
+                }
             }
         }
-        Ok(())
+        match first_unhandled_child_execution_error {
+            Some((child_execution_id, root_cause_id))
+                if self.forward_unhandled_child_errors_in_join_set_close =>
+            {
+                Err(ApplyError::UnhandledChildExecutionError {
+                    child_execution_id,
+                    root_cause_id,
+                })
+            }
+            _ => Ok(()),
+        }
     }
 
+    #[expect(clippy::result_large_err)]
     fn find_matching_atomic(
         &mut self,
         event_call: &EventCall,
@@ -429,7 +467,7 @@ impl<C: ClockFn> EventHistory<C> {
     }
 
     // TODO: Check params, scheduled_at etc to catch non-deterministic errors.
-    #[expect(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, clippy::result_large_err)]
     fn process_event_by_key(
         &mut self,
         key: &EventHistoryKey,
@@ -559,11 +597,28 @@ impl<C: ClockFn> EventHistory<C> {
                                         result.clone().into_value(),
                                     ),
                                 )),
-                                Err(err) => {
+                                // Copy root cause of UnhandledChildExecutionError
+                                Err(FinishedExecutionError::UnhandledChildExecutionError {
+                                    child_execution_id: _,
+                                    root_cause_id,
+                                }) => {
                                     error!(%child_execution_id,
                                             %join_set_id,
                                             "Child execution finished with an execution error, failing the parent");
-                                    Err(ApplyError::ChildExecutionError(err.clone()))
+                                    Err(ApplyError::UnhandledChildExecutionError {
+                                        child_execution_id: child_execution_id.clone(),
+                                        root_cause_id: root_cause_id.clone(), // Copy the original root cause
+                                    })
+                                }
+                                // All other FinishedExecutionErrors are unhandled with current child being the root cause
+                                Err(_) => {
+                                    error!(%child_execution_id,
+                                            %join_set_id,
+                                            "Child execution finished with an execution error, failing the parent");
+                                    Err(ApplyError::UnhandledChildExecutionError {
+                                        child_execution_id: child_execution_id.clone(),
+                                        root_cause_id: child_execution_id.clone(), // The child is the root cause
+                                    })
                                 }
                             },
                             JoinNextKind::AwaitNext => {
@@ -590,39 +645,62 @@ impl<C: ClockFn> EventHistory<C> {
                                             ))))),
                                         )))
                                     }
-                                    Err(err) => {
-                                        match kind {
-                                            JoinNextKind::DirectCall => {
-                                                error!(%child_execution_id,
-                                                    %join_set_id,
-                                                    "Child execution finished with an execution error, failing the parent");
-                                                Err(ApplyError::ChildExecutionError(err.clone()))
-                                            }
-                                            JoinNextKind::AwaitNext => {
-                                                let variant = match err {
-                                                    FinishedExecutionError::PermanentTimeout => {
-                                                        WastVal::Variant("permanent-timeout".to_string(), None)
-                                                    }
-                                                    FinishedExecutionError::NondeterminismDetected(_) => {
-                                                        WastVal::Variant("nondeterminism".to_string(), None)
-                                                    }
-                                                    FinishedExecutionError::PermanentFailure{reason, detail:_} => WastVal::Variant(
-                                                        "permanent-failure".to_string(),
-                                                        Some(Box::new(WastVal::String(reason.to_string()))),
-                                                    ),
-                                                };
-                                                Ok(FindMatchingResponse::Found(
-                                                    ChildReturnValue::WastVal(WastVal::Result(
-                                                        Err(Some(Box::new(WastVal::Tuple(vec![
-                                                            execution_id_into_wast_val(
-                                                                child_execution_id,
-                                                            ),
-                                                            variant,
-                                                        ])))),
-                                                    )),
-                                                ))
-                                            }
-                                        }
+                                    // Transform timeout to WastVal
+                                    Err(FinishedExecutionError::PermanentTimeout) => {
+                                        let variant =
+                                            WastVal::Variant("permanent-timeout".to_string(), None);
+                                        Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                                            WastVal::Result(Err(Some(Box::new(WastVal::Tuple(
+                                                vec![
+                                                    execution_id_into_wast_val(child_execution_id),
+                                                    variant,
+                                                ],
+                                            ))))),
+                                        )))
+                                    }
+                                    // Transform activity trap to WastVal
+                                    Err(FinishedExecutionError::PermanentFailure {
+                                        reason_inner,
+                                        kind: PermanentFailureKind::ActivityTrap,
+                                        ..
+                                    }) => {
+                                        let variant = WastVal::Variant(
+                                            "activity-trap".to_string(),
+                                            Some(Box::new(WastVal::String(
+                                                reason_inner.to_string(),
+                                            ))),
+                                        );
+                                        Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                                            WastVal::Result(Err(Some(Box::new(WastVal::Tuple(
+                                                vec![
+                                                    execution_id_into_wast_val(child_execution_id),
+                                                    variant,
+                                                ],
+                                            ))))),
+                                        )))
+                                    }
+                                    // Copy root cause of UnhandledChildExecutionError
+                                    Err(FinishedExecutionError::UnhandledChildExecutionError {
+                                        child_execution_id: _,
+                                        root_cause_id,
+                                    }) => {
+                                        error!(%child_execution_id,
+                                                %join_set_id,
+                                                "Child execution finished with an execution error, failing the parent");
+                                        Err(ApplyError::UnhandledChildExecutionError {
+                                            child_execution_id: child_execution_id.clone(),
+                                            root_cause_id: root_cause_id.clone(), // Copy the original root cause
+                                        })
+                                    }
+                                    // All other FinishedExecutionErrors are unhandled with current child being the root cause
+                                    Err(_) => {
+                                        error!(%child_execution_id,
+                                                %join_set_id,
+                                                "Child execution finished with an execution error, failing the parent");
+                                        Err(ApplyError::UnhandledChildExecutionError {
+                                            child_execution_id: child_execution_id.clone(),
+                                            root_cause_id: child_execution_id.clone(), // The child is the root cause
+                                        })
                                     }
                                 }
                             }
@@ -676,10 +754,8 @@ impl<C: ClockFn> EventHistory<C> {
                 )))
             }
 
-            (key, found) => Err(ApplyError::NondeterminismDetected(StrVariant::Arc(
-                Arc::from(format!(
-                    "unexpected key {key:?} not matching {found:?} at index {found_idx}",
-                )),
+            (key, found) => Err(ApplyError::NondeterminismDetected(format!(
+                "unexpected key {key:?} not matching {found:?} at index {found_idx}",
             ))),
         }
     }
@@ -1349,6 +1425,7 @@ mod tests {
             clock_fn,
             Arc::new(std::sync::Mutex::new(None)),
             info_span!("worker-test"),
+            false,
         );
         (event_history, exec_log.next_version)
     }

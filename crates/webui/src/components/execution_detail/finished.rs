@@ -1,10 +1,12 @@
 use crate::{
+    app::Route,
     components::{
         execution_detail::tree_component::TreeComponent, json_tree::insert_json_into_tree,
     },
     grpc::grpc_client,
 };
 use yew::prelude::*;
+use yew_router::prelude::Link;
 use yewprint::{
     id_tree::{InsertBehavior, Node, NodeId, Tree, TreeBuilder},
     Icon, NodeData, TreeData,
@@ -128,22 +130,65 @@ pub fn attach_result_detail(
                 Node::new(NodeData {
                     icon: Icon::Time,
                     label: "Execution Timed Out".into_html(),
-                    has_caret: false,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(root_id),
             )
             .unwrap();
         }
-        grpc_client::result_detail::Value::NondeterminismDetected(nondeterminism) => {
+        grpc_client::result_detail::Value::UnhandledChildExecutionError(
+            grpc_client::result_detail::UnhandledChildExecutionError {
+                child_execution_id,
+                root_cause_id,
+            },
+        ) => {
+            let child_execution_id = child_execution_id
+                .as_ref()
+                .expect("`child_execution_id` is sent in `UnhandledChildExecutionError` message");
+            let root_cause_id = root_cause_id
+                .as_ref()
+                .expect("`root_cause_id` is sent in `UnhandledChildExecutionError` mesage");
+            let error_node = tree
+                .insert(
+                    Node::new(NodeData {
+                        icon: Icon::Error,
+                        label: "Unhandled child execution error".into_html(),
+                        has_caret: true,
+                        ..Default::default()
+                    }),
+                    InsertBehavior::UnderNode(root_id),
+                )
+                .unwrap();
             tree.insert(
                 Node::new(NodeData {
                     icon: Icon::Error,
-                    label: format!("Nondeterminism Detected: {}", nondeterminism.reason)
-                        .into_html(),
+                    label: html! {
+                        <>
+                            {"Child Execution: "}
+                            <Link<Route> to={Route::ExecutionDetail { execution_id: child_execution_id.clone() } }>
+                                {child_execution_id}
+                            </Link<Route>>
+                        </>
+                    },
                     ..Default::default()
                 }),
-                InsertBehavior::UnderNode(root_id),
+                InsertBehavior::UnderNode(&error_node),
+            )
+            .unwrap();
+            tree.insert(
+                Node::new(NodeData {
+                    icon: Icon::Error,
+                    label: html! {
+                        <>
+                            {"Root cause: "}
+                            <Link<Route> to={Route::ExecutionDetail { execution_id: root_cause_id.clone() } }>
+                                {root_cause_id}
+                            </Link<Route>>
+                        </>
+                    },
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&error_node),
             )
             .unwrap();
         }

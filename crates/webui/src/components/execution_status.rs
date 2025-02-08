@@ -186,17 +186,17 @@ fn status_to_string(status: &grpc_client::execution_status::Status) -> Html {
                 .expect("ResultKind must be convertible from i32")
             {
                 ResultKind::Ok => html! {"Finished OK"},
+                ResultKind::FallibleError => {
+                    html! {"Finished with Err variant"}
+                }
                 ResultKind::Timeout => {
                     html! {"Finished with Timeout"}
-                }
-                ResultKind::NondeterminismDetected => {
-                    html! {"Nondeterminism detected"}
                 }
                 ResultKind::ExecutionFailure => {
                     html! {"Execution failure"}
                 }
-                ResultKind::FallibleError => {
-                    html! {"Finished with Err variant"}
+                ResultKind::UnhandledChildExecutionError => {
+                    html! {"Unhandled child execution error"}
                 }
             }
         }

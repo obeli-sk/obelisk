@@ -233,15 +233,15 @@ impl From<PendingStateFinishedResultKind> for grpc::ResultKind {
             PendingStateFinishedResultKind(Err(PendingStateFinishedError::Timeout)) => {
                 grpc::ResultKind::Timeout
             }
-            PendingStateFinishedResultKind(Err(
-                PendingStateFinishedError::NondeterminismDetected,
-            )) => grpc::ResultKind::NondeterminismDetected,
             PendingStateFinishedResultKind(Err(PendingStateFinishedError::ExecutionFailure)) => {
                 grpc::ResultKind::ExecutionFailure
             }
             PendingStateFinishedResultKind(Err(PendingStateFinishedError::FallibleError)) => {
                 grpc::ResultKind::FallibleError
             }
+            PendingStateFinishedResultKind(Err(
+                PendingStateFinishedError::UnhandledChildExecutionError,
+            )) => grpc::ResultKind::UnhandledChildExecutionError,
         }
     }
 }
@@ -354,18 +354,26 @@ impl From<FinishedExecutionResult> for grpc::ResultDetail {
             Err(FinishedExecutionError::PermanentTimeout) => {
                 grpc::result_detail::Value::Timeout(grpc::result_detail::Timeout {})
             }
-            Err(FinishedExecutionError::PermanentFailure { reason, detail }) => {
-                grpc::result_detail::Value::ExecutionFailure(
-                    grpc::result_detail::ExecutionFailure { reason, detail },
-                )
-            }
-            Err(FinishedExecutionError::NondeterminismDetected(reason)) => {
-                grpc::result_detail::Value::NondeterminismDetected(
-                    grpc::result_detail::NondeterminismDetected {
-                        reason: reason.to_string(),
-                    },
-                )
-            }
+            Err(FinishedExecutionError::PermanentFailure {
+                reason_full,
+                kind: _, // TODO Add PermanentFailureKind
+                detail,
+                reason_inner: _,
+            }) => grpc::result_detail::Value::ExecutionFailure(
+                grpc::result_detail::ExecutionFailure {
+                    reason: reason_full,
+                    detail,
+                },
+            ),
+            Err(FinishedExecutionError::UnhandledChildExecutionError {
+                child_execution_id,
+                root_cause_id,
+            }) => grpc::result_detail::Value::UnhandledChildExecutionError(
+                grpc::result_detail::UnhandledChildExecutionError {
+                    child_execution_id: Some(child_execution_id.into()),
+                    root_cause_id: Some(root_cause_id.into()),
+                },
+            ),
         };
         grpc::ResultDetail { value: Some(value) }
     }
@@ -418,10 +426,11 @@ pub(crate) fn from_execution_event_to_grpc(
                 },
                 ExecutionEventInner::TemporarilyFailed {
                     backoff_expires_at,
-                    reason,
+                    reason_full,
+                    reason_inner: _,
                     detail
                 } => grpc::execution_event::Event::Failed(grpc::execution_event::TemporarilyFailed {
-                    reason: reason.to_string(),
+                    reason: reason_full.to_string(),
                     detail,
                     backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                 }),

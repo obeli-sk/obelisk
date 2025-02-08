@@ -1581,8 +1581,9 @@ impl WorkerLinked {
     }
 }
 
+// TODO: Move to wasm-workers
 #[derive(Default, Debug)]
-struct ComponentConfigRegistry {
+pub struct ComponentConfigRegistry {
     inner: ComponentConfigRegistryInner,
 }
 
@@ -1595,7 +1596,7 @@ struct ComponentConfigRegistryInner {
 }
 
 impl ComponentConfigRegistry {
-    fn insert(&mut self, component: ComponentConfig) -> Result<(), anyhow::Error> {
+    pub fn insert(&mut self, component: ComponentConfig) -> Result<(), anyhow::Error> {
         // verify that the component or its exports are not already present
         if self
             .inner
@@ -1643,7 +1644,7 @@ impl ComponentConfigRegistry {
     /// This is a best effort to give function-level error messages.
     /// WASI imports and host functions are not validated at the moment, those errors
     /// are caught by wasmtime while pre-instantiation with a message containing the missing interface.
-    fn verify_imports(self) -> Result<ComponentConfigRegistryRO, anyhow::Error> {
+    pub fn verify_imports(self) -> Result<ComponentConfigRegistryRO, anyhow::Error> {
         let mut errors = Vec::new();
         for (component_id, examined_component) in &self.inner.ids_to_components {
             self.verify_imports_component(component_id, &examined_component.imports, &mut errors);
@@ -1693,15 +1694,27 @@ impl ComponentConfigRegistry {
             {
                 // check parameters
                 if imported_fn_metadata.parameter_types != exported_fn_metadata.parameter_types {
-                    error!("Parameter types do not match: {component_id} imports {import} , {exported_component_id} exports {export}",
+                    error!("Parameter types do not match: {ffqn} imported by {component_id} , exported by {exported_component_id}",
+                        ffqn = imported_fn_metadata.ffqn);
+                    error!(
+                        "Import {import}",
                         import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format
+                    );
+                    error!(
+                        "Export {export}",
                         export = serde_json::to_string(exported_fn_metadata).unwrap(),
                     );
                     errors.push(format!("parameter types do not match: {component_id} imports {imported_fn_metadata} , {exported_component_id} exports {exported_fn_metadata}"));
                 }
                 if imported_fn_metadata.return_type != exported_fn_metadata.return_type {
-                    error!("Return types do not match: {component_id} imports {import} , {exported_component_id} exports {export}",
+                    error!("Return types do not match: {ffqn} imported by {component_id} , exported by {exported_component_id}",
+                        ffqn = imported_fn_metadata.ffqn);
+                    error!(
+                        "Import {import}",
                         import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format
+                    );
+                    error!(
+                        "Export {export}",
                         export = serde_json::to_string(exported_fn_metadata).unwrap(),
                     );
                     errors.push(format!("return types do not match: {component_id} imports {imported_fn_metadata} , {exported_component_id} exports {exported_fn_metadata}"));
@@ -1716,19 +1729,19 @@ impl ComponentConfigRegistry {
 }
 
 #[derive(Debug, Clone)]
-struct ComponentConfigRegistryRO {
+pub struct ComponentConfigRegistryRO {
     inner: Arc<ComponentConfigRegistryInner>,
 }
 
 impl ComponentConfigRegistryRO {
-    fn get_wit(&self, id: &ComponentId) -> Option<&str> {
+    pub fn get_wit(&self, id: &ComponentId) -> Option<&str> {
         self.inner
             .ids_to_components
             .get(id)
             .and_then(|component_config| component_config.wit.as_deref())
     }
 
-    fn find_by_exported_ffqn_submittable(
+    pub fn find_by_exported_ffqn_submittable(
         &self,
         ffqn: &FunctionFqn,
     ) -> Option<(&ComponentId, ComponentRetryConfig, &FunctionMetadata)> {
@@ -1743,7 +1756,7 @@ impl ComponentConfigRegistryRO {
         )
     }
 
-    fn list(&self, extensions: bool) -> Vec<ComponentConfig> {
+    pub fn list(&self, extensions: bool) -> Vec<ComponentConfig> {
         self.inner
             .ids_to_components
             .values()

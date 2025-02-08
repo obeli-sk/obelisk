@@ -6,6 +6,8 @@ use concepts::storage::Version;
 use concepts::ExecutionId;
 use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
+use concepts::PermanentFailureKind;
+use concepts::TrapKind;
 use concepts::{
     storage::{DbError, JoinSetResponseEvent},
     FinishedExecutionError, StrVariant,
@@ -49,14 +51,32 @@ pub struct WorkerContext {
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
     // retriable errors
-    #[error("temporary error: {reason}")]
-    TemporaryError {
-        reason: StrVariant,
+    // Used by activity worker
+    #[error("activity {trap_kind}: {reason}")]
+    ActivityTrap {
+        reason: String,
+        trap_kind: TrapKind,
+        detail: String,
+        version: Version,
+    },
+    // Used by activity worker, must not be returned when retries are exhausted.
+    #[error("activity returned error")]
+    ActivityReturnedError {
         detail: Option<String>,
         version: Version,
     },
-    #[error("Limit reached: {0}")]
-    LimitReached(String, Version),
+    /// Workflow trap when `retry_on_trap` is enabled.
+    #[error("workflow trap handled as temporary error: {reason}")]
+    TemporaryWorkflowTrap {
+        reason: String,
+        kind: TrapKind,
+        detail: Option<String>,
+        version: Version,
+    },
+    // Resources are exhausted, retry after a delay as Unlocked, without increasing temporary event count.
+    #[error("limit reached: {reason}")]
+    LimitReached { reason: String, version: Version },
+    // Used by activity worker, best effort. If this is not persisted, the expired timers watcher will append it.
     #[error("temporary timeout")]
     TemporaryTimeout,
     #[error(transparent)]
@@ -68,14 +88,114 @@ pub enum WorkerError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum FatalError {
-    #[error("nondeterminism detected: `{0}`")]
-    NondeterminismDetected(StrVariant),
-    #[error("parameters cannot be parsed: {0}")]
+    /// Used by workflow worker when directly called child execution fails.
+    #[error("child finished with an execution error: {child_execution_id}")]
+    UnhandledChildExecutionError {
+        child_execution_id: ExecutionId,
+        root_cause_id: ExecutionId,
+    },
+
+    // Used by workflow worker
+    #[error("nondeterminism detected")]
+    NondeterminismDetected { detail: String },
+    // Used by activity worker, workflow worker
+    #[error(transparent)]
     ParamsParsingError(ParamsParsingError),
-    #[error("result cannot be parsed: {0}")]
+    // Used by activity worker, workflow worker
+    #[error("cannot instantiate: {reason}")]
+    CannotInstantiate { reason: String, detail: String },
+    // Used by activity worker, workflow worker
+    #[error(transparent)]
     ResultParsingError(ResultParsingError),
-    #[error("child finished with an execution error: {0}")]
-    ChildExecutionError(FinishedExecutionError),
-    #[error("uncategorized error: {reason} - {detail}")]
-    UncategorizedError { reason: String, detail: String },
+    /// Used when workflow cannot call an imported function, either a child execution or a function from workflow-support.
+    #[error("error calling imported function {ffqn} : {reason}")]
+    ImportedFunctionCallError {
+        ffqn: FunctionFqn,
+        reason: StrVariant,
+        detail: Option<String>,
+    },
+
+    /// Workflow trap if `retry_on_trap` is disabled.
+    #[error("workflow {trap_kind}: {reason}")]
+    WorkflowTrap {
+        reason: String,
+        trap_kind: TrapKind,
+        detail: String,
+    },
+    /// Workflow attempted to create a join set with the same name twice.
+    #[error("join set already exists with name `{name}`")]
+    JoinSetNameConflict { name: String },
+}
+
+impl From<FatalError> for FinishedExecutionError {
+    fn from(value: FatalError) -> Self {
+        let reason_full = value.to_string();
+        match value {
+            FatalError::UnhandledChildExecutionError {
+                child_execution_id,
+                root_cause_id,
+            } => FinishedExecutionError::UnhandledChildExecutionError {
+                child_execution_id,
+                root_cause_id,
+            },
+            FatalError::NondeterminismDetected { detail } => {
+                FinishedExecutionError::PermanentFailure {
+                    reason_inner: reason_full.clone(),
+                    reason_full,
+                    kind: PermanentFailureKind::NondeterminismDetected,
+                    detail: Some(detail),
+                }
+            }
+            FatalError::ParamsParsingError(params_parsing_error) => {
+                FinishedExecutionError::PermanentFailure {
+                    reason_inner: reason_full.to_string(),
+                    reason_full,
+                    kind: PermanentFailureKind::ParamsParsingError,
+                    detail: params_parsing_error.detail(),
+                }
+            }
+            FatalError::CannotInstantiate {
+                detail,
+                reason: reason_inner,
+                ..
+            } => FinishedExecutionError::PermanentFailure {
+                reason_inner,
+                reason_full,
+                kind: PermanentFailureKind::CannotInstantiate,
+                detail: Some(detail),
+            },
+            FatalError::ResultParsingError(_) => FinishedExecutionError::PermanentFailure {
+                reason_inner: reason_full.to_string(),
+                reason_full,
+                kind: PermanentFailureKind::ResultParsingError,
+                detail: None,
+            },
+            FatalError::ImportedFunctionCallError {
+                detail,
+                reason: reason_inner,
+                ..
+            } => FinishedExecutionError::PermanentFailure {
+                reason_inner: reason_inner.to_string(),
+                reason_full,
+                kind: PermanentFailureKind::ImportedFunctionCallError,
+                detail,
+            },
+            FatalError::WorkflowTrap {
+                detail,
+                reason: reason_inner,
+                ..
+            } => FinishedExecutionError::PermanentFailure {
+                reason_inner,
+                reason_full,
+                kind: PermanentFailureKind::WorkflowTrap,
+                detail: Some(detail),
+            },
+            FatalError::JoinSetNameConflict { name } => FinishedExecutionError::PermanentFailure {
+                reason_inner: name,
+                reason_full,
+                kind: PermanentFailureKind::JoinSetNameConflict,
+                detail: None,
+            },
+        }
+    }
 }

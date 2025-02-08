@@ -53,10 +53,8 @@ package obelisk:types@1.0.0 {
     }
 
     variant execution-error {
-      permanent-failure(string),
-      /// trap, instantiation error, non determinism, unhandled child execution error, param/result parsing error
+      activity-trap(string),
       permanent-timeout,
-      nondeterminism,
     }
   }
 }

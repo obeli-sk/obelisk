@@ -168,10 +168,10 @@ message GetStatusRequest {
 
 enum ResultKind {
     OK = 0;
-    TIMEOUT = 1;
-    NONDETERMINISM_DETECTED = 2;
+    FALLIBLE_ERROR = 1;
+    TIMEOUT = 2;
     EXECUTION_FAILURE = 3;
-    FALLIBLE_ERROR = 4;
+    UNHANDLED_CHILD_EXECUTION_ERROR = 4;
 }
 
 message ExecutionStatus {
@@ -209,29 +209,35 @@ message FinishedStatus {
     ResultDetail result_detail = 4;
 }
 
+// Mirrors FinishedExecutionResult with extracted Ok/FallibleError
 message ResultDetail {
     message Ok {
         optional google.protobuf.Any return_value = 1;
-    }
-    message Timeout {
-    }
-    message NondeterminismDetected {
-        string reason = 1;
-    }
-    message ExecutionFailure {
-        string reason = 1;
-        optional string detail = 2;
     }
     message FallibleError {
         // The top level JSON attribute "err" must be present.
         google.protobuf.Any return_value = 1;
     }
+    // FinishedExecutionError::PermanentTimeout
+    message Timeout {
+    }
+    // FinishedExecutionError::PermanentFailure
+    message ExecutionFailure {
+        string reason = 1;
+        optional string detail = 2;
+        // TODO Add PermanentFailureKind
+    }
+    // FinishedExecutionError::UnhandledChildExecutionError
+    message UnhandledChildExecutionError {
+        ExecutionId child_execution_id = 1;
+        ExecutionId root_cause_id = 2;
+    }
     oneof value {
         Ok ok = 1;
         FallibleError fallible_error = 2;
         Timeout timeout = 3;
-        NondeterminismDetected nondeterminism_detected = 4;
-        ExecutionFailure execution_failure = 5;
+        ExecutionFailure execution_failure = 4;
+        UnhandledChildExecutionError unhandled_child_execution_error = 5;
     }
 }
 

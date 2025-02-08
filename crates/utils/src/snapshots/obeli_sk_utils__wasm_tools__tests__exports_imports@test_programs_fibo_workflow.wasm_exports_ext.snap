@@ -12,7 +12,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       }
     ],
     "return_type": {
@@ -37,8 +37,7 @@ expression: exports
               },
               {
                 "variant": {
-                  "nondeterminism": null,
-                  "permanent-failure": "string",
+                  "activity-trap": "string",
                   "permanent-timeout": null
                 }
               }
@@ -107,7 +106,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       },
       {
         "type_wrapper": "u8",
@@ -135,7 +134,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       }
     ],
     "return_type": {
@@ -160,8 +159,7 @@ expression: exports
               },
               {
                 "variant": {
-                  "nondeterminism": null,
-                  "permanent-failure": "string",
+                  "activity-trap": "string",
                   "permanent-timeout": null
                 }
               }
@@ -240,7 +238,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       },
       {
         "type_wrapper": "u8",
@@ -278,7 +276,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       }
     ],
     "return_type": {
@@ -303,8 +301,7 @@ expression: exports
               },
               {
                 "variant": {
-                  "nondeterminism": null,
-                  "permanent-failure": "string",
+                  "activity-trap": "string",
                   "permanent-timeout": null
                 }
               }
@@ -326,7 +323,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       }
     ],
     "return_type": {
@@ -351,8 +348,7 @@ expression: exports
               },
               {
                 "variant": {
-                  "nondeterminism": null,
-                  "permanent-failure": "string",
+                  "activity-trap": "string",
                   "permanent-timeout": null
                 }
               }
@@ -426,7 +422,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       },
       {
         "type_wrapper": "u8",
@@ -511,7 +507,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       },
       {
         "type_wrapper": "u8",
@@ -544,7 +540,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       }
     ],
     "return_type": {
@@ -569,8 +565,7 @@ expression: exports
               },
               {
                 "variant": {
-                  "nondeterminism": null,
-                  "permanent-failure": "string",
+                  "activity-trap": "string",
                   "permanent-timeout": null
                 }
               }
@@ -644,7 +639,7 @@ expression: exports
       {
         "type_wrapper": "borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       },
       {
         "type_wrapper": "u8",

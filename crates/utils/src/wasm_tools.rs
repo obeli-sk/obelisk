@@ -375,7 +375,7 @@ impl ExIm {
         let param_type_join_set = ParameterType {
             type_wrapper: join_set_id_type_wrapper.clone(),
             name: StrVariant::Static("join-set-id"),
-            wit_type: StrVariant::Static("join-set-id"),
+            wit_type: StrVariant::Static("borrow<join-set-id>"),
         };
         let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("milliseconds") => Some(TypeWrapper::U64),
@@ -481,9 +481,8 @@ impl ExIm {
                         let error_tuple = Some(Box::new(TypeWrapper::Tuple(Box::new([
                             execution_id_type_wrapper.clone(),
                             TypeWrapper::Variant(indexmap! {
-                                Box::from("permanent-failure") => Some(TypeWrapper::String),
+                                Box::from("activity-trap") => Some(TypeWrapper::String),
                                 Box::from("permanent-timeout") => None,
-                                Box::from("nondeterminism") => None,
                             }),
                         ]))));
                         let (ok_part, type_wrapper) =

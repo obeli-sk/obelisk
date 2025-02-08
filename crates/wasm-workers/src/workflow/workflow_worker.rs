@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use concepts::storage::{DbConnection, DbPool};
 use concepts::{
     ComponentId, FunctionFqn, FunctionMetadata, PackageIfcFns, ResultParsingError, StrVariant,
+    TrapKind,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
@@ -42,6 +43,7 @@ pub struct WorkflowConfig {
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub non_blocking_event_batching: u32,
     pub retry_on_trap: bool,
+    pub forward_unhandled_child_errors_in_join_set_close: bool,
 }
 
 pub struct WorkflowWorkerCompiled<C: ClockFn> {
@@ -133,11 +135,11 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                                         )));
                                     }
                                 };
-
+                            let ffqn = ffqn.clone();
                             Box::new(async move {
                                 Ok(store_ctx
                                     .data_mut()
-                                    .call_imported_fn(imported_fn_call, results)
+                                    .call_imported_fn(imported_fn_call, results, ffqn)
                                     .await?)
                             })
                         }
@@ -218,20 +220,12 @@ enum RunError<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 
     /// Error from the wasmtime runtime that can be downcast to `WorkflowFunctionError`
     WorkerPartialResult(WorkerPartialResult, WorkflowCtx<C, DB, P>),
     /// Error that happened while running the function, which cannot be downcast to `WorkflowFunctionError`
-    Trap(String, WorkflowCtx<C, DB, P>, TrapKind),
-}
-
-enum TrapKind {
-    Function,
-    PostReturn,
-}
-impl TrapKind {
-    fn to_str_variant(&self) -> StrVariant {
-        match self {
-            Self::Function => StrVariant::Static("trap"),
-            Self::PostReturn => StrVariant::Static("trap in `post-return`"),
-        }
-    }
+    Trap {
+        reason: String,
+        detail: String,
+        workflow_ctx: WorkflowCtx<C, DB, P>,
+        kind: TrapKind,
+    },
 }
 
 enum WorkerResultRefactored<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
@@ -278,6 +272,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             interrupt_on_timeout_container,
             self.fn_registry.clone(),
             ctx.worker_span,
+            self.config.forward_unhandled_child_errors_in_join_set_close,
         );
         let mut store = Store::new(&self.engine, workflow_ctx);
         let instance = match self.instance_pre.instantiate_async(&mut store).await {
@@ -286,13 +281,15 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 let reason = err.to_string();
                 let version = store.into_data().version;
                 if reason.starts_with("maximum concurrent") {
-                    return Err(WorkerError::LimitReached(reason, version));
+                    return Err(WorkerError::LimitReached { reason, version });
                 }
-                return Err(WorkerError::TemporaryError {
-                    reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
-                    detail: Some(format!("{err:?}")),
+                return Err(WorkerError::FatalError(
+                    FatalError::CannotInstantiate {
+                        reason: format!("{err}"),
+                        detail: format!("{err:?}"),
+                    },
                     version,
-                });
+                ));
             }
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
@@ -323,11 +320,12 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let func_call_result = func.call_async(&mut store, &params, &mut results).await;
         if func_call_result.is_ok() {
             if let Err(post_return_err) = func.post_return_async(&mut store).await {
-                return Err(RunError::Trap(
-                    format!("{post_return_err:?}"),
-                    store.into_data(),
-                    TrapKind::PostReturn,
-                ));
+                return Err(RunError::Trap {
+                    reason: post_return_err.to_string(),
+                    detail: format!("{post_return_err:?}"),
+                    workflow_ctx: store.into_data(),
+                    kind: TrapKind::PostReturnTrap,
+                });
             }
         }
         let workflow_ctx = store.into_data();
@@ -355,11 +353,12 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                         workflow_ctx,
                     ))
                 } else {
-                    Err(RunError::Trap(
-                        format!("{err:?}"),
+                    Err(RunError::Trap {
+                        reason: err.to_string(),
+                        detail: format!("{err:?}"),
                         workflow_ctx,
-                        TrapKind::Function,
-                    ))
+                        kind: TrapKind::Trap,
+                    })
                 }
             }
         }
@@ -458,7 +457,12 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 }
                 WorkerResultRefactored::Ok(supported_result, workflow_ctx)
             }
-            Err(RunError::Trap(detail, mut workflow_ctx, trap_kind)) => {
+            Err(RunError::Trap {
+                reason,
+                detail,
+                mut workflow_ctx,
+                kind,
+            }) => {
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(||
                         error!("Database flush error: {db_err:?} while handling: {detail}, execution will be retried")
@@ -472,8 +476,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     worker_span.in_scope(||
                         info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as an temporary error")
                     );
-                    WorkerError::TemporaryError {
-                        reason: trap_kind.to_str_variant(),
+                    WorkerError::TemporaryWorkflowTrap {
+                        reason,
+                        kind,
                         detail: Some(detail),
                         version,
                     }
@@ -482,8 +487,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                         info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as a fatal error")
                     );
                     WorkerError::FatalError(
-                        FatalError::UncategorizedError {
-                            reason: trap_kind.to_str_variant().to_string(),
+                        FatalError::WorkflowTrap {
+                            reason,
+                            trap_kind: kind,
                             detail,
                         },
                         version,
@@ -535,21 +541,26 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         workflow_ctx
             .close_opened_join_sets()
             .await
-            .map_err(|apply_err| match apply_err {
-                ApplyError::NondeterminismDetected(reason) => {
+            .map_err(|err| match err {
+                ApplyError::NondeterminismDetected(detail) => {
                     WorkerResult::Err(WorkerError::FatalError(
-                        FatalError::NondeterminismDetected(reason),
+                        FatalError::NondeterminismDetected { detail },
                         workflow_ctx.version.clone(),
                     ))
                 }
-                ApplyError::ChildExecutionError(_) => {
-                    // Only `JoinNextKind::DirectCall` can cause this error.
-                    unreachable!(
-                        "direct call to child execution does not happen on closing join sets"
-                    )
-                }
                 ApplyError::InterruptRequested => WorkerResult::DbUpdatedByWorker,
                 ApplyError::DbError(db_error) => WorkerResult::Err(WorkerError::DbError(db_error)),
+                // Can only happen when forwarding unhandled child errors in join set close.
+                ApplyError::UnhandledChildExecutionError {
+                    child_execution_id,
+                    root_cause_id,
+                } => WorkerResult::Err(WorkerError::FatalError(
+                    FatalError::UnhandledChildExecutionError {
+                        child_execution_id,
+                        root_cause_id,
+                    },
+                    workflow_ctx.version.clone(),
+                )),
             })
     }
 }
@@ -690,6 +701,7 @@ pub(crate) mod tests {
                     join_next_blocking_strategy,
                     non_blocking_event_batching,
                     retry_on_trap: false,
+                    forward_unhandled_child_errors_in_join_set_close: false,
                 },
                 workflow_engine,
                 clock_fn.clone(),
@@ -896,6 +908,7 @@ pub(crate) mod tests {
                     join_next_blocking_strategy,
                     non_blocking_event_batching,
                     retry_on_trap: false,
+                    forward_unhandled_child_errors_in_join_set_close: false,
                 },
                 workflow_engine,
                 clock_fn,

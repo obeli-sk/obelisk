@@ -39,26 +39,70 @@ pub type FinishedExecutionResult = Result<SupportedFunctionReturnValue, Finished
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FinishedExecutionError {
+    // Activity only
     #[error("permanent timeout")]
     PermanentTimeout,
-    #[error("nondeterminism detected: `{0}`")]
-    NondeterminismDetected(StrVariant),
-    #[error("permanent failure: {reason}")]
+    // Workflow only
+    #[error("unhandled child execution error {child_execution_id}")]
+    UnhandledChildExecutionError {
+        child_execution_id: ExecutionId,
+        root_cause_id: ExecutionId,
+    },
+    #[error("permanent failure: {reason_full}")]
     PermanentFailure {
-        reason: String,
+        // Exists just for extracting reason of an activity trap, to avoid "activity trap: " prefix.
+        reason_inner: String,
+        // Contains reason_inner embedded in the error message
+        reason_full: String,
+        kind: PermanentFailureKind,
         detail: Option<String>,
-    }, // temporary failure that is not retried (anymore)
+    },
 }
-
 impl FinishedExecutionError {
     #[must_use]
     pub fn as_pending_state_finished_error(&self) -> PendingStateFinishedError {
         match self {
-            Self::PermanentTimeout => PendingStateFinishedError::Timeout,
-            Self::PermanentFailure { .. } => PendingStateFinishedError::ExecutionFailure,
-            Self::NondeterminismDetected(_) => PendingStateFinishedError::NondeterminismDetected,
+            FinishedExecutionError::PermanentTimeout => PendingStateFinishedError::Timeout,
+            FinishedExecutionError::UnhandledChildExecutionError { .. } => {
+                PendingStateFinishedError::UnhandledChildExecutionError
+            }
+            FinishedExecutionError::PermanentFailure { .. } => {
+                PendingStateFinishedError::ExecutionFailure
+            }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermanentFailureKind {
+    /// Applicable to Workflow
+    NondeterminismDetected,
+    /// Applicable to Workflow, Activity
+    ParamsParsingError,
+    /// Applicable to Workflow, Activity
+    CannotInstantiate,
+    /// Applicable to Workflow, Activity
+    ResultParsingError,
+    /// Applicable to Workflow
+    ImportedFunctionCallError,
+    /// Applicable to Activity
+    ActivityTrap,
+    /// Applicable to Workflow
+    WorkflowTrap,
+    /// Applicable to Workflow
+    JoinSetNameConflict,
+    /// Applicable to webhook endpoint
+    WebhookEndpointError,
+}
+
+#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrapKind {
+    #[display("trap")]
+    Trap,
+    #[display("post_return_trap")]
+    PostReturnTrap,
 }
 
 #[derive(Clone, Eq, derive_more::Display)]
@@ -465,11 +509,11 @@ pub enum SupportedFunctionReturnValue {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResultParsingError {
-    #[error("multi-value results are not supported")]
+    #[error("result cannot be parsed, multi-value results are not supported")]
     MultiValue,
-    #[error(transparent)]
+    #[error("result cannot be parsed, {0}")]
     TypeConversionError(#[from] val_json::type_wrapper::TypeConversionError),
-    #[error(transparent)]
+    #[error("result cannot be parsed, {0}")]
     ValueConversionError(#[from] val_json::wast_val::WastValConversionError),
 }
 
@@ -698,15 +742,26 @@ pub mod serde_params {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParamsParsingError {
-    #[error("error converting type of {idx}-th parameter: `{err}`")]
+    #[error("parameters cannot be parsed, cannot convert type of {idx}-th parameter")]
     ParameterTypeError {
         idx: usize,
         err: TypeConversionError,
     },
-    #[error(transparent)]
+    #[error("parameters cannot be deserialized: {0}")]
     ParamsDeserializationError(serde_json::Error),
     #[error("parameter cardinality mismatch, expected: {expected}, specified: {specified}")]
     ParameterCardinalityMismatch { expected: usize, specified: usize },
+}
+
+impl ParamsParsingError {
+    #[must_use]
+    pub fn detail(&self) -> Option<String> {
+        match self {
+            ParamsParsingError::ParameterTypeError { err, .. } => Some(format!("{err:?}")),
+            ParamsParsingError::ParamsDeserializationError(err) => Some(format!("{err:?}")),
+            ParamsParsingError::ParameterCardinalityMismatch { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1131,7 +1186,7 @@ impl JoinSetId {
         Ok(Self {
             execution_id,
             kind,
-            name: check_name(name, ALLOWED_JSON_SET_CHARS)?,
+            name: check_name(name, CHARSET_EXTRA_JSON_SET)?,
         })
     }
 
@@ -1144,7 +1199,7 @@ impl JoinSetId {
     }
 }
 const CHARSET_JOIN_SET_NAME: &str =
-    const_format::concatcp!(CHARSET_ALPHANUMERIC, ALLOWED_JSON_SET_CHARS);
+    const_format::concatcp!(CHARSET_ALPHANUMERIC, CHARSET_EXTRA_JSON_SET);
 
 pub const CHARSET_ALPHANUMERIC: &str =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -1202,7 +1257,7 @@ impl FromStr for JoinSetKind {
 }
 
 const JOIN_SET_ID_INFIX: char = ':';
-const ALLOWED_JSON_SET_CHARS: &str = "_-/.";
+const CHARSET_EXTRA_JSON_SET: &str = "_-/.";
 
 impl FromStr for JoinSetId {
     type Err = JoinSetIdParseError;
@@ -1239,11 +1294,25 @@ pub enum JoinSetIdParseError {
 
 impl<'a> Arbitrary<'a> for JoinSetId {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(Self {
-            execution_id: ExecutionId::arbitrary(u)?,
-            kind: JoinSetKind::UserDefinedRandom,
-            name: StrVariant::from(String::arbitrary(u)?),
-        })
+        let name: String = {
+            let length_inclusive = u.int_in_range(0..=10).unwrap();
+            (0..=length_inclusive)
+                .map(|_| {
+                    let idx = u.choose_index(CHARSET_JOIN_SET_NAME.len()).unwrap();
+                    CHARSET_JOIN_SET_NAME
+                        .chars()
+                        .nth(idx)
+                        .expect("idx is < charset.len()")
+                })
+                .collect()
+        };
+
+        Ok(JoinSetId::new(
+            ExecutionId::arbitrary(u)?,
+            JoinSetKind::UserDefinedRandom,
+            StrVariant::from(name),
+        )
+        .unwrap())
     }
 }
 

@@ -1,17 +1,17 @@
-use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult};
+use crate::worker::{Worker, WorkerContext, WorkerError, WorkerResult};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::storage::{
     AppendRequest, DbPool, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
     LockedExecution,
 };
-use concepts::JoinSetId;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn};
 use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
     FinishedExecutionError,
 };
 use concepts::{ComponentId, FinishedExecutionResult, FunctionMetadata, StrVariant};
+use concepts::{JoinSetId, PermanentFailureKind};
 use std::marker::PhantomData;
 use std::{
     sync::{
@@ -360,6 +360,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             }
             WorkerResult::DbUpdatedByWorker => None,
             WorkerResult::Err(err) => {
+                let reason = err.to_string();
                 let (primary_event, child_finished, version) = match err {
                     WorkerError::TemporaryTimeout => {
                         info!("Temporary timeout");
@@ -369,28 +370,34 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     WorkerError::DbError(db_error) => {
                         return Err(db_error);
                     }
-                    WorkerError::TemporaryError {
-                        reason,
+                    WorkerError::ActivityTrap {
+                        reason: reason_inner,
+                        trap_kind,
                         detail,
                         version,
                     } => {
                         if let Some(duration) = can_be_retried {
                             let expires_at = result_obtained_at + duration;
-                            debug!("Retrying failed execution after {duration:?} at {expires_at}");
+                            debug!("Retrying activity {trap_kind} execution after {duration:?} at {expires_at}");
                             (
                                 ExecutionEventInner::TemporarilyFailed {
                                     backoff_expires_at: expires_at,
-                                    reason,
-                                    detail,
+                                    reason_full: StrVariant::from(reason),
+                                    reason_inner: StrVariant::from(reason_inner),
+                                    detail: Some(detail),
                                 },
                                 None,
                                 version,
                             )
                         } else {
-                            info!("Permanently failed - {reason}");
+                            info!(
+                                "Activity {trap_kind} marked as permanent failure - {reason_inner}"
+                            );
                             let result = Err(FinishedExecutionError::PermanentFailure {
-                                reason: format!("permanently failed - {reason}"),
-                                detail,
+                                reason_inner,
+                                reason_full: reason,
+                                kind: PermanentFailureKind::ActivityTrap,
+                                detail: Some(detail),
                             });
                             let child_finished =
                                 parent.map(|(parent_execution_id, parent_join_set)| {
@@ -407,123 +414,63 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             )
                         }
                     }
-                    WorkerError::LimitReached(reason, new_version) => {
+                    WorkerError::ActivityReturnedError { detail, version } => {
+                        let duration = can_be_retried.expect(
+                            "ActivityReturnedError must not be returned when retries are exhausted",
+                        );
+                        let expires_at = result_obtained_at + duration;
+                        debug!("Retrying ActivityReturnedError after {duration:?} at {expires_at}");
+                        (
+                            ExecutionEventInner::TemporarilyFailed {
+                                backoff_expires_at: expires_at,
+                                reason_full: StrVariant::Static("activity returned error"),
+                                reason_inner: StrVariant::Static("activity returned error"),
+                                detail,
+                            },
+                            None,
+                            version,
+                        )
+                    }
+                    WorkerError::TemporaryWorkflowTrap {
+                        reason: reason_inner,
+                        kind,
+                        detail,
+                        version,
+                    } => {
+                        let duration = can_be_retried.expect("workflows are retried forever");
+                        let expires_at = result_obtained_at + duration;
+                        debug!(
+                            "Retrying workflow {kind} execution after {duration:?} at {expires_at}"
+                        );
+                        (
+                            ExecutionEventInner::TemporarilyFailed {
+                                backoff_expires_at: expires_at,
+                                reason_full: StrVariant::from(reason),
+                                reason_inner: StrVariant::from(reason_inner),
+                                detail,
+                            },
+                            None,
+                            version,
+                        )
+                    }
+                    WorkerError::LimitReached {
+                        reason: inner_reason,
+                        version: new_version,
+                    } => {
                         let expires_at = result_obtained_at + unlock_expiry_on_limit_reached;
-                        warn!("Limit reached: {reason}, unlocking after {unlock_expiry_on_limit_reached:?} at {expires_at}");
+                        warn!("Limit reached: {inner_reason}, unlocking after {unlock_expiry_on_limit_reached:?} at {expires_at}");
                         (
                             ExecutionEventInner::Unlocked {
                                 backoff_expires_at: expires_at,
-                                reason: StrVariant::from(format!("limit reached - {reason}")),
+                                reason: StrVariant::from(reason),
                             },
                             None,
                             new_version,
                         )
                     }
-                    WorkerError::FatalError(
-                        FatalError::NondeterminismDetected(reason),
-                        version,
-                    ) => {
-                        info!("Nondeterminism detected - {reason}");
-                        let result = Err(FinishedExecutionError::NondeterminismDetected(reason));
-                        let child_finished =
-                            parent.map(|(parent_execution_id, parent_join_set)| {
-                                ChildFinishedResponse {
-                                    parent_execution_id,
-                                    parent_join_set,
-                                    result: result.clone(),
-                                }
-                            });
-                        (
-                            ExecutionEventInner::Finished { result },
-                            child_finished,
-                            version,
-                        )
-                    }
-                    WorkerError::FatalError(FatalError::ParamsParsingError(err), version) => {
-                        info!("Error parsing parameters - {err:?}");
-                        let result = Err(FinishedExecutionError::PermanentFailure {
-                            reason: format!("error parsing parameters: `{err}`"),
-                            detail: Some(format!("{err:?}")),
-                        });
-                        let child_finished =
-                            parent.map(|(parent_execution_id, parent_join_set)| {
-                                ChildFinishedResponse {
-                                    parent_execution_id,
-                                    parent_join_set,
-                                    result: result.clone(),
-                                }
-                            });
-                        (
-                            ExecutionEventInner::Finished { result },
-                            child_finished,
-                            version,
-                        )
-                    }
-                    WorkerError::FatalError(FatalError::ResultParsingError(err), version) => {
-                        info!("Error parsing result - {err:?}");
-                        let result = Err(FinishedExecutionError::PermanentFailure {
-                            reason: format!("error parsing result: `{err}`"),
-                            detail: Some(format!("{err:?}")),
-                        });
-                        let child_finished =
-                            parent.map(|(parent_execution_id, parent_join_set)| {
-                                ChildFinishedResponse {
-                                    parent_execution_id,
-                                    parent_join_set,
-                                    result: result.clone(),
-                                }
-                            });
-                        (
-                            ExecutionEventInner::Finished { result },
-                            child_finished,
-                            version,
-                        )
-                    }
-                    WorkerError::FatalError(FatalError::ChildExecutionError(err), version) => {
-                        info!("Child finished with an execution error - {err}");
-                        let (reason, detail) = match err {
-                            FinishedExecutionError::PermanentFailure { reason, detail } => {
-                                (reason, detail)
-                            }
-                            err @ FinishedExecutionError::PermanentTimeout => {
-                                (err.to_string(), None)
-                            }
-                            FinishedExecutionError::NondeterminismDetected(detail) => (
-                                "nondeterminism detected".to_string(),
-                                Some(detail.to_string()),
-                            ),
-                        };
-                        if let Some(detail) = &detail {
-                            debug!("Detail: {detail}");
-                        }
-                        let result = Err(FinishedExecutionError::PermanentFailure {
-                            reason: format!("child finished with an execution error: {reason}"),
-                            detail,
-                        });
-                        let child_finished =
-                            parent.map(|(parent_execution_id, parent_join_set)| {
-                                ChildFinishedResponse {
-                                    parent_execution_id,
-                                    parent_join_set,
-                                    result: result.clone(),
-                                }
-                            });
-                        (
-                            ExecutionEventInner::Finished { result },
-                            child_finished,
-                            version,
-                        )
-                    }
-                    WorkerError::FatalError(
-                        FatalError::UncategorizedError { reason, detail },
-                        version,
-                    ) => {
-                        info!("Uncategorized error - {reason}");
-                        debug!("Detail: {detail}");
-                        let result = Err(FinishedExecutionError::PermanentFailure {
-                            reason: format!("uncategorized error - {reason}"),
-                            detail: Some(detail),
-                        });
+                    WorkerError::FatalError(fatal_error, version) => {
+                        info!("Fatal worker error - {fatal_error:?}");
+                        let result = Err(FinishedExecutionError::from(fatal_error));
                         let child_finished =
                             parent.map(|(parent_execution_id, parent_join_set)| {
                                 ChildFinishedResponse {
@@ -703,16 +650,17 @@ pub mod simple_worker {
 mod tests {
     use self::simple_worker::SimpleWorker;
     use super::*;
+    use crate::worker::FatalError;
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::storage::{AppendRequest, CreateRequest, JoinSetRequest};
+    use concepts::storage::{CreateRequest, JoinSetRequest};
     use concepts::storage::{
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
     use concepts::{
         FunctionMetadata, JoinSetKind, ParameterTypes, Params, StrVariant,
-        SupportedFunctionReturnValue,
+        SupportedFunctionReturnValue, TrapKind,
     };
     use db_tests::Database;
     use indexmap::IndexMap;
@@ -943,7 +891,7 @@ mod tests {
 
     #[expect(clippy::too_many_lines)]
     #[tokio::test]
-    async fn worker_error_should_trigger_an_execution_retry() {
+    async fn activity_trap_should_trigger_an_execution_retry() {
         set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
@@ -954,10 +902,13 @@ mod tests {
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
         };
+        let expected_reason = "error reason";
+        let expected_detail = "error detail";
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
-            WorkerError::TemporaryError {
-                reason: StrVariant::Static("fail"),
-                detail: None,
+            WorkerError::ActivityTrap {
+                reason: expected_reason.to_string(),
+                trap_kind: concepts::TrapKind::Trap,
+                detail: expected_detail.to_string(),
                 version: Version::new(2),
             },
         )));
@@ -980,20 +931,25 @@ mod tests {
         .await;
         assert_eq!(3, execution_log.events.len());
         {
-            let (reason, detail, at, expires_at) = assert_matches!(
+            let (reason_full, reason_inner, detail, at, expires_at) = assert_matches!(
                 &execution_log.events.get(2).unwrap(),
                 ExecutionEvent {
                     event: ExecutionEventInner::TemporarilyFailed {
-                        reason,
+                        reason_inner,
+                        reason_full,
                         detail,
                         backoff_expires_at,
                     },
                     created_at: at,
                 }
-                => (reason, detail, *at, *backoff_expires_at)
+                => (reason_full, reason_inner, detail, *at, *backoff_expires_at)
             );
-            assert_eq!("fail", reason.deref());
-            assert_eq!(None, *detail);
+            assert_eq!(expected_reason, reason_inner.deref());
+            assert_eq!(
+                format!("activity trap: {expected_reason}"),
+                reason_full.deref()
+            );
+            assert_eq!(Some(expected_detail), detail.as_deref());
             assert_eq!(at, sim_clock.now());
             assert_eq!(sim_clock.now() + retry_exp_backoff, expires_at);
         }
@@ -1055,7 +1011,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn worker_error_should_not_be_retried_if_no_retries_are_set() {
+    async fn activity_trap_should_not_be_retried_if_no_retries_are_set() {
         set_up();
         let created_at = Now.now();
         let clock_fn = ConstClock(created_at);
@@ -1069,10 +1025,12 @@ mod tests {
         };
 
         let expected_reason = "error reason";
+        let expected_detail = "error detail";
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
-            WorkerError::TemporaryError {
-                reason: StrVariant::Static(expected_reason),
-                detail: None,
+            WorkerError::ActivityTrap {
+                reason: expected_reason.to_string(),
+                trap_kind: concepts::TrapKind::Trap,
+                detail: expected_detail.to_string(),
                 version: Version::new(2),
             },
         )));
@@ -1092,42 +1050,57 @@ mod tests {
         )
         .await;
         assert_eq!(3, execution_log.events.len());
-        let (reason, detail) = assert_matches!(
+        let (reason, kind, detail) = assert_matches!(
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished{
-                    result: Err(FinishedExecutionError::PermanentFailure{reason, detail})
+                    result: Err(FinishedExecutionError::PermanentFailure{reason_inner, kind, detail, reason_full:_})
                 },
                 created_at: at,
             } if *at == created_at
-            => (reason, detail)
+            => (reason_inner, kind, detail)
         );
-        assert_eq!(format!("permanently failed - {expected_reason}"), *reason);
-        assert_eq!(None, *detail);
+        assert_eq!(expected_reason, *reason);
+        assert_eq!(Some(expected_detail), detail.as_deref());
+        assert_eq!(PermanentFailureKind::ActivityTrap, *kind);
 
         db_pool.close().await.unwrap();
     }
 
-    #[rstest::rstest(
-        worker_error => [
-            WorkerError::TemporaryError {
-                reason: StrVariant::Static("error reason"),
-                detail: None,
+    #[rstest::rstest]
+    #[case(WorkerError::ActivityTrap {
+                reason: "error reason".to_string(),
+                trap_kind: TrapKind::Trap,
+                detail: "detail".to_string(),
                 version: Version::new(2),
             },
-            WorkerError::TemporaryError {
-                reason: StrVariant::Static("error reason"),
+            FinishedExecutionError::PermanentFailure {
+                reason_full: "activity trap: error reason".to_string(),
+                reason_inner: "error reason".to_string(),
+                kind: PermanentFailureKind::ActivityTrap,
                 detail: Some("detail".to_string()),
-                version: Version::new(2),
-            },
-            WorkerError::TemporaryTimeout,
-        ]
+            })]
+    #[case(
+        WorkerError::TemporaryTimeout,
+        FinishedExecutionError::PermanentTimeout
     )]
+    #[case(WorkerError::FatalError(FatalError::UnhandledChildExecutionError {
+                child_execution_id: ExecutionId::from_parts(1,1), root_cause_id: ExecutionId::from_parts(2,2)
+            },
+            Version::new(2),),
+            FinishedExecutionError::UnhandledChildExecutionError {
+                child_execution_id: ExecutionId::from_parts(1,1),
+                root_cause_id: ExecutionId::from_parts(2,2)
+            }
+            )]
     #[tokio::test]
-    async fn child_execution_permanently_failed_should_notify_parent(worker_error: WorkerError) {
+    async fn child_execution_permanently_failed_should_notify_parent(
+        #[case] worker_error: WorkerError,
+        #[case] expected_child_err: FinishedExecutionError,
+    ) {
         use concepts::storage::JoinSetResponseEventOuter;
-
         const LOCK_EXPIRY: Duration = Duration::from_secs(1);
+
         set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
@@ -1232,20 +1205,6 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let expected_child_err = match &worker_error {
-            WorkerError::TemporaryError {
-                reason,
-                detail,
-                version: _,
-            } => FinishedExecutionError::PermanentFailure {
-                reason: format!("permanently failed - {reason}"),
-                detail: detail.clone(),
-            },
-            WorkerError::TemporaryTimeout => FinishedExecutionError::PermanentTimeout,
-            worker_error => {
-                unreachable!("unexpected {worker_error}")
-            }
-        };
 
         let child_worker = Arc::new(
             SimpleWorker::with_single_result(WorkerResult::Err(worker_error)).with_ffqn(FFQN_CHILD),

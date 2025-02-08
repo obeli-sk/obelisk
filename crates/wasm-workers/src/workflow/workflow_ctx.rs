@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::DelayId;
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
-use concepts::{ExecutionId, FinishedExecutionError, FunctionRegistry, IfcFqnName, StrVariant};
+use concepts::{ExecutionId, FunctionRegistry, IfcFqnName, StrVariant};
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
 use executor::worker::FatalError;
@@ -30,11 +30,20 @@ use wasmtime::component::{Linker, Resource, Val};
 pub(crate) enum WorkflowFunctionError {
     // fatal errors:
     #[error("non deterministic execution: {0}")]
-    NondeterminismDetected(StrVariant),
-    #[error("child finished with an execution error: {0}")]
-    ChildExecutionError(FinishedExecutionError), // only on direct call
-    #[error("uncategorized error - {0}")]
-    UncategorizedError(StrVariant), // Mostly used when an extension function cannot be called. Traps are handled in `RunError::Trap`.
+    NondeterminismDetected(String),
+    #[error("child execution finished with an execution error: {child_execution_id}")]
+    UnhandledChildExecutionError {
+        child_execution_id: ExecutionId,
+        root_cause_id: ExecutionId,
+    },
+    #[error("error calling imported function {ffqn} - {reason}")]
+    ImportedFunctionCallError {
+        ffqn: FunctionFqn,
+        reason: StrVariant,
+        detail: Option<String>,
+    },
+    #[error("join set already exists with name `{0}`")]
+    JoinSetNameConflict(String),
     // retriable errors:
     #[error("interrupt requested")]
     InterruptRequested,
@@ -55,22 +64,40 @@ pub(crate) enum WorkerPartialResult {
 impl WorkflowFunctionError {
     pub(crate) fn into_worker_partial_result(self, version: Version) -> WorkerPartialResult {
         match self {
-            Self::InterruptRequested => WorkerPartialResult::InterruptRequested,
-            Self::DbError(db_error) => WorkerPartialResult::DbError(db_error),
+            WorkflowFunctionError::InterruptRequested => WorkerPartialResult::InterruptRequested,
+            WorkflowFunctionError::DbError(db_error) => WorkerPartialResult::DbError(db_error),
             // fatal errors:
-            Self::NondeterminismDetected(reason) => {
-                WorkerPartialResult::FatalError(FatalError::NondeterminismDetected(reason), version)
+            WorkflowFunctionError::NondeterminismDetected(detail) => {
+                WorkerPartialResult::FatalError(
+                    FatalError::NondeterminismDetected { detail },
+                    version,
+                )
             }
-            Self::ChildExecutionError(err) => {
-                WorkerPartialResult::FatalError(FatalError::ChildExecutionError(err), version)
-            }
-            Self::UncategorizedError(reason) => WorkerPartialResult::FatalError(
-                FatalError::UncategorizedError {
-                    reason: reason.to_string(),
-                    detail: String::new(),
+            WorkflowFunctionError::UnhandledChildExecutionError {
+                child_execution_id,
+                root_cause_id,
+            } => WorkerPartialResult::FatalError(
+                FatalError::UnhandledChildExecutionError {
+                    child_execution_id,
+                    root_cause_id,
                 },
                 version,
             ),
+            WorkflowFunctionError::ImportedFunctionCallError {
+                ffqn,
+                reason,
+                detail,
+            } => WorkerPartialResult::FatalError(
+                FatalError::ImportedFunctionCallError {
+                    ffqn,
+                    reason,
+                    detail,
+                },
+                version,
+            ),
+            WorkflowFunctionError::JoinSetNameConflict(name) => {
+                WorkerPartialResult::FatalError(FatalError::JoinSetNameConflict { name }, version)
+            }
         }
     }
 }
@@ -79,9 +106,13 @@ impl From<ApplyError> for WorkflowFunctionError {
     fn from(value: ApplyError) -> Self {
         match value {
             ApplyError::NondeterminismDetected(reason) => Self::NondeterminismDetected(reason),
-            ApplyError::ChildExecutionError(finished_execution_error) => {
-                Self::ChildExecutionError(finished_execution_error)
-            }
+            ApplyError::UnhandledChildExecutionError {
+                child_execution_id,
+                root_cause_id,
+            } => Self::UnhandledChildExecutionError {
+                child_execution_id,
+                root_cause_id,
+            },
             ApplyError::InterruptRequested => Self::InterruptRequested,
             ApplyError::DbError(db_error) => Self::DbError(db_error),
         }
@@ -158,9 +189,13 @@ impl<'a> ImportedFnCall<'a> {
                 let target_ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 let (join_set_id, params) =
-                    Self::extract_join_set_id(&called_ffqn, store_ctx, params).map_err(|err| {
-                        WorkflowFunctionError::UncategorizedError(StrVariant::from(err))
-                    })?;
+                    Self::extract_join_set_id(&called_ffqn, store_ctx, params).map_err(
+                        |detail| WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: called_ffqn,
+                            reason: StrVariant::Static("cannot extract join set id"),
+                            detail: Some(detail),
+                        },
+                    )?;
                 Ok(ImportedFnCall::Submit {
                     target_ffqn,
                     join_set_id,
@@ -172,13 +207,24 @@ impl<'a> ImportedFnCall<'a> {
                 let target_ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 let (join_set_id, params) =
-                    Self::extract_join_set_id(&called_ffqn, store_ctx, params).map_err(|err| {
-                        WorkflowFunctionError::UncategorizedError(StrVariant::from(err))
-                    })?;
+                    match Self::extract_join_set_id(&called_ffqn, store_ctx, params) {
+                        Ok(ok) => ok,
+                        Err(err) => {
+                            return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                                ffqn: called_ffqn,
+                                reason: StrVariant::Static("cannot extract join set id"),
+                                detail: Some(err),
+                            })
+                        }
+                    };
                 if !params.is_empty() {
-                    return Err(WorkflowFunctionError::UncategorizedError(
-                        StrVariant::from(format!("error running {called_ffqn}: wrong parameter length, expected single string parameter containing join-set-id, got {} other parameters", params.len()
-                    ))));
+                    return Err(
+                        WorkflowFunctionError::ImportedFunctionCallError {
+                            reason: StrVariant::Static("wrong parameter length"),
+                            detail: Some(format!("error running {called_ffqn}: wrong parameter length, expected single string parameter containing join-set-id, got {} other parameters", params.len())),
+                            ffqn: called_ffqn,
+                        }
+                    );
                 };
                 Ok(ImportedFnCall::AwaitNext {
                     target_ffqn,
@@ -190,22 +236,36 @@ impl<'a> ImportedFnCall<'a> {
                 let target_ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 let Some((scheduled_at, params)) = params.split_first() else {
-                    return Err(WorkflowFunctionError::UncategorizedError(
-                        StrVariant::from(format!("error running {called_ffqn}: exepcted at least one parameter of type `scheduled-at`, got empty parameter list"))
-                    ));
+                    return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                        ffqn: called_ffqn,
+                        reason: StrVariant::Static(
+                            "exepcted at least one parameter of type `scheduled-at`",
+                        ),
+                        detail: None,
+                    });
                 };
-                let scheduled_at =
-                    WastVal::try_from(scheduled_at.clone()).map_err(|err| {
-                        WorkflowFunctionError::UncategorizedError(
-                            StrVariant::from(format!("error running {called_ffqn}: cannot convert to internal representation - {err:?}"))
-                        )
-                    })?;
+                let scheduled_at = match WastVal::try_from(scheduled_at.clone()) {
+                    Ok(ok) => ok,
+                    Err(err) => {
+                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: called_ffqn,
+                            reason: StrVariant::Static(
+                                "cannot convert `scheduled-at` to internal representation",
+                            ),
+                            detail: Some(format!("{err:?}")),
+                        })
+                    }
+                };
                 let scheduled_at = match HistoryEventScheduledAt::try_from(&scheduled_at) {
                     Ok(scheduled_at) => scheduled_at,
                     Err(err) => {
-                        return Err(WorkflowFunctionError::UncategorizedError(
-                            StrVariant::from(format!("error running {called_ffqn}: wrong first parameter type, expected `scheduled-at`, got `{scheduled_at:?}` - {err:?}"))
-                        ));
+                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: called_ffqn,
+                            reason: StrVariant::Static(
+                                "first parameter type must be `scheduled-at`",
+                            ),
+                            detail: Some(format!("{err:?}")),
+                        });
                     }
                 };
 
@@ -216,9 +276,11 @@ impl<'a> ImportedFnCall<'a> {
                 })
             } else {
                 error!("Unrecognized extension function {called_ffqn}");
-                return Err(WorkflowFunctionError::UncategorizedError(StrVariant::from(
-                    format!("unrecognized extension function {called_ffqn}"),
-                )));
+                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: StrVariant::Static("unrecognized extension function"),
+                    detail: None,
+                });
             }
         } else {
             Ok(ImportedFnCall::Direct {
@@ -260,6 +322,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
         fn_registry: Arc<dyn FunctionRegistry>,
         worker_span: Span,
+        forward_unhandled_child_errors_in_join_set_close: bool,
     ) -> Self {
         Self {
             execution_id: execution_id.clone(),
@@ -274,6 +337,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 clock_fn.clone(),
                 interrupt_on_timeout_container,
                 worker_span.clone(),
+                forward_unhandled_child_errors_in_join_set_close,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -301,6 +365,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         &mut self,
         imported_fn_call: ImportedFnCall<'_>,
         results: &mut [Val],
+        called_ffqn: FunctionFqn,
     ) -> Result<(), WorkflowFunctionError> {
         trace!(?imported_fn_call, "call_imported_fn start");
         let event_call = self.imported_fn_to_event_call(imported_fn_call);
@@ -323,9 +388,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 error!(
                     "Unexpected result length or type, runtime expects {expected}, got: {got:?}",
                 );
-                return Err(WorkflowFunctionError::UncategorizedError(
-                    StrVariant::Static("unexpected result length or type"),
-                ));
+                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: StrVariant::Static("unexpected result length"),
+                    detail: Some(format!("expected {expected}, got: {got:?}")),
+                });
             }
         }
         trace!(?results, "call_imported_fn finish");
@@ -397,9 +464,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             Ok(join_set_id)
         } else {
             Err(wasmtime::Error::new(
-                WorkflowFunctionError::UncategorizedError(StrVariant::from(format!(
-                    "join set already exists with name `{name}`"
-                ))),
+                WorkflowFunctionError::JoinSetNameConflict(name),
             ))
         }
     }
@@ -778,6 +843,7 @@ pub(crate) mod tests {
                 Arc::new(std::sync::Mutex::new(None)),
                 self.fn_registry.clone(),
                 tracing::info_span!("workflow-test"),
+                false,
             );
             for step in &self.steps {
                 let res = match step {
@@ -794,6 +860,7 @@ pub(crate) mod tests {
                                     params: &[],
                                 },
                                 &mut [],
+                                ffqn.clone(),
                             )
                             .await
                     }
@@ -814,6 +881,7 @@ pub(crate) mod tests {
                                     target_params: &[],
                                 },
                                 &mut ret_val,
+                                target_ffqn.clone(), // TODO: Should be the called ffqn, but it is only used for error reporting
                             )
                             .await
                     }

@@ -248,7 +248,8 @@ pub const DUMMY_TEMPORARILY_TIMED_OUT: ExecutionEventInner =
     };
 pub const DUMMY_TEMPORARILY_FAILED: ExecutionEventInner = ExecutionEventInner::TemporarilyFailed {
     backoff_expires_at: DateTime::from_timestamp_nanos(0),
-    reason: StrVariant::empty(),
+    reason_full: StrVariant::empty(),
+    reason_inner: StrVariant::empty(),
     detail: None,
 };
 
@@ -310,7 +311,9 @@ pub enum ExecutionEventInner {
     TemporarilyFailed {
         backoff_expires_at: DateTime<Utc>,
         #[arbitrary(value = StrVariant::Static("reason"))]
-        reason: StrVariant,
+        reason_full: StrVariant,
+        #[arbitrary(value = StrVariant::Static("reason inner"))]
+        reason_inner: StrVariant,
         detail: Option<String>,
     },
     // Created by the executor holding last lock.
@@ -1027,7 +1030,7 @@ impl From<&FinishedExecutionResult> for PendingStateFinishedResultKind {
 #[strum(serialize_all = "snake_case")]
 pub enum PendingStateFinishedError {
     Timeout,
-    NondeterminismDetected,
+    UnhandledChildExecutionError,
     ExecutionFailure,
     FallibleError,
 }

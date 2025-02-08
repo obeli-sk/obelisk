@@ -50,8 +50,7 @@ expression: imports
               },
               {
                 "variant": {
-                  "nondeterminism": null,
-                  "permanent-failure": "string",
+                  "activity-trap": "string",
                   "permanent-timeout": null
                 }
               }
@@ -126,8 +125,7 @@ expression: imports
               },
               {
                 "variant": {
-                  "nondeterminism": null,
-                  "permanent-failure": "string",
+                  "activity-trap": "string",
                   "permanent-timeout": null
                 }
               }

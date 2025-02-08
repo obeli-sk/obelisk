@@ -11,7 +11,8 @@ use concepts::storage::{
 };
 use concepts::{
     ComponentId, ComponentType, ExecutionId, ExecutionMetadata, FinishedExecutionError,
-    FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, Params, StrVariant,
+    FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, Params, PermanentFailureKind,
+    StrVariant,
 };
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use derivative::Derivative;
@@ -690,7 +691,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                                 .as_ref()
                                 .map(|()| SupportedFunctionReturnValue::None)
                                 .map_err(|err| FinishedExecutionError::PermanentFailure {
-                                    reason: err.to_string(),
+                                    reason_full: err.to_string(),
+                                    reason_inner: err.to_string(),
+                                    kind: PermanentFailureKind::WebhookEndpointError,
                                     detail: Some(format!("{err:?}")),
                                 }),
                         },

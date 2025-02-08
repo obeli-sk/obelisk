@@ -1,4 +1,3 @@
-
 package testing:fibo-workflow-obelisk-ext;
 
 interface workflow {

@@ -4,7 +4,7 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
 use crate::WasmFileError;
 use async_trait::async_trait;
-use concepts::{ComponentId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue};
+use concepts::{ComponentId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue, TrapKind};
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
@@ -112,13 +112,18 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             Err(err) => {
                 let reason = err.to_string();
                 if reason.starts_with("maximum concurrent") {
-                    return WorkerResult::Err(WorkerError::LimitReached(reason, ctx.version));
+                    return WorkerResult::Err(WorkerError::LimitReached {
+                        reason,
+                        version: ctx.version,
+                    });
                 }
-                return WorkerResult::Err(WorkerError::TemporaryError {
-                    reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
-                    detail: Some(format!("{err:?}")),
-                    version: ctx.version,
-                });
+                return WorkerResult::Err(WorkerError::FatalError(
+                    FatalError::CannotInstantiate {
+                        reason: format!("{err}"),
+                        detail: format!("{err:?}"),
+                    },
+                    ctx.version,
+                ));
             }
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
@@ -146,10 +151,10 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             let worker_span = ctx.worker_span.clone();
             async move {
                 if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
-                    // guest panic is translated to an TemporaryError, which allows for retries.
-                    return WorkerResult::Err(WorkerError::TemporaryError {
-                        reason: StrVariant::Static("trap"),
-                        detail: Some(format!("{err:?}")),
+                    return WorkerResult::Err(WorkerError::ActivityTrap {
+                        reason: err.to_string(),
+                        trap_kind: TrapKind::Trap,
+                        detail: format!("{err:?}"),
                         version: ctx.version,
                     });
                 };
@@ -165,9 +170,10 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                     }
                 };
                 if let Err(err) = func.post_return_async(&mut store).await {
-                    return WorkerResult::Err(WorkerError::TemporaryError {
-                        reason: StrVariant::Static("trap in `post-return`"),
-                        detail: Some(format!("{err:?}")),
+                    return WorkerResult::Err(WorkerError::ActivityTrap {
+                        reason: err.to_string(),
+                        trap_kind: TrapKind::PostReturnTrap,
+                        detail: format!("{err:?}"),
                         version: ctx.version,
                     });
                 }
@@ -179,8 +185,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                             let detail = serde_json::to_string(result_err).expect(
                                 "SupportedFunctionReturnValue should be serializable to JSON",
                             );
-                            return WorkerResult::Err(WorkerError::TemporaryError {
-                                reason: StrVariant::Static("activity returned an error"),
+                            return WorkerResult::Err(WorkerError::ActivityReturnedError {
                                 detail: Some(detail),
                                 version: ctx.version,
                             });
@@ -455,7 +460,7 @@ pub(crate) mod tests {
             for jh in join_handles {
                 if matches!(
                     jh.await.unwrap(),
-                    WorkerResult::Err(WorkerError::LimitReached(..))
+                    WorkerResult::Err(WorkerError::LimitReached { .. })
                 ) {
                     limit_reached += 1;
                 }
@@ -801,17 +806,19 @@ pub(crate) mod tests {
                 );
                 let exec_log = db_connection.get(&execution_id).await.unwrap();
 
-                let (reason, detail, found_expires_at) = assert_matches!(
+                let (reason_full, reason_inner, detail, found_expires_at) = assert_matches!(
                     &exec_log.last_event().event,
                     ExecutionEventInner::TemporarilyFailed {
                         backoff_expires_at,
-                        reason,
+                        reason_full,
+                        reason_inner,
                         detail: Some(detail),
                     }
-                    => (reason, detail, *backoff_expires_at)
+                    => (reason_full, reason_inner, detail, *backoff_expires_at)
                 );
                 assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
-                assert_eq!("activity returned an error", reason.deref());
+                assert_eq!("activity returned error", reason_inner.deref());
+                assert_eq!("activity returned error", reason_full.deref());
                 assert!(
                     detail.contains("wrong status code: 500"),
                     "Unexpected {detail}"
