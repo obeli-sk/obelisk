@@ -422,6 +422,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         rand::Rng::gen(&mut self.rng)
     }
 
+    // FIXME: Instead of a random name, use an auto incrementing integer.
     fn next_join_set_name_random(&mut self) -> String {
         loop {
             let name = JoinSetId::random_name(&mut self.rng, 5, 11);
@@ -658,12 +659,15 @@ mod workflow_support {
                 .map_err(WorkflowFunctionError::from)?)
         }
 
-        async fn new_join_set(&mut self, name: String) -> wasmtime::Result<Resource<JoinSetId>> {
+        async fn new_join_set_named(
+            &mut self,
+            name: String,
+        ) -> wasmtime::Result<Resource<JoinSetId>> {
             self.persist_join_set_with_kind(name, JoinSetKind::UserDefinedNamed)
                 .await
         }
 
-        async fn new_join_set_random(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
+        async fn new_join_set_generated(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
             let name = self.next_join_set_name_random();
             self.persist_join_set_with_kind(name, JoinSetKind::UserDefinedGenerated)
                 .await
@@ -868,7 +872,8 @@ pub(crate) mod tests {
                     }
                     WorkflowStep::SubmitWithoutAwait { target_ffqn } => {
                         // Create new join set
-                        let join_set_resource = workflow_ctx.new_join_set_random().await.unwrap();
+                        let join_set_resource =
+                            workflow_ctx.new_join_set_generated().await.unwrap();
                         let join_set_id = workflow_ctx
                             .resource_table
                             .get(&join_set_resource)

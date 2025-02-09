@@ -3,10 +3,10 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:workflow/workflow-support@1.0.0.new-join-set-random": {
+  "obelisk:workflow/workflow-support@1.0.0.new-join-set-generated": {
     "ffqn": {
       "ifc_fqn": "obelisk:workflow/workflow-support@1.0.0",
-      "function_name": "new-join-set-random"
+      "function_name": "new-join-set-generated"
     },
     "parameter_types": [],
     "return_type": {

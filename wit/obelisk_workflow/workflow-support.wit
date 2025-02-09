@@ -18,11 +18,10 @@ interface workflow-support {
     // TODO: sleep-submit
 
     /// Create a new completing join set.
-    /// Closing the join set at the execution finish will block until all child executions are finished.
-    new-join-set: func(name: string) -> join-set-id;
+    new-join-set-named: func(name: string) -> join-set-id;
 
-    /// Create a new completing join set with a random name.
-    new-join-set-random: func() -> join-set-id;
+    /// Create a new completing join set with a generated name.
+    new-join-set-generated: func() -> join-set-id;
 
-    // TODO: `new-join-set-cancelling(name: string)` that cancels all remaining child executions on close
+    // TODO: `new-join-set-cancelling(name: string)` that cancels all child executions that are not awaited.
 }
