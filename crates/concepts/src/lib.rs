@@ -1241,9 +1241,9 @@ pub enum JoinSetKind {
 impl JoinSetKind {
     fn as_code(&self) -> &'static str {
         match self {
-            JoinSetKind::OneOff => "oneoff",
-            JoinSetKind::UserDefinedNamed => "named",
-            JoinSetKind::UserDefinedRandom => "rnd",
+            JoinSetKind::OneOff => "o",
+            JoinSetKind::UserDefinedNamed => "n",
+            JoinSetKind::UserDefinedRandom => "g",
         }
     }
 }
