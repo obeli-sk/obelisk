@@ -1236,14 +1236,14 @@ pub fn random_string(
 pub enum JoinSetKind {
     OneOff,
     UserDefinedNamed,
-    UserDefinedRandom,
+    UserDefinedGenerated,
 }
 impl JoinSetKind {
     fn as_code(&self) -> &'static str {
         match self {
             JoinSetKind::OneOff => "o",
             JoinSetKind::UserDefinedNamed => "n",
-            JoinSetKind::UserDefinedRandom => "g",
+            JoinSetKind::UserDefinedGenerated => "g",
         }
     }
 }
@@ -1310,7 +1310,7 @@ impl<'a> Arbitrary<'a> for JoinSetId {
 
         Ok(JoinSetId::new(
             ExecutionId::arbitrary(u)?,
-            JoinSetKind::UserDefinedRandom,
+            JoinSetKind::UserDefinedGenerated,
             StrVariant::from(name),
         )
         .unwrap())

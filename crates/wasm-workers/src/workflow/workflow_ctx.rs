@@ -665,7 +665,7 @@ mod workflow_support {
 
         async fn new_join_set_random(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
             let name = self.next_join_set_name_random();
-            self.persist_join_set_with_kind(name, JoinSetKind::UserDefinedRandom)
+            self.persist_join_set_with_kind(name, JoinSetKind::UserDefinedGenerated)
                 .await
         }
     }

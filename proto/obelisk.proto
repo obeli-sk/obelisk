@@ -128,7 +128,7 @@ message JoinSetId {
     enum JoinSetKind {
         ONE_OFF = 0;
         USER_DEFINED_NAMED = 1;
-        USER_DEFINED_RANDOM = 2;
+        USER_DEFINED_GENERATED = 2;
     }
 
     ExecutionId execution_id = 1;
