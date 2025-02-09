@@ -24,6 +24,7 @@ use concepts::FinishedExecutionError;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::JoinSetId;
+use concepts::JoinSetKind;
 use concepts::PermanentFailureKind;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
@@ -169,6 +170,27 @@ impl<C: ClockFn> EventHistory<C> {
             *processing_status == ProcessingStatus::Processed &&
             matches!(event, HistoryEvent::JoinSet { join_set_id: found } if found.name.as_ref() == join_set_name)
         )
+    }
+
+    pub(crate) fn join_set_count(&self, kind: JoinSetKind) -> usize {
+        // TODO: optimize
+        self.event_history
+            .iter()
+            .filter(|(event, processing_status)| {
+                // Do not look into the future as it would break replay.
+                *processing_status == ProcessingStatus::Processed
+                    && matches!(
+                        event,
+                        HistoryEvent::JoinSet {
+                            join_set_id: JoinSetId {
+                                kind: found_kind,
+                                ..
+                            }
+                        }
+                        if *found_kind == kind
+                    )
+            })
+            .count()
     }
 
     /// Apply the event and wait if new, replay if already in the event history, or

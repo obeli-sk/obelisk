@@ -423,19 +423,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 
     // FIXME: Instead of a random name, use an auto incrementing integer.
-    fn next_join_set_name_random(&mut self) -> String {
-        loop {
-            let name = JoinSetId::random_name(&mut self.rng, 5, 11);
-            if !self.event_history.join_set_name_exists(&name) {
-                return name;
-            }
-        }
+    fn next_join_set_name_index(&mut self, kind: JoinSetKind) -> String {
+        self.event_history.join_set_count(kind).to_string()
     }
 
     fn next_join_set_one_off(&mut self) -> JoinSetId {
         JoinSetId::new(
             JoinSetKind::OneOff,
-            StrVariant::from(self.next_join_set_name_random()),
+            StrVariant::from(self.next_join_set_name_index(JoinSetKind::OneOff)),
         )
         .expect("next_string_random returns valid join set name")
     }
@@ -666,7 +661,7 @@ mod workflow_support {
         }
 
         async fn new_join_set_generated(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
-            let name = self.next_join_set_name_random();
+            let name = self.next_join_set_name_index(JoinSetKind::UserDefinedGenerated);
             self.persist_join_set_with_kind(name, JoinSetKind::UserDefinedGenerated)
                 .await
         }

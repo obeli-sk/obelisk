@@ -405,10 +405,7 @@ pub enum HistoryEvent {
     #[display("Persist")]
     Persist { value: Vec<u8>, kind: PersistKind },
     #[display("JoinSet({join_set_id})")]
-    JoinSet {
-        join_set_id: JoinSetId,
-        // TODO: add JoinSetKind (unordered, ordered), cancellation policy
-    },
+    JoinSet { join_set_id: JoinSetId },
     #[display("JoinSetRequest({join_set_id}, {request})")]
     JoinSetRequest {
         join_set_id: JoinSetId,

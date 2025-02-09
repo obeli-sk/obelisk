@@ -1184,14 +1184,6 @@ impl JoinSetId {
             name: check_name(name, CHARSET_EXTRA_JSON_SET)?,
         })
     }
-
-    pub fn random_name(
-        rng: &mut rand::rngs::StdRng,
-        min_length: u16,
-        max_length_exclusive: u16,
-    ) -> String {
-        random_string(rng, min_length, max_length_exclusive, CHARSET_JOIN_SET_NAME)
-    }
 }
 const CHARSET_JOIN_SET_NAME: &str =
     const_format::concatcp!(CHARSET_ALPHANUMERIC, CHARSET_EXTRA_JSON_SET);
@@ -1829,17 +1821,12 @@ mod tests {
     #[tokio::test]
     async fn join_set_serde_should_be_consistent() {
         use crate::{JoinSetId, JoinSetKind};
-        use rand::{rngs::StdRng, SeedableRng as _};
-
-        let execution_id = ExecutionId::generate();
-        let raw_data: Vec<_> = (0..10).map(|_| madsim::rand::random::<u8>()).collect();
-        let mut unstructured = arbitrary::Unstructured::new(&raw_data);
-        let kind: JoinSetKind = unstructured.arbitrary().unwrap();
-        let mut rng = StdRng::seed_from_u64(madsim::rand::random::<u64>());
-        let name = JoinSetId::random_name(&mut rng, 0, 5);
-        let join_set_id = JoinSetId::new(execution_id, kind, StrVariant::from(name)).unwrap();
-        let ser = serde_json::to_string(&join_set_id).unwrap();
-        let deser = serde_json::from_str(&ser).unwrap();
-        assert_eq!(join_set_id, deser);
+        use strum::IntoEnumIterator;
+        for kind in JoinSetKind::iter() {
+            let join_set_id = JoinSetId::new(kind, StrVariant::from("name")).unwrap();
+            let ser = serde_json::to_string(&join_set_id).unwrap();
+            let deser = serde_json::from_str(&ser).unwrap();
+            assert_eq!(join_set_id, deser);
+        }
     }
 }
