@@ -3,6 +3,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/obeli-sk/obelisk/compare/v0.14.2...v0.15.0)
+
+### ⛰️ Features
+
+- *(db)* [**breaking**] Change format of `JoinSetId` - introduce `JoinSetKind` - ([ed83a5f](https://github.com/obeli-sk/obelisk/commit/ed83a5fca4d1fcf19cee738acfeabc3d6ec9b7d2))
+- Allow more characters to be used in join set name - ([7ae009b](https://github.com/obeli-sk/obelisk/commit/7ae009b3d8ce69ef6cd8139778780fe37d50b3df))
+
+### 🐛 Bug Fixes
+
+- *(db)* [**breaking**] Change serde format of `PendingStateFinishedResultKind` to snake_case - ([2f9343d](https://github.com/obeli-sk/obelisk/commit/2f9343d483b4bdc856804ecdd0b6138dd7a257d5))
+
+### 🧪 Testing
+
+- Use -submit ffqn for `WorkflowStep::SubmitWithoutAwait` - ([6ad9f8e](https://github.com/obeli-sk/obelisk/commit/6ad9f8e65c4f1002a914d8022a661acf31f54599))
+
+### 🚜 Refactor
+
+- *(doc)* Rename `install.sh` to `download.sh` - ([8b0f07c](https://github.com/obeli-sk/obelisk/commit/8b0f07caa231349b1c4395dcc8539344be3e887d))
+- *(grpc)* [**breaking**] Add `kind` to `JoinSetId` message - ([9190b2a](https://github.com/obeli-sk/obelisk/commit/9190b2a893d6fa97fb482b658db81a89ea0ac61d))
+- *(sqlite)* [**breaking**] Store child version in `t_join_set_response` - ([aba3019](https://github.com/obeli-sk/obelisk/commit/aba301970a5432f3ca53cebe0b6cd604e73ba277))
+- *(sqlite)* [**breaking**] Remove `t_join_set_response.result` - ([f9e91e1](https://github.com/obeli-sk/obelisk/commit/f9e91e1863c70ad0a5e082802b2d7f8cfdbbf4f5))
+- *(wit,grpc)* [**breaking**] Remove unhandled errors from `execution-error` - ([97136fd](https://github.com/obeli-sk/obelisk/commit/97136fd6f709399b3d1cfc6e4b327cba1f82cc74))
+- Wrap names in `ConfigName` - ([8b1727f](https://github.com/obeli-sk/obelisk/commit/8b1727f53a27e071a2599ec5be8c4ef3842d16c3))
+- Externalize special characters used in `check_name` - ([5108652](https://github.com/obeli-sk/obelisk/commit/5108652cc63e09a1aa8c9c3a4b70044334015ba9))
+
+
 ## [0.14.2](https://github.com/obeli-sk/obelisk/compare/v0.14.1...v0.14.2)
 
 ### 🐛 Bug Fixes
