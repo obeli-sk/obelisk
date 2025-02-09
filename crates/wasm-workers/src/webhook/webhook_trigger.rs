@@ -529,12 +529,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             else {
                 return Err(WebhookEndpointFunctionError::FunctionMetadataNotFound { ffqn });
             };
-            let join_set_id = JoinSetId::new(
-                self.execution_id.clone(),
-                concepts::JoinSetKind::OneOff,
-                StrVariant::empty(),
-            )
-            .unwrap();
+            let join_set_id =
+                JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
 
             let req_join_set_created = AppendRequest {
                 created_at,

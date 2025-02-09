@@ -1171,21 +1171,15 @@ pub mod prefixed_ulid {
     serde_with::DeserializeFromStr,
 )]
 #[non_exhaustive] // force using the constructor as much as possible due to validation
-#[display("{execution_id}{JOIN_SET_ID_INFIX}{kind}{JOIN_SET_ID_INFIX}{name}")]
+#[display("{kind}{JOIN_SET_ID_INFIX}{name}")]
 pub struct JoinSetId {
-    pub execution_id: ExecutionId,
     pub kind: JoinSetKind,
     pub name: StrVariant,
 }
 
 impl JoinSetId {
-    pub fn new(
-        execution_id: ExecutionId,
-        kind: JoinSetKind,
-        name: StrVariant,
-    ) -> Result<Self, InvalidNameError<JoinSetId>> {
+    pub fn new(kind: JoinSetKind, name: StrVariant) -> Result<Self, InvalidNameError<JoinSetId>> {
         Ok(Self {
-            execution_id,
             kind,
             name: check_name(name, CHARSET_EXTRA_JSON_SET)?,
         })
@@ -1264,20 +1258,13 @@ impl FromStr for JoinSetId {
     type Err = JoinSetIdParseError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<_> = input.splitn(3, JOIN_SET_ID_INFIX).collect();
-        if parts.len() != 3 {
+        let Some((kind, name)) = input.split_once(JOIN_SET_ID_INFIX) else {
             return Err(JoinSetIdParseError::WrongParts);
-        }
-        let execution_id = parts[0].parse()?;
-        let kind = parts[1]
+        };
+        let kind = kind
             .parse()
             .map_err(JoinSetIdParseError::JoinSetKindParseError)?;
-        let name = parts[2]; // checked on the next line using the constructor
-        Ok(JoinSetId::new(
-            execution_id,
-            kind,
-            StrVariant::from(name.to_string()),
-        )?)
+        Ok(JoinSetId::new(kind, StrVariant::from(name.to_string()))?)
     }
 }
 
@@ -1308,12 +1295,7 @@ impl<'a> Arbitrary<'a> for JoinSetId {
                 .collect()
         };
 
-        Ok(JoinSetId::new(
-            ExecutionId::arbitrary(u)?,
-            JoinSetKind::UserDefinedGenerated,
-            StrVariant::from(name),
-        )
-        .unwrap())
+        Ok(JoinSetId::new(JoinSetKind::UserDefinedGenerated, StrVariant::from(name)).unwrap())
     }
 }
 

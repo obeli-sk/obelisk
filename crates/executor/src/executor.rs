@@ -1141,12 +1141,7 @@ mod tests {
         )
         .await;
 
-        let join_set_id = JoinSetId::new(
-            parent_execution_id.clone(),
-            JoinSetKind::OneOff,
-            StrVariant::empty(),
-        )
-        .unwrap();
+        let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         let child_execution_id = ExecutionId::generate();
         // executor does not append anything, this should have been written by the worker:
         {

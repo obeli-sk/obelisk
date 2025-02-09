@@ -33,7 +33,6 @@ impl From<DelayId> for grpc::DelayId {
 impl From<JoinSetId> for grpc::JoinSetId {
     fn from(join_set_id: JoinSetId) -> Self {
         Self {
-            execution_id: Some(join_set_id.execution_id.into()),
             kind: grpc::join_set_id::JoinSetKind::from(join_set_id.kind) as i32,
             name: join_set_id.name.to_string(),
         }

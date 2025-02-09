@@ -236,7 +236,6 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
 pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
     event: HistoryEvent::JoinSet {
         join_set_id: JoinSetId {
-            execution_id: ExecutionId::from_parts(0, 0),
             kind: crate::JoinSetKind::OneOff,
             name: StrVariant::empty(),
         },

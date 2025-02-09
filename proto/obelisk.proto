@@ -131,7 +131,6 @@ message JoinSetId {
         USER_DEFINED_GENERATED = 2;
     }
 
-    ExecutionId execution_id = 1;
     JoinSetKind kind = 2;
     string name = 3;
 }

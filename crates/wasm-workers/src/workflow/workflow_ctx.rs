@@ -434,7 +434,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 
     fn next_join_set_one_off(&mut self) -> JoinSetId {
         JoinSetId::new(
-            self.execution_id.clone(),
             JoinSetKind::OneOff,
             StrVariant::from(self.next_join_set_name_random()),
         )
@@ -447,8 +446,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         kind: JoinSetKind,
     ) -> wasmtime::Result<Resource<JoinSetId>> {
         if !self.event_history.join_set_name_exists(&name) {
-            let join_set_id =
-                JoinSetId::new(self.execution_id.clone(), kind, StrVariant::from(name))?;
+            let join_set_id = JoinSetId::new(kind, StrVariant::from(name))?;
             let res = self
                 .event_history
                 .apply(
