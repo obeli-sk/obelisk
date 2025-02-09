@@ -699,6 +699,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::host_exports::obelisk::workflow::workflow_support::Host as _;
+    use crate::host_exports::SUFFIX_FN_SUBMIT;
     use crate::workflow::workflow_ctx::ApplyError;
     use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
     use crate::{
@@ -713,7 +714,7 @@ pub(crate) mod tests {
         wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
         JoinSetRequest, PendingState,
     };
-    use concepts::{ComponentId, ExecutionMetadata, FunctionRegistry};
+    use concepts::{ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, SUFFIX_PKG_EXT};
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
@@ -826,6 +827,7 @@ pub(crate) mod tests {
     impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
         for WorkflowWorkerMock<C, DB, P>
     {
+        #[expect(clippy::too_many_lines)]
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             info!("Starting");
             let seed = ctx.execution_id.random_part();
@@ -873,6 +875,19 @@ pub(crate) mod tests {
                             .unwrap()
                             .clone();
                         let mut ret_val = vec![Val::Bool(false)];
+                        let target_ifc = target_ffqn.ifc_fqn.clone();
+                        let submit_ffqn = FunctionFqn {
+                            ifc_fqn: IfcFqnName::from_parts(
+                                target_ifc.namespace(),
+                                &format!("{}{SUFFIX_PKG_EXT}", target_ifc.package_name()),
+                                target_ifc.ifc_name(),
+                                target_ifc.version(),
+                            ),
+                            function_name: concepts::FnName::from(format!(
+                                "{}{}",
+                                target_ffqn.function_name, SUFFIX_FN_SUBMIT
+                            )),
+                        };
                         workflow_ctx
                             .call_imported_fn(
                                 ImportedFnCall::Submit {
@@ -881,7 +896,7 @@ pub(crate) mod tests {
                                     target_params: &[],
                                 },
                                 &mut ret_val,
-                                target_ffqn.clone(), // TODO: Should be the called ffqn, but it is only used for error reporting
+                                submit_ffqn,
                             )
                             .await
                     }
