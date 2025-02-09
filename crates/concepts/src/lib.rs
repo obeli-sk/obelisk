@@ -1065,6 +1065,7 @@ pub mod prefixed_ulid {
         pub fn increment(&self) -> Self {
             match &self.0 {
                 ExecutionIdInner::TopLevel(_) => {
+                    // FIXME: Make this a compile error
                     panic!("called `increment` on the top level ExecutionId")
                 }
                 ExecutionIdInner::Derived(top_level, suffix_vec) => {
@@ -1257,7 +1258,7 @@ impl FromStr for JoinSetKind {
 }
 
 const JOIN_SET_ID_INFIX: char = ':';
-const CHARSET_EXTRA_JSON_SET: &str = "_-/.";
+const CHARSET_EXTRA_JSON_SET: &str = "_-/";
 
 impl FromStr for JoinSetId {
     type Err = JoinSetIdParseError;
