@@ -100,7 +100,7 @@ const CREATE_INDEX_IDX_T_EXECUTION_ID_EXECUTION_ID_VARIANT: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_variant  ON t_execution_log (execution_id, variant);
 ";
 
-/// Stores child execution return values for the parent (execution_id). Append only.
+/// Stores child execution return values for the parent (`execution_id`). Append only.
 /// For `JoinSetResponse::DelayFinished`, column `delay_id` must not be null.
 /// For `JoinSetResponse::ChildExecutionFinished`, column `child_execution_id`,`finished_version`
 /// must not be null.

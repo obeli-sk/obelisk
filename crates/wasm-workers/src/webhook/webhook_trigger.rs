@@ -388,7 +388,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
         let metadata = concepts::ExecutionMetadata::from_parent_span(&self.component_logger.span);
         let create_request = CreateRequest {
             created_at,
-            execution_id: ExecutionId::TopLevel(self.execution_id.clone()),
+            execution_id: ExecutionId::TopLevel(self.execution_id),
             ffqn: HTTP_HANDLER_FFQN,
             params: Params::empty(),
             parent: None,
@@ -498,14 +498,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                     max_retries: import_retry_config.max_retries,
                     retry_exp_backoff: import_retry_config.retry_exp_backoff,
                     component_id,
-                    scheduled_by: Some(ExecutionId::TopLevel(self.execution_id.clone())),
+                    scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
                 };
                 let db_connection = self.db_pool.connection();
                 let version = db_connection
                     .append_batch_create_new_execution(
                         created_at,
                         vec![child_exec_req],
-                        ExecutionId::TopLevel(self.execution_id.clone()),
+                        ExecutionId::TopLevel(self.execution_id),
                         version.clone(),
                         vec![create_child_req],
                     )
@@ -567,7 +567,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 ffqn,
                 params: Params::from_wasmtime(Arc::from(params)),
                 parent: Some((
-                    ExecutionId::TopLevel(self.execution_id.clone()),
+                    ExecutionId::TopLevel(self.execution_id),
                     self.join_set_id_direct.clone(),
                 )),
                 metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
@@ -582,7 +582,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 .append_batch_create_new_execution(
                     created_at,
                     vec![req_join_set_created, req_child_exec, req_join_next],
-                    ExecutionId::TopLevel(self.execution_id.clone()),
+                    ExecutionId::TopLevel(self.execution_id),
                     version.clone(),
                     vec![req_create_child],
                 )

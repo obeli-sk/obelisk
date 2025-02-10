@@ -44,9 +44,7 @@ impl From<JoinSetKind> for grpc::join_set_id::JoinSetKind {
         match value {
             JoinSetKind::OneOff => grpc::join_set_id::JoinSetKind::OneOff,
             JoinSetKind::Named => grpc::join_set_id::JoinSetKind::UserDefinedNamed,
-            JoinSetKind::Generated => {
-                grpc::join_set_id::JoinSetKind::UserDefinedGenerated
-            }
+            JoinSetKind::Generated => grpc::join_set_id::JoinSetKind::UserDefinedGenerated,
         }
     }
 }

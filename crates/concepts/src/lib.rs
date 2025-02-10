@@ -1039,13 +1039,15 @@ pub mod prefixed_ulid {
         pub fn get_incremented(&self) -> Self {
             self.get_incremented_by(1)
         }
+        #[must_use]
         pub fn get_incremented_by(&self, count: u64) -> Self {
             ExecutionIdDerived {
-                top_level: self.top_level.clone(),
+                top_level: self.top_level,
                 infix: self.infix.clone(),
                 idx: self.idx + count,
             }
         }
+        #[must_use]
         pub fn next_level(&self, join_set_id: &JoinSetId) -> ExecutionIdDerived {
             let ExecutionIdDerived {
                 top_level,
@@ -1135,6 +1137,7 @@ pub mod prefixed_ulid {
             ExecutionId::TopLevel(PrefixedUlid::generate())
         }
 
+        #[must_use]
         pub fn get_top_level(&self) -> ExecutionIdTopLevel {
             match &self {
                 ExecutionId::TopLevel(prefixed_ulid) => *prefixed_ulid,
@@ -1213,7 +1216,7 @@ pub mod prefixed_ulid {
         fn from_str(input: &str) -> Result<Self, Self::Err> {
             if input.contains(EXECUTION_ID_INFIX) {
                 ExecutionIdDerived::from_str(input)
-                    .map(|ok| ExecutionId::Derived(ok))
+                    .map(ExecutionId::Derived)
                     .map_err(|err| match err {
                         ExecutionIdDerivedParseError::FirstDelimiterNotFound => {
                             unreachable!("first delimiter checked")

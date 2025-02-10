@@ -1083,7 +1083,7 @@ mod tests {
             detail: Some("detail".to_string()),
         };
         child_execution_permanently_failed_should_notify_parent(worker_error, expected_child_err)
-            .await
+            .await;
     }
 
     #[tokio::test]
@@ -1091,7 +1091,7 @@ mod tests {
         let worker_error = WorkerError::TemporaryTimeout;
         let expected_child_err = FinishedExecutionError::PermanentTimeout;
         child_execution_permanently_failed_should_notify_parent(worker_error, expected_child_err)
-            .await
+            .await;
     }
 
     #[tokio::test]
@@ -1115,9 +1115,10 @@ mod tests {
             root_cause_id,
         };
         child_execution_permanently_failed_should_notify_parent(worker_error, expected_child_err)
-            .await
+            .await;
     }
 
+    #[expect(clippy::too_many_lines)]
     async fn child_execution_permanently_failed_should_notify_parent(
         worker_error: WorkerError,
         expected_child_err: FinishedExecutionError,
