@@ -25,7 +25,7 @@ impl HistoryJoinSetCreatedEventProps {
                     label: html! {
                         <>
                             {"Join Set Created: `"}
-                            {&join_set_id.name}
+                            {join_set_id}
                             {"`"}
                         </>
                     },

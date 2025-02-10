@@ -511,8 +511,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 scheduled_at,
                 target_params,
             } => {
-                // TODO(edge case): handle ExecutionId conflict: This does not have to be deterministicly generated. Remove execution_id from EventCall::ScheduleRequest
-                // and add retries.
+                // TODO(edge case): handle ExecutionId conflict: This does not have to be deterministicly generated.
+                // Remove execution_id from EventCall::ScheduleRequest and add retries.
+                // Or use ExecutionId::generate(), but ignore the id when checking determinism.
                 let execution_id =
                     ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
                 EventCall::ScheduleRequest {

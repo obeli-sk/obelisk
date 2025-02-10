@@ -32,7 +32,7 @@ impl HistoryJoinSetRequestEventProps {
                         label: html! {
                             <>
                                 {"Join Set Request: `"}
-                                {&join_set_id.name}
+                                {join_set_id}
                                 {"`"}
                             </>
                         },
