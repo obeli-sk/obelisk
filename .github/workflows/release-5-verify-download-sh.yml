@@ -1,4 +1,4 @@
-name: release-5-verify-install-sh
+name: release-5-verify-download-sh
 
 on:
   workflow_dispatch:
@@ -51,7 +51,7 @@ jobs:
           VERSION=${TAG#v}
           mkdir temp
           cd temp
-          curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/install.sh | bash
+          curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
           ./obelisk --version | grep $VERSION
           ./obelisk server generate-config
           ./obelisk server verify
