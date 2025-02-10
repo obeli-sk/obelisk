@@ -34,6 +34,11 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Configure git before push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Run release-plz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
