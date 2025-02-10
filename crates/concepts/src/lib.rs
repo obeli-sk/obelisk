@@ -867,6 +867,7 @@ pub mod prefixed_ulid {
     use serde_with::{DeserializeFromStr, SerializeDisplay};
     use std::{
         fmt::{Debug, Display},
+        hash::Hasher,
         marker::PhantomData,
         num::ParseIntError,
         str::FromStr,
@@ -1141,16 +1142,26 @@ pub mod prefixed_ulid {
             }
         }
 
-        // TODO: Remove
         #[must_use]
         pub fn timestamp_part(&self) -> u64 {
             self.get_top_level().timestamp_part()
         }
 
-        // TODO: Remove
         #[must_use]
         pub fn random_seed(&self) -> u64 {
-            self.get_top_level().random_part()
+            let mut hasher = fxhash::FxHasher::default();
+            hasher.write_u64(self.get_top_level().random_part());
+            hasher.write_u64(self.timestamp_part());
+            if let ExecutionId::Derived(ExecutionIdDerived {
+                top_level: _,
+                infix,
+                idx,
+            }) = self
+            {
+                hasher.write(infix.as_bytes());
+                hasher.write_u64(*idx);
+            }
+            hasher.finish()
         }
 
         #[must_use]
@@ -1889,6 +1900,28 @@ mod tests {
         assert_eq!(format!("{top_level}.g:gg.1.o:oo.1"), ser);
         let parsed = ExecutionId::from_str(&ser).unwrap();
         assert_eq!(execution_id, parsed);
+    }
+
+    #[test]
+    fn execution_id_hash_should_be_stable() {
+        let parent = ExecutionId::from_parts(1, 2);
+        let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::Static("name")).unwrap();
+        let sibling_1 = parent.next_level(&join_set_id);
+        let sibling_2 = ExecutionId::Derived(sibling_1.get_incremented());
+        let sibling_1 = ExecutionId::Derived(sibling_1);
+        let join_set_id_inner =
+            JoinSetId::new(JoinSetKind::OneOff, StrVariant::Static("oo")).unwrap();
+        let child =
+            ExecutionId::Derived(sibling_1.next_level(&join_set_id_inner).get_incremented());
+        let parent = parent.random_seed();
+        let sibling_1 = sibling_1.random_seed();
+        let sibling_2 = sibling_2.random_seed();
+        let child = child.random_seed();
+        let vec = vec![parent, sibling_1, sibling_2, child];
+        insta::assert_debug_snapshot!(vec);
+        // check that every hash is unique
+        let set: hashbrown::HashSet<_> = vec.into_iter().collect();
+        assert_eq!(4, set.len());
     }
 
     #[test]

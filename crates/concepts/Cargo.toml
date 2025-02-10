@@ -19,6 +19,7 @@ chrono.workspace = true
 const_format.workspace = true
 derivative.workspace = true
 derive_more.workspace = true
+fxhash.workspace = true
 getrandom.workspace = true                       # Only needed for the madsim patch
 hashbrown.workspace = true
 indexmap.workspace = true
