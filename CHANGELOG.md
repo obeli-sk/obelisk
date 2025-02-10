@@ -3,6 +3,43 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/obeli-sk/obelisk/compare/v0.14.2...v0.15.0)
+
+### ⛰️ Features
+
+- *(db)* [**breaking**] Change format of `JoinSetId` - introduce `JoinSetKind` - ([ed83a5f](https://github.com/obeli-sk/obelisk/commit/ed83a5fca4d1fcf19cee738acfeabc3d6ec9b7d2))
+- Remove `.` from join set name charset - ([4524fef](https://github.com/obeli-sk/obelisk/commit/4524fefce40045f6b68eaeb842f49870f0f50e48))
+- Allow more characters to be used in join set name - ([7ae009b](https://github.com/obeli-sk/obelisk/commit/7ae009b3d8ce69ef6cd8139778780fe37d50b3df))
+
+### 🐛 Bug Fixes
+
+- *(db)* [**breaking**] Change serde format of `PendingStateFinishedResultKind` to snake_case - ([2f9343d](https://github.com/obeli-sk/obelisk/commit/2f9343d483b4bdc856804ecdd0b6138dd7a257d5))
+
+### 🧪 Testing
+
+- Use -submit ffqn for `WorkflowStep::SubmitWithoutAwait` - ([6ad9f8e](https://github.com/obeli-sk/obelisk/commit/6ad9f8e65c4f1002a914d8022a661acf31f54599))
+
+### 🚜 Refactor
+
+- *(doc)* Rename `install.sh` to `download.sh` - ([8b0f07c](https://github.com/obeli-sk/obelisk/commit/8b0f07caa231349b1c4395dcc8539344be3e887d))
+- *(grpc)* [**breaking**] Remove "user defined" prefix from `JoinSetId` - ([6a22e25](https://github.com/obeli-sk/obelisk/commit/6a22e253cf3a07344be0775e26ca9c063241bba9))
+- *(grpc)* [**breaking**] Remove execution id part from join set id - ([55a8108](https://github.com/obeli-sk/obelisk/commit/55a8108b92da073403895e9d5061a3b0cd32f76d))
+- *(grpc)* [**breaking**] Rename join set kind suffix `random` to `generated` - ([947ff57](https://github.com/obeli-sk/obelisk/commit/947ff57c103661e9e98c1f7be11411e57ba412e5))
+- *(grpc)* [**breaking**] Add `kind` to `JoinSetId` message - ([9190b2a](https://github.com/obeli-sk/obelisk/commit/9190b2a893d6fa97fb482b658db81a89ea0ac61d))
+- *(sqlite)* [**breaking**] Add join set id to the child execution id - ([ee811ba](https://github.com/obeli-sk/obelisk/commit/ee811ba96127d678b66ba3f9c289e4f366118af4))
+- *(sqlite)* [**breaking**] Store child version in `t_join_set_response` - ([aba3019](https://github.com/obeli-sk/obelisk/commit/aba301970a5432f3ca53cebe0b6cd604e73ba277))
+- *(sqlite)* [**breaking**] Remove `t_join_set_response.result` - ([f9e91e1](https://github.com/obeli-sk/obelisk/commit/f9e91e1863c70ad0a5e082802b2d7f8cfdbbf4f5))
+- *(ui)* Display join set kind in join sets - ([925f1ec](https://github.com/obeli-sk/obelisk/commit/925f1ece86dfa0f0cf9af4cd560232c4b8d880cd))
+- *(wit)* [**breaking**] Rename join set creation functions to `-named` and `-generated` - ([64f0877](https://github.com/obeli-sk/obelisk/commit/64f0877652c95e0694ce0df3220f25580339d805))
+- *(wit,grpc)* [**breaking**] Remove unhandled errors from `execution-error` - ([97136fd](https://github.com/obeli-sk/obelisk/commit/97136fd6f709399b3d1cfc6e4b327cba1f82cc74))
+- Use all parts of execution id for random seed - ([f68dd7c](https://github.com/obeli-sk/obelisk/commit/f68dd7caea63c4e3d582774fc0c6a2af2bab49b9))
+- Remove `UserDefined` from `JoinSetKind` variants - ([54acfc3](https://github.com/obeli-sk/obelisk/commit/54acfc3e4fa13c60b637be924d3074def16ccd01))
+- Wrap names in `ConfigName` - ([8b1727f](https://github.com/obeli-sk/obelisk/commit/8b1727f53a27e071a2599ec5be8c4ef3842d16c3))
+- Use auto-incremented index for unnamed join sets - ([a60e9e0](https://github.com/obeli-sk/obelisk/commit/a60e9e0c11c69983d31bde7de4655a9efd737f7a))
+- Shorten `JoinSetKind` string representation - ([8f520be](https://github.com/obeli-sk/obelisk/commit/8f520be110141d7135793ed0ead9630c50b5e118))
+- Externalize special characters used in `check_name` - ([5108652](https://github.com/obeli-sk/obelisk/commit/5108652cc63e09a1aa8c9c3a4b70044334015ba9))
+
+
 ## [0.14.2](https://github.com/obeli-sk/obelisk/compare/v0.14.1...v0.14.2)
 
 ### 🐛 Bug Fixes
