@@ -1303,15 +1303,15 @@ pub fn random_string(
 #[display("{}", self.as_code())]
 pub enum JoinSetKind {
     OneOff,
-    UserDefinedNamed,
-    UserDefinedGenerated,
+    Named,
+    Generated,
 }
 impl JoinSetKind {
     fn as_code(&self) -> &'static str {
         match self {
             JoinSetKind::OneOff => "o",
-            JoinSetKind::UserDefinedNamed => "n",
-            JoinSetKind::UserDefinedGenerated => "g",
+            JoinSetKind::Named => "n",
+            JoinSetKind::Generated => "g",
         }
     }
 }
@@ -1369,7 +1369,7 @@ impl<'a> Arbitrary<'a> for JoinSetId {
                 .collect()
         };
 
-        Ok(JoinSetId::new(JoinSetKind::UserDefinedGenerated, StrVariant::from(name)).unwrap())
+        Ok(JoinSetId::new(JoinSetKind::Generated, StrVariant::from(name)).unwrap())
     }
 }
 
@@ -1851,8 +1851,7 @@ mod tests {
     #[test]
     fn execution_id_with_one_level_should_parse() {
         let top_level = ExecutionId::generate();
-        let join_set_id =
-            JoinSetId::new(JoinSetKind::UserDefinedNamed, StrVariant::Static("name")).unwrap();
+        let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::Static("name")).unwrap();
         let first_child = ExecutionId::Derived(top_level.next_level(&join_set_id));
         let ser = first_child.to_string();
         assert_eq!(format!("{top_level}.n:name.0"), ser);
@@ -1863,8 +1862,7 @@ mod tests {
     #[test]
     fn execution_id_increment_twice() {
         let top_level = ExecutionId::generate();
-        let join_set_id =
-            JoinSetId::new(JoinSetKind::UserDefinedNamed, StrVariant::Static("name")).unwrap();
+        let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::Static("name")).unwrap();
         let first_child = top_level.next_level(&join_set_id);
         let second_child = ExecutionId::Derived(first_child.get_incremented());
         let ser = second_child.to_string();
@@ -1877,7 +1875,7 @@ mod tests {
     fn execution_id_next_level_twice() {
         let top_level = ExecutionId::generate();
         let join_set_id_outer =
-            JoinSetId::new(JoinSetKind::UserDefinedGenerated, StrVariant::Static("gg")).unwrap();
+            JoinSetId::new(JoinSetKind::Generated, StrVariant::Static("gg")).unwrap();
         let join_set_id_inner =
             JoinSetId::new(JoinSetKind::OneOff, StrVariant::Static("oo")).unwrap();
         let execution_id = ExecutionId::Derived(

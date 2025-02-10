@@ -415,7 +415,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 
     fn next_join_set_name_index(&mut self, kind: JoinSetKind) -> String {
-        assert!(kind != JoinSetKind::UserDefinedNamed);
+        assert!(kind != JoinSetKind::Named);
         self.event_history.join_set_count(kind).to_string()
     }
 
@@ -655,13 +655,13 @@ mod workflow_support {
             &mut self,
             name: String,
         ) -> wasmtime::Result<Resource<JoinSetId>> {
-            self.persist_join_set_with_kind(name, JoinSetKind::UserDefinedNamed)
+            self.persist_join_set_with_kind(name, JoinSetKind::Named)
                 .await
         }
 
         async fn new_join_set_generated(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
-            let name = self.next_join_set_name_index(JoinSetKind::UserDefinedGenerated);
-            self.persist_join_set_with_kind(name, JoinSetKind::UserDefinedGenerated)
+            let name = self.next_join_set_name_index(JoinSetKind::Generated);
+            self.persist_join_set_with_kind(name, JoinSetKind::Generated)
                 .await
         }
     }
