@@ -127,8 +127,8 @@ message RunId {
 message JoinSetId {
     enum JoinSetKind {
         ONE_OFF = 0;
-        USER_DEFINED_NAMED = 1;
-        USER_DEFINED_GENERATED = 2;
+        NAMED = 1;
+        GENERATED = 2;
     }
 
     JoinSetKind kind = 2;
