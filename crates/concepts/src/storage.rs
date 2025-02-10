@@ -1,4 +1,5 @@
 use crate::prefixed_ulid::DelayId;
+use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::RunId;
 use crate::ComponentId;
@@ -191,7 +192,7 @@ pub enum JoinSetResponse {
         delay_id: DelayId,
     },
     ChildExecutionFinished {
-        child_execution_id: ExecutionId,
+        child_execution_id: ExecutionIdDerived,
         #[arbitrary(value = Version(2))]
         finished_version: Version,
         #[arbitrary(value = Ok(SupportedFunctionReturnValue::None))]
@@ -210,7 +211,7 @@ impl JoinSetResponse {
     }
 
     #[must_use]
-    pub fn child_execution_id(&self) -> Option<ExecutionId> {
+    pub fn child_execution_id(&self) -> Option<ExecutionIdDerived> {
         if let JoinSetResponse::ChildExecutionFinished {
             child_execution_id, ..
         } = self
@@ -531,7 +532,9 @@ pub enum JoinSetRequest {
     },
     // Must be created by the executor in `PendingState::Locked`.
     #[display("ChildExecutionRequest({child_execution_id})")]
-    ChildExecutionRequest { child_execution_id: ExecutionId },
+    ChildExecutionRequest {
+        child_execution_id: ExecutionIdDerived,
+    },
 }
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
@@ -709,7 +712,7 @@ pub trait DbConnection: Send + Sync {
 
     async fn append_batch_respond_to_parent(
         &self,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdDerived,
         current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
         batch: Vec<AppendRequest>,
         version: Version,
@@ -1146,7 +1149,7 @@ mod tests {
     fn join_set_deser_with_result_ok_option_none_should_work() {
         let json = json!({
             "type": "ChildExecutionFinished",
-            "child_execution_id": "E_01JGKY3WWV7Z24NP9BJF90JZHB.0",
+            "child_execution_id": "E_01JGKY3WWV7Z24NP9BJF90JZHB.g:gg.0",
             "finished_version": 2,
             "result": {
                 "Ok": {
@@ -1176,8 +1179,8 @@ mod tests {
             } => (child_execution_id, finished_version, wast_val_with_type)
         );
         assert_eq!(
-            ExecutionId::from_str("E_01JGKY3WWV7Z24NP9BJF90JZHB.0").unwrap(),
-            child_execution_id
+            ExecutionId::from_str("E_01JGKY3WWV7Z24NP9BJF90JZHB.g:gg.0").unwrap(),
+            ExecutionId::Derived(child_execution_id)
         );
         assert_eq!(Version(2), finished_version);
 

@@ -717,19 +717,19 @@ pub async fn append_batch_respond_to_parent(
         .unwrap();
 
     let child_a = {
-        let parent_exe = db_connection.get(&parent_id).await.unwrap();
+        let parent_log = db_connection.get(&parent_id).await.unwrap();
         assert_matches!(
-            parent_exe.pending_state,
+            parent_log.pending_state,
             PendingState::PendingAt {
                 scheduled_at
             } if scheduled_at == sim_clock.now()
         );
         // Create child 1
-        let child_id = ExecutionId::generate();
+        let child_id = parent_id.next_level(&join_set_id);
         let child_version = db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
-                execution_id: child_id.clone(),
+                execution_id: ExecutionId::Derived(child_id.clone()),
                 ffqn: SOME_FFQN,
                 params: Params::default(),
                 parent: None,
@@ -804,11 +804,11 @@ pub async fn append_batch_respond_to_parent(
     };
     let child_b = {
         // Create child 2
-        let child_id = ExecutionId::generate();
+        let child_id = child_a.get_incremented();
         let child_version = db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
-                execution_id: child_id.clone(),
+                execution_id: ExecutionId::Derived(child_id.clone()),
                 ffqn: SOME_FFQN,
                 params: Params::default(),
                 parent: None,

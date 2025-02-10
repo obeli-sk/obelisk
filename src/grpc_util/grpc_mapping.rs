@@ -371,8 +371,8 @@ impl From<FinishedExecutionResult> for grpc::ResultDetail {
                 root_cause_id,
             }) => grpc::result_detail::Value::UnhandledChildExecutionError(
                 grpc::result_detail::UnhandledChildExecutionError {
-                    child_execution_id: Some(child_execution_id.into()),
-                    root_cause_id: Some(root_cause_id.into()),
+                    child_execution_id: Some(ExecutionId::Derived(child_execution_id).into()),
+                    root_cause_id: Some(ExecutionId::Derived(root_cause_id).into()),
                 },
             ),
         };
@@ -511,7 +511,10 @@ pub(crate) fn from_execution_event_to_grpc(
 
 pub mod response {
     use crate::command::grpc;
-    use concepts::storage::{JoinSetResponse, JoinSetResponseEventOuter, ResponseWithCursor};
+    use concepts::{
+        storage::{JoinSetResponse, JoinSetResponseEventOuter, ResponseWithCursor},
+        ExecutionId,
+    };
     use prost_wkt_types::Timestamp;
 
     impl From<ResponseWithCursor> for grpc::ResponseWithCursor {
@@ -539,7 +542,7 @@ pub mod response {
                     result,
                 } => grpc::join_set_response_event::Response::ChildExecutionFinished(
                     grpc::join_set_response_event::ChildExecutionFinished {
-                        child_execution_id: Some(child_execution_id.into()),
+                        child_execution_id: Some(ExecutionId::Derived(child_execution_id).into()),
                         result_detail: Some(result.into()),
                     },
                 ),

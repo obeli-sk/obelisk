@@ -527,9 +527,10 @@ impl Append {
                     ..
                 }
             );
+            let derived = assert_matches!(self.execution_id.clone(), ExecutionId::Derived(derived) => derived);
             db_connection
                 .append_batch_respond_to_parent(
-                    self.execution_id.clone(),
+                    derived.clone(),
                     self.created_at,
                     vec![self.primary_event],
                     self.version.clone(),
@@ -539,7 +540,7 @@ impl Append {
                         event: JoinSetResponseEvent {
                             join_set_id: child_finished.parent_join_set,
                             event: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id: self.execution_id,
+                                child_execution_id: derived,
                                 // Since self.primary_event is a finished event, the version will remain the same.
                                 finished_version: self.version,
                                 result: child_finished.result,
@@ -1067,36 +1068,59 @@ mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[rstest::rstest]
-    #[case(WorkerError::ActivityTrap {
-                reason: "error reason".to_string(),
-                trap_kind: TrapKind::Trap,
-                detail: "detail".to_string(),
-                version: Version::new(2),
-            },
-            FinishedExecutionError::PermanentFailure {
-                reason_full: "activity trap: error reason".to_string(),
-                reason_inner: "error reason".to_string(),
-                kind: PermanentFailureKind::ActivityTrap,
-                detail: Some("detail".to_string()),
-            })]
-    #[case(
-        WorkerError::TemporaryTimeout,
-        FinishedExecutionError::PermanentTimeout
-    )]
-    #[case(WorkerError::FatalError(FatalError::UnhandledChildExecutionError {
-                child_execution_id: ExecutionId::from_parts(1,1), root_cause_id: ExecutionId::from_parts(2,2)
-            },
-            Version::new(2),),
-            FinishedExecutionError::UnhandledChildExecutionError {
-                child_execution_id: ExecutionId::from_parts(1,1),
-                root_cause_id: ExecutionId::from_parts(2,2)
-            }
-            )]
     #[tokio::test]
+    async fn child_execution_permanently_failed_should_notify_parent_permanent_failure() {
+        let worker_error = WorkerError::ActivityTrap {
+            reason: "error reason".to_string(),
+            trap_kind: TrapKind::Trap,
+            detail: "detail".to_string(),
+            version: Version::new(2),
+        };
+        let expected_child_err = FinishedExecutionError::PermanentFailure {
+            reason_full: "activity trap: error reason".to_string(),
+            reason_inner: "error reason".to_string(),
+            kind: PermanentFailureKind::ActivityTrap,
+            detail: Some("detail".to_string()),
+        };
+        child_execution_permanently_failed_should_notify_parent(worker_error, expected_child_err)
+            .await
+    }
+
+    #[tokio::test]
+    async fn child_execution_permanently_failed_should_notify_parent_timeout() {
+        let worker_error = WorkerError::TemporaryTimeout;
+        let expected_child_err = FinishedExecutionError::PermanentTimeout;
+        child_execution_permanently_failed_should_notify_parent(worker_error, expected_child_err)
+            .await
+    }
+
+    #[tokio::test]
+    async fn child_execution_permanently_failed_should_notify_parent_unhandled_child() {
+        let parent_id = ExecutionId::from_parts(1, 1);
+        let join_set_id_outer =
+            JoinSetId::new(JoinSetKind::OneOff, StrVariant::Static("outer")).unwrap();
+        let root_cause_id = parent_id.next_level(&join_set_id_outer);
+        let join_set_id_inner =
+            JoinSetId::new(JoinSetKind::OneOff, StrVariant::Static("inner")).unwrap();
+        let child_execution_id = root_cause_id.next_level(&join_set_id_inner);
+        let worker_error = WorkerError::FatalError(
+            FatalError::UnhandledChildExecutionError {
+                child_execution_id: child_execution_id.clone(),
+                root_cause_id: root_cause_id.clone(),
+            },
+            Version::new(2),
+        );
+        let expected_child_err = FinishedExecutionError::UnhandledChildExecutionError {
+            child_execution_id,
+            root_cause_id,
+        };
+        child_execution_permanently_failed_should_notify_parent(worker_error, expected_child_err)
+            .await
+    }
+
     async fn child_execution_permanently_failed_should_notify_parent(
-        #[case] worker_error: WorkerError,
-        #[case] expected_child_err: FinishedExecutionError,
+        worker_error: WorkerError,
+        expected_child_err: FinishedExecutionError,
     ) {
         use concepts::storage::JoinSetResponseEventOuter;
         const LOCK_EXPIRY: Duration = Duration::from_secs(1);
@@ -1142,12 +1166,12 @@ mod tests {
         .await;
 
         let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
-        let child_execution_id = ExecutionId::generate();
+        let child_execution_id = parent_execution_id.next_level(&join_set_id);
         // executor does not append anything, this should have been written by the worker:
         {
             let child = CreateRequest {
                 created_at: sim_clock.now(),
-                execution_id: child_execution_id.clone(),
+                execution_id: ExecutionId::Derived(child_execution_id.clone()),
                 ffqn: FFQN_CHILD,
                 params: Params::empty(),
                 parent: Some((parent_execution_id.clone(), join_set_id.clone())),
@@ -1227,7 +1251,11 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let child_log = db_pool.connection().get(&child_execution_id).await.unwrap();
+        let child_log = db_pool
+            .connection()
+            .get(&ExecutionId::Derived(child_execution_id.clone()))
+            .await
+            .unwrap();
         assert!(child_log.pending_state.is_finished());
         assert_eq!(
             Version(2),

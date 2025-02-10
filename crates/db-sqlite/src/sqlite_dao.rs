@@ -2,7 +2,7 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    prefixed_ulid::{DelayId, ExecutorId, PrefixedUlid, RunId},
+    prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, PrefixedUlid, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
         DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
@@ -1958,7 +1958,7 @@ impl SqlitePool {
         let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
         let inner_res = match (
             row.get::<_, Option<DelayIdW>>("delay_id")?,
-            row.get::<_, Option<ExecutionId>>("child_execution_id")?,
+            row.get::<_, Option<ExecutionIdDerived>>("child_execution_id")?,
             row.get::<_, Option<VersionType>>("finished_version")?,
             row.get::<_, Option<JsonWrapper<ExecutionEventInner>>>("json_value")?,
         ) {
@@ -2374,7 +2374,7 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip(self, batch, parent_response_event))]
     async fn append_batch_respond_to_parent(
         &self,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdDerived,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         version: Version,
@@ -2382,6 +2382,7 @@ impl DbConnection for SqlitePool {
         parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<AppendBatchResponse, DbError> {
         debug!("append_batch_respond_to_parent");
+        let execution_id = ExecutionId::Derived(execution_id);
         if execution_id == parent_execution_id {
             // Pending state would be wrong.
             // This is not a panic because it depends on DB state.

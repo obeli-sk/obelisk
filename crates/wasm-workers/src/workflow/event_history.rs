@@ -3,11 +3,13 @@ use super::event_history::ProcessingStatus::Unprocessed;
 use super::workflow_ctx::InterruptRequested;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::host_exports::delay_id_into_wast_val;
+use crate::host_exports::execution_id_derived_into_wast_val;
 use crate::host_exports::execution_id_into_wast_val;
 use crate::host_exports::join_set_id_into_wast_val;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::DelayId;
+use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage;
 use concepts::storage::HistoryEventScheduledAt;
 use concepts::storage::PersistKind;
@@ -82,8 +84,8 @@ pub(crate) enum ApplyError {
     NondeterminismDetected(String),
     // Fatal unless when closing a join set
     UnhandledChildExecutionError {
-        child_execution_id: ExecutionId,
-        root_cause_id: ExecutionId,
+        child_execution_id: ExecutionIdDerived,
+        root_cause_id: ExecutionIdDerived,
     },
     // retriable errors:
     InterruptRequested,
@@ -188,6 +190,25 @@ impl<C: ClockFn> EventHistory<C> {
                             }
                         }
                         if *found_kind == kind
+                    )
+            })
+            .count()
+    }
+
+    pub(crate) fn execution_count(&self, join_set_id: &JoinSetId) -> usize {
+        // TODO: optimize
+        self.event_history
+            .iter()
+            .filter(|(event, processing_status)| {
+                // Do not look into the future as it would break replay.
+                *processing_status == ProcessingStatus::Processed
+                    && matches!(
+                        event,
+                        HistoryEvent::JoinSetRequest {
+                            join_set_id: found,
+                            request: JoinSetRequest::ChildExecutionRequest { .. }
+                        }
+                        if found == join_set_id
                     )
             })
             .count()
@@ -565,7 +586,7 @@ impl<C: ClockFn> EventHistory<C> {
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::StartAsync`] , return execution id
                 Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                    execution_id_into_wast_val(execution_id),
+                    execution_id_derived_into_wast_val(execution_id),
                 )))
             }
 
@@ -639,7 +660,8 @@ impl<C: ClockFn> EventHistory<C> {
                                             "Child execution finished with an execution error, failing the parent");
                                     Err(ApplyError::UnhandledChildExecutionError {
                                         child_execution_id: child_execution_id.clone(),
-                                        root_cause_id: child_execution_id.clone(), // The child is the root cause
+                                        // The child is the root cause
+                                        root_cause_id: child_execution_id.clone(),
                                     })
                                 }
                             },
@@ -649,7 +671,9 @@ impl<C: ClockFn> EventHistory<C> {
                                         // result<execution-id, tuple<execution-id, execution-error>>
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                                             WastVal::Result(Ok(Some(Box::new(
-                                                execution_id_into_wast_val(child_execution_id),
+                                                execution_id_derived_into_wast_val(
+                                                    child_execution_id,
+                                                ),
                                             )))),
                                         )))
                                     }
@@ -661,7 +685,9 @@ impl<C: ClockFn> EventHistory<C> {
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                                             WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(
                                                 vec![
-                                                    execution_id_into_wast_val(child_execution_id),
+                                                    execution_id_derived_into_wast_val(
+                                                        child_execution_id,
+                                                    ),
                                                     v.value.clone(),
                                                 ],
                                             ))))),
@@ -674,7 +700,9 @@ impl<C: ClockFn> EventHistory<C> {
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                                             WastVal::Result(Err(Some(Box::new(WastVal::Tuple(
                                                 vec![
-                                                    execution_id_into_wast_val(child_execution_id),
+                                                    execution_id_derived_into_wast_val(
+                                                        child_execution_id,
+                                                    ),
                                                     variant,
                                                 ],
                                             ))))),
@@ -695,7 +723,9 @@ impl<C: ClockFn> EventHistory<C> {
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                                             WastVal::Result(Err(Some(Box::new(WastVal::Tuple(
                                                 vec![
-                                                    execution_id_into_wast_val(child_execution_id),
+                                                    execution_id_derived_into_wast_val(
+                                                        child_execution_id,
+                                                    ),
                                                     variant,
                                                 ],
                                             ))))),
@@ -721,7 +751,8 @@ impl<C: ClockFn> EventHistory<C> {
                                                 "Child execution finished with an execution error, failing the parent");
                                         Err(ApplyError::UnhandledChildExecutionError {
                                             child_execution_id: child_execution_id.clone(),
-                                            root_cause_id: child_execution_id.clone(), // The child is the root cause
+                                            // The child is the root cause
+                                            root_cause_id: child_execution_id.clone(),
                                         })
                                     }
                                 }
@@ -936,7 +967,7 @@ impl<C: ClockFn> EventHistory<C> {
                 assert!(extension.is_none());
                 let child_req = CreateRequest {
                     created_at: called_at,
-                    execution_id: child_execution_id,
+                    execution_id: ExecutionId::Derived(child_execution_id),
                     ffqn,
                     params,
                     parent: Some((self.execution_id.clone(), join_set_id)),
@@ -1114,7 +1145,7 @@ impl<C: ClockFn> EventHistory<C> {
                 assert!(extension.is_none());
                 let child = CreateRequest {
                     created_at: called_at,
-                    execution_id: child_execution_id,
+                    execution_id: ExecutionId::Derived(child_execution_id),
                     ffqn,
                     params,
                     parent: Some((self.execution_id.clone(), join_set_id)),
@@ -1227,7 +1258,7 @@ pub(crate) enum EventCall {
     StartAsync {
         ffqn: FunctionFqn,
         join_set_id: JoinSetId,
-        child_execution_id: ExecutionId,
+        child_execution_id: ExecutionIdDerived,
         params: Params,
     },
     ScheduleRequest {
@@ -1245,7 +1276,7 @@ pub(crate) enum EventCall {
     BlockingChildDirectCall {
         ffqn: FunctionFqn,
         join_set_id: JoinSetId,
-        child_execution_id: ExecutionId,
+        child_execution_id: ExecutionIdDerived,
         params: Params,
     },
     BlockingDelayRequest {
@@ -1298,7 +1329,7 @@ enum EventHistoryKey {
     },
     ChildExecutionRequest {
         join_set_id: JoinSetId,
-        child_execution_id: ExecutionId,
+        child_execution_id: ExecutionIdDerived,
     },
     DelayRequest {
         join_set_id: JoinSetId,
@@ -1405,6 +1436,7 @@ mod tests {
     use crate::workflow::event_history::ApplyError;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
+    use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::{
@@ -1497,7 +1529,7 @@ mod tests {
 
         let join_set_id =
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
-        let child_execution_id = ExecutionId::generate();
+        let child_execution_id = execution_id.next_level(&join_set_id);
 
         let blocking_join_first = |mut event_history: EventHistory<_>,
                                    mut version: Version,
@@ -1610,7 +1642,7 @@ mod tests {
             version: &mut Version,
             db_pool: &impl DbPool<DB>,
             join_set_id: JoinSetId,
-            child_execution_id: ExecutionId,
+            child_execution_id: ExecutionIdDerived,
             fn_registry: &dyn FunctionRegistry,
         ) {
             event_history
@@ -1677,7 +1709,7 @@ mod tests {
 
         let join_set_id =
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
-        let child_execution_id = ExecutionId::generate();
+        let child_execution_id = execution_id.next_level(&join_set_id);
 
         start_async(
             &mut event_history,
@@ -1742,7 +1774,7 @@ mod tests {
             .unwrap();
 
         let child_resp_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-            execution_id_into_wast_val(&child_execution_id),
+            execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id)),
             WastVal::U8(1),
         ]))))));
 
@@ -1776,8 +1808,8 @@ mod tests {
             db_pool: &impl DbPool<DB>,
             fn_registry: &dyn FunctionRegistry,
             join_set_id: JoinSetId,
-            child_execution_id_a: ExecutionId,
-            child_execution_id_b: ExecutionId,
+            child_execution_id_a: ExecutionIdDerived,
+            child_execution_id_b: ExecutionIdDerived,
         ) -> Result<Option<WastVal>, ApplyError> {
             event_history
                 .apply(
@@ -1870,8 +1902,9 @@ mod tests {
 
         let join_set_id =
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
-        let child_execution_id_a = ExecutionId::generate();
-        let child_execution_id_b = ExecutionId::generate();
+
+        let child_execution_id_a = execution_id.next_level(&join_set_id);
+        let child_execution_id_b = child_execution_id_a.get_incremented();
 
         assert_matches!(
             blocking_join_first(
@@ -1943,7 +1976,7 @@ mod tests {
         .await
         .unwrap();
         let kid_a_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-            execution_id_into_wast_val(&child_execution_id_a),
+            execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id_a)),
             WastVal::U8(1),
         ]))))));
         assert_eq!(kid_a_wrapped, res);
@@ -1962,7 +1995,7 @@ mod tests {
             .await
             .unwrap();
         let kid_b_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-            execution_id_into_wast_val(&child_execution_id_b),
+            execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id_b)),
             WastVal::U8(2),
         ]))))));
         assert_eq!(kid_b_wrapped, res.into_wast_val());

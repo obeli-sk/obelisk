@@ -257,7 +257,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .exported_ffqn_to_index
             .get(&ctx.ffqn)
             .expect("executor only calls `run` with ffqns that are exported");
-        let seed = ctx.execution_id.random_part();
+        let seed = ctx.execution_id.random_seed();
         let workflow_ctx = WorkflowCtx::new(
             ctx.execution_id,
             ctx.event_history,

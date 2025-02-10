@@ -5,14 +5,15 @@ use crate::host_exports::{
 };
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::WasmFileError;
+use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel};
 use concepts::storage::{
     AppendRequest, ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
     HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
 };
 use concepts::{
     ComponentId, ComponentType, ExecutionId, ExecutionMetadata, FinishedExecutionError,
-    FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, Params, PermanentFailureKind,
-    StrVariant,
+    FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, JoinSetKind, Params,
+    PermanentFailureKind, StrVariant,
 };
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use derivative::Derivative;
@@ -304,7 +305,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                         .serve_connection(
                             io,
                             hyper::service::service_fn(move |req| {
-                                let execution_id = ExecutionId::generate();
+                                let execution_id = ExecutionId::generate().get_top_level();
                                 debug!(%execution_id, method = %req.method(), uri = %req.uri(), "Processing request");
                                 RequestHandler {
                                     engine: engine.clone(),
@@ -350,8 +351,9 @@ struct WebhookEndpointCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
-    execution_id: ExecutionId,
-    next_child_execution_id: ExecutionId,
+    execution_id: ExecutionIdTopLevel,
+    next_child_execution_id: ExecutionIdDerived,
+    join_set_id_direct: JoinSetId,
     version: Option<Version>,
     component_logger: ComponentLogger,
     phantom_data: PhantomData<DB>,
@@ -370,10 +372,10 @@ enum WebhookEndpointFunctionError {
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
-    fn get_and_increment_child_id(&mut self) -> ExecutionId {
-        let mut incremented = self.next_child_execution_id.increment();
+    fn next_child_id(&mut self) -> ExecutionIdDerived {
+        let mut incremented = self.next_child_execution_id.get_incremented();
         std::mem::swap(&mut self.next_child_execution_id, &mut incremented);
-        incremented
+        incremented // return the old value
     }
 
     // Create new execution if this is the first call of the request/response cycle
@@ -382,11 +384,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             return Ok(found.clone());
         }
         let created_at = self.clock_fn.now();
-        // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
+        // Associate the top level execution with the request span. Allows to find the trace by execution id.
         let metadata = concepts::ExecutionMetadata::from_parent_span(&self.component_logger.span);
         let create_request = CreateRequest {
             created_at,
-            execution_id: self.execution_id.clone(),
+            execution_id: ExecutionId::TopLevel(self.execution_id.clone()),
             ffqn: HTTP_HANDLER_FFQN,
             params: Params::empty(),
             parent: None,
@@ -496,14 +498,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                     max_retries: import_retry_config.max_retries,
                     retry_exp_backoff: import_retry_config.retry_exp_backoff,
                     component_id,
-                    scheduled_by: Some(self.execution_id.clone()),
+                    scheduled_by: Some(ExecutionId::TopLevel(self.execution_id.clone())),
                 };
                 let db_connection = self.db_pool.connection();
                 let version = db_connection
                     .append_batch_create_new_execution(
                         created_at,
                         vec![child_exec_req],
-                        self.execution_id.clone(),
+                        ExecutionId::TopLevel(self.execution_id.clone()),
                         version.clone(),
                         vec![create_child_req],
                     )
@@ -522,21 +524,19 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             let version = self.get_version().await?;
             let span = Span::current();
             span.record("version", tracing::field::display(&version));
-            let child_execution_id = self.get_and_increment_child_id();
+            let child_execution_id = self.next_child_id();
             let created_at = self.clock_fn.now();
             let Some((_function_metadata, component_id, import_retry_config)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
             else {
                 return Err(WebhookEndpointFunctionError::FunctionMetadataNotFound { ffqn });
             };
-            let join_set_id =
-                JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
 
             let req_join_set_created = AppendRequest {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSet {
-                        join_set_id: join_set_id.clone(),
+                        join_set_id: self.join_set_id_direct.clone(),
                     },
                 },
             };
@@ -544,7 +544,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
-                        join_set_id: join_set_id.clone(),
+                        join_set_id: self.join_set_id_direct.clone(),
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
                         },
@@ -555,7 +555,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinNext {
-                        join_set_id: join_set_id.clone(),
+                        join_set_id: self.join_set_id_direct.clone(),
                         run_expires_at: created_at, // does not matter what the pending state is.
                         closing: false,
                     },
@@ -563,10 +563,13 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             };
             let req_create_child = CreateRequest {
                 created_at,
-                execution_id: child_execution_id.clone(),
+                execution_id: ExecutionId::Derived(child_execution_id.clone()),
                 ffqn,
                 params: Params::from_wasmtime(Arc::from(params)),
-                parent: Some((self.execution_id.clone(), join_set_id)),
+                parent: Some((
+                    ExecutionId::TopLevel(self.execution_id.clone()),
+                    self.join_set_id_direct.clone(),
+                )),
                 metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
                 scheduled_at: created_at,
                 max_retries: import_retry_config.max_retries,
@@ -579,7 +582,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 .append_batch_create_new_execution(
                     created_at,
                     vec![req_join_set_created, req_child_exec, req_join_next],
-                    self.execution_id.clone(),
+                    ExecutionId::TopLevel(self.execution_id.clone()),
                     version.clone(),
                     vec![req_create_child],
                 )
@@ -587,7 +590,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             self.version = Some(version);
 
             let res = db_connection
-                .wait_for_finished_result(&child_execution_id, None /* TODO timeouts */)
+                .wait_for_finished_result(
+                    &ExecutionId::Derived(child_execution_id.clone()),
+                    None, /* TODO timeouts */
+                )
                 .await;
             trace!("Finished result: {res:?}");
 
@@ -632,7 +638,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
         db_pool: P,
         fn_registry: Arc<dyn FunctionRegistry>,
         params: impl Iterator<Item = (&'a str, &'a str)>,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdTopLevel,
         forward_stdout: Option<StdOutput>,
         forward_stderr: Option<StdOutput>,
         env_vars: &[EnvVar],
@@ -654,6 +660,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             wasi_ctx.env(key, val);
         }
         let wasi_ctx = wasi_ctx.build();
+        // All child executions are part of the same join set.
+        let join_set_id_direct = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         let ctx = WebhookEndpointCtx {
             clock_fn,
             db_pool,
@@ -663,7 +671,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             http_ctx: WasiHttpCtx::new(),
             version: None,
             component_id,
-            next_child_execution_id: execution_id.next_level(),
+            next_child_execution_id: ExecutionId::TopLevel(execution_id)
+                .next_level(&join_set_id_direct),
+            join_set_id_direct,
             execution_id,
             component_logger: ComponentLogger { span: request_span },
             phantom_data: PhantomData,
@@ -678,7 +688,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             self.db_pool
                 .connection()
                 .append(
-                    self.execution_id,
+                    ExecutionId::TopLevel(self.execution_id),
                     version,
                     AppendRequest {
                         created_at: self.clock_fn.now(),
@@ -749,7 +759,7 @@ struct RequestHandler<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPoo
     clock_fn: C,
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
-    execution_id: ExecutionId,
+    execution_id: ExecutionIdTopLevel,
     router: Arc<MethodAwareRouter<WebhookEndpointInstance<C, DB, P>>>,
     phantom_data: PhantomData<DB>,
 }

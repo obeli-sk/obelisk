@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    prefixed_ulid::{ExecutorId, RunId},
+    prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
         DbConnection, DbError, DbPool, ExecutionEvent, ExecutionListPagination, ExecutionLog,
@@ -145,7 +145,7 @@ impl DbConnection for DbConnectionProxy {
 
     async fn append_batch_respond_to_parent(
         &self,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdDerived,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         version: Version,

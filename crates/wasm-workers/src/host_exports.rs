@@ -15,6 +15,7 @@ wasmtime::component::bindgen!({
 });
 
 use crate::workflow::workflow_ctx::WorkflowCtx;
+use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::JoinSetId;
 use concepts::{
     prefixed_ulid::DelayId,
@@ -77,6 +78,10 @@ pub(crate) fn execution_id_into_val(execution_id: &ExecutionId) -> Val {
         "id".to_string(),
         Val::String(execution_id.to_string()),
     )])
+}
+
+pub(crate) fn execution_id_derived_into_wast_val(execution_id: &ExecutionIdDerived) -> WastVal {
+    WastVal::Record(indexmap! {"id".to_string() => WastVal::String(execution_id.to_string())})
 }
 
 pub(crate) fn join_set_id_into_wast_val(join_set_id: &JoinSetId) -> WastVal {

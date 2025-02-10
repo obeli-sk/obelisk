@@ -7,7 +7,7 @@ use crate::host_exports::{
 use crate::{host_exports, WasmFileError};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::DelayId;
+use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::{ExecutionId, FunctionRegistry, IfcFqnName, StrVariant};
@@ -33,8 +33,8 @@ pub(crate) enum WorkflowFunctionError {
     NondeterminismDetected(String),
     #[error("child execution finished with an execution error: {child_execution_id}")]
     UnhandledChildExecutionError {
-        child_execution_id: ExecutionId,
-        root_cause_id: ExecutionId,
+        child_execution_id: ExecutionIdDerived,
+        root_cause_id: ExecutionIdDerived,
     },
     #[error("error calling imported function {ffqn} - {reason}")]
     ImportedFunctionCallError {
@@ -121,7 +121,6 @@ impl From<ApplyError> for WorkflowFunctionError {
 
 pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     execution_id: ExecutionId,
-    next_child_execution_id: ExecutionId,
     event_history: EventHistory<C>,
     rng: StdRng,
     pub(crate) clock_fn: C,
@@ -326,7 +325,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     ) -> Self {
         Self {
             execution_id: execution_id.clone(),
-            next_child_execution_id: execution_id.next_level(),
             event_history: EventHistory::new(
                 execution_id,
                 event_history,
@@ -348,12 +346,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             resource_table: wasmtime::component::ResourceTable::default(),
             phantom_data: PhantomData,
         }
-    }
-
-    fn get_and_increment_child_id(&mut self) -> ExecutionId {
-        let mut incremented = self.next_child_execution_id.increment();
-        std::mem::swap(&mut self.next_child_execution_id, &mut incremented);
-        incremented
     }
 
     pub(crate) async fn flush(&mut self) -> Result<(), DbError> {
@@ -422,8 +414,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         rand::Rng::gen(&mut self.rng)
     }
 
-    // FIXME: Instead of a random name, use an auto incrementing integer.
     fn next_join_set_name_index(&mut self, kind: JoinSetKind) -> String {
+        assert!(kind != JoinSetKind::UserDefinedNamed);
         self.event_history.join_set_count(kind).to_string()
     }
 
@@ -495,11 +487,18 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             .await
     }
 
+    fn next_child_id(&mut self, join_set_id: &JoinSetId) -> ExecutionIdDerived {
+        let count = self.event_history.execution_count(join_set_id);
+        self.execution_id
+            .next_level(join_set_id)
+            .get_incremented_by(u64::try_from(count).unwrap())
+    }
+
     fn imported_fn_to_event_call(&mut self, imported_fn_call: ImportedFnCall) -> EventCall {
         match imported_fn_call {
             ImportedFnCall::Direct { ffqn, params } => {
                 let join_set_id = self.next_join_set_one_off();
-                let child_execution_id = self.get_and_increment_child_id();
+                let child_execution_id = self.execution_id.next_level(&join_set_id);
                 EventCall::BlockingChildDirectCall {
                     ffqn,
                     join_set_id,
@@ -528,7 +527,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 join_set_id,
                 target_params,
             } => {
-                let child_execution_id = self.get_and_increment_child_id();
+                let child_execution_id = self.next_child_id(&join_set_id);
                 EventCall::StartAsync {
                     ffqn: target_ffqn,
                     join_set_id,
@@ -827,7 +826,7 @@ pub(crate) mod tests {
         #[expect(clippy::too_many_lines)]
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             info!("Starting");
-            let seed = ctx.execution_id.random_part();
+            let seed = ctx.execution_id.random_seed();
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id.clone(),
                 ctx.event_history,
@@ -1223,7 +1222,10 @@ pub(crate) mod tests {
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
                     info!("Executing child {child_execution_id}");
                     assert!(child_execution_count > 0);
-                    let child_log = db_connection.get(&child_execution_id).await.unwrap();
+                    let child_log = db_connection
+                        .get(&ExecutionId::Derived(child_execution_id.clone()))
+                        .await
+                        .unwrap();
                     assert_eq!(
                         Some((execution_id.clone(), join_set_id.clone())),
                         child_log.parent()
@@ -1255,7 +1257,10 @@ pub(crate) mod tests {
                     };
                     assert_eq!(1, child_exec_tick.wait_for_tasks().await.unwrap());
                     child_execution_count -= 1;
-                    let child_log = db_connection.get(&child_execution_id).await.unwrap();
+                    let child_log = db_connection
+                        .get(&ExecutionId::Derived(child_execution_id.clone()))
+                        .await
+                        .unwrap();
                     debug!(
                         "Child execution {child_execution_id} should be finished: {:?}",
                         &child_log.events

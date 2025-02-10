@@ -7,7 +7,7 @@ pub use indexmap;
 use indexmap::IndexMap;
 use opentelemetry::propagation::{Extractor, Injector};
 pub use prefixed_ulid::ExecutionId;
-use prefixed_ulid::ExecutionIdParseError;
+use prefixed_ulid::{ExecutionIdDerived, ExecutionIdParseError};
 use serde_json::Value;
 use std::{
     borrow::Borrow,
@@ -45,8 +45,8 @@ pub enum FinishedExecutionError {
     // Workflow only
     #[error("unhandled child execution error {child_execution_id}")]
     UnhandledChildExecutionError {
-        child_execution_id: ExecutionId,
-        root_cause_id: ExecutionId,
+        child_execution_id: ExecutionIdDerived,
+        root_cause_id: ExecutionIdDerived,
     },
     #[error("permanent failure: {reason_full}")]
     PermanentFailure {
@@ -865,14 +865,16 @@ pub mod prefixed_ulid {
     use arbitrary::Arbitrary;
     use derivative::Derivative;
     use serde_with::{DeserializeFromStr, SerializeDisplay};
-    use smallvec::SmallVec;
     use std::{
         fmt::{Debug, Display},
         marker::PhantomData,
         num::ParseIntError,
         str::FromStr,
+        sync::Arc,
     };
     use ulid::Ulid;
+
+    use crate::JoinSetId;
 
     #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr, Derivative)]
     #[display("{}_{ulid}", Self::prefix())]
@@ -1006,7 +1008,7 @@ pub mod prefixed_ulid {
     }
 
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
-    pub type TopLevelExecutionId = PrefixedUlid<prefix::E>;
+    pub type ExecutionIdTopLevel = PrefixedUlid<prefix::E>;
     pub type RunId = PrefixedUlid<prefix::Run>;
     pub type DelayId = PrefixedUlid<prefix::Delay>;
 
@@ -1019,93 +1021,159 @@ pub mod prefixed_ulid {
         }
     }
 
-    type SuffixVec = SmallVec<[u64; 5]>;
-
     #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, SerializeDisplay, DeserializeFromStr, Clone)]
-    pub struct ExecutionId(ExecutionIdInner);
+    pub enum ExecutionId {
+        TopLevel(ExecutionIdTopLevel),
+        Derived(ExecutionIdDerived),
+    }
 
-    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
-    enum ExecutionIdInner {
-        TopLevel(TopLevelExecutionId),
-        Derived(TopLevelExecutionId, SuffixVec),
+    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, SerializeDisplay, DeserializeFromStr)]
+    pub struct ExecutionIdDerived {
+        top_level: ExecutionIdTopLevel,
+        infix: Arc<str>,
+        idx: u64,
+    }
+    impl ExecutionIdDerived {
+        #[must_use]
+        pub fn get_incremented(&self) -> Self {
+            self.get_incremented_by(1)
+        }
+        pub fn get_incremented_by(&self, count: u64) -> Self {
+            ExecutionIdDerived {
+                top_level: self.top_level.clone(),
+                infix: self.infix.clone(),
+                idx: self.idx + count,
+            }
+        }
+        pub fn next_level(&self, join_set_id: &JoinSetId) -> ExecutionIdDerived {
+            let ExecutionIdDerived {
+                top_level,
+                infix,
+                idx,
+            } = self;
+            let infix = Arc::from(format!(
+                "{infix}{EXECUTION_ID_INFIX}{idx}{EXECUTION_ID_INFIX}{join_set_id}"
+            ));
+            ExecutionIdDerived {
+                top_level: *top_level,
+                infix,
+                idx: 0,
+            }
+        }
+        fn display_or_debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let ExecutionIdDerived {
+                top_level,
+                infix,
+                idx,
+            } = self;
+            write!(
+                f,
+                "{top_level}{EXECUTION_ID_INFIX}{infix}{EXECUTION_ID_INFIX}{idx}"
+            )
+        }
+    }
+    impl Debug for ExecutionIdDerived {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.display_or_debug(f)
+        }
+    }
+    impl Display for ExecutionIdDerived {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.display_or_debug(f)
+        }
+    }
+    impl FromStr for ExecutionIdDerived {
+        type Err = ExecutionIdDerivedParseError;
+
+        fn from_str(input: &str) -> Result<Self, Self::Err> {
+            if let Some((prefix, suffix)) = input.split_once(EXECUTION_ID_INFIX) {
+                let top_level = PrefixedUlid::from_str(prefix)
+                    .map_err(ExecutionIdDerivedParseError::PrefixedUlidParseError)?;
+                let Some((infix, idx)) = suffix.rsplit_once(EXECUTION_ID_INFIX) else {
+                    return Err(ExecutionIdDerivedParseError::SecondDelimiterNotFound);
+                };
+                let infix = Arc::from(infix);
+                let idx =
+                    u64::from_str(idx).map_err(ExecutionIdDerivedParseError::ParseIndexError)?;
+                Ok(ExecutionIdDerived {
+                    top_level,
+                    infix,
+                    idx,
+                })
+            } else {
+                Err(ExecutionIdDerivedParseError::FirstDelimiterNotFound)
+            }
+        }
+    }
+    impl<'a> Arbitrary<'a> for ExecutionIdDerived {
+        fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+            let top_level = ExecutionId::TopLevel(ExecutionIdTopLevel::arbitrary(u)?);
+            let join_set_id = JoinSetId::arbitrary(u)?;
+            Ok(top_level.next_level(&join_set_id))
+        }
+    }
+    #[derive(Debug, thiserror::Error)]
+    pub enum ExecutionIdDerivedParseError {
+        #[error(transparent)]
+        PrefixedUlidParseError(PrefixedUlidParseError),
+        #[error(
+            "cannot parse derived execution id - first delimiter `{EXECUTION_ID_INFIX}` not found"
+        )]
+        FirstDelimiterNotFound,
+        #[error(
+            "cannot parse derived execution id - second delimiter `{EXECUTION_ID_INFIX}` not found"
+        )]
+        SecondDelimiterNotFound,
+        #[error("cannot parse derived execution id - last suffix must be a number")]
+        ParseIndexError(ParseIntError),
     }
 
     impl ExecutionId {
         #[must_use]
         pub fn generate() -> Self {
-            ExecutionId(ExecutionIdInner::TopLevel(PrefixedUlid::generate()))
+            ExecutionId::TopLevel(PrefixedUlid::generate())
         }
 
-        fn get_top_level(&self) -> TopLevelExecutionId {
-            match &self.0 {
-                ExecutionIdInner::TopLevel(prefixed_ulid) => *prefixed_ulid,
-                ExecutionIdInner::Derived(prefixed_uild, _) => *prefixed_uild,
+        pub fn get_top_level(&self) -> ExecutionIdTopLevel {
+            match &self {
+                ExecutionId::TopLevel(prefixed_ulid) => *prefixed_ulid,
+                ExecutionId::Derived(ExecutionIdDerived { top_level, .. }) => *top_level,
             }
         }
 
+        // TODO: Remove
         #[must_use]
         pub fn timestamp_part(&self) -> u64 {
             self.get_top_level().timestamp_part()
         }
 
+        // TODO: Remove
         #[must_use]
-        pub fn random_part(&self) -> u64 {
+        pub fn random_seed(&self) -> u64 {
             self.get_top_level().random_part()
         }
 
         #[must_use]
         pub const fn from_parts(timestamp_ms: u64, random_part: u128) -> Self {
-            ExecutionId(ExecutionIdInner::TopLevel(TopLevelExecutionId::from_parts(
-                timestamp_ms,
-                random_part,
-            )))
+            ExecutionId::TopLevel(ExecutionIdTopLevel::from_parts(timestamp_ms, random_part))
         }
 
         #[must_use]
-        pub fn increment(&self) -> Self {
-            match &self.0 {
-                ExecutionIdInner::TopLevel(_) => {
-                    // FIXME: Make this a compile error
-                    panic!("called `increment` on the top level ExecutionId")
-                }
-                ExecutionIdInner::Derived(top_level, suffix_vec) => {
-                    let mut suffix_vec = suffix_vec.clone();
-                    *suffix_vec
-                        .last_mut()
-                        .expect("empty smallvec is never constructed") += 1;
-                    ExecutionId(ExecutionIdInner::Derived(*top_level, suffix_vec))
-                }
-            }
-        }
-        #[must_use]
-        pub fn next_level(&self) -> Self {
-            match &self.0 {
-                ExecutionIdInner::TopLevel(top_level) => {
-                    let mut suffix: SuffixVec = SmallVec::new();
-                    suffix.push(0);
-                    ExecutionId(ExecutionIdInner::Derived(*top_level, suffix))
-                }
-                ExecutionIdInner::Derived(top_level, suffix) => {
-                    let mut suffix = suffix.clone();
-                    suffix.push(0);
-                    ExecutionId(ExecutionIdInner::Derived(*top_level, suffix))
-                }
+        pub fn next_level(&self, join_set_id: &JoinSetId) -> ExecutionIdDerived {
+            match &self {
+                ExecutionId::TopLevel(top_level) => ExecutionIdDerived {
+                    top_level: *top_level,
+                    infix: Arc::from(join_set_id.to_string()),
+                    idx: 0,
+                },
+                ExecutionId::Derived(derived) => derived.next_level(join_set_id),
             }
         }
 
         fn display_or_debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            match &self.0 {
-                ExecutionIdInner::TopLevel(top_level) => Display::fmt(top_level, f),
-                ExecutionIdInner::Derived(top_level, suffix) => {
-                    write!(f, "{top_level}{EXECUTION_ID_INFIX}")?;
-                    for (idx, part) in suffix.iter().enumerate() {
-                        if idx > 0 {
-                            write!(f, "{EXECUTION_ID_INFIX}")?;
-                        }
-                        write!(f, "{part}")?;
-                    }
-                    Ok(())
-                }
+            match &self {
+                ExecutionId::TopLevel(top_level) => Display::fmt(top_level, f),
+                ExecutionId::Derived(derived) => Display::fmt(derived, f),
             }
         }
     }
@@ -1116,25 +1184,41 @@ pub mod prefixed_ulid {
     pub enum ExecutionIdParseError {
         #[error(transparent)]
         PrefixedUlidParseError(#[from] PrefixedUlidParseError),
-        #[error(transparent)]
-        ParseIntError(#[from] ParseIntError),
+        #[error(
+            "cannot parse derived execution id - first delimiter `{EXECUTION_ID_INFIX}` not found"
+        )]
+        FirstDelimiterNotFound,
+        #[error(
+            "cannot parse derived execution id - second delimiter `{EXECUTION_ID_INFIX}` not found"
+        )]
+        SecondDelimiterNotFound,
+        #[error("cannot parse derived execution id - last suffix must be a number")]
+        ParseIndexError(#[from] ParseIntError),
     }
 
     impl FromStr for ExecutionId {
         type Err = ExecutionIdParseError;
 
         fn from_str(input: &str) -> Result<Self, Self::Err> {
-            if let Some((prefix, suffix)) = input.split_once(EXECUTION_ID_INFIX) {
-                let top_level = PrefixedUlid::from_str(prefix)?;
-                let suffix = suffix
-                    .split(EXECUTION_ID_INFIX)
-                    .map(u64::from_str)
-                    .collect::<Result<SuffixVec, _>>()?;
-                Ok(ExecutionId(ExecutionIdInner::Derived(top_level, suffix)))
+            if input.contains(EXECUTION_ID_INFIX) {
+                ExecutionIdDerived::from_str(input)
+                    .map(|ok| ExecutionId::Derived(ok))
+                    .map_err(|err| match err {
+                        ExecutionIdDerivedParseError::FirstDelimiterNotFound => {
+                            unreachable!("first delimiter checked")
+                        }
+                        ExecutionIdDerivedParseError::SecondDelimiterNotFound => {
+                            ExecutionIdParseError::SecondDelimiterNotFound
+                        }
+                        ExecutionIdDerivedParseError::PrefixedUlidParseError(err) => {
+                            ExecutionIdParseError::PrefixedUlidParseError(err)
+                        }
+                        ExecutionIdDerivedParseError::ParseIndexError(err) => {
+                            ExecutionIdParseError::ParseIndexError(err)
+                        }
+                    })
             } else {
-                Ok(ExecutionId(ExecutionIdInner::TopLevel(
-                    PrefixedUlid::from_str(input)?,
-                )))
+                Ok(ExecutionId::TopLevel(PrefixedUlid::from_str(input)?))
             }
         }
     }
@@ -1153,9 +1237,7 @@ pub mod prefixed_ulid {
 
     impl<'a> Arbitrary<'a> for ExecutionId {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-            Ok(ExecutionId(ExecutionIdInner::TopLevel(
-                PrefixedUlid::arbitrary(u)?,
-            )))
+            Ok(ExecutionId::TopLevel(PrefixedUlid::arbitrary(u)?))
         }
     }
 }
@@ -1727,9 +1809,10 @@ impl opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'_
 #[cfg(test)]
 mod tests {
 
-    use crate::{prefixed_ulid::ExecutorId, ExecutionId, StrVariant};
+    use crate::{prefixed_ulid::ExecutorId, ExecutionId, JoinSetId, JoinSetKind, StrVariant};
     use std::{
         hash::{DefaultHasher, Hash, Hasher},
+        str::FromStr,
         sync::Arc,
     };
 
@@ -1766,39 +1849,48 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "called `increment` on the top level ExecutionId")]
-    fn execution_id_increment_on_top_level_should_panic() {
+    fn execution_id_with_one_level_should_parse() {
         let top_level = ExecutionId::generate();
-        let _ = top_level.increment();
-    }
-
-    #[test]
-    fn execution_id_next_level_should_work() {
-        let top_level = ExecutionId::generate();
-        let first_child = top_level.next_level();
-        assert_eq!(format!("{top_level}.0"), first_child.to_string());
+        let join_set_id =
+            JoinSetId::new(JoinSetKind::UserDefinedNamed, StrVariant::Static("name")).unwrap();
+        let first_child = ExecutionId::Derived(top_level.next_level(&join_set_id));
+        let ser = first_child.to_string();
+        assert_eq!(format!("{top_level}.n:name.0"), ser);
+        let parsed = ExecutionId::from_str(&ser).unwrap();
+        assert_eq!(first_child, parsed);
     }
 
     #[test]
     fn execution_id_increment_twice() {
         let top_level = ExecutionId::generate();
-        let second_child = top_level.next_level().increment();
-        assert_eq!(format!("{top_level}.1"), second_child.to_string());
+        let join_set_id =
+            JoinSetId::new(JoinSetKind::UserDefinedNamed, StrVariant::Static("name")).unwrap();
+        let first_child = top_level.next_level(&join_set_id);
+        let second_child = ExecutionId::Derived(first_child.get_incremented());
+        let ser = second_child.to_string();
+        assert_eq!(format!("{top_level}.n:name.1"), ser);
+        let parsed = ExecutionId::from_str(&ser).unwrap();
+        assert_eq!(second_child, parsed);
     }
 
     #[test]
     fn execution_id_next_level_twice() {
         let top_level = ExecutionId::generate();
-        let second_child = top_level.next_level().next_level().increment();
-        assert_eq!(format!("{top_level}.0.1"), second_child.to_string());
-    }
-
-    #[test]
-    fn execution_id_parsing_derived() {
-        let generated = ExecutionId::generate().next_level().increment();
-        let str = generated.to_string();
-        let parsed = str.parse().unwrap();
-        assert_eq!(generated, parsed);
+        let join_set_id_outer =
+            JoinSetId::new(JoinSetKind::UserDefinedGenerated, StrVariant::Static("gg")).unwrap();
+        let join_set_id_inner =
+            JoinSetId::new(JoinSetKind::OneOff, StrVariant::Static("oo")).unwrap();
+        let execution_id = ExecutionId::Derived(
+            top_level
+                .next_level(&join_set_id_outer)
+                .get_incremented()
+                .next_level(&join_set_id_inner)
+                .get_incremented(),
+        );
+        let ser = execution_id.to_string();
+        assert_eq!(format!("{top_level}.g:gg.1.o:oo.1"), ser);
+        let parsed = ExecutionId::from_str(&ser).unwrap();
+        assert_eq!(execution_id, parsed);
     }
 
     #[test]

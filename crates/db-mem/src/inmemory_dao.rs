@@ -7,7 +7,7 @@ use self::index::JournalsIndex;
 use crate::journal::ExecutionJournal;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{ExecutorId, RunId};
+use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest, DbConnection,
     DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
@@ -138,7 +138,7 @@ impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all, %execution_id)]
     async fn append_batch_respond_to_parent(
         &self,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdDerived,
         _created_at: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         version: Version,
@@ -729,13 +729,14 @@ impl DbHolder {
 
     fn append_batch_respond_to_parent(
         &mut self,
-        execution_id: &ExecutionId,
+        execution_id: &ExecutionIdDerived,
         batch: Vec<AppendRequest>,
         version: Version,
         parent_execution_id: &ExecutionId,
         parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<Version, SpecificError> {
-        let child_version = self.append_batch(batch, execution_id, version)?;
+        let child_version =
+            self.append_batch(batch, &ExecutionId::Derived(execution_id.clone()), version)?;
         self.append_response(parent_execution_id, parent_response_event)?;
         Ok(child_version)
     }

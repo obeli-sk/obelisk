@@ -1,4 +1,4 @@
-use crate::{ExecutionId, JoinSetId};
+use crate::{prefixed_ulid::ExecutionIdDerived, ExecutionId, JoinSetId};
 use rusqlite::{
     types::{FromSql, FromSqlError, ToSqlOutput},
     ToSql,
@@ -17,6 +17,24 @@ impl FromSql for ExecutionId {
             error!(
                 backtrace = %std::backtrace::Backtrace::capture(),
                 "Cannot convert to ExecutionId value:`{str}` - {err:?}"
+            );
+            FromSqlError::InvalidType
+        })
+    }
+}
+
+impl ToSql for ExecutionIdDerived {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
+    }
+}
+impl FromSql for ExecutionIdDerived {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let str = value.as_str()?;
+        str.parse::<ExecutionIdDerived>().map_err(|err| {
+            error!(
+                backtrace = %std::backtrace::Backtrace::capture(),
+                "Cannot convert to ExecutionIdDerived value:`{str}` - {err:?}"
             );
             FromSqlError::InvalidType
         })

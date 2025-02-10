@@ -229,7 +229,6 @@ serde_json = "1.0.137"
 serde_with = "3.12.0"
 sha2 = "0.10.8"
 shadow-rs = "0.37"
-smallvec = "1.13.2"
 strum = { version = "0.26.3", features = ["derive"] }
 tempfile = "3.14.0"
 thiserror = "2.0"

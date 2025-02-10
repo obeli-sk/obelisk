@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::HistoryEvent;
 use concepts::storage::Version;
@@ -91,8 +92,8 @@ pub enum FatalError {
     /// Used by workflow worker when directly called child execution fails.
     #[error("child finished with an execution error: {child_execution_id}")]
     UnhandledChildExecutionError {
-        child_execution_id: ExecutionId,
-        root_cause_id: ExecutionId,
+        child_execution_id: ExecutionIdDerived,
+        root_cause_id: ExecutionIdDerived,
     },
 
     // Used by workflow worker
