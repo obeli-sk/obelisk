@@ -75,7 +75,6 @@
                 cargo-nextest
                 cargo-semver-checks
                 litecli
-                lldb
                 nixd
                 nixpkgs-fmt
                 pkg-config
