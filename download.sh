@@ -4,7 +4,7 @@
 # Usage:
 # curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
 
-set -eux
+set -eu
 
 # Set pipefail if it works in a subshell, disregard if unsupported
 (set -o pipefail 2> /dev/null) && set -o pipefail
@@ -26,7 +26,7 @@ if [ "$os" = "Linux" ]; then
     if echo "$ldd_version" | grep -q "musl" || echo "$issue" | grep -q "NixOS"; then
         lib="musl"
         if echo "$issue" | grep -q "NixOS"; then
-            echo "Using musl on NixOS. If you want to use glibc, please use run with `nix profile install github:obeli-sk/obelisk/latest`"
+            echo -e "Downloading musl-based bianry on NixOS. Consider installing with\nnix profile install github:obeli-sk/obelisk/latest"
         fi
     else
         lib="gnu"
@@ -49,4 +49,5 @@ else
 fi
 
 # Download and extract the tarball
+echo "Downloading and extracting $url"
 curl -L --proto '=https' --tlsv1.2 -sSf "$url" | tar -xvzf -
