@@ -1,4 +1,5 @@
 use crate::config::toml::{log::LoggingStyle, ConfigToml};
+use tracing::warn;
 use tracing_subscriber::Layer;
 
 #[cfg(feature = "tokio-console")]
@@ -37,7 +38,6 @@ where
     use opentelemetry::trace::TracerProvider;
     use opentelemetry_otlp::WithExportConfig as _;
     use opentelemetry_sdk::propagation::TraceContextPropagator;
-    use opentelemetry_sdk::runtime;
     use opentelemetry_sdk::Resource;
 
     Ok(match &mut config.otlp {
@@ -48,12 +48,13 @@ where
                 .with_endpoint(&otlp.otlp_endpoint)
                 .build()
                 .context("otlp endpoint setup failure")?;
-            let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
-                .with_batch_exporter(exporter, runtime::Tokio)
-                .with_resource(Resource::new(vec![opentelemetry::KeyValue::new(
-                    opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-                    otlp.service_name.clone(),
-                )]))
+            let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                .with_batch_exporter(exporter)
+                .with_resource(
+                    Resource::builder()
+                        .with_service_name(otlp.service_name.clone())
+                        .build(),
+                )
                 .build();
             // EnvFilter missing Clone
             let env_filter = std::mem::take(&mut otlp.level).0;
@@ -159,13 +160,19 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
 #[derive(Default)]
 pub(crate) struct Guard {
     file_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
+    #[cfg(feature = "otlp")]
+    tracer_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
 }
 
 impl Drop for Guard {
     fn drop(&mut self) {
         cfg_if::cfg_if! {
             if #[cfg(feature = "otlp")] {
-                opentelemetry::global::shutdown_tracer_provider();
+                if let Some(tracer_provider) = self.tracer_provider.take() {
+                    if let Err(err) = tracer_provider.shutdown() {
+                        warn!("Error shutting down the tracing provider - {err:?}");
+                    }
+                }
             }
         }
     }
