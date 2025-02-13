@@ -167,12 +167,12 @@ arbitrary = { version = "1.4.1", features = ["derive"] }
 assert_matches = "1.5.0"
 async-channel = "2.3.1"
 async-trait = "0.1"
-bytes = "1.9"
+bytes = "1.10"
 cargo_metadata = "0.19"
 cfg-if = "1.0.0"
 chrono = { version = "0.4.39", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.27", features = ["derive"] }
-config = { version = "0.15.6", default-features = false, features = [
+clap = { version = "4.5.29", features = ["derive"] }
+config = { version = "0.15.8", default-features = false, features = [
     "toml",
     "preserve_order",
     "async",
@@ -198,20 +198,20 @@ hashbrown = { version = "0.15.2", features = ["serde"] }
 hdrhistogram = "7.5.4"
 http = "1.2.0"
 http-body-util = "0.1"
-hyper = "1.5.2"
+hyper = "1.6.0"
 hyper-util = { version = "0.1", features = ["tokio"] }
 indexmap = { version = "2.7", features = ["serde"] }
-insta = { version = "1.42.0", features = ["json"] }
+insta = { version = "1.42.1", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
 madsim = "0.2.31"
 oci-client = { version = "0.14.0", default-features = false, features = [
     "rustls-tls",
 ] }
-oci-wasm = { version = "0.2.0", default-features = false, features = [ # Dependent on matching oci-client
+oci-wasm = { version = "0.2.1", default-features = false, features = [ # Dependent on matching oci-client
     "rustls-tls",
 ] }
-prost = "0.13.4"
+prost = "0.13.5"
 prost-wkt-types = "0.6"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = [
@@ -226,12 +226,12 @@ rusqlite = { version = "0.33.0", features = [
     "serde_json",
 ] }
 serde = { version = "1.0.217", features = ["derive"] }
-serde_json = "1.0.137"
+serde_json = "1.0.138"
 serde_with = "3.12.0"
 sha2 = "0.10.8"
 shadow-rs = "0.37"
 strum = { version = "0.26.3", features = ["derive"] }
-tempfile = "3.14.0"
+tempfile = "3.16.0"
 thiserror = "2.0"
 tokio = { version = "0.2.30", package = "madsim-tokio", features = [
     "fs",
@@ -244,7 +244,7 @@ tokio = { version = "0.2.30", package = "madsim-tokio", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.17"
-toml = { version = "0.8.19", features = ["preserve_order"] }
+toml = { version = "0.8.20", features = ["preserve_order"] }
 tonic = { version = "0.12.3", default-features = false }
 tonic-build = { version = "0.12.3", default-features = false }
 tonic-web = "0.12.3"
@@ -253,7 +253,7 @@ tower-http = { version = "0.6.2", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
-ulid = { version = "1.1.4", features = ["serde"] }
+ulid = { version = "1.2.0", features = ["serde"] }
 url = "2.5.4"
 waki = "0.5.1"
 waki-macros = "0.5.1"
@@ -265,7 +265,7 @@ id-arena = "2.2.1"
 implicit-clone = "0.5.0"
 log = "0.4.25"
 semver = "1.0.25"
-tonic-web-wasm-client = "0.6.0"
+tonic-web-wasm-client = "0.6.1"
 wasm-bindgen = "=0.2.100"                                                     # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml.
 wasm-bindgen-futures = "=0.4.50"                                              # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/futures/Cargo.toml
 web-sys = "=0.3.77"                                                           # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/web-sys/Cargo.toml
@@ -280,10 +280,10 @@ wasmtime = { version = "29.0.1", features = ["memory-protection-keys"] }
 wasmtime-wasi = "29.0.1"
 wasmtime-wasi-http = "29.0.1"
 # wasm-tools
-wast = "223.0.0"
-wit-parser = "0.223.0"
-wasmparser = "0.223.0"
-wit-component = "0.223.0"
+wast = "223.0.1"
+wit-parser = "0.223.1"
+wasmparser = "0.223.1"
+wit-component = "0.223.1"
 
 # testing components
 wit-bindgen = "0.37.0"
