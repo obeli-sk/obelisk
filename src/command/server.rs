@@ -866,6 +866,7 @@ async fn run_internal(
         )
         .serve_with_shutdown(api_listening_addr, async move {
             info!("Serving gRPC requests at {api_listening_addr}");
+            info!("Server is ready");
             tokio::signal::ctrl_c()
                 .await
                 .expect("failed to listen for SIGINT event");
