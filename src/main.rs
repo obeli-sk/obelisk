@@ -107,7 +107,6 @@ async fn main() -> Result<(), anyhow::Error> {
                     ffqn,
                     params,
                     follow,
-                    verbosity,
                 }) => {
                     // TODO interactive search for ffqn showing param types and result, file name
                     // enter parameters one by one
@@ -117,15 +116,14 @@ async fn main() -> Result<(), anyhow::Error> {
                     let serde_json::Value::Array(params) = params else {
                         bail!("params should be a JSON array");
                     };
-                    command::execution::submit(client, ffqn, params, follow, verbosity.into()).await
+                    command::execution::submit(client, ffqn, params, follow).await
                 }
                 ClientSubcommand::Execution(args::Execution::Get {
                     execution_id,
-                    verbosity,
                     follow,
                 }) => {
                     let client = get_execution_repository_client(api_url).await?;
-                    command::execution::get(client, execution_id, follow, verbosity.into()).await
+                    command::execution::get(client, execution_id, follow).await
                 }
             }
         }
