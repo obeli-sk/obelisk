@@ -37,30 +37,45 @@ jobs:
         run: nix develop --command cargo fmt --check
 
   check-dev-deps:
-    name: Check dev-deps
+    name: Check dev-deps.txt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: nixbuild/nix-quick-install-action@v29
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Populate the nix store
         run: nix develop --command echo
-
       - run: nix develop --command ./scripts/dev-deps.sh
-
-      - run: cat dev-deps.txt
-
       - run: |
-          if git diff --quiet -- dev-deps.txt; then
-              echo "No changes in dev-deps"
+          if git diff --quiet; then
+              echo "No changes"
           else
-              echo "Changes in dev-deps detected:"
-              echo "$(git diff -- dev-deps.txt)"
+              echo "Changes detected:"
+              git diff
               exit 1
           fi
+
+  check-unpublishable-packages:
+    name: Check unpublishable-packages.txt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: nixbuild/nix-quick-install-action@v29
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Populate the nix store
+        run: nix develop --command echo
+      - run: nix develop --command ./scripts/unpublishable-packages.sh
+      - run: |
+          if git diff --quiet; then
+              echo "No changes"
+          else
+              echo "Changes detected:"
+              git diff
+              exit 1
+          fi
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest
