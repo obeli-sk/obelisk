@@ -17,7 +17,6 @@ pub(crate) async fn submit(
     ffqn: FunctionFqn,
     params: Vec<serde_json::Value>,
     follow: bool,
-    verbosity: ExecutionVerbosity,
 ) -> anyhow::Result<()> {
     let resp = client
         .submit(tonic::Request::new(grpc::SubmitRequest {
@@ -39,7 +38,7 @@ pub(crate) async fn submit(
         })??;
     println!("{execution_id}");
     if follow {
-        get(client, execution_id, follow, verbosity).await?;
+        get(client, execution_id, follow).await?;
     }
     Ok(())
 }
@@ -75,16 +74,24 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_statu
     let new_pending_status = match status {
         Status::Locked(_) => "Locked".to_string(),
         Status::PendingAt(_) => "Pending".to_string(),
-        Status::BlockedByJoinSet(BlockedByJoinSet { closing: false, .. }) => {
-            "BlockedByJoinSet".to_string()
-        }
-        Status::BlockedByJoinSet(BlockedByJoinSet { closing: true, .. }) => {
-            "BlockedByJoinSetClosing".to_string()
+        Status::BlockedByJoinSet(BlockedByJoinSet {
+            closing,
+            join_set_id: Some(grpc::JoinSetId { name, kind }),
+            lock_expires_at: _,
+        }) => {
+            let kind = grpc::join_set_id::JoinSetKind::try_from(kind)
+                .expect("JoinSetKind must be valid")
+                .as_str_name()
+                .to_lowercase();
+
+            let closing = if closing { "-closing" } else { "" };
+            format!("BlockedByJoinSet {kind} `{name}`{closing}")
         }
         Status::Finished(Finished { .. }) => {
             // Skip, the final result will be sent in the next message, since we set `send_finished_status` to true.
             return;
         }
+        illegal => panic!("illegal state {illegal:?}"),
     };
     if *old_pending_status != new_pending_status {
         println!("{new_pending_status}");
@@ -168,33 +175,13 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> anyhow::Resul
             .to_std()
             .expect("must be non-negative")
     );
-
     res
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-pub(crate) enum ExecutionVerbosity {
-    #[default]
-    PendingState,
-    EventHistory,
-    Full,
-}
-
-impl From<u8> for ExecutionVerbosity {
-    fn from(value: u8) -> Self {
-        match value {
-            0 => ExecutionVerbosity::PendingState,
-            1 => ExecutionVerbosity::EventHistory,
-            _ => ExecutionVerbosity::Full,
-        }
-    }
 }
 
 pub(crate) async fn get(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionId,
     follow: bool,
-    _verbosity: ExecutionVerbosity, // TODO
 ) -> anyhow::Result<()> {
     let mut stream = client
         .get_status(tonic::Request::new(grpc::GetStatusRequest {
@@ -205,9 +192,9 @@ pub(crate) async fn get(
         .await
         .to_anyhow()?
         .into_inner();
-    let mut pending_status_cache = String::new();
+    let mut old_pending_status = String::new();
     while let Some(status) = stream.message().await? {
-        print_status(status, &mut pending_status_cache)?;
+        print_status(status, &mut old_pending_status)?;
     }
     Ok(())
 }
