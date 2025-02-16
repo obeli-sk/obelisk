@@ -1,4 +1,4 @@
-cargo-binstall 1.10.22
+cargo-binstall 1.10.23
 cargo-edit-upgrade 0.13.1
 cargo-expand 1.0.100
 cargo-nextest 0.9.87
