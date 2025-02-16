@@ -8,8 +8,11 @@ use anyhow::Context;
 use chrono::DateTime;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::execution_status::Status;
+use serde_json::json;
 use std::str::FromStr;
 use tracing::instrument;
+
+// TODO: CamelCase + snake_case  mixed in JSON output
 
 #[instrument(skip_all)]
 pub(crate) async fn submit(
@@ -17,6 +20,7 @@ pub(crate) async fn submit(
     ffqn: FunctionFqn,
     params: Vec<serde_json::Value>,
     follow: bool,
+    json_output: bool,
 ) -> anyhow::Result<()> {
     let resp = client
         .submit(tonic::Request::new(grpc::SubmitRequest {
@@ -36,9 +40,20 @@ pub(crate) async fn submit(
         .map(|execution_id| {
             ExecutionId::from_str(&execution_id.id).context("cannot parse `execution_id`")
         })??;
-    println!("{execution_id}");
+    if json_output {
+        let json = json!(
+            {"submit": {"execution_id": execution_id }}
+        );
+        println!("[{json}");
+    } else {
+        println!("{execution_id}");
+    }
     if follow {
-        get(client, execution_id, follow).await?;
+        let json_output_started = if json_output { Some(true) } else { None };
+        get(client, execution_id, follow, json_output_started).await?;
+    }
+    if json_output {
+        println!("\n]");
     }
     Ok(())
 }
@@ -46,24 +61,43 @@ pub(crate) async fn submit(
 fn print_status(
     response: grpc::GetStatusResponse,
     old_pending_status: &mut String,
+    json_output_started: Option<bool>, // None if json is disabled. Some(true) if `[{..}` was printed alraedy.
 ) -> anyhow::Result<()> {
     use grpc::get_status_response::Message;
-    match response.message.expect("message expected") {
-        Message::Summary(summary) => {
-            let ffqn = FunctionFqn::try_from(summary.function_name.expect("sent by server"))
-                .expect("ffqn sent by the server must be valid");
-            println!("Function: {ffqn}");
+    let message = response.message.expect("message expected");
+    if json_output_started.is_some() {
+        if !old_pending_status.is_empty() || json_output_started == Some(true) {
+            println!(",");
+        }
+        *old_pending_status = match message {
+            Message::Summary(_) => {
+                serde_json::to_string(&message).expect("summary must be serializable")
+            }
+            Message::CurrentStatus(_) => {
+                serde_json::to_string(&message).expect("pending_status must be serializable")
+            }
+            Message::FinishedStatus(finished_sattus) => print_finished_status_json(finished_sattus),
+        };
 
-            print_pending_status(
-                summary.current_status.expect("sent by server"),
-                old_pending_status,
-            );
-        }
-        Message::CurrentStatus(pending_status) => {
-            print_pending_status(pending_status, old_pending_status);
-        }
-        Message::FinishedStatus(finished_sattus) => {
-            print_finished_status(finished_sattus)?;
+        print!("{old_pending_status}");
+    } else {
+        match message {
+            Message::Summary(summary) => {
+                let ffqn = FunctionFqn::try_from(summary.function_name.expect("sent by server"))
+                    .expect("ffqn sent by the server must be valid");
+                println!("Function: {ffqn}");
+
+                print_pending_status(
+                    summary.current_status.expect("sent by server"),
+                    old_pending_status,
+                );
+            }
+            Message::CurrentStatus(pending_status) => {
+                print_pending_status(pending_status, old_pending_status);
+            }
+            Message::FinishedStatus(finished_sattus) => {
+                print_finished_status(finished_sattus)?;
+            }
         }
     }
     Ok(())
@@ -91,7 +125,7 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_statu
             // Skip, the final result will be sent in the next message, since we set `send_finished_status` to true.
             return;
         }
-        illegal => panic!("illegal state {illegal:?}"),
+        illegal @ Status::BlockedByJoinSet(_) => panic!("illegal state {illegal:?}"),
     };
     if *old_pending_status != new_pending_status {
         println!("{new_pending_status}");
@@ -178,10 +212,63 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> anyhow::Resul
     res
 }
 
+fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> String {
+    let created_at = finished_status
+        .created_at
+        .expect("`created_at` is sent by the server");
+    let scheduled_at = finished_status
+        .scheduled_at
+        .expect("`scheduled_at` is sent by the server");
+    let finished_at = finished_status
+        .finished_at
+        .expect("`finished_at` is sent by the server");
+
+    let mut json = match finished_status
+        .result_detail
+        .expect("`result_detail` is sent by the server")
+        .value
+    {
+        Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
+            return_value: Some(return_value),
+        })) => {
+            let return_value: serde_json::Value = serde_json::from_slice(&return_value.value)
+                .expect("return_value must be JSON encoded");
+            json!({"ok": return_value})
+        }
+        Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok { return_value: None })) => {
+            json!({"ok": null})
+        }
+        Some(grpc::result_detail::Value::FallibleError(grpc::result_detail::FallibleError {
+            return_value: Some(return_value),
+        })) => {
+            let return_value: serde_json::Value = serde_json::from_slice(&return_value.value)
+                .expect("return_value must be JSON encoded");
+            json!({"fallible_error": return_value})
+        }
+        Some(grpc::result_detail::Value::Timeout(_)) => json!({"timeout": null}),
+        Some(grpc::result_detail::Value::ExecutionFailure(
+            grpc::result_detail::ExecutionFailure { reason, detail },
+        )) => json!({"execution_failure": {"reason": reason, "detail": detail}}),
+        Some(grpc::result_detail::Value::UnhandledChildExecutionError(
+            grpc::result_detail::UnhandledChildExecutionError {
+                child_execution_id,
+                root_cause_id,
+            },
+        )) => json!({"unhandled_child_execution_error": {"child_execution_id": child_execution_id,
+                "root_cause_id": root_cause_id}}),
+        other => unreachable!("unexpected variant {other:?}"),
+    };
+    json["created_at"] = serde_json::Value::String(created_at.to_string());
+    json["scheduled_at"] = serde_json::Value::String(scheduled_at.to_string());
+    json["finished_at"] = serde_json::Value::String(finished_at.to_string());
+    json.to_string()
+}
+
 pub(crate) async fn get(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionId,
     follow: bool,
+    json_output_started: Option<bool>, // None if json is disabled. Some(true) if `[{..}` was printed alraedy.
 ) -> anyhow::Result<()> {
     let mut stream = client
         .get_status(tonic::Request::new(grpc::GetStatusRequest {
@@ -193,8 +280,14 @@ pub(crate) async fn get(
         .to_anyhow()?
         .into_inner();
     let mut old_pending_status = String::new();
+    if json_output_started == Some(false) {
+        println!("[");
+    }
     while let Some(status) = stream.message().await? {
-        print_status(status, &mut old_pending_status)?;
+        print_status(status, &mut old_pending_status, json_output_started)?;
+    }
+    if json_output_started == Some(false) {
+        println!("\n]");
     }
     Ok(())
 }

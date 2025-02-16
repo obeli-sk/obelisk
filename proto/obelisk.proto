@@ -246,7 +246,7 @@ message GetStatusResponse {
         ExecutionSummary summary = 1;
         // Remaining messages
         ExecutionStatus current_status = 2;
-        // Finished status
+        // Finished status, sent only if `send_finished_status` is set.
         FinishedStatus finished_status = 3;
     }
 }

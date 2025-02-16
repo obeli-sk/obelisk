@@ -120,14 +120,20 @@ pub(crate) enum Execution {
         /// Function in the fully qualified format
         #[arg(value_name = "FUNCTION")]
         ffqn: FunctionFqn,
-        /// Parameters encoded as an JSON array
+        /// Parameters encoded as an JSON
         #[arg(value_name = "PARAMS")]
         params: String,
+        /// Print output as JSON
+        #[arg(long)]
+        json: bool,
     },
     Get {
         /// Follow the stream of events until the execution finishes
         #[arg(short, long)]
         follow: bool,
         execution_id: ExecutionId,
+        /// Print output as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
