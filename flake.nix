@@ -19,11 +19,12 @@
               {
                 inherit system overlays;
                 crossSystem =
-                if config != null then { # the parameter is not null only when building -musl targets.
+                  if config != null then {
+                    # the parameter is not null only when building -musl targets.
                     inherit config;
                     rustc = { inherit config; };
                     isStatic = true;
-                    } else null;
+                  } else null;
               };
           makeObelisk = pkgs: patch-for-generic-linux: buildType:
             pkgs.rustPlatform.buildRustPackage {
@@ -42,25 +43,29 @@
                 pkg-config
                 protobuf
               ];
-              installPhase = let
-                interpreter = if patch-for-generic-linux then
-                  if system == "x86_64-linux" then "/lib64/ld-linux-x86-64.so.2"
-                  else if system == "aarch64-linux" then "/lib/ld-linux-aarch64.so.1"
-                  else throw "Unsupported system for generic linux: ${system}"
-                else null;
-              in ''
-                BINARY=$(find target -name obelisk)
-                ${if patch-for-generic-linux then "patchelf --set-interpreter ${interpreter} $BINARY" else ""}
-                mkdir -p $out/bin/
-                cp $BINARY $out/bin/
-              '';
+              installPhase =
+                let
+                  interpreter =
+                    if patch-for-generic-linux then
+                      if system == "x86_64-linux" then "/lib64/ld-linux-x86-64.so.2"
+                      else if system == "aarch64-linux" then "/lib/ld-linux-aarch64.so.1"
+                      else throw "Unsupported system for generic linux: ${system}"
+                    else null;
+                in
+                ''
+                  BINARY=$(find target -name obelisk)
+                  ${if patch-for-generic-linux then "patchelf --set-interpreter ${interpreter} $BINARY" else ""}
+                  mkdir -p $out/bin/
+                  cp $BINARY $out/bin/
+                '';
               inherit buildType;
               doCheck = false;
             };
           pkgs = makePkgs null;
-          pkgsMusl = if system == "x86_64-linux" then makePkgs "x86_64-unknown-linux-musl"
-                     else if system == "aarch64-linux" then makePkgs "aarch64-unknown-linux-musl"
-                     else null;
+          pkgsMusl =
+            if system == "x86_64-linux" then makePkgs "x86_64-unknown-linux-musl"
+            else if system == "aarch64-linux" then makePkgs "aarch64-unknown-linux-musl"
+            else null;
         in
         {
           devShells.default = pkgs.mkShell {
@@ -94,12 +99,13 @@
             obeliskLibcNix = makeObelisk pkgs false "release";
             obeliskLibcNixDev = makeObelisk pkgs false "dev";
             default = obeliskLibcNix;
-          } // (if pkgsMusl != null then { # is !=null on linux only
+          } // (if pkgsMusl != null then {
+            # is !=null on linux only
             obeliskMusl = makeObelisk pkgsMusl false "release";
             obeliskMuslDev = makeObelisk pkgsMusl false "dev";
             obeliskLibcGeneric = makeObelisk pkgs true "release";
             obeliskLibcGenericDev = makeObelisk pkgs true "dev";
-          } else {});
+          } else { });
         }
       );
 }
