@@ -3,15 +3,18 @@
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
-OUTPUT_FILE="assets/unpublishable-packages.txt" > "$OUTPUT_FILE"  # Clear the output file
+OUTPUT_FILE="assets/unpublishable-packages.txt"
 
 # Find all Cargo.toml files and check if "publish = false" is set
-grep -rl "publish\s*=\s*false" --include="Cargo.toml" crates | while read -r file; do
-    # Extract package name
+PACKAGES=()
+while IFS= read -r file; do
     PACKAGE_NAME=$(grep -m1 '^name\s*=\s*"' "$file" | sed -E 's/name\s*=\s*"([^"]+)"/\1/')
     if [ -n "$PACKAGE_NAME" ]; then
-        echo "$PACKAGE_NAME" >> "$OUTPUT_FILE"
+        PACKAGES+=("$PACKAGE_NAME")
     fi
-done
+done < <(grep -rl "publish\s*=\s*false" --include="Cargo.toml" crates)
+
+# Sort and write to file
+printf "%s\n" "${PACKAGES[@]}" | sort > "$OUTPUT_FILE"
 
 echo "Unpublishable packages saved to $OUTPUT_FILE"
