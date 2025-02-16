@@ -3,6 +3,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.1](https://github.com/obeli-sk/obelisk/compare/v0.15.0...v0.15.1)
+
+### ⛰️ Features
+
+- *(cli)* Add `--json` parameter to `submit` and `get` - ([e437ef9](https://github.com/obeli-sk/obelisk/commit/e437ef9c1c050dcceec1d71097b63cea0eecf5f2))
+- *(toml)* Add `~` prefix expansion - ([43050f5](https://github.com/obeli-sk/obelisk/commit/43050f57e05e98b6ec4745b4aad46d8de0bb6826))
+- Print join set name in CLI - ([1c9225d](https://github.com/obeli-sk/obelisk/commit/1c9225de47104b0db28d41f7d11ff79447b3e34d))
+
+### 🚜 Refactor
+
+- Add "Server is ready" info message - ([bfa966f](https://github.com/obeli-sk/obelisk/commit/bfa966f1a7a78bd6f8086d5faa6bfd57e9fbb9ed))
+
+
 ## [0.15.0](https://github.com/obeli-sk/obelisk/compare/v0.14.2...v0.15.0)
 
 ### ⛰️ Features
