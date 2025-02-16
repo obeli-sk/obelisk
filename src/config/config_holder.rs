@@ -1,7 +1,7 @@
 use super::toml::ConfigToml;
 use anyhow::bail;
 use config::{builder::AsyncState, ConfigBuilder, Environment, File, FileFormat};
-use directories::ProjectDirs;
+use directories::{BaseDirs, ProjectDirs};
 use std::path::{Path, PathBuf};
 use tracing::debug;
 
@@ -10,6 +10,7 @@ const EXAMPLE_TOML: &[u8] = include_bytes!("../../obelisk.toml");
 pub(crate) struct ConfigHolder {
     paths: Vec<PathBuf>,
     pub(crate) project_dirs: Option<ProjectDirs>,
+    pub(crate) base_dirs: Option<BaseDirs>,
 }
 
 impl ConfigHolder {
@@ -21,7 +22,11 @@ impl ConfigHolder {
         Ok(())
     }
 
-    pub(crate) fn new(project_dirs: Option<ProjectDirs>, config: Option<PathBuf>) -> Self {
+    pub(crate) fn new(
+        project_dirs: Option<ProjectDirs>,
+        base_dirs: Option<BaseDirs>,
+        config: Option<PathBuf>,
+    ) -> Self {
         let paths = if let Some(config) = config {
             vec![config]
         } else {
@@ -56,6 +61,7 @@ impl ConfigHolder {
         Self {
             paths,
             project_dirs,
+            base_dirs,
         }
     }
 

@@ -5,7 +5,7 @@ use concepts::{
     StrVariant,
 };
 use db_sqlite::sqlite_dao::SqliteConfig;
-use directories::ProjectDirs;
+use directories::{BaseDirs, ProjectDirs};
 use log::{LoggingConfig, LoggingStyle};
 use serde::{Deserialize, Deserializer};
 use std::{
@@ -24,6 +24,7 @@ use wasm_workers::{
 };
 use webhook::{HttpServer, WebhookComponent};
 
+const HOME_DIR_PREFIX: &str = "~/";
 const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
 const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
 const CONFIG_DIR_PREFIX: &str = "${CONFIG_DIR}/";
@@ -73,6 +74,7 @@ impl ConfigToml {
     pub(crate) async fn get_wasm_cache_directory(
         &self,
         project_dirs: Option<&ProjectDirs>,
+        base_dirs: Option<&BaseDirs>,
     ) -> Result<PathBuf, anyhow::Error> {
         let wasm_directory = self.wasm_cache_directory.as_deref().unwrap_or_else(|| {
             if project_dirs.is_some() {
@@ -81,7 +83,7 @@ impl ConfigToml {
                 DEFAULT_WASM_DIRECTORY
             }
         });
-        replace_path_prefix_mkdir(wasm_directory, project_dirs).await
+        replace_path_prefix_mkdir(wasm_directory, project_dirs, base_dirs).await
     }
 }
 
@@ -101,6 +103,7 @@ impl SqliteConfigToml {
     pub(crate) async fn get_sqlite_dir(
         &self,
         project_dirs: Option<&ProjectDirs>,
+        base_dirs: Option<&BaseDirs>,
     ) -> Result<PathBuf, anyhow::Error> {
         let sqlite_file = self.directory.as_deref().unwrap_or_else(|| {
             if project_dirs.is_some() {
@@ -109,7 +112,7 @@ impl SqliteConfigToml {
                 DEFAULT_SQLITE_DIR
             }
         });
-        replace_path_prefix_mkdir(sqlite_file, project_dirs).await
+        replace_path_prefix_mkdir(sqlite_file, project_dirs, base_dirs).await
     }
 
     pub(crate) fn as_config(&self) -> SqliteConfig {
@@ -147,6 +150,7 @@ impl CodegenCache {
     pub(crate) async fn get_directory(
         &self,
         project_dirs: Option<&ProjectDirs>,
+        base_dirs: Option<&BaseDirs>,
     ) -> Result<PathBuf, anyhow::Error> {
         let directory = self.directory.as_deref().unwrap_or_else(|| {
             if project_dirs.is_some() {
@@ -155,7 +159,7 @@ impl CodegenCache {
                 DEFAULT_CODEGEN_CACHE_DIRECTORY
             }
         });
-        replace_path_prefix_mkdir(directory, project_dirs).await
+        replace_path_prefix_mkdir(directory, project_dirs, base_dirs).await
     }
 }
 
@@ -865,27 +869,38 @@ impl From<InflightSemaphore> for Option<Arc<tokio::sync::Semaphore>> {
 mod util {
     use std::path::PathBuf;
 
-    use directories::ProjectDirs;
+    use directories::{BaseDirs, ProjectDirs};
+    use tracing::warn;
 
-    use super::{CACHE_DIR_PREFIX, CONFIG_DIR_PREFIX, DATA_DIR_PREFIX};
+    use super::{CACHE_DIR_PREFIX, CONFIG_DIR_PREFIX, DATA_DIR_PREFIX, HOME_DIR_PREFIX};
 
     pub(crate) async fn replace_path_prefix_mkdir(
         dir: &str,
         project_dirs: Option<&ProjectDirs>,
+        base_dirs: Option<&BaseDirs>,
     ) -> Result<PathBuf, anyhow::Error> {
-        let path = match project_dirs {
-            Some(project_dirs) => {
-                if let Some(suffix) = dir.strip_prefix(DATA_DIR_PREFIX) {
-                    project_dirs.data_dir().join(suffix)
-                } else if let Some(suffix) = dir.strip_prefix(CACHE_DIR_PREFIX) {
-                    project_dirs.cache_dir().join(suffix)
-                } else if let Some(suffix) = dir.strip_prefix(CONFIG_DIR_PREFIX) {
-                    project_dirs.config_dir().join(suffix)
-                } else {
-                    PathBuf::from(dir)
-                }
+        let path = if let (Some(project_dirs), Some(base_dirs)) = (project_dirs, base_dirs) {
+            if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
+                base_dirs.home_dir().join(suffix)
+            } else if let Some(suffix) = dir.strip_prefix(DATA_DIR_PREFIX) {
+                project_dirs.data_dir().join(suffix)
+            } else if let Some(suffix) = dir.strip_prefix(CACHE_DIR_PREFIX) {
+                project_dirs.cache_dir().join(suffix)
+            } else if let Some(suffix) = dir.strip_prefix(CONFIG_DIR_PREFIX) {
+                project_dirs.config_dir().join(suffix)
+            } else {
+                PathBuf::from(dir)
             }
-            None => PathBuf::from(dir),
+        } else {
+            if dir.starts_with(HOME_DIR_PREFIX)
+                || dir.starts_with(DATA_DIR_PREFIX)
+                || dir.starts_with(CACHE_DIR_PREFIX)
+                || dir.starts_with(CONFIG_DIR_PREFIX)
+            {
+                warn!("Not expanding prefix of `{dir}`");
+            }
+
+            PathBuf::from(dir)
         };
         tokio::fs::create_dir_all(&path).await?;
         Ok(path)

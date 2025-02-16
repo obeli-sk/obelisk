@@ -63,6 +63,7 @@ use concepts::ReturnType;
 use concepts::StrVariant;
 use db_sqlite::sqlite_dao::SqliteConfig;
 use db_sqlite::sqlite_dao::SqlitePool;
+use directories::BaseDirs;
 use directories::ProjectDirs;
 use executor::executor::ExecutorTaskHandle;
 use executor::executor::{ExecConfig, ExecTask};
@@ -699,10 +700,11 @@ pub(crate) struct RunParams {
 
 pub(crate) async fn run(
     project_dirs: Option<ProjectDirs>,
+    base_dirs: Option<BaseDirs>,
     config: Option<PathBuf>,
     params: RunParams,
 ) -> anyhow::Result<()> {
-    let config_holder = ConfigHolder::new(project_dirs, config);
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config);
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
 
@@ -720,10 +722,11 @@ pub(crate) struct VerifyParams {
 
 pub(crate) async fn verify(
     project_dirs: Option<ProjectDirs>,
+    base_dirs: Option<BaseDirs>,
     config: Option<PathBuf>,
     verify_params: VerifyParams,
 ) -> Result<(), anyhow::Error> {
-    let config_holder = ConfigHolder::new(project_dirs, config);
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config);
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
     Box::pin(verify_internal(config, config_holder, verify_params)).await?;
@@ -739,16 +742,25 @@ async fn verify_internal(
     debug!("Using toml config: {config:#?}");
     let db_dir = config
         .sqlite
-        .get_sqlite_dir(config_holder.project_dirs.as_ref())
+        .get_sqlite_dir(
+            config_holder.project_dirs.as_ref(),
+            config_holder.base_dirs.as_ref(),
+        )
         .await?;
     let wasm_cache_dir = config
-        .get_wasm_cache_directory(config_holder.project_dirs.as_ref())
+        .get_wasm_cache_directory(
+            config_holder.project_dirs.as_ref(),
+            config_holder.base_dirs.as_ref(),
+        )
         .await?;
     let codegen_cache = if config.codegen_cache.enabled {
         Some(
             config
                 .codegen_cache
-                .get_directory(config_holder.project_dirs.as_ref())
+                .get_directory(
+                    config_holder.project_dirs.as_ref(),
+                    config_holder.base_dirs.as_ref(),
+                )
                 .await?,
         )
     } else {
@@ -1808,6 +1820,7 @@ impl Drop for AbortOnDropHandle {
 #[cfg(all(test, not(madsim)))]
 mod tests {
     use crate::command::server::VerifyParams;
+    use directories::BaseDirs;
     use rstest::rstest;
     use std::path::PathBuf;
 
@@ -1821,6 +1834,7 @@ mod tests {
         let obelisk_toml = get_workspace_dir().join(obelisk_toml);
         crate::command::server::verify(
             crate::project_dirs(),
+            BaseDirs::new(),
             Some(obelisk_toml),
             VerifyParams {
                 clean_db: false,
