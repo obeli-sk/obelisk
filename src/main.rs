@@ -11,7 +11,7 @@ use args::{Args, Client, ClientSubcommand, Server, Subcommand};
 use clap::Parser;
 use command::server::{RunParams, VerifyParams};
 use config::config_holder::ConfigHolder;
-use directories::ProjectDirs;
+use directories::{BaseDirs, ProjectDirs};
 use grpc_util::{injector::TracingInjector, to_channel};
 use std::path::PathBuf;
 use tonic::{codec::CompressionEncoding, transport::Channel};
@@ -30,6 +30,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }) => {
             Box::pin(command::server::run(
                 project_dirs(),
+                BaseDirs::new(),
                 config,
                 RunParams {
                     clean_db,
@@ -54,6 +55,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }) => {
             command::server::verify(
                 project_dirs(),
+                BaseDirs::new(),
                 config,
                 VerifyParams {
                     clean_db,
