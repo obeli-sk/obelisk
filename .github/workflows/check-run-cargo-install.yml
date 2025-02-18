@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install wget gcc protobuf-compiler libprotobuf-dev -y
+          sudo apt install protobuf-compiler -y
 
       - name: Install obelisk from current path
         run: |
