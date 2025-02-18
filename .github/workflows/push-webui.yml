@@ -20,7 +20,7 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  push-components:
+  push-webui:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
