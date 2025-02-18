@@ -60,7 +60,8 @@ async fn main(mut incoming_req: Request<IncomingBody>, incoming_responder: Respo
             // Copy the incoming request body to client_outgoing_body
             let req_to_req = async {
                 let res = copy(incoming_req.body_mut(), &mut client_outgoing_body).await;
-                Client::finish(client_outgoing_body, None); // TODO: Convert to io error
+                // TODO: Convert to io error if necessary
+                let _ = Client::finish(client_outgoing_body, None);
                 res
             };
 
@@ -85,7 +86,7 @@ async fn main(mut incoming_req: Request<IncomingBody>, incoming_responder: Respo
             };
             let (req_to_req, (resp_to_resp, incoming_response)) =
                 futures::join!(req_to_req, resp_to_resp);
-            let result = req_to_req.and_then(|()| resp_to_resp);
+            let result = req_to_req.and(resp_to_resp);
 
             // join:
             Finished::finish(incoming_response, result, None)
