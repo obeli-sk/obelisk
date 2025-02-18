@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - main
+      - latest
   pull_request:
 # If new code is pushed to a PR branch, then cancel in progress workflows for that PR.
 
