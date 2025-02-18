@@ -24,6 +24,6 @@ jobs:
         run: nix develop --command echo
 
       - name: Build webui + proxy
-        run: ./scripts/push-webui.sh dummytag
+        run: nix develop --command ./scripts/push-webui.sh dummytag
         env:
           DRY_RUN: true
