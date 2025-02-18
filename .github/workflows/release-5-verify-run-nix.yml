@@ -1,0 +1,65 @@
+name: release-5-verify-run-nix
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "The ref (branch or SHA) to obtain the tag"
+        required: false
+        type: string
+  workflow_run:
+    workflows:
+      - release-3-upload-artifacts
+    types:
+      - completed
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  check-run-nix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: default
+          - target: obeliskMusl
+
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
+      - id: git-info
+        run: |
+          git fetch --tags
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          TAG="$(git tag --contains HEAD)"
+          if [ -z "$TAG" ]; then
+            echo "No tag pointing at HEAD."
+            exit 1
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - uses: nixbuild/nix-quick-install-action@v29
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add garnix cache
+        run: |
+          echo "extra-substituters = https://cache.garnix.io" >> ~/.config/nix/nix.conf
+          echo "extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g" >> ~/.config/nix/nix.conf
+
+      - name: Create temp directory
+        run: mkdir temp
+
+      - name: Build the binary
+        working-directory: temp
+        run: |
+          full_target="github:obeli-sk/obelisk/${TAG}#${{ matrix.target }}"
+          nix run $full_target -- --version
+          nix run $full_target -- server generate-config
+          nix run $full_target -- server verify
+        env:
+          TAG: ${{ steps.git-info.outputs.tag }}
