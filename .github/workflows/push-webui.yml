@@ -37,7 +37,7 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      - name: Download obelisk # TODO: Consider using nix run github:obeli-sk/obelisk
+      - name: Download obelisk using binstall
         run: |
           nix develop --command cargo binstall obelisk --install-path . -y
           echo $(pwd) >> $GITHUB_PATH

@@ -1,0 +1,29 @@
+name: check-build-webui
+
+on:
+  push:
+    branches:
+      - main
+      - latest
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  check-build-webui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nixbuild/nix-quick-install-action@v29
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Populate the nix store
+        run: nix develop --command echo
+
+      - name: Build webui + proxy
+        run: ./scripts/push-webui.sh dummytag
+        env:
+          DRY_RUN: true
