@@ -43,7 +43,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
         run: |
-          nix develop '.#release' --command ./scripts/cargo-publish-workspace.sh
+          nix develop '.#release' --command ./scripts/cargo-publish-workspace.sh --locked --no-verify
 
       - name: Update `latest` branch
         if: ${{ github.event.inputs.latest }}
