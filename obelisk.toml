@@ -1,9 +1,3 @@
-### Supported path prefixes:
-## | Prefix       | Default path            | Details
-## | ${DATA_DIR}  |  ~/.local/share/obelisk | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dir
-## | ${CACHE_DIR} |  ~/.cache/obelisk       | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.cache_dir
-## | ${CONFIG_DIR}|  ~/.config/obelisk      | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.config_dir
-
 ## Server configuration
 api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
 webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
@@ -28,8 +22,8 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 
 ## Common executor settings
 # exec.batch_size = 5 # Number of executions to lock for every event loop tick.
-# exec.lock_expiry.secs = 1 # Each execution is locked for 1s by default.
-# exec.tick_sleep.millis = 200 # Sleep between event loop ticks.
+# exec.lock_expiry.seconds = 1 # Each execution is locked for 1s by default.
+# exec.tick_sleep.milliseconds = 200 # Sleep between event loop ticks.
 # exec.max_inflight_instances = "unlimited" # If set to an integer, limits the number of inflight instances.
 
 ### WASM Activity components configuration
@@ -39,7 +33,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Specific settings for activity_wasm:
 ## Retry customization: All activities are retried on trap (panic) and timeouts until `max_retries` condition is met.
 # max_retries = 5
-# retry_exp_backoff.millis = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
+# retry_exp_backoff.milliseconds = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
 # retry_on_err = true # When a function with a return type `result` returns the `Err` variant, attept to retry the execution.
 ## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".
 # forward_stdout="stderr" # forwards stdout to host's stderr
@@ -52,7 +46,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Common settings for all components - see above.
 ## Common executor settings - see above.
 ## Retry customization: All workflows are retried on trap (panic) and timeouts forever. Therefore, `retry_exp_backoff` must not be zero.
-# retry_exp_backoff.millis = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
+# retry_exp_backoff.milliseconds = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
 ## Joining strategy: When workflow requests a child execution result, it can either be interrupted, or kept in the memory.
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.
 # join_next_blocking_strategy = "await" # Default strategy is "await"
@@ -100,7 +94,7 @@ max_retries = 0
 [[workflow]]
 name = "test_programs_fibo_workflow"
 location.oci = "docker.io/getobelisk/test_programs_fibo_workflow:2025-02-09@sha256:97f107c51a2a9ba2e7ec78c6b65079dc7ed9ddcda90061109bc3040041280cf3"
-exec.lock_expiry.secs = 2
+exec.lock_expiry.seconds = 2
 
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
@@ -121,7 +115,7 @@ location.oci = "docker.io/getobelisk/test_programs_http_get_workflow:2025-02-09@
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
 location.oci = "docker.io/getobelisk/test_programs_sleep_activity:2025-02-09@sha256:b57df051ec74b9e1f8ef9edef35b720ee92e3c64cb7942dc1da7254027dcf058"
-exec.lock_expiry.secs = 10
+exec.lock_expiry.seconds = 10
 
 [[workflow]]
 name = "test_programs_sleep_workflow"
@@ -152,6 +146,13 @@ enabled = true
 # style = "json"
 # span = "close"
 # target = true
-# rotation = "daily"
+# rotation = "daily"  # One of "minutely"|"hourly"|"daily"|"never"
 # directory = "."
-# prefix = "obelisk_server_daily"
+# prefix = "obelisk_server_daily" # File name prefix
+
+## Appendix: Supported path prefixes:
+# | Prefix       | Default path           | Details
+# | ~            | ~                      |
+# | ${DATA_DIR}  | ~/.local/share/obelisk | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dir
+# | ${CACHE_DIR} | ~/.cache/obelisk       | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.cache_dir
+# | ${CONFIG_DIR}| ~/.config/obelisk      | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.config_dir

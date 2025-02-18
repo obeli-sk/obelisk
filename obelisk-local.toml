@@ -13,7 +13,7 @@ max_retries = 0
 [[workflow]]
 name = "test_programs_fibo_workflow"
 location.path = "target/wasm32-unknown-unknown/release/test_programs_fibo_workflow.wasm"
-exec.lock_expiry.secs = 2
+exec.lock_expiry.seconds = 2
 
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
@@ -34,7 +34,7 @@ location.path = "target/wasm32-unknown-unknown/release/test_programs_http_get_wo
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
 location.path = "target/wasm32-wasip2/release/test_programs_sleep_activity.wasm"
-exec.lock_expiry.secs = 10
+exec.lock_expiry.seconds = 10
 
 [[workflow]]
 name = "test_programs_sleep_workflow"

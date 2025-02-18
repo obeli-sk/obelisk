@@ -530,15 +530,15 @@ pub(crate) mod otlp {
 #[derive(Debug, Clone, Copy, Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DurationConfig {
-    Secs(u64),
-    Millis(u64),
+    Seconds(u64),
+    Milliseconds(u64),
 }
 
 impl From<DurationConfig> for Duration {
     fn from(value: DurationConfig) -> Self {
         match value {
-            DurationConfig::Millis(millis) => Duration::from_millis(millis),
-            DurationConfig::Secs(secs) => Duration::from_secs(secs),
+            DurationConfig::Milliseconds(millis) => Duration::from_millis(millis),
+            DurationConfig::Seconds(secs) => Duration::from_secs(secs),
         }
     }
 }
@@ -947,7 +947,7 @@ const fn default_max_retries() -> u32 {
 }
 
 const fn default_retry_exp_backoff() -> DurationConfig {
-    DurationConfig::Millis(100)
+    DurationConfig::Milliseconds(100)
 }
 
 const fn default_strategy() -> JoinNextBlockingStrategy {
@@ -959,11 +959,11 @@ const fn default_batch_size() -> u32 {
 }
 
 const fn default_lock_expiry() -> DurationConfig {
-    DurationConfig::Secs(1)
+    DurationConfig::Seconds(1)
 }
 
 const fn default_tick_sleep() -> DurationConfig {
-    DurationConfig::Millis(200)
+    DurationConfig::Milliseconds(200)
 }
 
 const fn default_non_blocking_event_batching() -> u32 {
