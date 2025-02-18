@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/obeli-sk/obelisk/compare/v0.15.1...v0.16.0)
+
+### ⛰️ Features
+
+- *(toml)* [**breaking**] Rename duration variants `secs`,`millis` to `seconds`,`milliseconds` - ([2f1a3f9](https://github.com/obeli-sk/obelisk/commit/2f1a3f9f61a3487fbce388b6561e42ea537aaafe))
+
+
 ## [0.15.1](https://github.com/obeli-sk/obelisk/compare/v0.15.0...v0.15.1)
 
 ### ⛰️ Features
