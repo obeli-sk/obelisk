@@ -132,3 +132,12 @@ ul li span {
 .types-interface ul li span {
     color: #50fa7b;
 }
+
+span.bp3-tree-node-label {
+    overflow: auto;
+}
+
+.table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+  }

@@ -324,14 +324,20 @@ fn render_execution_details(
         })
         .collect();
     Some(html! {
+        <div class="table-wrapper">
         <table>
+        <thead>
         <tr>
             <th>{"Version"}</th>
             <th>{"Timestamp"}</th>
             <th>{"Since scheduled"}</th>
             <th>{"Detail"}</th>
         </tr>
+        </thead>
+        <tbody>
         {rows}
+        </tbody>
         </table>
+        </div>
     })
 }
