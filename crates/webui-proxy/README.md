@@ -10,6 +10,12 @@ webui.listening_addr = "127.0.0.1:8080"
 ```
 
 In order to use the development version of the proxy, remove the line above.
+
+Build
+```sh
+cargo build --package webui-proxy --target=wasm32-wasip2 --profile=release_trunk
+```
+
 Add the `webui-proxy` as a webhook endpoint:
 ```toml
 [[http_server]]
@@ -27,4 +33,4 @@ forward_stderr = "stderr"
 ```
 
 ## Pushing to docker hub
-See [webui-bump.sh](../../scripts/webui-bump.sh).
+See [webui-bump.sh](../../scripts/push-webui.sh).

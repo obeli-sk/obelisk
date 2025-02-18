@@ -13,10 +13,11 @@ version.workspace = true
 webui-builder.workspace = true
 
 [dependencies]
-anyhow.workspace = true
-wit-bindgen.workspace = true
-url.workspace = true
-futures = { workspace = true, default-features = false, features = ['alloc'] }
+futures = { workspace = true, default-features = false, features = [
+    "alloc",
+    "async-await",
+] }
+wstd.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
