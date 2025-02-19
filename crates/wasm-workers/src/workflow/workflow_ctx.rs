@@ -1254,7 +1254,7 @@ pub(crate) mod tests {
                             db_pool.clone(),
                             Arc::new([child_log.ffqn().clone()]),
                         );
-                        exec_task.tick2(sim_clock.now()).await.unwrap()
+                        exec_task.tick_test(sim_clock.now()).await.unwrap()
                     };
                     assert_eq!(1, child_exec_tick.wait_for_tasks().await.unwrap());
                     child_execution_count -= 1;

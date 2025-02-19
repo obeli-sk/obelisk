@@ -224,8 +224,9 @@ impl<C: ClockFn> EventHistory<C> {
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<ChildReturnValue, ApplyError> {
+        trace!("apply({event_call:?})");
         let found_atomic = self.find_matching_atomic(&event_call)?;
-        trace!("{event_call:?} {found_atomic:?}");
+        trace!("found_atomic: {found_atomic:?}");
 
         if let FindMatchingResponse::Found(resp) = found_atomic {
             return Ok(resp);
@@ -483,9 +484,10 @@ impl<C: ClockFn> EventHistory<C> {
 
     fn mark_next_unprocessed_response(
         &mut self,
-        parent_event_idx: usize, // needs to be marked as Processed as well
+        parent_event_idx: usize, // needs to be marked as Processed as well if found
         join_set_id: &JoinSetId,
     ) -> Option<&JoinSetResponseEvent> {
+        trace!("mark_next_unprocessed_response responses: {:?}", self.responses);
         if let Some(idx) = self
             .responses
             .iter()

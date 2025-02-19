@@ -1455,6 +1455,7 @@ impl SqlitePool {
             .into_iter()
             .map(|resp| resp.event)
             .collect();
+        trace!("Responses: {responses:?}");
         let event_history = events
             .into_iter()
             .map(|event| {
@@ -1915,9 +1916,13 @@ impl SqlitePool {
         let mut sql = "SELECT r.id, r.created_at, r.join_set_id, \
             r.delay_id, \
             r.child_execution_id, r.finished_version, l.json_value \
-            FROM t_join_set_response r, t_execution_log l WHERE r.execution_id = :execution_id AND \
-            r.child_execution_id = l.execution_id AND r.finished_version = l.version"
-            .to_string();
+            FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
+            WHERE r.execution_id = :execution_id AND \
+            ( \
+            r.finished_version = l.version \
+            OR r.child_execution_id IS NULL \
+            )"
+        .to_string();
         let limit = match &pagination {
             Some(
                 pagination @ (Pagination::NewerThan { cursor, .. }
@@ -1981,9 +1986,11 @@ impl SqlitePool {
                     ))),
                 }
             }
-            _ => Err(DbError::Specific(SpecificError::ConsistencyError(
-                StrVariant::from(format!("invalid row {id} in t_join_set_response")),
-            ))),
+            (delay, child, finished, result) => {
+                error!("Invalid row in t_join_set_response {id} - {:?} {child:?} {finished:?} {:?}", delay.map(|it|it.0), result.map(|it| it.0));
+                Err(DbError::Specific(SpecificError::ConsistencyError(
+                StrVariant::Static("invalid row in t_join_set_response"),
+            )))},
         }
         .map(|event| ResponseWithCursor {
             cursor: id,

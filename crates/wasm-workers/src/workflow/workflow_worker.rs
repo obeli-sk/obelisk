@@ -578,7 +578,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     }
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
-        trace!("Params: {params:?}", params = ctx.params);
+        trace!("Run with ctx: {ctx:?}");
         if !ctx.can_be_retried {
             warn!("Workflow configuration set to not retry anymore. This can lead to nondeterministic results.");
         }
@@ -633,7 +633,7 @@ pub(crate) mod tests {
     };
     use rstest::rstest;
     use serde_json::json;
-    use std::time::Duration;
+    use std::{time::Duration, u32};
     use test_utils::sim_clock::SimClock;
     use val_json::{
         type_wrapper::TypeWrapper,
@@ -954,8 +954,8 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-                component_id: ComponentId::dummy_activity(),
+                max_retries: u32::MAX,
+                component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
             .await
@@ -1412,7 +1412,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             Arc::new([FFQN_WORKFLOW_SLEEP_RESCHEDULE_FFQN]),
         );
-        // tick2 + await should mark the first execution finished.
+        // tick + await should mark the first execution finished.
         assert_eq!(
             1,
             exec_task
