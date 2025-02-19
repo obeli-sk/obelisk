@@ -487,7 +487,10 @@ impl<C: ClockFn> EventHistory<C> {
         parent_event_idx: usize, // needs to be marked as Processed as well if found
         join_set_id: &JoinSetId,
     ) -> Option<&JoinSetResponseEvent> {
-        trace!("mark_next_unprocessed_response responses: {:?}", self.responses);
+        trace!(
+            "mark_next_unprocessed_response responses: {:?}",
+            self.responses
+        );
         if let Some(idx) = self
             .responses
             .iter()

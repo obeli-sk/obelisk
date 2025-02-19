@@ -633,7 +633,7 @@ pub(crate) mod tests {
     };
     use rstest::rstest;
     use serde_json::json;
-    use std::{time::Duration, u32};
+    use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use val_json::{
         type_wrapper::TypeWrapper,
@@ -1008,7 +1008,7 @@ pub(crate) mod tests {
         match join_next_blocking_strategy {
             JoinNextBlockingStrategy::Interrupt => assert_eq!(sim_clock.now(), blocked_until),
             JoinNextBlockingStrategy::Await => {
-                assert_eq!(sim_clock.now() + LOCK_DURATION, blocked_until)
+                assert_eq!(sim_clock.now() + LOCK_DURATION, blocked_until);
             }
         }
         sim_clock
@@ -1050,7 +1050,7 @@ pub(crate) mod tests {
             );
             match join_next_blocking_strategy {
                 JoinNextBlockingStrategy::Interrupt => {
-                    assert_eq!(sim_clock.now(), actual_pending_at)
+                    assert_eq!(sim_clock.now(), actual_pending_at);
                 }
                 JoinNextBlockingStrategy::Await => {
                     assert_eq!(blocked_until, actual_pending_at);
