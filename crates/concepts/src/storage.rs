@@ -398,13 +398,24 @@ pub fn from_bytes_to_u64(bytes: [u8; 8]) -> u64 {
 }
 
 #[derive(
-    Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
+    derive_more::Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    arbitrary::Arbitrary,
+    Serialize,
+    Deserialize,
 )]
 #[serde(tag = "type")]
 /// Must be created by the executor in [`PendingState::Locked`].
 pub enum HistoryEvent {
     #[display("Persist")]
-    Persist { value: Vec<u8>, kind: PersistKind },
+    Persist {
+        #[debug(skip)]
+        value: Vec<u8>,
+        kind: PersistKind,
+    },
     #[display("JoinSet({join_set_id})")]
     JoinSet { join_set_id: JoinSetId },
     #[display("JoinSetRequest({join_set_id}, {request})")]

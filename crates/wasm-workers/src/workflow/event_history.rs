@@ -1254,7 +1254,7 @@ impl PollVariant {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 pub(crate) enum EventCall {
     CreateJoinSet {
         join_set_id: JoinSetId,
@@ -1289,6 +1289,7 @@ pub(crate) enum EventCall {
         expires_at_if_new: DateTime<Utc>,
     },
     Persist {
+        #[debug(skip)]
         value: Vec<u8>,
         kind: PersistKind,
     },
@@ -1322,12 +1323,13 @@ impl EventCall {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 enum EventHistoryKey {
     CreateJoinSet {
         join_set_id: JoinSetId,
     },
     Persist {
+        #[debug(skip)]
         value: Vec<u8>,
         kind: PersistKind,
     },
