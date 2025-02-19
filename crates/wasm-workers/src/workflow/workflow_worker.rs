@@ -927,10 +927,11 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn sleep_should_be_persisted_after_executor_restart(
         #[values(Database::Memory, Database::Sqlite)] database: Database,
-        #[values(JoinNextBlockingStrategy::Interrupt)] // , JoinNextBlockingStrategy::Await
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         const SLEEP_MILLIS: u32 = 100;
+        const LOCK_DURATION: Duration = Duration::from_secs(1);
         test_utils::set_up();
         let sim_clock = SimClock::epoch();
         let (_guard, db_pool) = database.set_up().await;
@@ -973,9 +974,9 @@ pub(crate) mod tests {
             .await;
             let exec_config = ExecConfig {
                 batch_size: 1,
-                lock_expiry: Duration::from_secs(1),
+                lock_expiry: LOCK_DURATION,
                 tick_sleep: Duration::ZERO, // irrelevant here as we call tick manually
-                component_id: ComponentId::dummy_activity(),
+                component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
             };
             let ffqns = extract_ffqns_test(worker.as_ref());
@@ -997,17 +998,34 @@ pub(crate) mod tests {
                 .unwrap();
             assert_eq!(1, worker_tasks);
         }
-        {
+        let blocked_until = {
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
                 .unwrap();
-            assert_matches!(pending_state, PendingState::BlockedByJoinSet { .. });
+            assert_matches!(pending_state, PendingState::BlockedByJoinSet {lock_expires_at, .. } => lock_expires_at)
+        };
+        match join_next_blocking_strategy {
+            JoinNextBlockingStrategy::Interrupt => assert_eq!(sim_clock.now(), blocked_until),
+            JoinNextBlockingStrategy::Await => {
+                assert_eq!(sim_clock.now() + LOCK_DURATION, blocked_until)
+            }
         }
         sim_clock
             .move_time_forward(Duration::from_millis(u64::from(SLEEP_MILLIS)))
             .await;
 
+        // Run the worker tick again before the response arrives - should be noop
+        {
+            let worker_tasks = sleep_exec
+                .tick_test(sim_clock.now())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap();
+            assert_eq!(0, worker_tasks);
+        }
         // expired_timers_watcher should see the AsyncDelay and send the response.
         {
             let timer = expired_timers_watcher::tick_test(&db_connection, sim_clock.now())
@@ -1030,7 +1048,15 @@ pub(crate) mod tests {
                 }
                 => scheduled_at
             );
-            assert_eq!(sim_clock.now(), actual_pending_at);
+            match join_next_blocking_strategy {
+                JoinNextBlockingStrategy::Interrupt => {
+                    assert_eq!(sim_clock.now(), actual_pending_at)
+                }
+                JoinNextBlockingStrategy::Await => {
+                    assert_eq!(blocked_until, actual_pending_at);
+                    sim_clock.move_time_to(blocked_until).await;
+                }
+            }
         }
         // Reexecute the worker
         {
