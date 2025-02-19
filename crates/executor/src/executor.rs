@@ -94,6 +94,11 @@ impl Drop for ExecutorTaskHandle {
     }
 }
 
+#[cfg(feature = "test")]
+pub fn extract_ffqns_test(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
+    extract_ffqns(worker)
+}
+
 pub(crate) fn extract_ffqns(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
     worker
         .exported_functions()
@@ -186,7 +191,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     }
 
     #[cfg(feature = "test")]
-    pub async fn tick2(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
+    pub async fn tick_test(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
         self.tick(executed_at).await
     }
 
@@ -1248,7 +1253,7 @@ mod tests {
         if expected_child_err == FinishedExecutionError::PermanentTimeout {
             // In case of timeout, let the timers watcher handle it
             sim_clock.move_time_forward(LOCK_EXPIRY).await;
-            expired_timers_watcher::tick(db_pool.connection(), sim_clock.now())
+            expired_timers_watcher::tick(&db_pool.connection(), sim_clock.now())
                 .await
                 .unwrap();
         }
@@ -1396,7 +1401,7 @@ mod tests {
         }
         {
             let expired_locks =
-                expired_timers_watcher::tick(db_pool.connection(), now_after_first_lock_expiry)
+                expired_timers_watcher::tick(&db_pool.connection(), now_after_first_lock_expiry)
                     .await
                     .unwrap()
                     .expired_locks;
@@ -1442,7 +1447,7 @@ mod tests {
         }
         {
             let expired_locks =
-                expired_timers_watcher::tick(db_pool.connection(), now_after_second_lock_expiry)
+                expired_timers_watcher::tick(&db_pool.connection(), now_after_second_lock_expiry)
                     .await
                     .unwrap()
                     .expired_locks;

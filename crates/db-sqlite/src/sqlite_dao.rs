@@ -1735,16 +1735,18 @@ impl SqlitePool {
 
         // if the execution is going to be unblocked by this response...
         let previous_pending_state = Self::get_combined_state(tx, execution_id)?.pending_state;
+        debug!("previous_pending_state: {previous_pending_state:?}");
         let pendnig_at = match previous_pending_state {
             PendingState::BlockedByJoinSet {
                 join_set_id: found_join_set_id,
                 lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
                 closing: _,
             } if *join_set_id == found_join_set_id => {
+                // PendingAt should be set to current time if called from expired_timers_watcher,
+                // or to a future time if the execution is hot.
+                let scheduled_at = max(lock_expires_at, req.created_at);
                 // update the pending state.
-                let pending_state = PendingState::PendingAt {
-                    scheduled_at: lock_expires_at, // TODO: test this
-                };
+                let pending_state = PendingState::PendingAt { scheduled_at };
                 let next_version = Self::get_next_version(tx, execution_id)?;
                 Self::update_state(
                     tx,

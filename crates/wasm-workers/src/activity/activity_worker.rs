@@ -691,7 +691,7 @@ pub(crate) mod tests {
             assert_eq!(
                 1,
                 exec_task
-                    .tick2(sim_clock.now())
+                    .tick_test(sim_clock.now())
                     .await
                     .unwrap()
                     .wait_for_tasks()
@@ -797,7 +797,7 @@ pub(crate) mod tests {
                 assert_eq!(
                     1,
                     exec_task
-                        .tick2(sim_clock.now())
+                        .tick_test(sim_clock.now())
                         .await
                         .unwrap()
                         .wait_for_tasks()
@@ -829,7 +829,7 @@ pub(crate) mod tests {
             assert_eq!(
                 0,
                 exec_task
-                    .tick2(sim_clock.now())
+                    .tick_test(sim_clock.now())
                     .await
                     .unwrap()
                     .wait_for_tasks()
@@ -852,7 +852,7 @@ pub(crate) mod tests {
             assert_eq!(
                 1,
                 exec_task
-                    .tick2(sim_clock.now())
+                    .tick_test(sim_clock.now())
                     .await
                     .unwrap()
                     .wait_for_tasks()

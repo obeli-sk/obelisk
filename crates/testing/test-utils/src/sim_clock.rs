@@ -16,6 +16,12 @@ impl Default for SimClock {
 }
 
 impl SimClock {
+    pub fn epoch() -> SimClock {
+        Self::new(DateTime::from_timestamp_nanos(0))
+    }
+}
+
+impl SimClock {
     #[must_use]
     pub fn new(now: DateTime<Utc>) -> Self {
         Self {
