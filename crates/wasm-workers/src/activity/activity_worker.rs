@@ -201,7 +201,12 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         };
         let started_at = self.clock_fn.now();
         let deadline_delta = ctx.execution_deadline - started_at;
-        let deadline_duration = deadline_delta.to_std().unwrap();
+        let Ok(deadline_duration) = deadline_delta.to_std() else {
+            ctx.worker_span.in_scope(||
+                info!(execution_deadline = %ctx.execution_deadline, %started_at, "Timed out - started_at later than execution_deadline")
+            );
+            return WorkerResult::Err(WorkerError::TemporaryTimeout);
+        };
         let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
 
         tokio::select! { // future's liveness: Dropping the loser immediately.
@@ -217,9 +222,9 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             },
             ()  = tokio::time::sleep(deadline_duration) => {
                 ctx.worker_span.in_scope(||
-                        info!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %self.clock_fn.now(), "Timed out")
+                        info!(duration = ?stopwatch_for_reporting.elapsed(), %started_at, ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %self.clock_fn.now(), "Timed out")
                     );
-                    return WorkerResult::Err(WorkerError::TemporaryTimeout);
+                return WorkerResult::Err(WorkerError::TemporaryTimeout);
             }
         }
     }
@@ -582,14 +587,14 @@ pub(crate) mod tests {
                 vec![engine.weak()],
                 Duration::from_millis(EPOCH_MILLIS),
             );
-
+            let sim_clock = SimClock::epoch();
             let (worker, _) = new_activity_worker(
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 engine,
-                Now,
+                sim_clock.clone(),
             );
 
-            let executed_at = Now.now();
+            let executed_at = sim_clock.now();
             let ctx = WorkerContext {
                 execution_id: ExecutionId::generate(),
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -603,6 +608,51 @@ pub(crate) mod tests {
                 responses: Vec::new(),
                 version: Version::new(0),
                 execution_deadline: executed_at + TIMEOUT,
+                can_be_retried: false,
+                run_id: RunId::generate(),
+                worker_span: info_span!("worker-test"),
+            };
+            let WorkerResult::Err(err) = worker.run(ctx).await else {
+                panic!()
+            };
+            assert_matches!(err, WorkerError::TemporaryTimeout);
+        }
+
+        #[tokio::test]
+        async fn execution_deadline_before_now_should_timeout() {
+            test_utils::set_up();
+
+            let engine =
+                Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
+            let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
+                vec![engine.weak()],
+                Duration::from_millis(EPOCH_MILLIS),
+            );
+            let sim_clock = SimClock::epoch();
+            let (worker, _) = new_activity_worker(
+                test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                engine,
+                sim_clock.clone(),
+            );
+            // simulate a scheduling problem where deadline < now
+            let execution_deadline = sim_clock.now();
+            sim_clock
+                .move_time_forward(Duration::from_millis(100))
+                .await;
+
+            let ctx = WorkerContext {
+                execution_id: ExecutionId::generate(),
+                metadata: concepts::ExecutionMetadata::empty(),
+                ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
+                params: Params::from_json_values(vec![
+                    json!(
+                    {"milliseconds": 1}),
+                    json!(1),
+                ]),
+                event_history: Vec::new(),
+                responses: Vec::new(),
+                version: Version::new(0),
+                execution_deadline,
                 can_be_retried: false,
                 run_id: RunId::generate(),
                 worker_span: info_span!("worker-test"),
