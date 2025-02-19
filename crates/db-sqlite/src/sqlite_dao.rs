@@ -1917,7 +1917,8 @@ impl SqlitePool {
             r.delay_id, \
             r.child_execution_id, r.finished_version, l.json_value \
             FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
-            WHERE r.execution_id = :execution_id AND \
+            WHERE \
+            r.execution_id = :execution_id AND \
             ( \
             r.finished_version = l.version \
             OR r.child_execution_id IS NULL \
@@ -2013,9 +2014,14 @@ impl SqlitePool {
                 "SELECT r.id, r.created_at, r.join_set_id, \
                     r.delay_id, \
                     r.child_execution_id, r.finished_version, l.json_value \
-                    FROM t_join_set_response r, t_execution_log l WHERE \
+                    FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
+                    WHERE \
                     r.execution_id = :execution_id AND r.join_set_id = :join_set_id AND \
-                    r.child_execution_id = l.execution_id AND r.finished_version = l.version \
+                    (
+                    r.finished_version = l.version \
+                    OR \
+                    r.child_execution_id IS NULL \
+                    ) \
                     ORDER BY id \
                     LIMIT 1 OFFSET :offset",
             )
@@ -2045,9 +2051,13 @@ impl SqlitePool {
             "SELECT r.id, r.created_at, r.join_set_id, \
             r.delay_id, \
             r.child_execution_id, r.finished_version, l.json_value \
-            FROM t_join_set_response r, t_execution_log l WHERE \
+            FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
+            WHERE \
             r.execution_id = :execution_id AND \
-            r.child_execution_id = l.execution_id AND r.finished_version = l.version \
+            ( \
+            r.finished_version = l.version \
+            OR r.child_execution_id IS NULL \
+            ) \
             ORDER BY id \
             LIMIT -1 OFFSET :offset",
         )
