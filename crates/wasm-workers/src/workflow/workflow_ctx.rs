@@ -432,7 +432,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         name: String,
         kind: JoinSetKind,
     ) -> wasmtime::Result<Resource<JoinSetId>> {
-        if !self.event_history.join_set_name_exists(&name) {
+        if !self.event_history.join_set_name_exists(&name, kind) {
             let join_set_id = JoinSetId::new(kind, StrVariant::from(name))?;
             let res = self
                 .event_history
@@ -561,6 +561,7 @@ mod workflow_support {
         storage::{self, PersistKind},
         JoinSetId, JoinSetKind, CHARSET_ALPHANUMERIC,
     };
+    use tracing::trace;
     use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
 
@@ -662,6 +663,7 @@ mod workflow_support {
 
         async fn new_join_set_generated(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
             let name = self.next_join_set_name_index(JoinSetKind::Generated);
+            trace!("new_join_set_generated: {name}");
             self.persist_join_set_with_kind(name, JoinSetKind::Generated)
                 .await
         }
@@ -845,6 +847,7 @@ pub(crate) mod tests {
                 false,
             );
             for step in &self.steps {
+                info!("Processing step {step:?}");
                 let res = match step {
                     WorkflowStep::Sleep { millis } => {
                         workflow_ctx
@@ -977,6 +980,22 @@ pub(crate) mod tests {
             res
         };
         assert_eq!(builder_a.run(closure), builder_b.run(closure));
+    }
+
+    #[tokio::test]
+    async fn creating_oneoff_and_generated_join_sets_with_same_name_should_work() {
+        test_utils::set_up();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let steps = vec![
+            WorkflowStep::Call {
+                ffqn: FFQN_CHILD_MOCK,
+            },
+            WorkflowStep::SubmitWithoutAwait {
+                target_ffqn: FFQN_CHILD_MOCK,
+            },
+        ];
+        execute_steps(steps, &db_pool).await;
+        db_pool.close().await.unwrap();
     }
 
     const FFQN_CHILD_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn-child");

@@ -165,13 +165,13 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
-    pub(crate) fn join_set_name_exists(&self, join_set_name: &str) -> bool {
+    pub(crate) fn join_set_name_exists(&self, join_set_name: &str, kind: JoinSetKind) -> bool {
         // TODO: optimize
         self.event_history.iter().any(|(event, processing_status)|
             // Do not look into the future as it would break replay.
             *processing_status == ProcessingStatus::Processed &&
-            matches!(event, HistoryEvent::JoinSet { join_set_id: found } if found.name.as_ref() == join_set_name)
-        )
+            matches!(event, HistoryEvent::JoinSet { join_set_id: found }
+                if found.name.as_ref() == join_set_name && found.kind == kind))
     }
 
     pub(crate) fn join_set_count(&self, kind: JoinSetKind) -> usize {
