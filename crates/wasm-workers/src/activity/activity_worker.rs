@@ -624,10 +624,6 @@ pub(crate) mod tests {
 
             let engine =
                 Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
-            let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
-                vec![engine.weak()],
-                Duration::from_millis(EPOCH_MILLIS),
-            );
             let sim_clock = SimClock::epoch();
             let (worker, _) = new_activity_worker(
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,

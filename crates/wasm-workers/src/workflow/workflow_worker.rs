@@ -374,7 +374,12 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         execution_deadline: DateTime<Utc>,
     ) -> WorkerResult {
         let started_at = self.clock_fn.now();
-        let deadline_duration = (execution_deadline - started_at).to_std().unwrap();
+        let Ok(deadline_duration) = (execution_deadline - started_at).to_std() else {
+            worker_span.in_scope(||
+                info!(%execution_deadline, %started_at, "Timed out - started_at later than execution_deadline")
+            );
+            return WorkerResult::Err(WorkerError::TemporaryTimeout);
+        };
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! { // future's liveness: Dropping the loser immediately.
             res = Self::race_func_internal(store, func, params, &worker_span, stopwatch, deadline_duration, execution_deadline, self.config.retry_on_trap) => {
@@ -617,10 +622,10 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use concepts::{
-        prefixed_ulid::ExecutorId,
+        prefixed_ulid::{ExecutorId, RunId},
         storage::{
             wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState,
-            PendingStateFinished, PendingStateFinishedResultKind,
+            PendingStateFinished, PendingStateFinishedResultKind, Version,
         },
         ComponentType,
     };
@@ -635,6 +640,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
+    use tracing::info_span;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -663,6 +669,13 @@ pub(crate) mod tests {
 
     pub(crate) async fn compile_workflow(wasm_path: &str) -> (WasmComponent, ComponentId) {
         let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
+        compile_workflow_with_engine(wasm_path, &engine)
+    }
+
+    pub(crate) fn compile_workflow_with_engine(
+        wasm_path: &str,
+        engine: &Engine,
+    ) -> (WasmComponent, ComponentId) {
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             wasm_file_name(wasm_path),
@@ -885,7 +898,7 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    pub(crate) async fn get_workflow_worker<
+    pub(crate) async fn compile_workflow_worker<
         C: ClockFn,
         DB: DbConnection + 'static,
         P: DbPool<DB> + 'static,
@@ -921,6 +934,57 @@ pub(crate) mod tests {
             .unwrap()
             .into_worker(db_pool),
         )
+    }
+
+    #[tokio::test]
+    async fn execution_deadline_before_now_should_timeout() {
+        const SLEEP_MILLIS: u32 = 100;
+        test_utils::set_up();
+
+        let (_guard, db_pool) = Database::Memory.set_up().await;
+
+        let sim_clock = SimClock::epoch();
+        let worker = compile_workflow_worker(
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+            db_pool.clone(),
+            sim_clock.clone(),
+            JoinNextBlockingStrategy::Interrupt,
+            0,
+            TestingFnRegistry::new_from_components(vec![
+                compile_activity(
+                    test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                )
+                .await,
+                compile_workflow(
+                    test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+                )
+                .await,
+            ]),
+        )
+        .await;
+        // simulate a scheduling problem where deadline < now
+        let execution_deadline = sim_clock.now();
+        sim_clock
+            .move_time_forward(Duration::from_millis(100))
+            .await;
+
+        let ctx = WorkerContext {
+            execution_id: ExecutionId::generate(),
+            metadata: concepts::ExecutionMetadata::empty(),
+            ffqn: SLEEP_HOST_ACTIVITY_FFQN,
+            params: Params::from_json_values(vec![json!({"milliseconds": SLEEP_MILLIS})]),
+            event_history: Vec::new(),
+            responses: Vec::new(),
+            version: Version::new(0),
+            execution_deadline,
+            can_be_retried: false,
+            run_id: RunId::generate(),
+            worker_span: info_span!("worker-test"),
+        };
+        let WorkerResult::Err(err) = worker.run(ctx).await else {
+            panic!()
+        };
+        assert_matches!(err, WorkerError::TemporaryTimeout);
     }
 
     #[rstest]
@@ -963,7 +1027,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let sleep_exec = {
-            let worker = get_workflow_worker(
+            let worker = compile_workflow_worker(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 db_pool.clone(),
                 sim_clock.clone(),
@@ -1393,7 +1457,7 @@ pub(crate) mod tests {
             compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW)
                 .await,
         ]);
-        let worker = get_workflow_worker(
+        let worker = compile_workflow_worker(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),
             sim_clock.clone(),
