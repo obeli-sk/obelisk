@@ -707,12 +707,13 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::prefixed_ulid::RunId;
-    use concepts::storage::ExecutionLog;
+    use concepts::prefixed_ulid::{ExecutionIdDerived, RunId};
     use concepts::storage::{
-        wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
-        JoinSetRequest, PendingState,
+        wait_for_pending_state_fn, AppendRequest, CreateRequest, DbConnection, DbPool,
+        HistoryEvent, JoinSetRequest, JoinSetResponse, PendingState, PendingStateFinished,
+        PendingStateFinishedResultKind,
     };
+    use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
     use concepts::{ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, SUFFIX_PKG_EXT};
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
@@ -1001,7 +1002,10 @@ pub(crate) mod tests {
     const FFQN_CHILD_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn-child");
 
     #[tokio::test]
+    #[expect(clippy::too_many_lines)]
+    #[expect(clippy::search_is_some)]
     async fn check_determinism_closing_multiple_join_sets() {
+        const SUBMITS: usize = 10;
         test_utils::set_up();
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let sim_clock = SimClock::new(Now.now());
@@ -1030,7 +1034,7 @@ pub(crate) mod tests {
             WorkflowStep::SubmitWithoutAwait {
                 target_ffqn: FFQN_CHILD_MOCK,
             },
-            10,
+            SUBMITS,
         )
         .collect();
         let worker = Arc::new(WorkflowWorkerMock::new(
@@ -1040,33 +1044,149 @@ pub(crate) mod tests {
             sim_clock.clone(),
             db_pool.clone(),
         ));
-        // Run it the first time, should end up in Interrupted state with a closing join set.
-        let worker_result = worker
-            .run(WorkerContext {
-                execution_id: execution_id.clone(),
-                metadata: ExecutionMetadata::empty(),
-                ffqn: FFQN_MOCK,
-                params: Params::empty(),
-                event_history: vec![],
-                responses: vec![],
-                version,
-                execution_deadline: sim_clock.now() + Duration::from_secs(1),
-                can_be_retried: false,
-                run_id: RunId::generate(),
-                worker_span: info_span!("check_determinism"),
-            })
-            .await;
-        assert_matches!(worker_result, WorkerResult::DbUpdatedByWorker);
-        let execution_log = db_connection.get(&execution_id).await.unwrap();
-        let closing_join_nexts = execution_log
-            .event_history()
-            .filter_map(|event| match event {
-                HistoryEvent::JoinNext { closing: true, .. } => Some(()),
-                _ => None,
-            })
-            .count();
-        assert_eq!(1, closing_join_nexts);
+        {
+            let mut worker_result = worker
+                .run(WorkerContext {
+                    execution_id: execution_id.clone(),
+                    metadata: ExecutionMetadata::empty(),
+                    ffqn: FFQN_MOCK,
+                    params: Params::empty(),
+                    event_history: vec![],
+                    responses: vec![],
+                    version,
+                    execution_deadline: sim_clock.now() + Duration::from_secs(1),
+                    can_be_retried: false,
+                    run_id: RunId::generate(),
+                    worker_span: info_span!("check_determinism"),
+                })
+                .await;
+            assert_matches!(
+                worker_result,
+                WorkerResult::DbUpdatedByWorker,
+                "At least one -submit is expected"
+            );
+            // Run it SUBMITS times to close all join sets.
+            for run in 0..SUBMITS {
+                assert_matches!(worker_result, WorkerResult::DbUpdatedByWorker);
+                let execution_log = db_connection.get(&execution_id).await.unwrap();
+                let closing_join_nexts: hashbrown::HashSet<_> = execution_log
+                    .event_history()
+                    .filter_map(|event| match event {
+                        HistoryEvent::JoinNext {
+                            closing: true,
+                            join_set_id,
+                            ..
+                        } => Some(join_set_id),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(run + 1, closing_join_nexts.len());
+                // The last execution log entry must be join next.
+                let last_join_set = assert_matches!(&execution_log.pending_state, PendingState::BlockedByJoinSet {join_set_id, ..} => join_set_id.clone());
+                // Find a child execution id that belongs to this join set and has not been executed.
+                let child_execution_id = {
+                    let mut childs: Vec<_> = execution_log
+                        .event_history()
+                        .filter_map(|hevent| match hevent {
+                            HistoryEvent::JoinSetRequest {
+                                join_set_id: found,
+                                request:
+                                    JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                            } if last_join_set == found => Some(child_execution_id),
+                            _ => None,
+                        })
+                        .collect();
+                    childs.retain(|child| {
+                        execution_log
+                            .responses
+                            .iter()
+                            .find(|r| {
+                                matches!(
+                                    r,
+                                    JoinSetResponseEventOuter {
+                                        event: JoinSetResponseEvent {
+                                            event: JoinSetResponse::ChildExecutionFinished {
+                                                child_execution_id: found,
+                                                ..
+                                            },
+                                            ..
+                                        },
+                                        ..
+                                    }
+                                    if child == found
+                                )
+                            })
+                            .is_none() // retain only if response is not found.
+                    });
+                    assert_eq!(1, childs.len());
+                    childs.pop().unwrap()
+                };
+                info!("Found child to be executed: {child_execution_id}");
+                exec_child(child_execution_id, db_pool.clone(), sim_clock.clone()).await;
+                info!("Advancing the worker");
+                let execution_log = db_connection.get(&execution_id).await.unwrap();
+                assert_eq!(run + 1, execution_log.responses.len());
+                worker_result = worker
+                    .run(WorkerContext {
+                        execution_id: execution_id.clone(),
+                        metadata: ExecutionMetadata::empty(),
+                        ffqn: FFQN_MOCK,
+                        params: Params::empty(),
+                        event_history: execution_log.event_history().collect(),
+                        responses: execution_log
+                            .responses
+                            .into_iter()
+                            .map(|outer| outer.event)
+                            .collect(),
+                        version: execution_log.next_version,
+                        execution_deadline: sim_clock.now() + Duration::from_secs(1),
+                        can_be_retried: false,
+                        run_id: RunId::generate(),
+                        worker_span: info_span!("check_determinism"),
+                    })
+                    .await;
+                if run + 1 < SUBMITS {
+                    assert_matches!(
+                        worker_result,
+                        WorkerResult::DbUpdatedByWorker,
+                        "At another -submit is expected"
+                    );
+                }
+            }
+            let (finished_value, version) = assert_matches!(
+                worker_result,
+                WorkerResult::Ok(finished_value, version) => (finished_value, version),
+                "should be finished"
+            );
+            info!("Appending finished result");
+            db_connection
+                .append(
+                    execution_id.clone(),
+                    version,
+                    AppendRequest {
+                        created_at: sim_clock.now(),
+                        event: concepts::storage::ExecutionEventInner::Finished {
+                            result: Ok(finished_value),
+                        },
+                    },
+                )
+                .await
+                .unwrap();
+        }
 
+        let execution_log = db_connection.get(&execution_id).await.unwrap();
+        assert_matches!(
+            execution_log.pending_state,
+            PendingState::Finished {
+                finished: PendingStateFinished {
+                    result_kind: PendingStateFinishedResultKind(Ok(())),
+                    ..
+                }
+            }
+        );
+
+        // Currently only finished executions can be checked. Otherwise a noop
+        // response in `find_matching_atomic` would need to be implemented.
         info!("Run again to test determinism");
         let worker_result = worker
             .run(WorkerContext {
@@ -1088,10 +1208,11 @@ pub(crate) mod tests {
                 worker_span: info_span!("check_determinism"),
             })
             .await;
-        assert_matches!(worker_result, WorkerResult::DbUpdatedByWorker);
+        assert_matches!(worker_result, WorkerResult::Ok(..), "should be finished");
         assert_eq!(
             execution_log,
-            db_connection.get(&execution_id).await.unwrap()
+            db_connection.get(&execution_id).await.unwrap(),
+            "nothing should be written when verifying determinism"
         );
         db_pool.close().await.unwrap();
     }
@@ -1240,53 +1361,9 @@ pub(crate) mod tests {
                     delay_request_count -= 1;
                 }
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
-                    info!("Executing child {child_execution_id}");
                     assert!(child_execution_count > 0);
-                    let child_log = db_connection
-                        .get(&ExecutionId::Derived(child_execution_id.clone()))
-                        .await
-                        .unwrap();
-                    assert_eq!(
-                        Some((execution_id.clone(), join_set_id.clone())),
-                        child_log.parent()
-                    );
-                    // Execute the submitted child.
-                    let child_exec_tick = {
-                        let worker = Arc::new(WorkflowWorkerMock::new(
-                            child_log.ffqn().clone(),
-                            fn_registry.clone(),
-                            vec![],
-                            sim_clock.clone(),
-                            db_pool.clone(),
-                        ));
-                        let exec_config = ExecConfig {
-                            batch_size: 1,
-                            lock_expiry: Duration::from_secs(1),
-                            tick_sleep: TICK_SLEEP,
-                            component_id: ComponentId::dummy_activity(),
-                            task_limiter: None,
-                        };
-                        let exec_task = ExecTask::new(
-                            worker,
-                            exec_config,
-                            sim_clock.clone(),
-                            db_pool.clone(),
-                            Arc::new([child_log.ffqn().clone()]),
-                        );
-                        exec_task.tick_test(sim_clock.now()).await.unwrap()
-                    };
-                    assert_eq!(1, child_exec_tick.wait_for_tasks().await.unwrap());
+                    exec_child(child_execution_id, db_pool.clone(), sim_clock.clone()).await;
                     child_execution_count -= 1;
-                    let child_log = db_connection
-                        .get(&ExecutionId::Derived(child_execution_id.clone()))
-                        .await
-                        .unwrap();
-                    debug!(
-                        "Child execution {child_execution_id} should be finished: {:?}",
-                        &child_log.events
-                    );
-                    let child_res = child_log.into_finished_result().unwrap();
-                    assert_matches!(child_res, Ok(SupportedFunctionReturnValue::None));
                 }
             }
             processed.push(join_set_id);
@@ -1300,5 +1377,58 @@ pub(crate) mod tests {
         workflow_exec_task.close().await;
         timers_watcher_task.close().await;
         (execution_id, execution_log)
+    }
+
+    async fn exec_child<DB: DbConnection + 'static>(
+        child_execution_id: ExecutionIdDerived,
+        db_pool: impl DbPool<DB> + 'static,
+        sim_clock: SimClock,
+    ) {
+        info!("Executing child {child_execution_id}");
+        let db_connection = db_pool.connection();
+        let child_log = db_connection
+            .get(&ExecutionId::Derived(child_execution_id.clone()))
+            .await
+            .unwrap();
+        let (parent_execution_id, join_set_id) = assert_matches!(
+            child_log.parent(),
+            Some(v) => v
+        );
+        db_connection
+            .append_batch_respond_to_parent(
+                child_execution_id.clone(),
+                sim_clock.now(),
+                vec![AppendRequest {
+                    created_at: sim_clock.now(),
+                    event: concepts::storage::ExecutionEventInner::Finished {
+                        result: Ok(SupportedFunctionReturnValue::None),
+                    },
+                }],
+                child_log.next_version.clone(),
+                parent_execution_id,
+                JoinSetResponseEventOuter {
+                    created_at: sim_clock.now(),
+                    event: JoinSetResponseEvent {
+                        join_set_id,
+                        event: JoinSetResponse::ChildExecutionFinished {
+                            child_execution_id: child_execution_id.clone(),
+                            finished_version: child_log.next_version.clone(),
+                            result: Ok(SupportedFunctionReturnValue::None),
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let child_log = db_connection
+            .get(&ExecutionId::Derived(child_execution_id.clone()))
+            .await
+            .unwrap();
+        debug!(
+            "Child execution {child_execution_id} should be finished: {:?}",
+            &child_log.events
+        );
+        let child_res = child_log.into_finished_result().unwrap();
+        assert_matches!(child_res, Ok(SupportedFunctionReturnValue::None));
     }
 }

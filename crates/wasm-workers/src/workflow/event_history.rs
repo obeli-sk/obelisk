@@ -239,33 +239,34 @@ impl<C: ClockFn> EventHistory<C> {
             } else {
                 self.execution_deadline
             };
-        let poll_variant = event_call.poll_variant();
-        if poll_variant.is_none() {
-            // Cannot be FoundRequestButNotResponse, this is not blocking.
-            assert_matches!(found_atomic, FindMatchingResponse::NotFound);
-            // Events that cannot block, e.g. creating new join sets.
-            // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
-            let cloned_non_blocking = event_call.clone();
-            let history_events = self
-                .append_to_db(
-                    event_call,
-                    db_connection,
-                    fn_registry,
-                    called_at,
-                    lock_expires_at,
-                    version,
-                )
-                .await
-                .map_err(ApplyError::DbError)?;
-            self.event_history
-                .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
-            let non_blocking_resp = self.find_matching_atomic(&cloned_non_blocking)?;
-            // Now it must be found.
-            let non_blocking_resp =
-                assert_matches!(non_blocking_resp, FindMatchingResponse::Found(r) => r);
-            return Ok(non_blocking_resp);
-        }
-        let poll_variant = poll_variant.unwrap();
+        let poll_variant = match event_call.poll_variant() {
+            None => {
+                // Cannot be FoundRequestButNotResponse, this is not blocking.
+                assert_matches!(found_atomic, FindMatchingResponse::NotFound);
+                // Events that cannot block, e.g. creating new join sets.
+                // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
+                let cloned_non_blocking = event_call.clone();
+                let history_events = self
+                    .append_to_db(
+                        event_call,
+                        db_connection,
+                        fn_registry,
+                        called_at,
+                        lock_expires_at,
+                        version,
+                    )
+                    .await
+                    .map_err(ApplyError::DbError)?;
+                self.event_history
+                    .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
+                let non_blocking_resp = self.find_matching_atomic(&cloned_non_blocking)?;
+                // Now it must be found.
+                let non_blocking_resp =
+                    assert_matches!(non_blocking_resp, FindMatchingResponse::Found(r) => r);
+                return Ok(non_blocking_resp);
+            }
+            Some(poll_variant) => poll_variant,
+        };
 
         let keys = event_call.as_keys();
         if matches!(found_atomic, FindMatchingResponse::NotFound) {
@@ -460,9 +461,9 @@ impl<C: ClockFn> EventHistory<C> {
                     return Ok(resp);
                 }
                 FindMatchingResponse::FoundRequestButNotResponse => {
-                    // Noop, do not store anything just wait for the response.
-                    assert_eq!(idx, last_key_idx, "FoundRequestButNotResponse is returned on EventHistoryKey::JoinNextChild or EventHistoryKey::JoinNextDelay which must be the last returned by EventCall.as_keys");
-                    return Ok(resp);
+                    unreachable!(
+                        "FoundRequestButNotResponse in find_matching_atomic - {event_call:?}"
+                    );
                 }
                 FindMatchingResponse::Found(_) => {
                     if idx == last_key_idx {
