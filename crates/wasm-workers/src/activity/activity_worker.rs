@@ -10,7 +10,7 @@ use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::{fmt::Debug, sync::Arc};
 use tracing::{info, trace};
-use utils::time::{now_tokio_instant, ClockFn};
+use utils::time::{now_tokio_instant, ClockFn, Sleep};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::UpdateDeadline;
@@ -26,22 +26,24 @@ pub struct ActivityConfig {
 }
 
 #[derive(Clone)]
-pub struct ActivityWorker<C: ClockFn> {
+pub struct ActivityWorker<C: ClockFn, S: Sleep> {
     engine: Arc<Engine>,
     instance_pre: InstancePre<ActivityCtx>,
     exim: ExIm,
     clock_fn: C,
+    sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
 }
 
-impl<C: ClockFn> ActivityWorker<C> {
+impl<C: ClockFn, S: Sleep> ActivityWorker<C, S> {
     #[tracing::instrument(skip_all, fields(%config.component_id), err)]
     pub fn new_with_config(
         wasm_component: WasmComponent,
         config: ActivityConfig,
         engine: Arc<Engine>,
         clock_fn: C,
+        sleep: S,
     ) -> Result<Self, WasmFileError> {
         let linking_err = |err: wasmtime::Error| WasmFileError::LinkingError {
             context: StrVariant::Static("linking error"),
@@ -71,6 +73,7 @@ impl<C: ClockFn> ActivityWorker<C> {
             engine,
             exim: wasm_component.exim,
             clock_fn,
+            sleep,
             exported_ffqn_to_index,
             config,
             instance_pre,
@@ -87,7 +90,7 @@ impl<C: ClockFn> ActivityWorker<C> {
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
+impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
     fn exported_functions(&self) -> &[FunctionMetadata] {
         self.exim.get_exports(false)
     }
@@ -220,7 +223,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 }});
                 return res;
             },
-            ()  = tokio::time::sleep(deadline_duration) => {
+            ()  = self.sleep.sleep(deadline_duration) => {
                 ctx.worker_span.in_scope(||
                         info!(duration = ?stopwatch_for_reporting.elapsed(), %started_at, ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %self.clock_fn.now(), "Timed out")
                     );
@@ -245,6 +248,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::{path::Path, time::Duration};
     use test_utils::sim_clock::SimClock;
+    use utils::time::TokioSleep;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -299,6 +303,7 @@ pub(crate) mod tests {
         wasm_path: &str,
         engine: Arc<Engine>,
         clock_fn: impl ClockFn + 'static,
+        sleep: impl Sleep + 'static,
     ) -> (Arc<dyn Worker>, ComponentId) {
         let (wasm_component, component_id) = compile_activity_with_engine(wasm_path, &engine);
         (
@@ -308,6 +313,7 @@ pub(crate) mod tests {
                     activity_config(component_id.clone()),
                     engine,
                     clock_fn,
+                    sleep,
                 )
                 .unwrap(),
             ),
@@ -319,9 +325,11 @@ pub(crate) mod tests {
         db_pool: P,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
+        sleep: impl Sleep + 'static,
     ) -> ExecutorTaskHandle {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
-        let (worker, component_id) = new_activity_worker(wasm_path, engine, clock_fn.clone());
+        let (worker, component_id) =
+            new_activity_worker(wasm_path, engine, clock_fn.clone(), sleep);
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -341,11 +349,13 @@ pub(crate) mod tests {
     pub(crate) async fn spawn_activity_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         clock_fn: impl ClockFn + 'static,
+        sleep: impl Sleep + 'static,
     ) -> ExecutorTaskHandle {
         spawn_activity(
             db_pool,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             clock_fn,
+            sleep,
         )
         .await
     }
@@ -356,7 +366,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
-        let exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.clone()).await;
+        let exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.clone(), TokioSleep).await;
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -438,6 +448,7 @@ pub(crate) mod tests {
                 test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 engine,
                 Now,
+                TokioSleep,
             );
             let execution_deadline = Now.now() + lock_expiry;
             // create executions
@@ -506,6 +517,7 @@ pub(crate) mod tests {
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 engine,
                 Now,
+                TokioSleep,
             );
 
             let exec_config = ExecConfig {
@@ -592,6 +604,7 @@ pub(crate) mod tests {
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 engine,
                 sim_clock.clone(),
+                TokioSleep,
             );
 
             let executed_at = sim_clock.now();
@@ -629,6 +642,7 @@ pub(crate) mod tests {
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 engine,
                 sim_clock.clone(),
+                TokioSleep,
             );
             // simulate a scheduling problem where deadline < now
             let execution_deadline = sim_clock.now();
@@ -678,6 +692,7 @@ pub(crate) mod tests {
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                 engine,
                 sim_clock.clone(),
+                TokioSleep,
             );
             let exec_config = ExecConfig {
                 batch_size: 1,
@@ -783,6 +798,7 @@ pub(crate) mod tests {
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                 engine,
                 sim_clock.clone(),
+                TokioSleep,
             );
             let exec_config = ExecConfig {
                 batch_size: 1,

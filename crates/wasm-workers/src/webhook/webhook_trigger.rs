@@ -951,6 +951,7 @@ pub(crate) mod tests {
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
         use tracing::info;
+        use utils::time::TokioSleep;
         use utils::wasm_tools::WasmComponent;
         use val_json::type_wrapper::TypeWrapper;
         use val_json::wast_val::{WastVal, WastValWithType};
@@ -989,7 +990,7 @@ pub(crate) mod tests {
                 let sim_clock = SimClock::default();
                 let (guard, db_pool) = Database::Memory.set_up().await;
                 let activity_exec_task =
-                    spawn_activity_fibo(db_pool.clone(), sim_clock.clone()).await;
+                    spawn_activity_fibo(db_pool.clone(), sim_clock.clone(), TokioSleep).await;
                 let fn_registry = TestingFnRegistry::new_from_components(vec![
                     compile_activity(
                         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,

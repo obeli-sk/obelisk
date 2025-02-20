@@ -2966,6 +2966,7 @@ name = "obeli-sk-utils"
 version = "0.16.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "cfg-if",
  "chrono",
  "derive_more",

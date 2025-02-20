@@ -99,6 +99,7 @@ use tracing::{debug, info, trace};
 use utils::time::now_tokio_instant;
 use utils::time::ClockFn;
 use utils::time::Now;
+use utils::time::TokioSleep;
 use utils::wasm_tools::WasmComponent;
 use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
 use val_json::wast_val::WastValWithType;
@@ -1446,8 +1447,13 @@ fn prespawn_activity(
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
         .ok();
-    let worker =
-        ActivityWorker::new_with_config(wasm_component, activity.activity_config, engine, Now)?;
+    let worker = ActivityWorker::new_with_config(
+        wasm_component,
+        activity.activity_config,
+        engine,
+        Now,
+        TokioSleep,
+    )?;
     Ok(WorkerCompiled::new_activity(
         worker,
         activity.content_digest,
@@ -1486,6 +1492,7 @@ fn prespawn_workflow(
         workflow.workflow_config,
         engine,
         Now,
+        TokioSleep,
     );
     Ok(WorkerCompiled::new_workflow(
         worker,
@@ -1498,14 +1505,14 @@ fn prespawn_workflow(
 }
 
 struct WorkerCompiled {
-    worker: Either<Arc<dyn Worker>, WorkflowWorkerCompiled<Now>>,
+    worker: Either<Arc<dyn Worker>, WorkflowWorkerCompiled<Now, TokioSleep>>,
     exec_config: ExecConfig,
     executor_id: ExecutorId,
 }
 
 impl WorkerCompiled {
     fn new_activity(
-        worker: ActivityWorker<Now>,
+        worker: ActivityWorker<Now, TokioSleep>,
         content_digest: ContentDigest,
         exec_config: ExecConfig,
         retry_config: ComponentRetryConfig,
@@ -1534,7 +1541,7 @@ impl WorkerCompiled {
     }
 
     fn new_workflow(
-        worker: WorkflowWorkerCompiled<Now>,
+        worker: WorkflowWorkerCompiled<Now, TokioSleep>,
         content_digest: ContentDigest,
         exec_config: ExecConfig,
         retry_config: ComponentRetryConfig,
@@ -1578,7 +1585,7 @@ impl WorkerCompiled {
 }
 
 struct WorkerLinked {
-    worker: Either<Arc<dyn Worker>, WorkflowWorkerLinked<Now, SqlitePool, SqlitePool>>,
+    worker: Either<Arc<dyn Worker>, WorkflowWorkerLinked<Now, TokioSleep, SqlitePool, SqlitePool>>,
     exec_config: ExecConfig,
     executor_id: ExecutorId,
 }

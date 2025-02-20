@@ -18,7 +18,7 @@ use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{error, info, instrument, trace, warn, Span};
-use utils::time::{now_tokio_instant, ClockFn};
+use utils::time::{now_tokio_instant, ClockFn, Sleep};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{component::Val, Engine};
@@ -46,47 +46,52 @@ pub struct WorkflowConfig {
     pub forward_unhandled_child_errors_in_join_set_close: bool,
 }
 
-pub struct WorkflowWorkerCompiled<C: ClockFn> {
+pub struct WorkflowWorkerCompiled<C: ClockFn, S: Sleep> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
     clock_fn: C,
+    sleep: S,
     wasm_component: WasmComponent,
 }
 
-pub struct WorkflowWorkerLinked<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+pub struct WorkflowWorkerLinked<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
     exim: ExIm,
     clock_fn: C,
+    sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     fn_registry: Arc<dyn FunctionRegistry>,
     instance_pre: InstancePre<WorkflowCtx<C, DB, P>>,
 }
 
 #[derive(Clone)]
-pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+pub struct WorkflowWorker<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
     exim: ExIm,
     db_pool: P,
     clock_fn: C,
+    sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     fn_registry: Arc<dyn FunctionRegistry>,
     instance_pre: InstancePre<WorkflowCtx<C, DB, P>>,
 }
 
-impl<C: ClockFn> WorkflowWorkerCompiled<C> {
+impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
     #[tracing::instrument(skip_all, fields(%config.component_id))]
     pub fn new_with_config(
         wasm_component: WasmComponent,
         config: WorkflowConfig,
         engine: Arc<Engine>,
         clock_fn: C,
+        sleep: S,
     ) -> Self {
         Self {
             config,
             engine,
             clock_fn,
+            sleep,
             wasm_component,
         }
     }
@@ -95,7 +100,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
     pub fn link<DB: DbConnection, P: DbPool<DB>>(
         self,
         fn_registry: Arc<dyn FunctionRegistry>,
-    ) -> Result<WorkflowWorkerLinked<C, DB, P>, WasmFileError> {
+    ) -> Result<WorkflowWorkerLinked<C, S, DB, P>, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
 
         // Link obelisk: workflow-support and log
@@ -181,6 +186,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
             engine: self.engine,
             exim: self.wasm_component.exim,
             clock_fn: self.clock_fn,
+            sleep: self.sleep,
             exported_ffqn_to_index,
             fn_registry,
             instance_pre,
@@ -200,14 +206,15 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerLinked<C, DB, P> {
-    pub fn into_worker(self, db_pool: P) -> WorkflowWorker<C, DB, P> {
+impl<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerLinked<C, S, DB, P> {
+    pub fn into_worker(self, db_pool: P) -> WorkflowWorker<C, S, DB, P> {
         WorkflowWorker {
             config: self.config,
             engine: self.engine,
             exim: self.exim,
             db_pool,
             clock_fn: self.clock_fn,
+            sleep: self.sleep,
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             fn_registry: self.fn_registry,
             instance_pre: self.instance_pre,
@@ -237,8 +244,12 @@ enum WorkerResultRefactored<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 type CallFuncResult<C, DB, P> =
     Result<(SupportedFunctionReturnValue, WorkflowCtx<C, DB, P>), RunError<C, DB, P>>;
 
-impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
-    WorkflowWorker<C, DB, P>
+impl<
+        C: ClockFn + 'static,
+        S: Sleep + 'static,
+        DB: DbConnection + 'static,
+        P: DbPool<DB> + 'static,
+    > WorkflowWorker<C, S, DB, P>
 {
     async fn prepare_func(
         &self,
@@ -385,7 +396,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             res = Self::race_func_internal(store, func, params, &worker_span, stopwatch, deadline_duration, execution_deadline, self.config.retry_on_trap) => {
                 res
             },
-            () = tokio::time::sleep(deadline_duration) => {
+            () = self.sleep.sleep(deadline_duration) => {
                 // Not flushing the workflow_ctx as it would introduce locking.
                 // Not closing the join sets, workflow MUST be retried.
                 if interrupt_on_timeout_container.lock().unwrap().take().is_some() {
@@ -571,8 +582,12 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
-    for WorkflowWorker<C, DB, P>
+impl<
+        C: ClockFn + 'static,
+        S: Sleep + 'static,
+        DB: DbConnection + 'static,
+        P: DbPool<DB> + 'static,
+    > Worker for WorkflowWorker<C, S, DB, P>
 {
     fn exported_functions(&self) -> &[FunctionMetadata] {
         self.exim.get_exports(false)
@@ -641,6 +656,7 @@ pub(crate) mod tests {
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::info_span;
+    use utils::time::TokioSleep;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -722,6 +738,7 @@ pub(crate) mod tests {
                 },
                 workflow_engine,
                 clock_fn.clone(),
+                TokioSleep,
             )
             .link(fn_registry)
             .unwrap()
@@ -865,7 +882,8 @@ pub(crate) mod tests {
         .unwrap();
 
         info!("Execution should call the activity and finish");
-        let activity_exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.clone()).await;
+        let activity_exec_task =
+            spawn_activity_fibo(db_pool.clone(), sim_clock.clone(), TokioSleep).await;
 
         let res = db_connection
             .wait_for_finished_result(&execution_id, None)
@@ -900,16 +918,18 @@ pub(crate) mod tests {
 
     pub(crate) async fn compile_workflow_worker<
         C: ClockFn,
+        S: Sleep,
         DB: DbConnection + 'static,
         P: DbPool<DB> + 'static,
     >(
         wasm_path: &str,
         db_pool: P,
         clock_fn: C,
+        sleep: S,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: u32,
         fn_registry: Arc<dyn FunctionRegistry>,
-    ) -> Arc<WorkflowWorker<C, DB, P>> {
+    ) -> Arc<WorkflowWorker<C, S, DB, P>> {
         let workflow_engine =
             Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
         Arc::new(
@@ -929,6 +949,7 @@ pub(crate) mod tests {
                 },
                 workflow_engine,
                 clock_fn,
+                sleep,
             )
             .link(fn_registry)
             .unwrap()
@@ -948,6 +969,7 @@ pub(crate) mod tests {
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),
             sim_clock.clone(),
+            TokioSleep,
             JoinNextBlockingStrategy::Interrupt,
             0,
             TestingFnRegistry::new_from_components(vec![
@@ -1031,6 +1053,7 @@ pub(crate) mod tests {
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 db_pool.clone(),
                 sim_clock.clone(),
+                TokioSleep,
                 join_next_blocking_strategy,
                 0,
                 fn_registry,
@@ -1178,6 +1201,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
+            TokioSleep,
         )
         .await;
 
@@ -1266,6 +1290,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
+            TokioSleep,
         )
         .await;
 
@@ -1372,6 +1397,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
+            TokioSleep,
         )
         .await;
         let workflow_exec_task = spawn_workflow(
@@ -1461,6 +1487,7 @@ pub(crate) mod tests {
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),
             sim_clock.clone(),
+            TokioSleep,
             join_next_strategy,
             batching,
             fn_registry,
@@ -1578,6 +1605,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
+            TokioSleep,
         )
         .await;
 

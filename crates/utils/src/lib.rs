@@ -3,12 +3,35 @@ pub mod wasm_tools;
 mod wit;
 
 pub mod time {
+    use std::time::Duration;
+    use std::time::Instant;
+
+    use async_trait::async_trait;
+    use chrono::DateTime;
+    use chrono::Utc;
+
     pub trait ClockFn: Send + Sync + Clone {
         fn now(&self) -> DateTime<Utc>;
     }
 
-    use chrono::DateTime;
-    use chrono::Utc;
+    #[async_trait]
+    pub trait Sleep: Send + Sync + Clone {
+        async fn sleep(&self, duration: Duration);
+        async fn sleep_until(&self, deadline: Instant);
+    }
+
+    #[derive(Clone)]
+    pub struct TokioSleep;
+
+    #[async_trait]
+    impl Sleep for TokioSleep {
+        async fn sleep(&self, duration: Duration) {
+            tokio::time::sleep(duration).await
+        }
+        async fn sleep_until(&self, deadline: Instant) {
+            tokio::time::sleep_until(deadline.into()).await
+        }
+    }
 
     cfg_if::cfg_if! {
         if #[cfg(all(test, madsim))] {
