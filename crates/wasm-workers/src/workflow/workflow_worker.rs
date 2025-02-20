@@ -683,7 +683,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         (
-            WasmComponent::new(wasm_path, &engine, Some(component_id.component_type.into()))
+            WasmComponent::new(wasm_path, engine, Some(component_id.component_type.into()))
                 .unwrap(),
             component_id,
         )
