@@ -3,6 +3,8 @@ use concepts::storage::DbPool;
 use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
 use concepts::storage::{AppendRequest, CreateRequest};
+use concepts::time::ClockFn as _;
+use concepts::time::Now;
 use concepts::ComponentId;
 use concepts::ExecutionId;
 use concepts::Params;
@@ -11,8 +13,6 @@ use db_tests::SOME_FFQN;
 use std::time::Duration;
 use test_utils::arbitrary::UnstructuredHolder;
 use test_utils::set_up;
-use concepts::time::ClockFn as _;
-use concepts::time::Now;
 
 #[tokio::test]
 async fn diff_proptest() {
@@ -119,6 +119,7 @@ mod nomadsim {
     use concepts::storage::ExecutionEventInner;
     use concepts::storage::Version;
     use concepts::storage::{AppendRequest, CreateRequest};
+    use concepts::time::ClockFn as _;
     use concepts::ComponentId;
     use concepts::ExecutionId;
     use concepts::FinishedExecutionResult;
@@ -129,7 +130,6 @@ mod nomadsim {
     use std::time::Duration;
     use test_utils::set_up;
     use test_utils::sim_clock::SimClock;
-    use concepts::time::ClockFn as _;
 
     use val_json::wast_val::WastValWithType;
 

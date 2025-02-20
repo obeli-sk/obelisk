@@ -4,13 +4,13 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
 use crate::WasmFileError;
 use async_trait::async_trait;
+use concepts::time::{now_tokio_instant, ClockFn, Sleep};
 use concepts::{ComponentId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue, TrapKind};
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::{fmt::Debug, sync::Arc};
 use tracing::{info, trace};
-use concepts::time::{now_tokio_instant, ClockFn, Sleep};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::UpdateDeadline;
@@ -238,6 +238,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
+    use concepts::time::TokioSleep;
     use concepts::{
         prefixed_ulid::ExecutorId,
         storage::{CreateRequest, DbConnection, DbPool},
@@ -248,7 +249,6 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::{path::Path, time::Duration};
     use test_utils::sim_clock::SimClock;
-    use concepts::time::TokioSleep;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -400,13 +400,13 @@ pub(crate) mod tests {
     pub mod wasmtime_nosim {
         use super::*;
         use crate::engines::PoolingOptions;
+        use concepts::time::Now;
         use concepts::{
             prefixed_ulid::RunId,
             storage::{ExecutionEventInner, Version},
         };
         use test_utils::{env_or_default, sim_clock::SimClock};
         use tracing::{debug, info, info_span};
-        use concepts::time::Now;
 
         const EPOCH_MILLIS: u64 = 10;
 

@@ -18,6 +18,7 @@ use concepts::storage::{
     JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
+use concepts::time::ClockFn;
 use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
 use concepts::ExecutionMetadata;
@@ -36,7 +37,6 @@ use tracing::instrument;
 use tracing::Level;
 use tracing::Span;
 use tracing::{debug, error, trace};
-use concepts::time::ClockFn;
 use val_json::wast_val::WastVal;
 
 #[derive(Debug)]
@@ -1440,6 +1440,7 @@ mod tests {
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
+    use concepts::time::ClockFn;
     use concepts::{
         ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params,
         SupportedFunctionReturnValue,
@@ -1451,7 +1452,6 @@ mod tests {
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::{info, info_span};
-    use concepts::time::ClockFn;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::{WastVal, WastValWithType};
 

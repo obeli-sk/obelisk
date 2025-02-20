@@ -991,9 +991,9 @@ impl ServerVerified {
         })
     }
 }
-
+type Sqlite = SqlitePool<TokioSleep>;
 struct ServerInit {
-    db_pool: SqlitePool<TokioSleep>,
+    db_pool: Sqlite,
     exec_join_handles: Vec<ExecutorTaskHandle>,
     timers_watcher: expired_timers_watcher::TaskHandle,
     #[expect(dead_code)] // http servers will be aborted automatically
@@ -1088,14 +1088,14 @@ impl ServerInit {
 }
 
 type WebhookInstancesAndRoutes = (
-    WebhookEndpointInstance<Now, SqlitePool<TokioSleep>, SqlitePool<TokioSleep>>,
+    WebhookEndpointInstance<Now, Sqlite, Sqlite>,
     Vec<WebhookRouteVerified>,
 );
 
 async fn start_webhooks(
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstancesAndRoutes>)>,
     engines: &Engines,
-    db_pool: SqlitePool<TokioSleep>,
+    db_pool: Sqlite,
     fn_registry: Arc<dyn FunctionRegistry>,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
     let mut abort_handles = Vec::with_capacity(http_servers_to_webhooks.len());
@@ -1585,15 +1585,12 @@ impl WorkerCompiled {
 }
 
 struct WorkerLinked {
-    worker: Either<
-        Arc<dyn Worker>,
-        WorkflowWorkerLinked<Now, TokioSleep, SqlitePool<TokioSleep>, SqlitePool<TokioSleep>>,
-    >,
+    worker: Either<Arc<dyn Worker>, WorkflowWorkerLinked<Now, TokioSleep, Sqlite, Sqlite>>,
     exec_config: ExecConfig,
     executor_id: ExecutorId,
 }
 impl WorkerLinked {
-    fn spawn(self, db_pool: SqlitePool<TokioSleep>) -> ExecutorTaskHandle {
+    fn spawn(self, db_pool: Sqlite) -> ExecutorTaskHandle {
         let worker = match self.worker {
             Either::Left(activity) => activity,
             Either::Right(workflow_linked) => {

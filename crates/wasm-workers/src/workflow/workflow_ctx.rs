@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
+use concepts::time::ClockFn;
 use concepts::{ExecutionId, FunctionRegistry, IfcFqnName, StrVariant};
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
@@ -21,7 +22,6 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, instrument, trace, Span};
-use concepts::time::ClockFn;
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, Val};
 
@@ -714,6 +714,7 @@ pub(crate) mod tests {
         PendingStateFinishedResultKind,
     };
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
+    use concepts::time::{ClockFn, Now};
     use concepts::{ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, SUFFIX_PKG_EXT};
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
@@ -726,7 +727,6 @@ pub(crate) mod tests {
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info, info_span};
-    use concepts::time::{ClockFn, Now};
     use wasmtime::component::Val;
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);

@@ -10,6 +10,7 @@ use concepts::storage::{
     AppendRequest, ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
     HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
 };
+use concepts::time::ClockFn;
 use concepts::{
     ComponentId, ComponentType, ExecutionId, ExecutionMetadata, FinishedExecutionError,
     FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, JoinSetKind, Params,
@@ -30,7 +31,6 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Level, Span};
-use concepts::time::ClockFn;
 use utils::wasm_tools::{ExIm, WasmComponent, HTTP_HANDLER_FFQN};
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
@@ -938,6 +938,7 @@ pub(crate) mod tests {
             workflow::workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
         };
         use assert_matches::assert_matches;
+        use concepts::time::TokioSleep;
         use concepts::{
             storage::{DbConnection, DbPool},
             ExecutionId,
@@ -951,7 +952,6 @@ pub(crate) mod tests {
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
         use tracing::info;
-        use concepts::time::TokioSleep;
         use utils::wasm_tools::WasmComponent;
         use val_json::type_wrapper::TypeWrapper;
         use val_json::wast_val::{WastVal, WastValWithType};
