@@ -11,8 +11,8 @@ use db_tests::SOME_FFQN;
 use std::time::Duration;
 use test_utils::arbitrary::UnstructuredHolder;
 use test_utils::set_up;
-use utils::time::ClockFn as _;
-use utils::time::Now;
+use concepts::time::ClockFn as _;
+use concepts::time::Now;
 
 #[tokio::test]
 async fn diff_proptest() {
@@ -129,7 +129,7 @@ mod nomadsim {
     use std::time::Duration;
     use test_utils::set_up;
     use test_utils::sim_clock::SimClock;
-    use utils::time::ClockFn as _;
+    use concepts::time::ClockFn as _;
 
     use val_json::wast_val::WastValWithType;
 

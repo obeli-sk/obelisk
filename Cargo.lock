@@ -2880,6 +2880,7 @@ dependencies = [
  "arbitrary",
  "assert_matches",
  "async-trait",
+ "cfg-if",
  "chrono",
  "const_format",
  "derivative",
@@ -2967,7 +2968,6 @@ version = "0.16.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "cfg-if",
  "chrono",
  "derive_more",
  "hashbrown 0.15.2",
@@ -4682,6 +4682,7 @@ dependencies = [
  "chrono",
  "madsim",
  "madsim-tokio",
+ "obeli-sk-concepts",
  "obeli-sk-utils",
  "tracing",
  "tracing-subscriber",

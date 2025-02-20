@@ -5,6 +5,7 @@ use concepts::storage::{
     AppendRequest, DbPool, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
     LockedExecution,
 };
+use concepts::time::ClockFn;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn};
 use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
@@ -22,7 +23,6 @@ use std::{
 };
 use tokio::task::{AbortHandle, JoinHandle};
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Level, Span};
-use utils::time::ClockFn;
 
 #[derive(Debug, Clone)]
 pub struct ExecConfig {
@@ -664,6 +664,7 @@ mod tests {
     use concepts::storage::{
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
+    use concepts::time::Now;
     use concepts::{
         FunctionMetadata, JoinSetKind, ParameterTypes, Params, StrVariant,
         SupportedFunctionReturnValue, TrapKind,
@@ -674,7 +675,6 @@ mod tests {
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::set_up;
     use test_utils::sim_clock::{ConstClock, SimClock};
-    use utils::time::Now;
 
     pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
 

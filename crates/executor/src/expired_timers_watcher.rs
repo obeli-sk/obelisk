@@ -21,7 +21,7 @@ use std::{
 use tokio::task::AbortHandle;
 use tracing::Level;
 use tracing::{debug, error, info, instrument, trace, warn};
-use utils::time::ClockFn;
+use concepts::time::ClockFn;
 
 #[derive(Debug, Clone)]
 pub struct TimersWatcherConfig<C: ClockFn> {

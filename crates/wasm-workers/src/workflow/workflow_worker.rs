@@ -6,6 +6,7 @@ use crate::WasmFileError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::storage::{DbConnection, DbPool};
+use concepts::time::{now_tokio_instant, ClockFn, Sleep};
 use concepts::{
     ComponentId, FunctionFqn, FunctionMetadata, PackageIfcFns, ResultParsingError, StrVariant,
     TrapKind,
@@ -18,7 +19,6 @@ use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{error, info, instrument, trace, warn, Span};
-use utils::time::{now_tokio_instant, ClockFn, Sleep};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{component::Val, Engine};
@@ -636,6 +636,7 @@ pub(crate) mod tests {
         tests::{fn_registry_dummy, TestingFnRegistry},
     };
     use assert_matches::assert_matches;
+    use concepts::time::TokioSleep;
     use concepts::{
         prefixed_ulid::{ExecutorId, RunId},
         storage::{
@@ -656,7 +657,6 @@ pub(crate) mod tests {
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::info_span;
-    use utils::time::TokioSleep;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -1023,7 +1023,7 @@ pub(crate) mod tests {
         let (_guard, db_pool) = database.set_up().await;
 
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY)
+            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY) // not used here
                 .await,
             compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW)
                 .await,

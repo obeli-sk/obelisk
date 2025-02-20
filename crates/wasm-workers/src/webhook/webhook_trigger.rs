@@ -30,7 +30,7 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Level, Span};
-use utils::time::ClockFn;
+use concepts::time::ClockFn;
 use utils::wasm_tools::{ExIm, WasmComponent, HTTP_HANDLER_FFQN};
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
@@ -951,7 +951,7 @@ pub(crate) mod tests {
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
         use tracing::info;
-        use utils::time::TokioSleep;
+        use concepts::time::TokioSleep;
         use utils::wasm_tools::WasmComponent;
         use val_json::type_wrapper::TypeWrapper;
         use val_json::wast_val::{WastVal, WastValWithType};

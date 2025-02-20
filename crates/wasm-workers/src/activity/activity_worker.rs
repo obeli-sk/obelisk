@@ -10,7 +10,7 @@ use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::{fmt::Debug, sync::Arc};
 use tracing::{info, trace};
-use utils::time::{now_tokio_instant, ClockFn, Sleep};
+use concepts::time::{now_tokio_instant, ClockFn, Sleep};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::UpdateDeadline;
@@ -248,7 +248,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::{path::Path, time::Duration};
     use test_utils::sim_clock::SimClock;
-    use utils::time::TokioSleep;
+    use concepts::time::TokioSleep;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -406,7 +406,7 @@ pub(crate) mod tests {
         };
         use test_utils::{env_or_default, sim_clock::SimClock};
         use tracing::{debug, info, info_span};
-        use utils::time::Now;
+        use concepts::time::Now;
 
         const EPOCH_MILLIS: u64 = 10;
 

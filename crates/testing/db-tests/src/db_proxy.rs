@@ -11,6 +11,7 @@ use concepts::{
         LockPendingResponse, LockResponse, Pagination, PendingState, ResponseWithCursor, Version,
         VersionType,
     },
+    time::TokioSleep,
     ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn,
 };
 use db_mem::inmemory_dao::InMemoryPool;
@@ -19,7 +20,7 @@ use db_sqlite::sqlite_dao::SqlitePool;
 #[derive(Clone)]
 pub enum DbPoolEnum {
     Memory(InMemoryPool),
-    Sqlite(SqlitePool),
+    Sqlite(SqlitePool<TokioSleep>),
 }
 
 #[async_trait]

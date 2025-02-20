@@ -16,6 +16,7 @@ wasmtime::component::bindgen!({
 
 use crate::workflow::workflow_ctx::WorkflowCtx;
 use concepts::prefixed_ulid::ExecutionIdDerived;
+use concepts::time::ClockFn;
 use concepts::JoinSetId;
 use concepts::{
     prefixed_ulid::DelayId,
@@ -26,7 +27,6 @@ use indexmap::indexmap;
 pub(crate) use obelisk::types::time::Duration as DurationEnum;
 use std::time::Duration;
 use tracing::error;
-use utils::time::ClockFn;
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Resource, Val};
 

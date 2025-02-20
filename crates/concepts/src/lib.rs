@@ -31,6 +31,7 @@ use wasmtime::component::{Type, Val};
 #[cfg(feature = "rusqlite")]
 mod rusqlite_ext;
 pub mod storage;
+pub mod time;
 
 pub const NAMESPACE_OBELISK: &str = "obelisk";
 pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext";

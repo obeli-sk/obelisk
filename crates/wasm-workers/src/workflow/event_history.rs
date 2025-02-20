@@ -36,7 +36,7 @@ use tracing::instrument;
 use tracing::Level;
 use tracing::Span;
 use tracing::{debug, error, trace};
-use utils::time::ClockFn;
+use concepts::time::ClockFn;
 use val_json::wast_val::WastVal;
 
 #[derive(Debug)]
@@ -1451,7 +1451,7 @@ mod tests {
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::{info, info_span};
-    use utils::time::ClockFn;
+    use concepts::time::ClockFn;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::{WastVal, WastValWithType};
 

@@ -12,6 +12,7 @@ use concepts::{
         PendingStateFinishedResultKind, ResponseWithCursor, SpecificError, Version, VersionType,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_TEMPORARILY_FAILED, DUMMY_TEMPORARILY_TIMED_OUT,
     },
+    time::Sleep,
     ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, JoinSetId, StrVariant,
 };
 use hdrhistogram::{Counter, Histogram};
@@ -409,16 +410,17 @@ enum ThreadCommand {
 }
 
 #[derive(Clone)]
-pub struct SqlitePool {
+pub struct SqlitePool<S: Sleep> {
     shutdown: Arc<AtomicBool>,
     command_tx: tokio::sync::mpsc::Sender<ThreadCommand>,
     response_subscribers: ResponseSubscribers,
     ffqn_to_pending_subscription: Arc<Mutex<hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>>>,
+    sleep: S,
 }
 
 #[async_trait]
-impl DbPool<SqlitePool> for SqlitePool {
-    fn connection(&self) -> SqlitePool {
+impl<S: Sleep> DbPool<SqlitePool<S>> for SqlitePool<S> {
+    fn connection(&self) -> SqlitePool<S> {
         self.clone()
     }
 
@@ -470,7 +472,7 @@ impl Default for SqliteConfig {
     }
 }
 
-impl SqlitePool {
+impl<S: Sleep> SqlitePool<S> {
     fn init_thread(path: &Path) -> Connection {
         // No need to log errors - propagate error messages via panic.
         // It is OK to panic here - spawned on blocking thread pool, panic will error the initialization.
@@ -634,7 +636,11 @@ impl SqlitePool {
     }
 
     #[instrument(level = Level::DEBUG, skip_all, name = "sqlite_new")]
-    pub async fn new<P: AsRef<Path>>(path: P, config: SqliteConfig) -> Result<Self, DbError> {
+    pub async fn new<P: AsRef<Path>>(
+        path: P,
+        config: SqliteConfig,
+        sleep: S,
+    ) -> Result<Self, DbError> {
         let path = path.as_ref().to_owned();
         let shutdown = Arc::new(AtomicBool::new(false));
         let (command_tx, command_rx) = tokio::sync::mpsc::channel(config.queue_capacity);
@@ -663,6 +669,7 @@ impl SqlitePool {
             command_tx,
             response_subscribers: Arc::default(),
             ffqn_to_pending_subscription: Arc::default(),
+            sleep,
         })
     }
 
@@ -2160,6 +2167,29 @@ impl SqlitePool {
             _ => {}
         }
     }
+
+    #[instrument(level = Level::TRACE, skip_all)]
+    fn append_batch_create_new_execution_inner(
+        tx: &mut rusqlite::Transaction,
+        batch: Vec<AppendRequest>,
+        execution_id: &ExecutionId,
+        mut version: Version,
+        child_req: Vec<CreateRequest>,
+    ) -> Result<(Version, Vec<PendingAt>), DbError> {
+        let mut pending_at = None;
+        for append_request in batch {
+            (version, pending_at) = Self::append(tx, execution_id, &append_request, version)?;
+        }
+        let mut pending_ats = Vec::new();
+        if let Some(pending_at) = pending_at {
+            pending_ats.push(pending_at);
+        }
+        for child_req in child_req {
+            let (_, pending_at) = Self::create_inner(tx, child_req)?;
+            pending_ats.push(pending_at);
+        }
+        Ok((version, pending_ats))
+    }
 }
 
 enum IndexAction {
@@ -2168,7 +2198,7 @@ enum IndexAction {
 }
 
 #[async_trait]
-impl DbConnection for SqlitePool {
+impl<S: Sleep> DbConnection for SqlitePool<S> {
     #[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
         debug!("create");
@@ -2347,34 +2377,10 @@ impl DbConnection for SqlitePool {
             panic!("Cannot append `Created` event - use `create` instead");
         }
 
-        #[instrument(level = Level::TRACE, skip_all)]
-        fn append_batch_create_new_execution_inner(
-            tx: &mut rusqlite::Transaction,
-            batch: Vec<AppendRequest>,
-            execution_id: &ExecutionId,
-            mut version: Version,
-            child_req: Vec<CreateRequest>,
-        ) -> Result<(Version, Vec<PendingAt>), DbError> {
-            let mut pending_at = None;
-            for append_request in batch {
-                (version, pending_at) =
-                    SqlitePool::append(tx, execution_id, &append_request, version)?;
-            }
-            let mut pending_ats = Vec::new();
-            if let Some(pending_at) = pending_at {
-                pending_ats.push(pending_at);
-            }
-            for child_req in child_req {
-                let (_, pending_at) = SqlitePool::create_inner(tx, child_req)?;
-                pending_ats.push(pending_at);
-            }
-            Ok((version, pending_ats))
-        }
-
         let (version, pending_ats) = self
             .transaction_write(
                 move |tx| {
-                    append_batch_create_new_execution_inner(
+                    Self::append_batch_create_new_execution_inner(
                         tx,
                         batch,
                         &execution_id,
@@ -2622,7 +2628,7 @@ impl DbConnection for SqlitePool {
         ffqns: Arc<[FunctionFqn]>,
         max_wait: Duration,
     ) {
-        let sleep_until = Instant::now() + max_wait;
+        let sleep_fut = self.sleep.sleep(max_wait);
         let (sender, mut receiver) = mpsc::channel(1);
         {
             let mut ffqn_to_pending_subscription =
@@ -2644,7 +2650,7 @@ impl DbConnection for SqlitePool {
             Ok(ok) => ok,
             Err(err) => {
                 trace!("Ignoring error and waiting in for timeout - {err:?}");
-                tokio::time::sleep_until(sleep_until).await;
+                sleep_fut.await;
                 return;
             }
         };
@@ -2656,7 +2662,7 @@ impl DbConnection for SqlitePool {
             _ = receiver.recv() => {
                 trace!("Received a notification");
             }
-            () = tokio::time::sleep_until(sleep_until) => {
+            () = sleep_fut => {
             }
         }
     }
@@ -2768,12 +2774,13 @@ impl DbConnection for SqlitePool {
 #[cfg(any(test, feature = "tempfile"))]
 pub mod tempfile {
     use super::{SqliteConfig, SqlitePool};
+    use concepts::time::TokioSleep;
     use tempfile::NamedTempFile;
 
-    pub async fn sqlite_pool() -> (SqlitePool, Option<NamedTempFile>) {
+    pub async fn sqlite_pool() -> (SqlitePool<TokioSleep>, Option<NamedTempFile>) {
         if let Ok(path) = std::env::var("SQLITE_FILE") {
             (
-                SqlitePool::new(path, SqliteConfig::default())
+                SqlitePool::new(path, SqliteConfig::default(), TokioSleep)
                     .await
                     .unwrap(),
                 None,
@@ -2782,7 +2789,7 @@ pub mod tempfile {
             let file = NamedTempFile::new().unwrap();
             let path = file.path();
             (
-                SqlitePool::new(path, SqliteConfig::default())
+                SqlitePool::new(path, SqliteConfig::default(), TokioSleep)
                     .await
                     .unwrap(),
                 Some(file),

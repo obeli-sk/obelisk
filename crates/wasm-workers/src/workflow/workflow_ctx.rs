@@ -21,7 +21,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, instrument, trace, Span};
-use utils::time::ClockFn;
+use concepts::time::ClockFn;
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, Val};
 
@@ -726,7 +726,7 @@ pub(crate) mod tests {
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info, info_span};
-    use utils::time::{ClockFn, Now};
+    use concepts::time::{ClockFn, Now};
     use wasmtime::component::Val;
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);

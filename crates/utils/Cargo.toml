@@ -15,7 +15,6 @@ val-json.workspace = true
 
 anyhow.workspace = true
 async-trait.workspace = true
-cfg-if.workspace = true
 chrono.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
