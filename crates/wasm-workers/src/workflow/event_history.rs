@@ -6,7 +6,6 @@ use crate::host_exports::delay_id_into_wast_val;
 use crate::host_exports::execution_id_derived_into_wast_val;
 use crate::host_exports::execution_id_into_wast_val;
 use crate::host_exports::join_set_id_into_wast_val;
-use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
@@ -225,10 +224,8 @@ impl<C: ClockFn> EventHistory<C> {
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<ChildReturnValue, ApplyError> {
         trace!("apply({event_call:?})");
-        let found_atomic = self.find_matching_atomic(&event_call)?;
-        trace!("found_atomic: {found_atomic:?}");
-
-        if let FindMatchingResponse::Found(resp) = found_atomic {
+        if let Some(resp) = self.find_matching_atomic(&event_call)? {
+            trace!("found_atomic: {resp:?}");
             return Ok(resp);
         }
 
@@ -241,8 +238,6 @@ impl<C: ClockFn> EventHistory<C> {
             };
         let poll_variant = match event_call.poll_variant() {
             None => {
-                // Cannot be FoundRequestButNotResponse, this is not blocking.
-                assert_matches!(found_atomic, FindMatchingResponse::NotFound);
                 // Events that cannot block, e.g. creating new join sets.
                 // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
                 let cloned_non_blocking = event_call.clone();
@@ -259,32 +254,30 @@ impl<C: ClockFn> EventHistory<C> {
                     .map_err(ApplyError::DbError)?;
                 self.event_history
                     .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
-                let non_blocking_resp = self.find_matching_atomic(&cloned_non_blocking)?;
-                // Now it must be found.
-                let non_blocking_resp =
-                    assert_matches!(non_blocking_resp, FindMatchingResponse::Found(r) => r);
+                let non_blocking_resp = self
+                    .find_matching_atomic(&cloned_non_blocking)?
+                    .expect("now it must be found");
                 return Ok(non_blocking_resp);
             }
             Some(poll_variant) => poll_variant,
         };
 
         let keys = event_call.as_keys();
-        if matches!(found_atomic, FindMatchingResponse::NotFound) {
-            // Persist
-            let history_events = self
-                .append_to_db(
-                    event_call,
-                    db_connection,
-                    fn_registry,
-                    called_at,
-                    lock_expires_at,
-                    version,
-                )
-                .await
-                .map_err(ApplyError::DbError)?;
-            self.event_history
-                .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
-        }
+        // Persist
+        let history_events = self
+            .append_to_db(
+                event_call,
+                db_connection,
+                fn_registry,
+                called_at,
+                lock_expires_at,
+                version,
+            )
+            .await
+            .map_err(ApplyError::DbError)?;
+        self.event_history
+            .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
+
         let last_key_idx = keys.len() - 1;
         for (idx, key) in keys.into_iter().enumerate() {
             let res = self.process_event_by_key(&key)?;
@@ -446,10 +439,11 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
+    // Return ChildReturnValue if response is found
     fn find_matching_atomic(
         &mut self,
         event_call: &EventCall,
-    ) -> Result<FindMatchingResponse, ApplyError> {
+    ) -> Result<Option<ChildReturnValue>, ApplyError> {
         let keys = event_call.as_keys();
         assert!(!keys.is_empty());
         let last_key_idx = keys.len() - 1;
@@ -458,16 +452,16 @@ impl<C: ClockFn> EventHistory<C> {
             match resp {
                 FindMatchingResponse::NotFound => {
                     assert_eq!(idx, 0, "NotFound must be returned on the first key");
-                    return Ok(resp);
+                    return Ok(None);
                 }
                 FindMatchingResponse::FoundRequestButNotResponse => {
                     unreachable!(
                         "FoundRequestButNotResponse in find_matching_atomic - {event_call:?}"
                     );
                 }
-                FindMatchingResponse::Found(_) => {
+                FindMatchingResponse::Found(found) => {
                     if idx == last_key_idx {
-                        return Ok(resp);
+                        return Ok(Some(found));
                     }
                 }
             }
