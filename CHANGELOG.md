@@ -3,6 +3,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.1](https://github.com/obeli-sk/obelisk/compare/v0.16.0...v0.16.1)
+
+### ⛰️ Features
+
+- Disable determinism checking for unfinished executions - ([f94f862](https://github.com/obeli-sk/obelisk/commit/f94f8623c3e2b9c57cd5d18f4302015a70c95c72))
+
+### 🐛 Bug Fixes
+
+- *(sqlite)* Return delays in `nth_response`, `get_responses_with_offset` - ([de53521](https://github.com/obeli-sk/obelisk/commit/de5352126e09f4871d878b3340e7bf2982e4f475))
+- *(sqlite)* `list_responses` must return delays - ([86be046](https://github.com/obeli-sk/obelisk/commit/86be04657ceac1cd239a3d5a68351ca8eebfc33e))
+- *(sqlite)* Set PendingAt to max(now, lock_expirey) - ([01c9501](https://github.com/obeli-sk/obelisk/commit/01c95015acecea394dfabc3336d3a450bc596275))
+- *(workflow)* Account for join set kinds when checking name uniqueness - ([f625496](https://github.com/obeli-sk/obelisk/commit/f625496ac7dd3aa3c8599151084d7e511713a48a))
+- Rollback dependency updates as `yew` needs `getrandom` 0.2 - ([1f2911f](https://github.com/obeli-sk/obelisk/commit/1f2911f15b5696eda5bfad559a30284baa33c405))
+- Gracefully handle deadline before start of execution in workflow worker - ([8f246d7](https://github.com/obeli-sk/obelisk/commit/8f246d713cc52e4a40b893f82a7068b8fc55c1c3))
+- Gracefully handle deadline before start of execution in activity worker - ([3d012b1](https://github.com/obeli-sk/obelisk/commit/3d012b143923edcf3620fba03746f041bc97eb8f))
+
+### 🚜 Refactor
+
+- *(webui)* Switch `webui-proxy` to `wstd` - ([dfad85c](https://github.com/obeli-sk/obelisk/commit/dfad85c94feedd13a42cc1732192707e2c8e6d66))
+- Make `sqlite_dao` use `Sleep` trait - ([bdf319d](https://github.com/obeli-sk/obelisk/commit/bdf319d21cb6ac38b5f3c0c048aa8d6fdda09f1d))
+- Introduce `Sleep` - ([b12d2ea](https://github.com/obeli-sk/obelisk/commit/b12d2ea3393068c0df84684e8c202acf28c673d1))
+- Skip `Persist.value` in debug output - ([c124345](https://github.com/obeli-sk/obelisk/commit/c124345f76eae47b6476d39ea6bea80b2550c280))
+- Return `Option<ChildReturnValue>` in `find_matching_atomic` - ([a2d55bb](https://github.com/obeli-sk/obelisk/commit/a2d55bbcab806e9596cf709b1d0b169f9d9c30dd))
+
+
 ## [0.16.0](https://github.com/obeli-sk/obelisk/compare/v0.15.1...v0.16.0)
 
 ### ⛰️ Features
