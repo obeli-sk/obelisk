@@ -2296,7 +2296,6 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
             "lock_inner",
         )
         .await
-        .map_err(DbError::from)
     }
 
     #[instrument(level = Level::DEBUG, skip(self, req))]
@@ -2318,8 +2317,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                 move |tx| Self::append(tx, &execution_id, &req, version),
                 "append",
             )
-            .await
-            .map_err(DbError::from)?;
+            .await?;
         if let Some(pending_at) = pending_at {
             self.notify_pending(pending_at, created_at);
         }
@@ -2355,8 +2353,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                 },
                 "append_batch",
             )
-            .await
-            .map_err(DbError::from)?;
+            .await?;
         if let Some(pending_at) = pending_at {
             self.notify_pending(pending_at, current_time);
         }
@@ -2394,8 +2391,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                 },
                 "append_batch_create_new_execution_inner",
             )
-            .await
-            .map_err(DbError::from)?;
+            .await?;
         self.notify_pending_all(pending_ats.into_iter(), current_time);
         Ok(version)
     }
@@ -2458,8 +2454,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                 },
                 "append_batch_respond_to_parent",
             )
-            .await
-            .map_err(DbError::from)?
+            .await?
         };
         if let Some(response_subscriber) = response_subscriber {
             let notified = response_subscriber.send(parent_response_event);
@@ -2479,7 +2474,6 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
         let execution_id = execution_id.clone();
         self.transaction_read(move |tx| Self::get(tx, &execution_id), "get")
             .await
-            .map_err(DbError::from)
     }
 
     #[instrument(level = Level::DEBUG, skip(self))]
@@ -2496,7 +2490,6 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
             "get",
         )
         .await
-        .map_err(DbError::from)
     }
 
     #[instrument(level = Level::DEBUG, skip(self))]
@@ -2526,8 +2519,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                 },
                 "subscribe_to_next_responses",
             )
-            .await
-            .map_err(DbError::from)?;
+            .await?;
         match resp_or_receiver {
             itertools::Either::Left(resp) => Ok(resp),
             itertools::Either::Right(receiver) => receiver
@@ -2556,8 +2548,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                 move |tx| Self::append_response(tx, &execution_id, &event, &response_subscribers),
                 "append_response",
             )
-            .await
-            .map_err(DbError::from)?
+            .await?
         };
         if let Some(response_subscriber) = response_subscriber {
             debug!("Notifying response subscriber");
@@ -2622,7 +2613,6 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
             }, "get_expired_timers"
         )
         .await
-        .map_err(DbError::from)
     }
 
     #[instrument(level = Level::TRACE, skip(self))]

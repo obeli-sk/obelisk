@@ -647,10 +647,7 @@ mod workflow_support {
 
         // TODO: Apply jitter, should be configured on the component level
         async fn sleep(&mut self, duration: DurationEnum) -> wasmtime::Result<()> {
-            Ok(self
-                .persist_sleep(Duration::from(duration))
-                .await
-                .map_err(WorkflowFunctionError::from)?)
+            Ok(self.persist_sleep(Duration::from(duration)).await?)
         }
 
         async fn new_join_set_named(
