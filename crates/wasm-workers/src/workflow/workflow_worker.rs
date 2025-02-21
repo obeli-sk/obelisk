@@ -1011,6 +1011,7 @@ pub(crate) mod tests {
 
     #[rstest]
     #[tokio::test]
+    // TODO: Test await interleaving with timer - execution should finished in one go.
     async fn sleep_should_be_persisted_after_executor_restart(
         #[values(Database::Memory, Database::Sqlite)] database: Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]

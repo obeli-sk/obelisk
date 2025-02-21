@@ -1753,6 +1753,7 @@ impl<S: Sleep> SqlitePool<S> {
                 // PendingAt should be set to current time if called from expired_timers_watcher,
                 // or to a future time if the execution is hot.
                 let scheduled_at = max(lock_expires_at, req.created_at);
+                // TODO: Add diff test
                 // update the pending state.
                 let pending_state = PendingState::PendingAt { scheduled_at };
                 let next_version = Self::get_next_version(tx, execution_id)?;
@@ -1919,6 +1920,7 @@ impl<S: Sleep> SqlitePool<S> {
         execution_id: &ExecutionId,
         pagination: Option<Pagination<u32>>,
     ) -> Result<Vec<ResponseWithCursor>, DbError> {
+        // TODO: Add test
         let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
         let mut sql = "SELECT r.id, r.created_at, r.join_set_id, \
             r.delay_id, \
@@ -2016,6 +2018,7 @@ impl<S: Sleep> SqlitePool<S> {
         join_set_id: &JoinSetId,
         skip_rows: u64,
     ) -> Result<Option<JoinSetResponseEventOuter>, DbError> {
+        // TODO: Add test
         Ok(tx
             .prepare(
                 "SELECT r.id, r.created_at, r.join_set_id, \
@@ -2054,6 +2057,7 @@ impl<S: Sleep> SqlitePool<S> {
         execution_id: &ExecutionId,
         skip_rows: usize,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
+        // TODO: Add test
         tx.prepare(
             "SELECT r.id, r.created_at, r.join_set_id, \
             r.delay_id, \
