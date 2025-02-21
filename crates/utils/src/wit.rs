@@ -280,10 +280,7 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
                         let type_id_await_next_ok_part_tuple = resolve.types.alloc(TypeDef {
                             name: None,
                             kind: TypeDefKind::Tuple(wit_parser::Tuple {
-                                types: vec![
-                                    Type::Id(type_id_execution_id),
-                                    *actual_return_type_id,
-                                ],
+                                types: vec![Type::Id(type_id_execution_id), *actual_return_type_id],
                             }),
                             owner: TypeOwner::None,
                             docs: wit_parser::Docs::default(),
