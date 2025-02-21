@@ -135,8 +135,8 @@ version = "0.16.0"
 license = "AGPL-3.0-only"
 repository = "https://github.com/obeli-sk/obelisk"
 authors = ["Project Developers"]
-edition = "2024"
-rust-version = "1.85.0"
+edition = "2021"
+rust-version = "1.84.0"
 
 [workspace.dependencies]
 concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.16.0" }
