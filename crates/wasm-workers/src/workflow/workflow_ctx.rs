@@ -411,7 +411,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 
     // Must be persisted by the caller.
     fn next_u128(&mut self) -> u128 {
-        rand::Rng::gen(&mut self.rng)
+        rand::Rng::r#gen(&mut self.rng)
     }
 
     fn next_join_set_name_index(&mut self, kind: JoinSetKind) -> String {
