@@ -1,5 +1,5 @@
 use crate::wasm_tools::{ComponentExportsType, ExIm};
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use concepts::{FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT};
 use hashbrown::HashMap;
 use id_arena::Arena;

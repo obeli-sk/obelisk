@@ -1,10 +1,10 @@
 use super::activity_worker::ActivityConfig;
-use crate::component_logger::{ComponentLogger, log_activities};
+use crate::component_logger::{log_activities, ComponentLogger};
 use crate::std_output_stream::LogStream;
 use concepts::ExecutionId;
 use tracing::Span;
 use wasmtime::Engine;
-use wasmtime::{Store, component::ResourceTable};
+use wasmtime::{component::ResourceTable, Store};
 use wasmtime_wasi::{self, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 

@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, atomic::AtomicBool},
+    sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
 use tracing::debug;

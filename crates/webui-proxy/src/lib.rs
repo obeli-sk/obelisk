@@ -1,7 +1,7 @@
 use wstd::http::body::{BodyForthcoming, IncomingBody};
 use wstd::http::server::{Finished, Responder};
 use wstd::http::{Client, HeaderValue, Request, Response, Uri};
-use wstd::io::{AsyncWrite, copy};
+use wstd::io::{copy, AsyncWrite};
 
 #[wstd::http_server]
 async fn main(mut incoming_req: Request<IncomingBody>, incoming_responder: Responder) -> Finished {

@@ -1,6 +1,6 @@
-use anyhow::{Context, anyhow};
+use anyhow::{anyhow, Context};
 use futures_util::TryFutureExt;
-use http::{Uri, uri::Scheme};
+use http::{uri::Scheme, Uri};
 use tonic::transport::{Channel, ClientTlsConfig};
 
 pub(crate) mod grpc_mapping;
@@ -29,7 +29,7 @@ pub(crate) async fn to_channel(url: String) -> Result<Channel, anyhow::Error> {
 // Source: https://github.com/hseeberger/hello-tracing-rs/blob/b411f8b192b7d585c42b5928ea635b2bd8bde29c/hello-tracing-common/src/otel/grpc.rs
 pub mod injector {
     use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
-    use tracing::{Span, warn};
+    use tracing::{warn, Span};
 
     struct MetadataInjector<'a>(&'a mut MetadataMap);
 
@@ -80,7 +80,7 @@ pub mod injector {
 pub mod extractor {
     use opentelemetry::propagation::Extractor;
 
-    use tracing::{Span, warn};
+    use tracing::{warn, Span};
     use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
     struct HttpHeaderExtractor<'a>(&'a http::HeaderMap);

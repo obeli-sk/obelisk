@@ -1,7 +1,7 @@
 use crate::app::AppState;
 use crate::components::ffqn_with_links::FfqnWithLinks;
 use crate::grpc::ffqn::FunctionFqn;
-use crate::grpc::function_detail::{InterfaceFilter, map_interfaces_to_fn_details};
+use crate::grpc::function_detail::{map_interfaces_to_fn_details, InterfaceFilter};
 use crate::grpc::grpc_client::{self, ComponentId, ComponentType};
 use crate::grpc::ifc_fqn::IfcFqn;
 use hashbrown::HashMap;

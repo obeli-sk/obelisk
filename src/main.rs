@@ -6,7 +6,7 @@ mod grpc_util;
 mod init;
 mod oci;
 
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use args::{Args, Client, ClientSubcommand, Server, Subcommand};
 use clap::Parser;
 use command::server::{RunParams, VerifyParams};

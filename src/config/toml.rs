@@ -1,8 +1,8 @@
-use super::{ComponentLocation, ConfigStoreCommon, env_var::EnvVarConfig};
+use super::{env_var::EnvVarConfig, ComponentLocation, ConfigStoreCommon};
 use anyhow::{anyhow, bail};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, InvalidNameError, StrVariant,
-    check_name,
+    check_name, ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, InvalidNameError,
+    StrVariant,
 };
 use db_sqlite::sqlite_dao::SqliteConfig;
 use directories::{BaseDirs, ProjectDirs};
@@ -502,7 +502,7 @@ impl From<WasmtimePoolingAllocatorConfig> for wasm_workers::engines::PoolingOpti
 
 #[cfg(feature = "otlp")]
 pub(crate) mod otlp {
-    use super::{Deserialize, log};
+    use super::{log, Deserialize};
     use log::EnvFilter;
 
     #[derive(Debug, Deserialize)]
@@ -544,7 +544,7 @@ impl From<DurationConfig> for Duration {
 }
 
 pub(crate) mod log {
-    use super::{Deserialize, default_out_style};
+    use super::{default_out_style, Deserialize};
     use serde_with::serde_as;
     use std::str::FromStr;
 
@@ -694,7 +694,7 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 pub(crate) mod webhook {
     use crate::config::env_var::EnvVarConfig;
 
-    use super::{ComponentCommon, ConfigName, InflightSemaphore, StdOutput, resolve_env_vars};
+    use super::{resolve_env_vars, ComponentCommon, ConfigName, InflightSemaphore, StdOutput};
     use anyhow::Context;
     use concepts::{ComponentId, ComponentType, ContentDigest, StrVariant};
     use serde::Deserialize;

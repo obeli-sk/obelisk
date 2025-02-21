@@ -1,15 +1,15 @@
-use anyhow::{Context, bail, ensure};
+use anyhow::{bail, ensure, Context};
 use concepts::{ContentDigest, Digest};
 use futures_util::TryFutureExt;
-use oci_client::{Reference, manifest::OciImageManifest};
-use oci_wasm::{ToConfig, WASM_MANIFEST_MEDIA_TYPE, WasmClient, WasmConfig};
+use oci_client::{manifest::OciImageManifest, Reference};
+use oci_wasm::{ToConfig, WasmClient, WasmConfig, WASM_MANIFEST_MEDIA_TYPE};
 use std::{
     future::Future,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
 };
-use tracing::{Instrument, debug, info, info_span, instrument, warn};
+use tracing::{debug, info, info_span, instrument, warn, Instrument};
 use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
 

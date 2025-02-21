@@ -1,4 +1,4 @@
-use crate::config::toml::{ConfigToml, log::LoggingStyle};
+use crate::config::toml::{log::LoggingStyle, ConfigToml};
 use tracing::warn;
 use tracing_subscriber::Layer;
 
@@ -37,8 +37,8 @@ where
     use anyhow::Context;
     use opentelemetry::trace::TracerProvider;
     use opentelemetry_otlp::WithExportConfig as _;
-    use opentelemetry_sdk::Resource;
     use opentelemetry_sdk::propagation::TraceContextPropagator;
+    use opentelemetry_sdk::Resource;
 
     Ok(match &mut config.otlp {
         Some(otlp) if otlp.enabled => {

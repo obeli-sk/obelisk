@@ -1,10 +1,10 @@
 use super::grpc;
 use super::grpc::execution_status::BlockedByJoinSet;
-use crate::ExecutionRepositoryClient;
 use crate::command::grpc::execution_status::Finished;
 use crate::grpc_util::grpc_mapping::TonicClientResultExt;
-use anyhow::Context;
+use crate::ExecutionRepositoryClient;
 use anyhow::anyhow;
+use anyhow::Context;
 use chrono::DateTime;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::execution_status::Status;

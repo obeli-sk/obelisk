@@ -1,4 +1,4 @@
-use grpc_client::{ComponentType, result_detail};
+use grpc_client::{result_detail, ComponentType};
 
 pub mod execution_id;
 pub mod ffqn;

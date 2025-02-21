@@ -11,9 +11,9 @@ use crate::components::execution_detail::temporarily_failed::TemporarilyFailedEv
 use crate::components::execution_detail::timed_out::TemporarilyTimedOutEvent;
 use crate::components::execution_detail::unlocked::UnlockedEvent;
 use crate::components::execution_status::ExecutionStatus;
-use crate::grpc::execution_id::{EXECUTION_ID_INFIX, ExecutionIdExt};
+use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
 use crate::grpc::grpc_client::{
-    self, ExecutionEvent, JoinSetId, JoinSetResponseEvent, execution_event,
+    self, execution_event, ExecutionEvent, JoinSetId, JoinSetResponseEvent,
 };
 use assert_matches::assert_matches;
 use chrono::DateTime;

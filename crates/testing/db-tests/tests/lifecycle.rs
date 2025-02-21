@@ -1,5 +1,4 @@
 use assert_matches::assert_matches;
-use concepts::JoinSetId;
 use concepts::prefixed_ulid::{DelayId, RunId};
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
@@ -9,9 +8,10 @@ use concepts::storage::{
 use concepts::storage::{DbPool, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
+use concepts::JoinSetId;
+use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
+use concepts::{storage::HistoryEvent, FinishedExecutionResult};
 use concepts::{ComponentId, Params, StrVariant};
-use concepts::{ExecutionId, prefixed_ulid::ExecutorId};
-use concepts::{FinishedExecutionResult, storage::HistoryEvent};
 use db_tests::Database;
 use db_tests::SOME_FFQN;
 use std::sync::Arc;
@@ -188,21 +188,19 @@ async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
     let exec2 = ExecutorId::generate();
     let lock_expiry = Duration::from_millis(500);
 
-    assert!(
-        db_connection
-            .lock_pending(
-                1,
-                sim_clock.now(),
-                Arc::from([SOME_FFQN]),
-                sim_clock.now(),
-                ComponentId::dummy_activity(),
-                exec1,
-                sim_clock.now() + lock_expiry,
-            )
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(db_connection
+        .lock_pending(
+            1,
+            sim_clock.now(),
+            Arc::from([SOME_FFQN]),
+            sim_clock.now(),
+            ComponentId::dummy_activity(),
+            exec1,
+            sim_clock.now() + lock_expiry,
+        )
+        .await
+        .unwrap()
+        .is_empty());
 
     let mut version;
     // Create
@@ -339,20 +337,18 @@ async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock using exec2  while in a lock");
-        assert!(
-            db_connection
-                .lock(
-                    created_at,
-                    component_id.clone(),
-                    &execution_id,
-                    RunId::generate(),
-                    version.clone(),
-                    exec2,
-                    created_at + lock_expiry,
-                )
-                .await
-                .is_err()
-        );
+        assert!(db_connection
+            .lock(
+                created_at,
+                component_id.clone(),
+                &execution_id,
+                RunId::generate(),
+                version.clone(),
+                exec2,
+                created_at + lock_expiry,
+            )
+            .await
+            .is_err());
         // Version is not changed
     }
 
@@ -380,20 +376,18 @@ async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Extend lock using exec1 and wrong run id should fail");
-        assert!(
-            db_connection
-                .lock(
-                    created_at,
-                    component_id.clone(),
-                    &execution_id,
-                    RunId::generate(),
-                    version.clone(),
-                    exec1,
-                    created_at + lock_expiry,
-                )
-                .await
-                .is_err()
-        );
+        assert!(db_connection
+            .lock(
+                created_at,
+                component_id.clone(),
+                &execution_id,
+                RunId::generate(),
+                version.clone(),
+                exec1,
+                created_at + lock_expiry,
+            )
+            .await
+            .is_err());
     }
     let backoff_expires_at = {
         let created_at = sim_clock.now();
@@ -591,21 +585,19 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
     // 1 = Right at lock expiry
     // 2 = Some time after lock expiry
     for _ in 0..3 {
-        assert!(
-            db_connection
-                .lock_pending(
-                    1,
-                    sim_clock.now(),
-                    Arc::from([SOME_FFQN]),
-                    sim_clock.now(),
-                    ComponentId::dummy_activity(),
-                    exec1,
-                    sim_clock.now() + LOCK_EXPIRY,
-                )
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        assert!(db_connection
+            .lock_pending(
+                1,
+                sim_clock.now(),
+                Arc::from([SOME_FFQN]),
+                sim_clock.now(),
+                ComponentId::dummy_activity(),
+                exec1,
+                sim_clock.now() + LOCK_EXPIRY,
+            )
+            .await
+            .unwrap()
+            .is_empty());
         sim_clock.move_time_forward(LOCK_EXPIRY).await;
     }
 }
@@ -1087,13 +1079,11 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
         .await
         .unwrap();
 
-    assert!(
-        db_connection
-            .get_expired_timers(sim_clock.now())
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(db_connection
+        .get_expired_timers(sim_clock.now())
+        .await
+        .unwrap()
+        .is_empty());
 
     sim_clock.move_time_forward(lock_expiry).await;
 
@@ -1170,13 +1160,11 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
         .await
         .unwrap();
 
-    assert!(
-        db_connection
-            .get_expired_timers(sim_clock.now())
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(db_connection
+        .get_expired_timers(sim_clock.now())
+        .await
+        .unwrap()
+        .is_empty());
 
     sim_clock.move_time_forward(lock_expiry).await;
 

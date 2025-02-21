@@ -1,6 +1,3 @@
-use concepts::ComponentId;
-use concepts::ExecutionId;
-use concepts::Params;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionEventInner;
@@ -8,6 +5,9 @@ use concepts::storage::ExecutionLog;
 use concepts::storage::{AppendRequest, CreateRequest};
 use concepts::time::ClockFn as _;
 use concepts::time::Now;
+use concepts::ComponentId;
+use concepts::ExecutionId;
+use concepts::Params;
 use db_tests::Database;
 use db_tests::SOME_FFQN;
 use std::time::Duration;
@@ -113,10 +113,6 @@ async fn create_and_append(
 
 #[cfg(not(madsim))]
 mod nomadsim {
-    use concepts::ComponentId;
-    use concepts::ExecutionId;
-    use concepts::FinishedExecutionResult;
-    use concepts::Params;
     use concepts::prefixed_ulid::ExecutorId;
     use concepts::storage::DbConnection;
     use concepts::storage::DbPool;
@@ -124,6 +120,10 @@ mod nomadsim {
     use concepts::storage::Version;
     use concepts::storage::{AppendRequest, CreateRequest};
     use concepts::time::ClockFn as _;
+    use concepts::ComponentId;
+    use concepts::ExecutionId;
+    use concepts::FinishedExecutionResult;
+    use concepts::Params;
     use db_tests::Database;
     use db_tests::SOME_FFQN;
     use std::sync::Arc;

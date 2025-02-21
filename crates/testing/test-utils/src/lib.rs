@@ -2,8 +2,8 @@ use std::fmt;
 use std::str::FromStr;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::{
-    FmtContext, FormattedFields,
     format::{self, FormatEvent, FormatFields},
+    FmtContext, FormattedFields,
 };
 use tracing_subscriber::registry::LookupSpan;
 

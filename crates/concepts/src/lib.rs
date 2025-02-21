@@ -182,8 +182,8 @@ impl AsRef<str> for StrVariant {
 mod serde_strvariant {
     use crate::StrVariant;
     use serde::{
-        Deserialize, Deserializer, Serialize, Serializer,
         de::{self, Visitor},
+        Deserialize, Deserializer, Serialize, Serializer,
     };
     use std::{ops::Deref, sync::Arc};
 
@@ -1594,7 +1594,9 @@ pub enum DigestParseErrror {
     TypeParseError { hash_type: String },
     #[error("cannot parse ContentDigest - invalid suffix length, expected 64 hex digits, got {0}")]
     SuffixLength(usize),
-    #[error("cannot parse ContentDigest - suffix must be hex-encoded, got invalid character `{0}`")]
+    #[error(
+        "cannot parse ContentDigest - suffix must be hex-encoded, got invalid character `{0}`"
+    )]
     SuffixInvalid(char),
 }
 
@@ -1822,7 +1824,7 @@ impl opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'_
 #[cfg(test)]
 mod tests {
 
-    use crate::{ExecutionId, JoinSetId, JoinSetKind, StrVariant, prefixed_ulid::ExecutorId};
+    use crate::{prefixed_ulid::ExecutorId, ExecutionId, JoinSetId, JoinSetKind, StrVariant};
     use std::{
         hash::{DefaultHasher, Hash, Hasher},
         str::FromStr,
