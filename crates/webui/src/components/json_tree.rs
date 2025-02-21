@@ -2,8 +2,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use yew::prelude::*;
 use yewprint::{
-    id_tree::{self, InsertBehavior, Node, NodeId},
     Icon, NodeData,
+    id_tree::{self, InsertBehavior, Node, NodeId},
 };
 
 #[derive(Properties, PartialEq, Clone)]

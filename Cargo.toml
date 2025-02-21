@@ -328,6 +328,7 @@ clippy.if_not_else = "allow"
 [workspace.lints.rust]
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(madsim)'] }
 unknown_lints = "deny"
+unsafe_op_in_unsafe_fn = "allow" # Bug in wit-bindgen
 
 [profile.release]
 overflow-checks = true

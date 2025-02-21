@@ -7,7 +7,7 @@ use hashbrown::HashSet;
 use std::path::PathBuf;
 use wit_component::{Output, TypeKind, WitPrinter};
 use wit_parser::{Resolve, Type, TypeDefKind, TypeOwner, UnresolvedPackageGroup};
-use yew::{html, Html, ToHtml};
+use yew::{Html, ToHtml, html};
 
 pub fn print_all(
     wit: &str,

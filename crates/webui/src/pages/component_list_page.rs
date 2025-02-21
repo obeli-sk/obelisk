@@ -8,7 +8,7 @@ use crate::{
     },
     grpc::{
         ffqn::FunctionFqn,
-        function_detail::{map_interfaces_to_fn_details, InterfaceFilter},
+        function_detail::{InterfaceFilter, map_interfaces_to_fn_details},
         grpc_client::{self, ComponentId, FunctionDetail},
         ifc_fqn::IfcFqn,
     },

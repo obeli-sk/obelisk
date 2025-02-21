@@ -2,9 +2,9 @@ use crate::sha256sum::calculate_sha256_file;
 use anyhow::Context;
 use concepts::{
     ComponentType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
-    PackageIfcFns, ParameterType, ParameterTypes, ReturnType, StrVariant, SUFFIX_PKG_EXT,
+    PackageIfcFns, ParameterType, ParameterTypes, ReturnType, SUFFIX_PKG_EXT, StrVariant,
 };
-use indexmap::{indexmap, IndexMap};
+use indexmap::{IndexMap, indexmap};
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -13,11 +13,11 @@ use std::{
 use tracing::{debug, error, info, trace, warn};
 use val_json::type_wrapper::{TypeConversionError, TypeWrapper};
 use wasmtime::{
-    component::{types::ComponentItem, Component, ComponentExportIndex},
     Engine,
+    component::{Component, ComponentExportIndex, types::ComponentItem},
 };
 use wit_component::{ComponentEncoder, WitPrinter};
-use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
+use wit_parser::{Resolve, Results, WorldItem, WorldKey, decoding::DecodedWasm};
 
 pub const EXTENSION_FN_SUFFIX_SCHEDULE: &str = "-schedule";
 
@@ -589,7 +589,7 @@ fn merge_function_params_with_wasmtime(
 fn merge_function_params_with_wasmtime_internal<'a>(
     submittable: bool,
     wasmtime_parsed_interfaces: impl ExactSizeIterator<Item = (&'a str /* ifc_fqn */, ComponentItem)>
-        + 'a,
+    + 'a,
     engine: &Engine,
     mut ffqns_to_wit_parsed_meta: hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
@@ -623,7 +623,7 @@ fn merge_function_params_with_wasmtime_internal<'a>(
                                 return Err(DecodeError::TypeNotSupported {
                                     err,
                                     ffqn: FunctionFqn::new_arc(ifc_fqn, function_name),
-                                })
+                                });
                             }
                         }
                     } else {
@@ -642,7 +642,7 @@ fn merge_function_params_with_wasmtime_internal<'a>(
                             return Err(DecodeError::TypeNotSupported {
                                 err,
                                 ffqn: FunctionFqn::new_arc(ifc_fqn, function_name),
-                            })
+                            });
                         }
                     };
                     let parameter_types = {
@@ -683,7 +683,9 @@ fn merge_function_params_with_wasmtime_internal<'a>(
                 extension: false,
             });
         } else {
-            warn!("Ignoring {ifc_fqn}.{item:?} - only component functions nested in component instances are supported");
+            warn!(
+                "Ignoring {ifc_fqn}.{item:?} - only component functions nested in component instances are supported"
+            );
         }
     }
     Ok(vec)

@@ -8,8 +8,8 @@ use crate::{
 use yew::prelude::*;
 use yew_router::prelude::Link;
 use yewprint::{
-    id_tree::{InsertBehavior, Node, NodeId, Tree, TreeBuilder},
     Icon, NodeData, TreeData,
+    id_tree::{InsertBehavior, Node, NodeId, Tree, TreeBuilder},
 };
 
 #[derive(Properties, PartialEq, Clone)]

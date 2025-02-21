@@ -1,8 +1,8 @@
 use crate::{components::execution_detail::tree_component::TreeComponent, grpc::grpc_client};
 use yew::prelude::*;
 use yewprint::{
-    id_tree::{InsertBehavior, Node, TreeBuilder},
     Icon, NodeData, TreeData,
+    id_tree::{InsertBehavior, Node, TreeBuilder},
 };
 
 #[derive(Properties, PartialEq, Clone)]

@@ -1,15 +1,15 @@
-use anyhow::{bail, ensure, Context};
+use anyhow::{Context, bail, ensure};
 use concepts::{ContentDigest, Digest};
 use futures_util::TryFutureExt;
-use oci_client::{manifest::OciImageManifest, Reference};
-use oci_wasm::{ToConfig, WasmClient, WasmConfig, WASM_MANIFEST_MEDIA_TYPE};
+use oci_client::{Reference, manifest::OciImageManifest};
+use oci_wasm::{ToConfig, WASM_MANIFEST_MEDIA_TYPE, WasmClient, WasmConfig};
 use std::{
     future::Future,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
 };
-use tracing::{debug, info, info_span, instrument, warn, Instrument};
+use tracing::{Instrument, debug, info, info_span, instrument, warn};
 use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
 
@@ -67,11 +67,15 @@ pub(crate) async fn pull_to_cache_dir(
             .instrument(info_span!("pull_manifest_and_config"))
             .await?;
         match image.digest() {
-            None => warn!("Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}"),
+            None => warn!(
+                "Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}"
+            ),
             Some(specified) => {
                 debug!("Fetched metadata digest {metadata_digest}");
                 if specified != metadata_digest {
-                    bail!("metadata digest mismatch. Specified:\n{image_without_digest}@{specified}\nActually got:\n{image_without_digest}@{metadata_digest}")
+                    bail!(
+                        "metadata digest mismatch. Specified:\n{image_without_digest}@{specified}\nActually got:\n{image_without_digest}@{metadata_digest}"
+                    )
                 }
             }
         }
@@ -113,8 +117,10 @@ pub(crate) async fn pull_to_cache_dir(
         .expect("layer length asserted in WasmClient")
         .data;
     let actual_hash = calculate_sha256_mem(&data);
-    ensure!(content_digest == actual_hash,
-        "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {content_digest}, got {actual_hash}");
+    ensure!(
+        content_digest == actual_hash,
+        "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {content_digest}, got {actual_hash}"
+    );
     // Write only after verifying the hash.
     tokio::fs::write(&wasm_path, data)
         .await

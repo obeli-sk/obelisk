@@ -1,4 +1,4 @@
-use super::{ifc_fqn::IfcFqn, NAMESPACE_OBELISK, SUFFIX_PKG_EXT};
+use super::{NAMESPACE_OBELISK, SUFFIX_PKG_EXT, ifc_fqn::IfcFqn};
 use anyhow::Context;
 use std::fmt::Display;
 use wit_parser::{Interface, PackageName};

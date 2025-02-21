@@ -2,15 +2,15 @@ use crate::grpc::ResultValueExt;
 use crate::{
     app::Route,
     components::execution_detail::{finished::attach_result_detail, tree_component::TreeComponent},
-    grpc::grpc_client::{self, join_set_response_event, JoinSetResponseEvent, ResultDetail},
+    grpc::grpc_client::{self, JoinSetResponseEvent, ResultDetail, join_set_response_event},
 };
 use chrono::DateTime;
 use log::error;
 use yew::prelude::*;
 use yew_router::prelude::Link;
 use yewprint::{
-    id_tree::{InsertBehavior, Node, TreeBuilder},
     Icon, NodeData, TreeData,
+    id_tree::{InsertBehavior, Node, TreeBuilder},
 };
 
 #[derive(Properties, PartialEq, Clone)]

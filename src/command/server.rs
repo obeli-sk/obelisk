@@ -1,53 +1,39 @@
 use super::grpc;
 use super::grpc::GenerateExecutionIdResponse;
+use crate::config::ComponentConfig;
+use crate::config::ComponentConfigImportable;
+use crate::config::ComponentLocation;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::env_var::EnvVarConfig;
-use crate::config::toml::webhook;
-use crate::config::toml::webhook::WebhookComponentVerified;
-use crate::config::toml::webhook::WebhookRoute;
-use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::config::toml::ActivityWasmConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
 use crate::config::toml::InflightSemaphore;
+use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::StdOutput;
 use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
-use crate::config::toml::SQLITE_FILE_NAME;
-use crate::config::ComponentConfig;
-use crate::config::ComponentConfigImportable;
-use crate::config::ComponentLocation;
-use crate::grpc_util::extractor::accept_trace;
-use crate::grpc_util::grpc_mapping::db_error_to_status;
-use crate::grpc_util::grpc_mapping::from_execution_event_to_grpc;
-use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
-use crate::grpc_util::grpc_mapping::TonicServerResultExt;
+use crate::config::toml::webhook;
+use crate::config::toml::webhook::WebhookComponentVerified;
+use crate::config::toml::webhook::WebhookRoute;
+use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::grpc_util::TonicRespResult;
 use crate::grpc_util::TonicResult;
+use crate::grpc_util::extractor::accept_trace;
+use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
+use crate::grpc_util::grpc_mapping::TonicServerResultExt;
+use crate::grpc_util::grpc_mapping::db_error_to_status;
+use crate::grpc_util::grpc_mapping::from_execution_event_to_grpc;
 use crate::init;
 use crate::init::Guard;
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
 use assert_matches::assert_matches;
 use chrono::DateTime;
 use chrono::Utc;
-use concepts::prefixed_ulid::ExecutorId;
-use concepts::storage::CreateRequest;
-use concepts::storage::DbConnection;
-use concepts::storage::DbPool;
-use concepts::storage::ExecutionListPagination;
-use concepts::storage::ExecutionWithState;
-use concepts::storage::HistoryEventScheduledAt;
-use concepts::storage::PendingState;
-use concepts::storage::Version;
-use concepts::storage::VersionType;
-use concepts::time::now_tokio_instant;
-use concepts::time::ClockFn;
-use concepts::time::Now;
-use concepts::time::TokioSleep;
 use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
@@ -65,6 +51,20 @@ use concepts::ParameterType;
 use concepts::Params;
 use concepts::ReturnType;
 use concepts::StrVariant;
+use concepts::prefixed_ulid::ExecutorId;
+use concepts::storage::CreateRequest;
+use concepts::storage::DbConnection;
+use concepts::storage::DbPool;
+use concepts::storage::ExecutionListPagination;
+use concepts::storage::ExecutionWithState;
+use concepts::storage::HistoryEventScheduledAt;
+use concepts::storage::PendingState;
+use concepts::storage::Version;
+use concepts::storage::VersionType;
+use concepts::time::ClockFn;
+use concepts::time::Now;
+use concepts::time::TokioSleep;
+use concepts::time::now_tokio_instant;
 use db_sqlite::sqlite_dao::SqliteConfig;
 use db_sqlite::sqlite_dao::SqlitePool;
 use directories::BaseDirs;
@@ -89,19 +89,19 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
-use tokio_stream::{wrappers::ReceiverStream, Stream};
+use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
 use tonic_web::GrpcWebLayer;
+use tracing::Instrument;
+use tracing::Span;
 use tracing::error;
 use tracing::info_span;
 use tracing::instrument;
 use tracing::warn;
-use tracing::Instrument;
-use tracing::Span;
 use tracing::{debug, info, trace};
-use utils::wasm_tools::WasmComponent;
 use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
+use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
 use wasm_workers::activity::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
@@ -323,8 +323,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         &self,
         request: tonic::Request<grpc::GetStatusRequest>,
     ) -> TonicRespResult<Self::GetStatusStream> {
-        use grpc::get_status_response::Message;
         use grpc::ExecutionSummary;
+        use grpc::get_status_response::Message;
 
         let request = request.into_inner();
         let execution_id: ExecutionId = request
@@ -1629,7 +1629,10 @@ impl ComponentConfigRegistry {
             for exported_ffqn in importable.exports_ext.iter().map(|f| &f.ffqn) {
                 if let Some((offending_id, _, _)) = self.inner.exported_ffqns_ext.get(exported_ffqn)
                 {
-                    bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.component_id);
+                    bail!(
+                        "function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}",
+                        component.component_id
+                    );
                 }
             }
 
@@ -1714,8 +1717,10 @@ impl ComponentConfigRegistry {
             {
                 // check parameters
                 if imported_fn_metadata.parameter_types != exported_fn_metadata.parameter_types {
-                    error!("Parameter types do not match: {ffqn} imported by {component_id} , exported by {exported_component_id}",
-                        ffqn = imported_fn_metadata.ffqn);
+                    error!(
+                        "Parameter types do not match: {ffqn} imported by {component_id} , exported by {exported_component_id}",
+                        ffqn = imported_fn_metadata.ffqn
+                    );
                     error!(
                         "Import {import}",
                         import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format
@@ -1727,8 +1732,10 @@ impl ComponentConfigRegistry {
                     errors.push(format!("parameter types do not match: {component_id} imports {imported_fn_metadata} , {exported_component_id} exports {exported_fn_metadata}"));
                 }
                 if imported_fn_metadata.return_type != exported_fn_metadata.return_type {
-                    error!("Return types do not match: {ffqn} imported by {component_id} , exported by {exported_component_id}",
-                        ffqn = imported_fn_metadata.ffqn);
+                    error!(
+                        "Return types do not match: {ffqn} imported by {component_id} , exported by {exported_component_id}",
+                        ffqn = imported_fn_metadata.ffqn
+                    );
                     error!(
                         "Import {import}",
                         import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format

@@ -4,8 +4,8 @@ use crate::{
 use yew::prelude::*;
 use yew_router::prelude::Link;
 use yewprint::{
-    id_tree::{InsertBehavior, Node, TreeBuilder},
     Icon, NodeData, TreeData,
+    id_tree::{InsertBehavior, Node, TreeBuilder},
 };
 
 #[derive(Properties, PartialEq, Clone)]

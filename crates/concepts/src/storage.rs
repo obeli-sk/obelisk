@@ -1,7 +1,3 @@
-use crate::prefixed_ulid::DelayId;
-use crate::prefixed_ulid::ExecutionIdDerived;
-use crate::prefixed_ulid::ExecutorId;
-use crate::prefixed_ulid::RunId;
 use crate::ComponentId;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
@@ -11,6 +7,10 @@ use crate::JoinSetId;
 use crate::Params;
 use crate::StrVariant;
 use crate::SupportedFunctionReturnValue;
+use crate::prefixed_ulid::DelayId;
+use crate::prefixed_ulid::ExecutionIdDerived;
+use crate::prefixed_ulid::ExecutorId;
+use crate::prefixed_ulid::RunId;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -484,16 +484,22 @@ impl TryFrom<&WastVal> for HistoryEventScheduledAt {
             ("in", Some(duration)) => {
                 if let &WastVal::Variant(key, value) = &duration.deref() {
                     let duration = match (key.as_str(), value.as_deref()) {
-                        ("milliseconds", Some(WastVal::U64(value))) => Duration::from_millis(*value),
+                        ("milliseconds", Some(WastVal::U64(value))) => {
+                            Duration::from_millis(*value)
+                        }
                         ("seconds", Some(WastVal::U64(value))) => Duration::from_secs(*value),
                         ("minutes", Some(WastVal::U64(value))) => Duration::from_secs(*value * 60),
-                        ("hours", Some(WastVal::U64(value))) => Duration::from_secs(*value * 60 * 60),
+                        ("hours", Some(WastVal::U64(value))) => {
+                            Duration::from_secs(*value * 60 * 60)
+                        }
                         ("days", Some(WastVal::U64(value))) => {
                             Duration::from_secs(*value * 60 * 60 * 24)
-                        },
-                        _ => return Err(
-                            "cannot convert `scheduled-at`, `in` variant: value must be one of the following keys: `milliseconds`(U64), `seconds`(U64), `minutes`(U32), `hours`(U32), `days`(U32)",
-                        )
+                        }
+                        _ => {
+                            return Err(
+                                "cannot convert `scheduled-at`, `in` variant: value must be one of the following keys: `milliseconds`(U64), `seconds`(U64), `minutes`(U32), `hours`(U32), `days`(U32)",
+                            );
+                        }
                     };
                     Ok(HistoryEventScheduledAt::In(duration))
                 } else {
@@ -511,18 +517,20 @@ impl TryFrom<&WastVal> for HistoryEventScheduledAt {
                 match (date_time.len(), seconds, nanos) {
                     (2, Some(WastVal::U64(seconds)), Some(WastVal::U32(nanos))) => {
                         let Ok(seconds) = i64::try_from(*seconds) else {
-                            return Err("cannot convert `scheduled-at`, cannot convert seconds from u64 to i64");
+                            return Err(
+                                "cannot convert `scheduled-at`, cannot convert seconds from u64 to i64",
+                            );
                         };
                         let Some(date_time) = DateTime::from_timestamp(seconds, *nanos) else {
-                            return Err("cannot convert `scheduled-at`, cannot convert seconds and nanos to DateTime");
+                            return Err(
+                                "cannot convert `scheduled-at`, cannot convert seconds and nanos to DateTime",
+                            );
                         };
                         Ok(HistoryEventScheduledAt::At(date_time))
                     }
-                    _ => {
-                        Err(
-                            "cannot convert `scheduled-at`, `at` variant: record must have exactly two keys: `seconds`(U64), `nanoseconds`(U32)",
-                        )
-                    }
+                    _ => Err(
+                        "cannot convert `scheduled-at`, `at` variant: record must have exactly two keys: `seconds`(U64), `nanoseconds`(U32)",
+                    ),
                 }
             }
             _ => Err("cannot convert `scheduled-at` variant, expected one of `now`, `in`, `at`"),
@@ -1112,10 +1120,10 @@ mod tests {
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
     use super::PendingStateFinishedResultKind;
-    use crate::storage::Version;
     use crate::ExecutionId;
     use crate::FinishedExecutionResult;
     use crate::SupportedFunctionReturnValue;
+    use crate::storage::Version;
     use assert_matches::assert_matches;
     use chrono::Utc;
     use rstest::rstest;

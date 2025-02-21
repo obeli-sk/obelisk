@@ -3,10 +3,9 @@
 use crate::{
     components::execution_detail::finished::FinishedEvent,
     grpc::grpc_client::{
-        self,
+        self, ExecutionStatus as GExecutionStatus, ExecutionSummary, FinishedStatus, ResultKind,
         execution_status::{Finished, Locked, PendingAt},
-        get_status_response, ExecutionStatus as GExecutionStatus, ExecutionSummary, FinishedStatus,
-        ResultKind,
+        get_status_response,
     },
 };
 use chrono::DateTime;
@@ -70,8 +69,8 @@ pub fn execution_status(
 
                 if let Some(cancel_rx) = cancel_rx {
                     debug!(
-                    "[{connectin_id}] <ExecutionStatus /> Subscribing to status of {execution_id}"
-                );
+                        "[{connectin_id}] <ExecutionStatus /> Subscribing to status of {execution_id}"
+                    );
                     wasm_bindgen_futures::spawn_local({
                         let status_state = status_state.clone();
                         let connectin_id = connectin_id.clone();
@@ -109,7 +108,9 @@ pub fn execution_status(
                                     }
                                     Ok(None) => break,
                                     Err(err) => {
-                                        error!("[{connectin_id}] Error wile listening to status updates: {err:?}");
+                                        error!(
+                                            "[{connectin_id}] Error wile listening to status updates: {err:?}"
+                                        );
                                         break;
                                     }
                                 }

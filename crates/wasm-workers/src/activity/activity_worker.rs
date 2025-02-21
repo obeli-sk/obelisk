@@ -1,10 +1,10 @@
 use super::activity_ctx::{self, ActivityCtx};
+use crate::WasmFileError;
 use crate::component_logger::log_activities;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
-use crate::WasmFileError;
 use async_trait::async_trait;
-use concepts::time::{now_tokio_instant, ClockFn, Sleep};
+use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{ComponentId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue, TrapKind};
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
@@ -12,9 +12,9 @@ use executor::worker::{Worker, WorkerError};
 use std::{fmt::Debug, sync::Arc};
 use tracing::{info, trace};
 use utils::wasm_tools::{ExIm, WasmComponent};
-use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::UpdateDeadline;
-use wasmtime::{component::Val, Engine};
+use wasmtime::component::{ComponentExportIndex, InstancePre};
+use wasmtime::{Engine, component::Val};
 
 #[derive(Clone, Debug)]
 pub struct ActivityConfig {
@@ -169,7 +169,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         return WorkerResult::Err(WorkerError::FatalError(
                             FatalError::ResultParsingError(err),
                             ctx.version,
-                        ))
+                        ));
                     }
                 };
                 if let Err(err) = func.post_return_async(&mut store).await {
@@ -240,9 +240,9 @@ pub(crate) mod tests {
     use assert_matches::assert_matches;
     use concepts::time::TokioSleep;
     use concepts::{
+        ComponentType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
         prefixed_ulid::ExecutorId,
         storage::{CreateRequest, DbConnection, DbPool},
-        ComponentType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -677,8 +677,8 @@ pub(crate) mod tests {
         async fn http_get_simple() {
             use std::ops::Deref;
             use wiremock::{
-                matchers::{method, path},
                 Mock, MockServer, ResponseTemplate,
+                matchers::{method, path},
             };
             const BODY: &str = "ok";
             const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
@@ -784,8 +784,8 @@ pub(crate) mod tests {
         async fn http_get_retry_on_fallible_err(succeed_eventually: bool) {
             use std::ops::Deref;
             use wiremock::{
-                matchers::{method, path},
                 Mock, MockServer, ResponseTemplate,
+                matchers::{method, path},
             };
             const BODY: &str = "ok";
             const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);

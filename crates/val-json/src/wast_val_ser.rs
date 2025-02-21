@@ -4,8 +4,8 @@ use crate::{
 };
 use indexmap::IndexMap;
 use serde::{
-    de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor},
     Deserialize, Serialize, Serializer,
+    de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor},
 };
 
 impl Serialize for WastVal {
@@ -361,14 +361,18 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                                 )))
                             }
                         } else {
-                            Err(Error::custom(format!("cannot deserialize enum: `{str_val}` not found in the following list: `{variants:?}`")))
+                            Err(Error::custom(format!(
+                                "cannot deserialize enum: `{str_val}` not found in the following list: `{variants:?}`"
+                            )))
                         }
                     }
                     TypeWrapper::Enum(variants) => {
                         if variants.contains(str_val) {
                             Ok(WastVal::Enum(str_val.to_string()))
                         } else {
-                            Err(Error::custom(format!("cannot deserialize enum: `{str_val}` not found in the following list: `{variants:?}`")))
+                            Err(Error::custom(format!(
+                                "cannot deserialize enum: `{str_val}` not found in the following list: `{variants:?}`"
+                            )))
                         }
                     }
                     _ => Err(Error::invalid_type(Unexpected::Str(str_val), &self)),
@@ -527,11 +531,15 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                     let mut vec = Vec::with_capacity(possible_flags.len());
                     while let Some(element) = seq.next_element::<String>()? {
                         if vec.contains(&element) {
-                            return Err(Error::custom(format!("cannot deserialize flags: flag `{element}` was found more than once")));
+                            return Err(Error::custom(format!(
+                                "cannot deserialize flags: flag `{element}` was found more than once"
+                            )));
                         } else if possible_flags.contains(element.as_str()) {
                             vec.push(element);
                         } else {
-                            return Err(Error::custom(format!("cannot deserialize flags: flag `{element}` not found in the list: `{possible_flags:?}`")));
+                            return Err(Error::custom(format!(
+                                "cannot deserialize flags: flag `{element}` not found in the list: `{possible_flags:?}`"
+                            )));
                         }
                     }
                     // All elements from `seq` must be consumed at this point.
@@ -553,8 +561,8 @@ pub mod params {
     use core::fmt;
     use itertools::{Itertools as _, Position};
     use serde::{
-        de::{Expected, SeqAccess, Visitor},
         Deserializer,
+        de::{Expected, SeqAccess, Visitor},
     };
     use serde_json::Value;
 
@@ -662,7 +670,7 @@ mod tests {
         wast_val_ser::WastValDeserialize,
     };
     use assert_matches::assert_matches;
-    use indexmap::{indexmap, indexset, IndexMap};
+    use indexmap::{IndexMap, indexmap, indexset};
     use itertools::Itertools;
     use serde::de::DeserializeSeed;
 

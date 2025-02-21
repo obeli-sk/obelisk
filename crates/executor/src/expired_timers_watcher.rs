@@ -9,13 +9,13 @@ use concepts::storage::ExecutionLog;
 use concepts::storage::JoinSetResponseEvent;
 use concepts::time::ClockFn;
 use concepts::{
-    storage::{ExecutionEventInner, ExpiredTimer, JoinSetResponse},
     FinishedExecutionError,
+    storage::{ExecutionEventInner, ExpiredTimer, JoinSetResponse},
 };
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };

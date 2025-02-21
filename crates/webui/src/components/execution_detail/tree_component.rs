@@ -1,5 +1,5 @@
 use yew::prelude::*;
-use yewprint::{id_tree::NodeId, TreeData};
+use yewprint::{TreeData, id_tree::NodeId};
 
 #[derive(Debug)]
 pub enum TreeComponentAction {

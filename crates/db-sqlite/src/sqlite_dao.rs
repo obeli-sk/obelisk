@@ -2,24 +2,23 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
+    ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, JoinSetId, StrVariant,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, PrefixedUlid, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
+        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_TEMPORARILY_FAILED, DUMMY_TEMPORARILY_TIMED_OUT,
         DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
         ExecutionListPagination, ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetRequest,
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
         LockResponse, LockedExecution, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedResultKind, ResponseWithCursor, SpecificError, Version, VersionType,
-        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_TEMPORARILY_FAILED, DUMMY_TEMPORARILY_TIMED_OUT,
     },
     time::Sleep,
-    ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, JoinSetId, StrVariant,
 };
 use hdrhistogram::{Counter, Histogram};
 use rusqlite::{
-    named_params,
+    Connection, OpenFlags, OptionalExtension, Params, ToSql, Transaction, named_params,
     types::{FromSql, FromSqlError},
-    Connection, OpenFlags, OptionalExtension, Params, ToSql, Transaction,
 };
 use std::{
     cmp::max,
@@ -29,8 +28,8 @@ use std::{
     path::Path,
     str::FromStr,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
@@ -38,7 +37,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
 };
-use tracing::{debug, debug_span, error, info, instrument, trace, warn, Level, Span};
+use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
 
 #[derive(Debug, Clone)]
 struct DelayReq {
@@ -508,8 +507,10 @@ impl<S: Sleep> SqlitePool<S> {
         let actual_version = actual_version.unwrap_or_else(|err| {
             panic!("Cannot read the schema version - {err:?}");
         });
-        assert!(actual_version == T_METADATA_EXPECTED_SCHEMA_VERSION,
-            "wrong schema version, expected {T_METADATA_EXPECTED_SCHEMA_VERSION}, got {actual_version}");
+        assert!(
+            actual_version == T_METADATA_EXPECTED_SCHEMA_VERSION,
+            "wrong schema version, expected {T_METADATA_EXPECTED_SCHEMA_VERSION}, got {actual_version}"
+        );
 
         // t_execution_log
         execute(&conn, CREATE_TABLE_T_EXECUTION_LOG, []);
@@ -871,7 +872,9 @@ impl<S: Sleep> SqlitePool<S> {
         appending_version: &Version,
     ) -> Result<(), DbError> {
         if *expected_version != *appending_version {
-            error!("Version mismatch - expected: {expected_version:?}, appending: {appending_version:?}");
+            error!(
+                "Version mismatch - expected: {expected_version:?}, appending: {appending_version:?}"
+            );
             return Err(DbError::Specific(SpecificError::VersionMismatch {
                 appending_version: appending_version.clone(),
                 expected_version: expected_version.clone(),
@@ -1275,7 +1278,8 @@ impl<S: Sleep> SqlitePool<S> {
         } else {
             format!("WHERE {}", statement_mod.where_vec.join(" AND "))
         };
-        let sql = format!("SELECT created_at, scheduled_at, state, execution_id, ffqn, next_version, \
+        let sql = format!(
+            "SELECT created_at, scheduled_at, state, execution_id, ffqn, next_version, \
             pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
             FROM t_state {where_str} ORDER BY created_at {desc} LIMIT {limit}",
             desc = if statement_mod.limit_desc { "DESC" } else { "" },

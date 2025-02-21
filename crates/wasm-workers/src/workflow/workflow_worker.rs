@@ -1,12 +1,12 @@
 use super::event_history::ApplyError;
 use super::workflow_ctx::InterruptRequested;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
-use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use crate::WasmFileError;
+use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::storage::{DbConnection, DbPool};
-use concepts::time::{now_tokio_instant, ClockFn, Sleep};
+use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{
     ComponentId, FunctionFqn, FunctionMetadata, PackageIfcFns, ResultParsingError, StrVariant,
     TrapKind,
@@ -18,10 +18,10 @@ use std::future;
 use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{error, info, instrument, trace, warn, Span};
+use tracing::{Span, error, info, instrument, trace, warn};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
-use wasmtime::{component::Val, Engine};
+use wasmtime::{Engine, component::Val};
 use wasmtime::{Store, UpdateDeadline};
 
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
@@ -244,12 +244,8 @@ enum WorkerResultRefactored<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 type CallFuncResult<C, DB, P> =
     Result<(SupportedFunctionReturnValue, WorkflowCtx<C, DB, P>), RunError<C, DB, P>>;
 
-impl<
-        C: ClockFn + 'static,
-        S: Sleep + 'static,
-        DB: DbConnection + 'static,
-        P: DbPool<DB> + 'static,
-    > WorkflowWorker<C, S, DB, P>
+impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
+    WorkflowWorker<C, S, DB, P>
 {
     async fn prepare_func(
         &self,
@@ -582,12 +578,8 @@ impl<
 }
 
 #[async_trait]
-impl<
-        C: ClockFn + 'static,
-        S: Sleep + 'static,
-        DB: DbConnection + 'static,
-        P: DbPool<DB> + 'static,
-    > Worker for WorkflowWorker<C, S, DB, P>
+impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
+    Worker for WorkflowWorker<C, S, DB, P>
 {
     fn exported_functions(&self) -> &[FunctionMetadata] {
         self.exim.get_exports(false)
@@ -600,7 +592,9 @@ impl<
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Run with ctx: {ctx:?}");
         if !ctx.can_be_retried {
-            warn!("Workflow configuration set to not retry anymore. This can lead to nondeterministic results.");
+            warn!(
+                "Workflow configuration set to not retry anymore. This can lead to nondeterministic results."
+            );
         }
         let interrupt_on_timeout_container = Arc::new(std::sync::Mutex::new(None));
         let worker_span = ctx.worker_span.clone();
@@ -630,20 +624,20 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         activity::activity_worker::tests::{
-            compile_activity, spawn_activity_fibo, wasm_file_name, FIBO_10_INPUT, FIBO_10_OUTPUT,
+            FIBO_10_INPUT, FIBO_10_OUTPUT, compile_activity, spawn_activity_fibo, wasm_file_name,
         },
         engines::{EngineConfig, Engines},
-        tests::{fn_registry_dummy, TestingFnRegistry},
+        tests::{TestingFnRegistry, fn_registry_dummy},
     };
     use assert_matches::assert_matches;
     use concepts::time::TokioSleep;
     use concepts::{
+        ComponentType,
         prefixed_ulid::{ExecutorId, RunId},
         storage::{
-            wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState,
-            PendingStateFinished, PendingStateFinishedResultKind, Version,
+            CreateRequest, DbConnection, PendingState, PendingStateFinished,
+            PendingStateFinishedResultKind, Version, wait_for_pending_state_fn,
         },
-        ComponentType,
     };
     use concepts::{ExecutionId, Params};
     use db_tests::Database;
@@ -1267,8 +1261,8 @@ pub(crate) mod tests {
         use std::ops::Deref;
         use tracing::debug;
         use wiremock::{
-            matchers::{method, path},
             Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
         };
         const BODY: &str = "ok";
 
@@ -1364,8 +1358,8 @@ pub(crate) mod tests {
         use std::ops::Deref;
         use tracing::debug;
         use wiremock::{
-            matchers::{method, path},
             Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
         };
         const BODY: &str = "ok";
         const GET_SUCCESSFUL_CONCURRENTLY_STRESS: FunctionFqn =

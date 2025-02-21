@@ -1,10 +1,10 @@
 use super::grpc;
 use super::grpc::execution_status::BlockedByJoinSet;
+use crate::ExecutionRepositoryClient;
 use crate::command::grpc::execution_status::Finished;
 use crate::grpc_util::grpc_mapping::TonicClientResultExt;
-use crate::ExecutionRepositoryClient;
-use anyhow::anyhow;
 use anyhow::Context;
+use anyhow::anyhow;
 use chrono::DateTime;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::execution_status::Status;
@@ -195,8 +195,11 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> anyhow::Resul
                 root_cause_id,
             },
         )) => (
-            format!("Unhandled child execution, child_execution_id: {child_execution_id}, root_cause_id: {root_cause_id}",
-               child_execution_id = child_execution_id.unwrap().id, root_cause_id = root_cause_id.unwrap().id),
+            format!(
+                "Unhandled child execution, child_execution_id: {child_execution_id}, root_cause_id: {root_cause_id}",
+                child_execution_id = child_execution_id.unwrap().id,
+                root_cause_id = root_cause_id.unwrap().id
+            ),
             Err(anyhow!("unhandled child execution error")),
         ),
         other => unreachable!("unexpected variant {other:?}"),

@@ -1,10 +1,10 @@
-use crate::component_logger::{log_activities, ComponentLogger};
+use crate::WasmFileError;
+use crate::component_logger::{ComponentLogger, log_activities};
 use crate::envvar::EnvVar;
 use crate::host_exports::{
-    execution_id_into_val, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
+    SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, execution_id_into_val,
 };
 use crate::std_output_stream::{LogStream, StdOutput};
-use crate::WasmFileError;
 use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel};
 use concepts::storage::{
     AppendRequest, ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
@@ -30,15 +30,15 @@ use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Level, Span};
-use utils::wasm_tools::{ExIm, WasmComponent, HTTP_HANDLER_FFQN};
+use tracing::{Instrument, Level, Span, debug, error, info, info_span, instrument, trace, warn};
+use utils::wasm_tools::{ExIm, HTTP_HANDLER_FFQN, WasmComponent};
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
-use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::bindings::ProxyPre;
+use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
@@ -444,7 +444,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 debug!("Got `-schedule` extension for {ffqn}");
                 let Some((scheduled_at, params)) = params.split_first() else {
-                    error!("Error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list");
+                    error!(
+                        "Error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list"
+                    );
                     return Err(WebhookEndpointFunctionError::UncategorizedError(
                         "error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list",
                     ));
@@ -459,9 +461,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 let scheduled_at = match HistoryEventScheduledAt::try_from(&scheduled_at) {
                     Ok(scheduled_at) => scheduled_at,
                     Err(err) => {
-                        error!("Wrong type for the first `-scheduled-at` parameter, expected `scheduled-at`, got `{scheduled_at:?}` - {err:?}");
+                        error!(
+                            "Wrong type for the first `-scheduled-at` parameter, expected `scheduled-at`, got `{scheduled_at:?}` - {err:?}"
+                        );
                         return Err(WebhookEndpointFunctionError::UncategorizedError(
-                            "error running `-schedule` extension function: wrong first parameter type"
+                            "error running `-schedule` extension function: wrong first parameter type",
                         ));
                     }
                 };
@@ -600,7 +604,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             let res = match res {
                 Ok(res) => res?,
                 Err(ClientError::DbError(err)) => {
-                    return Err(WebhookEndpointFunctionError::DbError(err))
+                    return Err(WebhookEndpointFunctionError::DbError(err));
                 }
                 Err(ClientError::Timeout) => unreachable!("timeout was not set"),
             };
@@ -928,22 +932,22 @@ pub(crate) mod tests {
     #[cfg(not(madsim))] // Due to TCP server/client
     pub(crate) mod nosim {
         use super::*;
-        use crate::activity::activity_worker::tests::{compile_activity, FIBO_10_OUTPUT};
+        use crate::activity::activity_worker::tests::{FIBO_10_OUTPUT, compile_activity};
         use crate::engines::{EngineConfig, Engines};
         use crate::tests::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{self, WebhookEndpointCompiled};
         use crate::workflow::workflow_worker::tests::compile_workflow;
         use crate::{
             activity::activity_worker::tests::spawn_activity_fibo,
-            workflow::workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
+            workflow::workflow_worker::{JoinNextBlockingStrategy, tests::spawn_workflow_fibo},
         };
         use assert_matches::assert_matches;
         use concepts::time::TokioSleep;
-        use concepts::{
-            storage::{DbConnection, DbPool},
-            ExecutionId,
-        };
         use concepts::{ComponentId, ComponentType, StrVariant, SupportedFunctionReturnValue};
+        use concepts::{
+            ExecutionId,
+            storage::{DbConnection, DbPool},
+        };
         use db_tests::{Database, DbGuard, DbPoolEnum};
         use executor::executor::ExecutorTaskHandle;
         use std::net::SocketAddr;

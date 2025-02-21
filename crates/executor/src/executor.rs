@@ -6,23 +6,23 @@ use concepts::storage::{
     LockedExecution,
 };
 use concepts::time::ClockFn;
-use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn};
-use concepts::{
-    storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
-    FinishedExecutionError,
-};
 use concepts::{ComponentId, FinishedExecutionResult, FunctionMetadata, StrVariant};
+use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
+use concepts::{
+    FinishedExecutionError,
+    storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
+};
 use concepts::{JoinSetId, PermanentFailureKind};
 use std::marker::PhantomData;
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 use tokio::task::{AbortHandle, JoinHandle};
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Level, Span};
+use tracing::{Instrument, Level, Span, debug, error, info, info_span, instrument, trace, warn};
 
 #[derive(Debug, Clone)]
 pub struct ExecConfig {
@@ -383,7 +383,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     } => {
                         if let Some(duration) = can_be_retried {
                             let expires_at = result_obtained_at + duration;
-                            debug!("Retrying activity {trap_kind} execution after {duration:?} at {expires_at}");
+                            debug!(
+                                "Retrying activity {trap_kind} execution after {duration:?} at {expires_at}"
+                            );
                             (
                                 ExecutionEventInner::TemporarilyFailed {
                                     backoff_expires_at: expires_at,
@@ -463,7 +465,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         version: new_version,
                     } => {
                         let expires_at = result_obtained_at + unlock_expiry_on_limit_reached;
-                        warn!("Limit reached: {inner_reason}, unlocking after {unlock_expiry_on_limit_reached:?} at {expires_at}");
+                        warn!(
+                            "Limit reached: {inner_reason}, unlocking after {unlock_expiry_on_limit_reached:?} at {expires_at}"
+                        );
                         (
                             ExecutionEventInner::Unlocked {
                                 backoff_expires_at: expires_at,
@@ -573,8 +577,8 @@ pub mod simple_worker {
     use crate::worker::{Worker, WorkerContext, WorkerResult};
     use async_trait::async_trait;
     use concepts::{
-        storage::{HistoryEvent, Version},
         FunctionFqn, FunctionMetadata, ParameterTypes,
+        storage::{HistoryEvent, Version},
     };
     use indexmap::IndexMap;
     use std::sync::Arc;
@@ -969,16 +973,18 @@ mod tests {
             )])),
         )));
         // noop until `retry_exp_backoff` expires
-        assert!(tick_fn(
-            exec_config.clone(),
-            sim_clock.clone(),
-            db_pool.clone(),
-            worker.clone(),
-            sim_clock.now(),
-        )
-        .await
-        .executions
-        .is_empty());
+        assert!(
+            tick_fn(
+                exec_config.clone(),
+                sim_clock.clone(),
+                db_pool.clone(),
+                worker.clone(),
+                sim_clock.now(),
+            )
+            .await
+            .executions
+            .is_empty()
+        );
         // tick again to finish the execution
         sim_clock.move_time_forward(retry_exp_backoff).await;
         tick_fn(
@@ -1407,12 +1413,14 @@ mod tests {
                     .expired_locks;
             assert_eq!(1, expired_locks);
         }
-        assert!(!first_execution_progress
-            .executions
-            .pop()
-            .unwrap()
-            .1
-            .is_finished());
+        assert!(
+            !first_execution_progress
+                .executions
+                .pop()
+                .unwrap()
+                .1
+                .is_finished()
+        );
 
         let execution_log = db_connection.get(&execution_id).await.unwrap();
         let expected_first_timeout_expiry = now_after_first_lock_expiry + timeout_duration;
@@ -1453,12 +1461,14 @@ mod tests {
                     .expired_locks;
             assert_eq!(1, expired_locks);
         }
-        assert!(!second_execution_progress
-            .executions
-            .pop()
-            .unwrap()
-            .1
-            .is_finished());
+        assert!(
+            !second_execution_progress
+                .executions
+                .pop()
+                .unwrap()
+                .1
+                .is_finished()
+        );
 
         drop(db_connection);
         drop(executor);

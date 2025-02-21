@@ -2,7 +2,7 @@ use crate::obelisk::log::log::info;
 use crate::obelisk::types::time::ScheduleAt;
 use crate::testing::fibo_workflow::workflow;
 use crate::testing::fibo_workflow_obelisk_ext::workflow as workflow_ext;
-use waki::{handler, ErrorCode, Request, Response};
+use waki::{ErrorCode, Request, Response, handler};
 use wit_bindgen::generate;
 
 generate!({ generate_all });

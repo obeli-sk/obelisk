@@ -1,6 +1,6 @@
 use super::grpc_client::{self};
 use std::{fmt::Display, str::FromStr};
-use yew::{html, ToHtml};
+use yew::{ToHtml, html};
 
 pub trait ExecutionIdExt {
     fn generate() -> grpc_client::ExecutionId {
