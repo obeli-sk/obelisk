@@ -40,7 +40,7 @@ impl LogStream {
 }
 
 impl wasmtime_wasi::StdoutStream for LogStream {
-    fn stream(&self) -> Box<dyn wasmtime_wasi::HostOutputStream> {
+    fn stream(&self) -> Box<dyn wasmtime_wasi::OutputStream> {
         Box::new(self.clone())
     }
 
@@ -54,7 +54,7 @@ impl wasmtime_wasi::StdoutStream for LogStream {
     }
 }
 
-impl wasmtime_wasi::HostOutputStream for LogStream {
+impl wasmtime_wasi::OutputStream for LogStream {
     fn write(&mut self, bytes: bytes::Bytes) -> StreamResult<()> {
         let mut bytes = &bytes[..];
 
@@ -93,6 +93,6 @@ impl wasmtime_wasi::HostOutputStream for LogStream {
 }
 
 #[async_trait::async_trait]
-impl wasmtime_wasi::Subscribe for LogStream {
+impl wasmtime_wasi::Pollable for LogStream {
     async fn ready(&mut self) {}
 }

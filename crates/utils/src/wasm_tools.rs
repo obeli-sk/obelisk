@@ -17,7 +17,7 @@ use wasmtime::{
     Engine,
 };
 use wit_component::{ComponentEncoder, WitPrinter};
-use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
+use wit_parser::{decoding::DecodedWasm, Resolve, WorldItem, WorldKey};
 
 pub const EXTENSION_FN_SUFFIX_SCHEDULE: &str = "-schedule";
 
@@ -759,7 +759,7 @@ fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
                         }
                     })
                     .collect();
-                let return_type = if let Results::Anon(return_type) = function.results {
+                let return_type = if let Some(return_type) = function.result {
                     let mut printer = WitPrinter::default();
                     printer
                         .print_type_name(resolve, &return_type)

@@ -5,7 +5,7 @@ use concepts::ExecutionId;
 use tracing::Span;
 use wasmtime::Engine;
 use wasmtime::{component::ResourceTable, Store};
-use wasmtime_wasi::{self, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{self, IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 pub struct ActivityCtx {
@@ -16,21 +16,20 @@ pub struct ActivityCtx {
 }
 
 impl WasiView for ActivityCtx {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi_ctx
+    }
+}
+
+impl IoView for ActivityCtx {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
     }
 }
 
 impl WasiHttpView for ActivityCtx {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http_ctx
-    }
-
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
     }
 }
 

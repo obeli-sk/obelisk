@@ -36,7 +36,7 @@ use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::bindings::ProxyPre;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
@@ -740,21 +740,19 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiView for WebhookEndpointCtx<C, DB, P> {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi_ctx
+    }
+}
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> IoView for WebhookEndpointCtx<C, DB, P> {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
     }
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiHttpView for WebhookEndpointCtx<C, DB, P> {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http_ctx
-    }
-
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
     }
 }
 

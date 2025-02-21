@@ -1,5 +1,5 @@
 use crate::wasm_tools::{ComponentExportsType, ExIm};
-use anyhow::{bail, Context};
+use anyhow::Context;
 use concepts::{FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT};
 use hashbrown::HashMap;
 use id_arena::Arena;
@@ -9,8 +9,8 @@ use std::{ops::Deref, path::PathBuf};
 use tracing::{error, warn};
 use wit_component::{DecodedWasm, WitPrinter};
 use wit_parser::{
-    Function, FunctionKind, Handle, Interface, InterfaceId, PackageName, Resolve, Results, Type,
-    TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup,
+    Function, FunctionKind, Handle, Interface, InterfaceId, PackageName, Resolve, Type, TypeDef,
+    TypeDefKind, TypeOwner, UnresolvedPackageGroup,
 };
 
 const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!(concat!(
@@ -260,7 +260,7 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
                         name: fn_name.clone(),
                         kind: FunctionKind::Freestanding,
                         params,
-                        results: Results::Anon(Type::Id(type_id_execution_id)),
+                        result: Some(Type::Id(type_id_execution_id)),
                         docs: wit_parser::Docs::default(),
                         stability: wit_parser::Stability::default(),
                     };
@@ -276,57 +276,48 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
                         "join-set-id".to_string(),
                         Type::Id(type_id_join_set_id_borrow_handle),
                     )];
-                    let results = match &original_fn.results {
-                        Results::Anon(actual_return_type_id) => {
-                            let type_id_await_next_ok_part_tuple = resolve.types.alloc(TypeDef {
-                                name: None,
-                                kind: TypeDefKind::Tuple(wit_parser::Tuple {
-                                    types: vec![
-                                        Type::Id(type_id_execution_id),
-                                        *actual_return_type_id,
-                                    ],
-                                }),
-                                owner: TypeOwner::None,
-                                docs: wit_parser::Docs::default(),
-                                stability: wit_parser::Stability::default(),
-                            });
-                            let type_id_result = resolve.types.alloc(TypeDef {
-                                name: None,
-                                kind: TypeDefKind::Result(wit_parser::Result_ {
-                                    ok: Some(Type::Id(type_id_await_next_ok_part_tuple)),
-                                    err: Some(Type::Id(type_id_await_next_err_part)),
-                                }),
-                                owner: TypeOwner::None,
-                                docs: wit_parser::Docs::default(),
-                                stability: wit_parser::Stability::default(),
-                            });
-                            Results::Anon(Type::Id(type_id_result))
-                        }
-                        Results::Named(vec) if vec.is_empty() => {
-                            let type_id_result = resolve.types.alloc(TypeDef {
-                                name: None,
-                                kind: TypeDefKind::Result(wit_parser::Result_ {
-                                    ok: Some(Type::Id(type_id_execution_id)),
-                                    err: Some(Type::Id(type_id_await_next_err_part)),
-                                }),
-                                owner: TypeOwner::None,
-                                docs: wit_parser::Docs::default(),
-                                stability: wit_parser::Stability::default(),
-                            });
-                            Results::Anon(Type::Id(type_id_result))
-                        }
-                        Results::Named(_) => {
-                            bail!(
-                                "named results are unsupported {fn_name} - {:?}",
-                                original_fn
-                            )
-                        }
+                    let result = if let Some(actual_return_type_id) = &original_fn.result {
+                        let type_id_await_next_ok_part_tuple = resolve.types.alloc(TypeDef {
+                            name: None,
+                            kind: TypeDefKind::Tuple(wit_parser::Tuple {
+                                types: vec![
+                                    Type::Id(type_id_execution_id),
+                                    *actual_return_type_id,
+                                ],
+                            }),
+                            owner: TypeOwner::None,
+                            docs: wit_parser::Docs::default(),
+                            stability: wit_parser::Stability::default(),
+                        });
+                        let type_id_result = resolve.types.alloc(TypeDef {
+                            name: None,
+                            kind: TypeDefKind::Result(wit_parser::Result_ {
+                                ok: Some(Type::Id(type_id_await_next_ok_part_tuple)),
+                                err: Some(Type::Id(type_id_await_next_err_part)),
+                            }),
+                            owner: TypeOwner::None,
+                            docs: wit_parser::Docs::default(),
+                            stability: wit_parser::Stability::default(),
+                        });
+                        Some(Type::Id(type_id_result))
+                    } else {
+                        let type_id_result = resolve.types.alloc(TypeDef {
+                            name: None,
+                            kind: TypeDefKind::Result(wit_parser::Result_ {
+                                ok: Some(Type::Id(type_id_execution_id)),
+                                err: Some(Type::Id(type_id_await_next_err_part)),
+                            }),
+                            owner: TypeOwner::None,
+                            docs: wit_parser::Docs::default(),
+                            stability: wit_parser::Stability::default(),
+                        });
+                        Some(Type::Id(type_id_result))
                     };
                     let fn_ext = Function {
                         name: fn_name.clone(),
                         kind: FunctionKind::Freestanding,
                         params,
-                        results,
+                        result,
                         docs: wit_parser::Docs::default(),
                         stability: wit_parser::Stability::default(),
                     };
@@ -342,7 +333,7 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
                         name: fn_name.clone(),
                         kind: FunctionKind::Freestanding,
                         params,
-                        results: Results::Anon(Type::Id(type_id_execution_id)),
+                        result: Some(Type::Id(type_id_execution_id)),
                         docs: wit_parser::Docs::default(),
                         stability: wit_parser::Stability::default(),
                     };
