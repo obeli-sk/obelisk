@@ -39,7 +39,7 @@ jobs:
 
       - name: Create GitHub Release
         run: |
-          TAG=$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)
+          TAG="v$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
           SHA=$(git rev-parse HEAD)
           echo "Releasing $TAG $SHA"
           curl -v --fail -X POST \
