@@ -31,17 +31,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
+
       - id: git-info
         run: |
-          git fetch --tags
+          VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
-          TAG="$(git tag --contains HEAD)"
-          if [ -z "$TAG" ]; then
-            echo "No tag pointing at HEAD."
-            exit 1
-          fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
       - uses: nixbuild/nix-quick-install-action@v29
         with:

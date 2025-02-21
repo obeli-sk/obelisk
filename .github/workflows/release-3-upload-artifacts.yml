@@ -37,10 +37,16 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
 
+      - id: git-info
+        run: |
+          VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         run: |
-          TAG="v$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
-          SHA=$(git rev-parse HEAD)
+
           echo "Releasing $TAG $SHA"
           curl -v --fail -X POST \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
@@ -55,6 +61,8 @@ jobs:
             https://api.github.com/repos/obeli-sk/obelisk/releases
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.git-info.outputs.tag }}
+          SHA: ${{ steps.git-info.outputs.sha }}
 
   upload-assets:
     name: ${{ matrix.target }}
@@ -84,10 +92,10 @@ jobs:
 
       - id: git-info
         run: |
-          git fetch --tags
+          VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
-          echo "tag=$(git tag --contains HEAD)" >> $GITHUB_OUTPUT
 
       - id: release-info
         run: |
@@ -95,9 +103,11 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/obeli-sk/obelisk/releases/tags/${{ steps.git-info.outputs.tag }} > release.json
+            https://api.github.com/repos/obeli-sk/obelisk/releases/tags/$TAG > release.json
           RELEASE_ID=$(jq -r '.id' release.json)
           echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
+        env:
+          TAG: ${{ steps.git-info.outputs.tag }}
 
       # Build the musl binary with Nix
       - name: Install Nix
@@ -134,15 +144,11 @@ jobs:
         if: ${{ !endsWith(matrix.target, '-musl') }}
         run: |
           source "$HOME/.cargo/env"
-          TAG=${{ steps.git-info.outputs.tag }}
-          if [ -z "$TAG" ]; then
-            echo "No tag pointing at HEAD."
-            exit 1
-          fi
-          TAG=${TAG#v}
-          cargo install obelisk@$TAG --locked --root .
+          cargo install obelisk@$VERSION --locked --root .
           TAR_CMD=$(if [[ $RUNNER_OS == 'macOS' ]]; then echo gtar; else echo tar; fi)
           $TAR_CMD czf archive.tar.gz --transform='s/^bin\///' bin/obelisk
+        env:
+          VERSION: ${{ steps.git-info.outputs.version }}
 
       # Common for all targets
       - name: Upload the archive

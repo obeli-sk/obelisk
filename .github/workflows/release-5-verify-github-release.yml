@@ -41,18 +41,12 @@ jobs:
 
       - id: git-info
         run: |
-          git fetch --tags
+          VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
-          echo "tag=$(git tag --contains HEAD)" >> $GITHUB_OUTPUT
 
       - run: |
-          TAG="${{ steps.git-info.outputs.tag }}"
-          if [ -z "$TAG" ]; then
-            echo "No tag pointing at HEAD."
-            exit 1
-          fi
-          VERSION=${TAG#v}
           mkdir temp
           cd temp
           # download the binary from GitHub Releases
@@ -63,3 +57,6 @@ jobs:
           ./obelisk --version | grep $VERSION
           ./obelisk server generate-config
           ./obelisk server verify
+        env:
+          TAG: ${{ steps.git-info.outputs.tag }}
+          VERSION: ${{ steps.git-info.outputs.version }}

@@ -28,19 +28,12 @@ jobs:
 
       - id: git-info
         run: |
-          git fetch --tags
+          VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
-          echo "tag=$(git tag --contains HEAD)" >> $GITHUB_OUTPUT
 
       - run: |
-          TAG="${{ steps.git-info.outputs.tag }}"
-          if [ -z "$TAG" ]; then
-            echo "No tag pointing at HEAD."
-            exit 1
-          fi
-          VERSION=${TAG#v}
-
           docker build --progress=plain --build-arg VERSION=$VERSION - <<EOF
             FROM alpine:latest
             ARG VERSION
@@ -57,3 +50,6 @@ jobs:
             RUN ./obelisk server generate-config
             RUN ./obelisk server verify
           EOF
+        env:
+          TAG: ${{ steps.git-info.outputs.tag }}
+          VERSION: ${{ steps.git-info.outputs.version }}
