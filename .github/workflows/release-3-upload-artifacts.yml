@@ -37,20 +37,11 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
 
-      - id: git-info
-        run: |
-          git fetch --tags
-          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
-          TAG="$(git tag --contains HEAD)"
-          if [ -z "$TAG" ]; then
-            echo "No tag pointing at HEAD."
-            exit 1
-          fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-
       - name: Create GitHub Release
         run: |
+          TAG=$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)
+          SHA=$(git rev-parse HEAD)
+          echo "Releasing $TAG $SHA"
           curl -v --fail -X POST \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -d '{
@@ -64,8 +55,6 @@ jobs:
             https://api.github.com/repos/obeli-sk/obelisk/releases
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.git-info.outputs.tag }}
-          SHA: ${{ steps.git-info.outputs.sha }}
 
   upload-assets:
     name: ${{ matrix.target }}
