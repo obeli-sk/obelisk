@@ -21,7 +21,7 @@ defaults:
 
 jobs:
   ci-test-nosim:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -55,7 +55,7 @@ jobs:
             target/nextest/${{ github.job }}/junit.xml
 
   ci-test-madsim:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 

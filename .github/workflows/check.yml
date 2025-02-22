@@ -23,7 +23,7 @@ defaults:
 jobs:
   fmt:
     name: cargo fmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -39,7 +39,7 @@ jobs:
 
   check-dev-deps:
     name: Check dev-deps.txt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: nixbuild/nix-quick-install-action@v29
@@ -59,7 +59,7 @@ jobs:
 
   check-unpublishable-packages:
     name: Check unpublishable-packages.txt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: nixbuild/nix-quick-install-action@v29
@@ -79,7 +79,7 @@ jobs:
 
   clippy:
     name: clippy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
     steps:
@@ -97,7 +97,7 @@ jobs:
 
   clippy-madsim:
     name: clippy - madsim
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
     steps:
