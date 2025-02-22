@@ -17,7 +17,6 @@ use concepts::{
     PermanentFailureKind, StrVariant,
 };
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
-use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -200,8 +199,7 @@ impl WebhookEndpointCompiled {
     }
 }
 
-#[derive(Derivative, derive_more::Debug)]
-#[derivative(Clone(bound = ""))] // Clone only because of potentially registering 2 paths via `route-recognizer`
+#[derive(Clone, derive_more::Debug)]
 pub struct WebhookEndpointInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     #[debug(skip)]
     proxy_pre: Arc<ProxyPre<WebhookEndpointCtx<C, DB, P>>>,
@@ -224,6 +222,7 @@ pub struct MethodAwareRouter<T> {
     fallback: Router<T>, // Routes that do not specify a method. Will be queried only if no match is found in `method_map`.
 }
 
+// Clone only because of potentially registering 2 paths via `route-recognizer`
 impl<T: Clone> MethodAwareRouter<T> {
     pub fn add(&mut self, method: Option<Method>, route: &str, dest: T) {
         let route = if route.is_empty() { "/*" } else { route };
@@ -244,7 +243,9 @@ impl<T: Clone> MethodAwareRouter<T> {
         }
         add(method, route, dest);
     }
+}
 
+impl<T> MethodAwareRouter<T> {
     fn find(&self, method: &Method, path: &Uri) -> Option<Match<&T>> {
         let path = path.path();
         self.method_map

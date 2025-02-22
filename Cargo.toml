@@ -181,7 +181,6 @@ config = { version = "0.15.8", default-features = false, features = [
 console-subscriber = "0.4.1"
 const_format = "0.2.34"
 criterion = "0.5"
-derivative = "2.2.0"
 derive_more = { version = "2.0.1", features = [
     "debug",
     "deref",
@@ -189,6 +188,7 @@ derive_more = { version = "2.0.1", features = [
     "from_str",
     "into",
 ] }
+derive-where = "1.2.7"
 docker_credential = "1.3.1"
 futures-util = "0.3.31"
 futures = { version = "0.3.31", default-features = false }
@@ -328,7 +328,7 @@ clippy.if_not_else = "allow"
 [workspace.lints.rust]
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(madsim)'] }
 unknown_lints = "deny"
-unsafe_op_in_unsafe_fn = "allow" # Bug in wit-bindgen
+unsafe_op_in_unsafe_fn = "allow"                                  # Bug in wit-bindgen
 
 [profile.release]
 overflow-checks = true

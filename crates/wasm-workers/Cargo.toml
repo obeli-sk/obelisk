@@ -22,7 +22,6 @@ async-trait.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 const_format.workspace = true
-derivative.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
 http-body-util.workspace = true

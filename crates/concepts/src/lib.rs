@@ -2,7 +2,6 @@ use ::serde::{Deserialize, Serialize};
 use arbitrary::Arbitrary;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
-use derivative::Derivative;
 pub use indexmap;
 use indexmap::IndexMap;
 use opentelemetry::propagation::{Extractor, Injector};
@@ -864,7 +863,6 @@ impl Params {
 
 pub mod prefixed_ulid {
     use arbitrary::Arbitrary;
-    use derivative::Derivative;
     use serde_with::{DeserializeFromStr, SerializeDisplay};
     use std::{
         fmt::{Debug, Display},
@@ -878,10 +876,9 @@ pub mod prefixed_ulid {
 
     use crate::JoinSetId;
 
-    #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr, Derivative)]
+    #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr)]
+    #[derive_where::derive_where(Clone, Copy)]
     #[display("{}_{ulid}", Self::prefix())]
-    #[derivative(Clone(bound = ""))]
-    #[derivative(Copy(bound = ""))]
     pub struct PrefixedUlid<T: 'static> {
         ulid: Ulid,
         phantom_data: PhantomData<fn(T) -> T>,
@@ -1622,27 +1619,23 @@ impl FromStr for Digest {
     }
 }
 
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, Derivative, Eq, derive_more::Display,
-)]
-#[derivative(PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, derive_more::Display)]
+#[derive_where::derive_where(PartialEq)]
 #[display("{wit_type}")]
 pub struct ReturnType {
     pub type_wrapper: TypeWrapper,
-    #[derivative(PartialEq = "ignore")]
+    #[derive_where(skip)]
     pub wit_type: StrVariant,
 }
 
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, Derivative, Eq, derive_more::Display,
-)]
-#[derivative(PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, derive_more::Display)]
+#[derive_where::derive_where(PartialEq)]
 #[display("{name}: {wit_type}")]
 pub struct ParameterType {
     pub type_wrapper: TypeWrapper,
-    #[derivative(PartialEq = "ignore")]
+    #[derive_where(skip)]
     pub name: StrVariant,
-    #[derivative(PartialEq = "ignore")]
+    #[derive_where(skip)]
     pub wit_type: StrVariant,
 }
 

@@ -27,8 +27,8 @@ pub enum DbPoolEnum {
 impl DbPool<DbConnectionProxy> for DbPoolEnum {
     fn connection(&self) -> DbConnectionProxy {
         match self {
-            DbPoolEnum::Memory(pool) => DbConnectionProxy(Box::new(pool.connection())),
-            DbPoolEnum::Sqlite(pool) => DbConnectionProxy(Box::new(pool.connection())),
+            DbPoolEnum::Memory(pool) => DbConnectionProxy(Arc::new(pool.connection())),
+            DbPoolEnum::Sqlite(pool) => DbConnectionProxy(Arc::new(pool.connection())),
         }
     }
 
@@ -47,7 +47,8 @@ impl DbPool<DbConnectionProxy> for DbPoolEnum {
     }
 }
 
-pub struct DbConnectionProxy(Box<dyn DbConnection>);
+#[derive(Clone)]
+pub struct DbConnectionProxy(Arc<dyn DbConnection>);
 #[async_trait]
 impl DbConnection for DbConnectionProxy {
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
