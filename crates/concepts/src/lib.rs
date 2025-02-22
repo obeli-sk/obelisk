@@ -1619,12 +1619,12 @@ impl FromStr for Digest {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, derive_more::Display)]
-#[derive_where::derive_where(PartialEq)]
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
+)]
 #[display("{wit_type}")]
 pub struct ReturnType {
     pub type_wrapper: TypeWrapper,
-    #[derive_where(skip)]
     pub wit_type: StrVariant,
 }
 
@@ -1634,8 +1634,8 @@ pub struct ReturnType {
 pub struct ParameterType {
     pub type_wrapper: TypeWrapper,
     #[derive_where(skip)]
+    // Names are read from how a component names the parameter and thus might differ between export and import.
     pub name: StrVariant,
-    #[derive_where(skip)]
     pub wit_type: StrVariant,
 }
 
