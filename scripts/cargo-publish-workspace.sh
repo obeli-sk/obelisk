@@ -3,9 +3,6 @@
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
-EXCLUDE_PACKAGES=()
-while read -r pkg; do
-    EXCLUDE_PACKAGES+=("--exclude" "$pkg")
-done < assets/unpublishable-packages.txt
+EXCLUDE_PACKAGES=$(awk '{printf " --exclude %s", $1}' "assets/unpublishable-packages.txt")
 
-cargo publish -Z package-workspace --workspace "${EXCLUDE_PACKAGES[@]}" "$@"
+cargo publish -Z package-workspace --workspace ${EXCLUDE_PACKAGES[@]} "$@"
