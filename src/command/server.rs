@@ -407,7 +407,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                                     };
                                     let send_res = tx.send(TonicResult::Ok(message)).await;
                                     if let Err(err) = send_res {
-                                        error!("Cannot send the message - {err:?}");
+                                        info!("Cannot send the message - {err:?}");
                                         return;
                                     }
                                     if let PendingState::Finished { finished: pending_state_finished } = pending_state {
