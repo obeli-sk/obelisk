@@ -13,10 +13,7 @@ version.workspace = true
 webui-builder.workspace = true
 
 [dependencies]
-futures = { workspace = true, default-features = false, features = [
-    "alloc",
-    "async-await",
-] }
+futures-concurrency.workspace = true
 wstd.workspace = true
 
 [lib]

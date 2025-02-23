@@ -1,3 +1,4 @@
+use futures_concurrency::prelude::*;
 use wstd::http::body::{BodyForthcoming, IncomingBody};
 use wstd::http::server::{Finished, Responder};
 use wstd::http::{Client, HeaderValue, Request, Response, Uri};
@@ -84,12 +85,12 @@ async fn main(mut incoming_req: Request<IncomingBody>, incoming_responder: Respo
                     incoming_response,
                 )
             };
-            let (req_to_req, (resp_to_resp, incoming_response)) =
-                futures::join!(req_to_req, resp_to_resp);
-            let result = req_to_req.and(resp_to_resp);
 
-            // join:
-            Finished::finish(incoming_response, result, None)
+            let (req_to_req, (resp_to_resp, incoming_response)) =
+                (req_to_req, resp_to_resp).join().await;
+            let is_success = req_to_req.and(resp_to_resp);
+
+            Finished::finish(incoming_response, is_success, None)
         }
         _ => {
             let content = get_index();

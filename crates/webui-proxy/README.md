@@ -8,23 +8,23 @@ The component is automatically loaded when `obelisk.toml` contains:
 ```toml
 webui.listening_addr = "127.0.0.1:8080"
 ```
-
-In order to use the development version of the proxy, remove the line above.
+However, this loads the webui as specified in [webui-version.txt](../../assets/webui-version.txt).
 
 Build
 ```sh
+trunk build --config crates/webui/Trunk.toml
 cargo build --package webui-proxy --target=wasm32-wasip2 --profile=release_trunk
 ```
 
 Add the `webui-proxy` as a webhook endpoint:
 ```toml
 [[http_server]]
-name = "webui"
-listening_addr = "127.0.0.1:8080"
+name = "webui2"
+listening_addr = "127.0.0.1:8081"
 
 [[webhook_endpoint]]
-name = "webui"
-http_server = "webui"
+name = "webui2"
+http_server = "webui2"
 location.path = "target/wasm32-wasip2/release_trunk/webui_proxy.wasm"
 routes = [""]
 env_vars = ["TARGET_URL=http://127.0.0.1:5005"]
