@@ -10,8 +10,8 @@ on:
         description: "The ref (branch or SHA) to process"
         required: false
         type: string
-      latest:
-        description: "Should the branch `latest` be updated?"
+      update-main:
+        description: "Should the branch `main` be updated?"
         required: false
         type: boolean
         default: true
@@ -49,7 +49,7 @@ jobs:
         run: |
           nix develop '.#release' --command ./scripts/cargo-publish-workspace.sh --locked ${{ github.event.inputs.extra-args }}
 
-      - name: Update `latest` branch
-        if: ${{ github.event.inputs.latest }}
+      - name: Update `main` branch
+        if: ${{ github.event.inputs.update-main }}
         run: |
-          git push --force origin HEAD:latest
+          git push origin HEAD:main
