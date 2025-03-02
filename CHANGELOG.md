@@ -3,6 +3,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.3](https://github.com/obeli-sk/obelisk/compare/v0.16.2...v0.16.3)
+
+### ⛰️ Features
+
+- Compare `wit_type` in `ReturnType` and `ParameterType` - ([da3faf3](https://github.com/obeli-sk/obelisk/commit/da3faf36b71ab5264f37d4b1d974a0b45672330e))
+
+### 📚 Documentation
+
+- Update the roadmap - ([72ad832](https://github.com/obeli-sk/obelisk/commit/72ad8323be92884b91b7f6d82e97fde4b39f178f))
+
+### 🚜 Refactor
+
+- *(webui)* Replace `futurs-util` with `futures-concurrency` - ([e7ea856](https://github.com/obeli-sk/obelisk/commit/e7ea8569bb09a801953ac26762817b4c25991b41))
+- Replace `derivative` with `derive-where` - ([e5c4e14](https://github.com/obeli-sk/obelisk/commit/e5c4e14754c255ad3addc0f79efbc3cd1ad3f07d))
+
+
 ## [0.16.1](https://github.com/obeli-sk/obelisk/compare/v0.16.0...v0.16.1)
 
 ### ⛰️ Features
