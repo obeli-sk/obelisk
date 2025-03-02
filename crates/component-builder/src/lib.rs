@@ -223,7 +223,7 @@ fn run_cargo_build(dst_target_dir: &Path, name: &str, tripple: &str) -> PathBuf 
         .arg(format!("--target={tripple}"))
         .arg(format!("--package={name}"))
         .env("CARGO_TARGET_DIR", dst_target_dir)
-        .env("CARGO_PROFILE_RELEASE_DEBUG", "limited") // keep debuginfo for backtraces
+        .env("CARGO_PROFILE_RELEASE_DEBUG", "limited") // debug = 1, retain line numbers
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env_remove("CLIPPY_ARGS"); // do not pass clippy parameters
     let status = cmd.status().unwrap();
