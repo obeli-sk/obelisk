@@ -1,5 +1,9 @@
 # Immediate goals
 
+## fix: Close join sets on drop
+
+## feat: Add CLosing strategy to join set creation
+
 ## fix: Get rid of streaming in WebUI
 Listening to multiple streams will exhaust all the available connections in a browser.
 Use timer instead, Add `stream` parameter.
@@ -7,27 +11,22 @@ Use timer instead, Add `stream` parameter.
 ## feat: Turn `execution-id` into a resource
 Make it symetrical with `join-set-id`, disallow users from `-await`ing on a string,
 can track the join set created.
+## feat: `execution-id.get()`, can be called multiple times
 
 ## fix: Deadlock when calling `-await-next` while nothing is in queue
 
 ## feat: Add `obelisk generate`
-`obelisk generate config` blank,webui,fibo
+`obelisk generate config` blank(just webui),fibo, testing, stargazers
 `obelisk generate wit -c obelisk.toml --out-dir wit/deps/ my-activity`
-`obelisk new` - show templates
+`obelisk generate wit` extensions for webhook (just `-schedule` ext)
+`obelisk new` - show templates, blank workflow should have obelisk types and workflow support
+`obelisk add --oci path` - add WIT files + extensions
 
 ## feat: Create an SDK for workflows and other (logging - maybe a proc macro)
+Convert delays into Duration
 
-## feat: Versioning
-versioning to tell when a component is not supported.
-The generated WITs should have a version.
-SDK needs to be versioned as well.
-
-## feat: `-await(execution-id)`, can be called multiple times
-
-## fix: Make `JoinSetId` in the format `executionid;0`
-Avoid possible conflicts when creating join sets.
-
-## refactor Remove wasmtime from parser
+## feat: Inspect remote or cached components
+`obelisk client component inspect/wit` should accept: path, componentId, oci location
 
 ## feat: deps.toml tool
 obelisk wit update-deps
