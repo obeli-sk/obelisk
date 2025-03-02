@@ -329,7 +329,7 @@ clippy.if_not_else = "allow"
 [workspace.lints.rust]
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(madsim)'] }
 unknown_lints = "deny"
-unsafe_op_in_unsafe_fn = "allow"                                  # Bug in wit-bindgen
+unsafe_op_in_unsafe_fn = "allow"                                  # Bug in wit-bindgen for Rust 2024
 
 [profile.release]
 overflow-checks = true
@@ -338,7 +338,7 @@ opt-level = "s"
 
 [profile.release_trunk]
 inherits = "release"
-strip = "symbols"
+strip = "debuginfo"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/obelisk-{ target }.tar.gz"
