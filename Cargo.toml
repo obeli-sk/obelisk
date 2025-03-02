@@ -170,8 +170,8 @@ async-trait = "0.1"
 bytes = "1.10"
 cargo_metadata = "0.19"
 cfg-if = "1.0.0"
-chrono = { version = "0.4.39", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.30", features = ["derive"] }
+chrono = { version = "0.4.40", features = ["arbitrary", "serde"] }
+clap = { version = "4.5.31", features = ["derive"] }
 config = { version = "0.15.8", default-features = false, features = [
     "toml",
     "preserve_order",
@@ -202,7 +202,7 @@ http-body-util = "0.1"
 hyper = "1.6.0"
 hyper-util = { version = "0.1", features = ["tokio"] }
 indexmap = { version = "2.7", features = ["serde"] }
-insta = { version = "1.42.1", features = ["json"] }
+insta = { version = "1.42.2", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
 madsim = "0.2.31"
@@ -230,7 +230,7 @@ serde = { version = "1.0.218", features = ["derive"] }
 serde_json = "1.0.139"
 serde_with = "3.12.0"
 sha2 = "0.10.8"
-shadow-rs = "0.38"
+shadow-rs = "1.0"
 strum = { version = "0.27.1", features = ["derive"] }
 tempfile = "=3.14.0" # yew and madsim use getrandom 0.2
 thiserror = "2.0"
@@ -278,9 +278,9 @@ yewprint-css = "0.4.0"
 wstd = "0.5.3"
 
 # wasmtime
-wasmtime = { version = "30.0.0", features = ["memory-protection-keys"] }
-wasmtime-wasi = "30.0.0"
-wasmtime-wasi-http = "30.0.0"
+wasmtime = { version = "30.0.2", features = ["memory-protection-keys"] }
+wasmtime-wasi = "30.0.2"
+wasmtime-wasi-http = "30.0.2"
 # wasm-tools
 wast = "226.0.0"
 wit-parser = "0.226.0"
