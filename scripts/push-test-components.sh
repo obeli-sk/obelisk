@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Pushes all WASM components to the Docker Hub and updates obelisk-oci.toml
+# Push all WASM components from crates/testing/test-programs to the Docker Hub and update obelisk-oci.toml
 
 set -exuo pipefail
 cd "$(dirname "$0")/.."

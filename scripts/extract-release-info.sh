@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# Called by the release CI to extract the changelog section for a given version.
+# Usage: ./scripts/extract-release-info.sh <VERSION>
+
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 

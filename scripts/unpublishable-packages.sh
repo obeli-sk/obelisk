@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# Find all packages with "publish = false" in their Cargo.toml files and save them to a file.
+
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 

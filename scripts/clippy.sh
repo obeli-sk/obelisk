@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Runs clippy normally and with `madsim` cfg flag.
+# Run clippy normally and with `madsim` cfg flag.
 
 set -exuo pipefail
 cd "$(dirname "$0")/.."
