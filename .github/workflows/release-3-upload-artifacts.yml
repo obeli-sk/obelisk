@@ -48,13 +48,15 @@ jobs:
         run: |
 
           echo "Releasing $TAG $SHA"
+          body=$(./scripts/extract-release-info.sh "$VERSION" | jq -R -s .)
           curl -v --fail -X POST \
+            -H "Content-Type: application/json" \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -d '{
-              "tag_name": "'$TAG'",
-              "target_commitish": "'$SHA'",
-              "name": "obelisk-'$TAG'",
-              "body": "",
+              "tag_name": "'"$TAG"'",
+              "target_commitish": "'"$SHA"'",
+              "name": "obelisk-'"$TAG"'",
+              "body": '"$body"',
               "draft": false,
               "prerelease": false
             }' \
