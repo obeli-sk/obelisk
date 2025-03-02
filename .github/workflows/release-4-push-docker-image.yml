@@ -43,7 +43,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
+          # Use the ref if provided, otherwise obtain the parent workflow branch, defaults to main.
+          ref: ${{ github.event.inputs.ref || github.event.workflow_run.head_branch }}
 
       - id: git-info
         run: |
