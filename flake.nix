@@ -27,9 +27,13 @@
                   } else null;
               };
           makeObelisk = pkgs: patch-for-generic-linux: buildType:
+            let
+              cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+              version = cargoToml.workspace.package.version;
+            in
             pkgs.rustPlatform.buildRustPackage {
               pname = "obelisk";
-              version = "0.0.1";
+              inherit version;
               src = ./.;
               cargoLock = {
                 lockFile = ./Cargo.lock;
