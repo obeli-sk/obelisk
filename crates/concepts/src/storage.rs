@@ -2,6 +2,7 @@ use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::RunId;
+use crate::ClosingStrategy;
 use crate::ComponentId;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
@@ -240,6 +241,7 @@ pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::Histor
             kind: crate::JoinSetKind::OneOff,
             name: StrVariant::empty(),
         },
+        closing_strategy: ClosingStrategy::Complete,
     },
 };
 pub const DUMMY_TEMPORARILY_TIMED_OUT: ExecutionEventInner =
@@ -356,7 +358,7 @@ impl ExecutionEventInner {
             } => Some(join_set_id),
             Self::HistoryEvent {
                 event:
-                    HistoryEvent::JoinSet { join_set_id }
+                    HistoryEvent::JoinSet { join_set_id, .. }
                     | HistoryEvent::JoinSetRequest { join_set_id, .. }
                     | HistoryEvent::JoinNext { join_set_id, .. },
             } => Some(join_set_id),
@@ -417,7 +419,10 @@ pub enum HistoryEvent {
         kind: PersistKind,
     },
     #[display("JoinSet({join_set_id})")]
-    JoinSet { join_set_id: JoinSetId },
+    JoinSet {
+        join_set_id: JoinSetId,
+        closing_strategy: ClosingStrategy,
+    },
     #[display("JoinSetRequest({join_set_id}, {request})")]
     JoinSetRequest {
         join_set_id: JoinSetId,

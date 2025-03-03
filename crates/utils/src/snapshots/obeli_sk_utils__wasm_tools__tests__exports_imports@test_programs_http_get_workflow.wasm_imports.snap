@@ -8,7 +8,18 @@ expression: imports
       "ifc_fqn": "obelisk:workflow/workflow-support@1.0.0",
       "function_name": "new-join-set-generated"
     },
-    "parameter_types": [],
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "enum": [
+            "complete",
+            "cancel"
+          ]
+        },
+        "name": "closing-strategy",
+        "wit_type": "closing-strategy"
+      }
+    ],
     "return_type": {
       "type_wrapper": "own",
       "wit_type": "join-set-id"

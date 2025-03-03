@@ -12,9 +12,9 @@ use concepts::storage::{
 };
 use concepts::time::ClockFn;
 use concepts::{
-    ComponentId, ComponentType, ExecutionId, ExecutionMetadata, FinishedExecutionError,
-    FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, JoinSetKind, Params,
-    PermanentFailureKind, StrVariant,
+    ClosingStrategy, ComponentId, ComponentType, ExecutionId, ExecutionMetadata,
+    FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName,
+    JoinSetKind, Params, PermanentFailureKind, StrVariant,
 };
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use http_body_util::combinators::BoxBody;
@@ -542,6 +542,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSet {
                         join_set_id: self.join_set_id_direct.clone(),
+                        closing_strategy: ClosingStrategy::Complete,
                     },
                 },
             };

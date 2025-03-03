@@ -61,7 +61,12 @@ package obelisk:workflow@1.0.0 {
   interface workflow-support {
     use obelisk:types/execution@1.0.0.{join-set-id};
 
-    new-join-set-generated: func() -> join-set-id;
+    enum closing-strategy {
+      complete,
+      cancel,
+    }
+
+    new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set-id;
   }
 }
 

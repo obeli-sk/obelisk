@@ -1271,6 +1271,22 @@ pub struct JoinSetId {
     pub name: StrVariant,
 }
 
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    arbitrary::Arbitrary,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ClosingStrategy {
+    Complete,
+}
+
 impl JoinSetId {
     pub fn new(kind: JoinSetKind, name: StrVariant) -> Result<Self, InvalidNameError<JoinSetId>> {
         Ok(Self {

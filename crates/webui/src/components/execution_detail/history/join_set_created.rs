@@ -34,6 +34,7 @@ impl HistoryJoinSetCreatedEventProps {
                 InsertBehavior::UnderNode(&root_id),
             )
             .unwrap();
+        // TODO: Add closing strategy when cancellation is supported.
         }
 
         TreeData::from(tree)

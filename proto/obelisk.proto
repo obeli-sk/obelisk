@@ -304,7 +304,12 @@ message ExecutionEvent {
         }
 
         message JoinSetCreated {
+            enum ClosingStrategy {
+                COMPLETE = 0;
+            }
+
             JoinSetId join_set_id = 1;
+            ClosingStrategy closing_strategy = 2;
         }
 
         message JoinSetRequest {

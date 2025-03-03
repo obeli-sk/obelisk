@@ -7,8 +7,8 @@ use concepts::{
         HistoryEventScheduledAt, JoinSetRequest, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedError, PendingStateFinishedResultKind, SpecificError, VersionType,
     },
-    ComponentId, ComponentType, ExecutionId, FinishedExecutionError, FinishedExecutionResult,
-    FunctionFqn, SupportedFunctionReturnValue,
+    ClosingStrategy, ComponentId, ComponentType, ExecutionId, FinishedExecutionError,
+    FinishedExecutionResult, FunctionFqn, SupportedFunctionReturnValue,
 };
 use concepts::{JoinSetId, JoinSetKind};
 use std::borrow::Borrow;
@@ -459,9 +459,13 @@ pub(crate) fn from_execution_event_to_grpc(
                                     grpc::execution_event::history_event::persist::persist_kind::RandomString {  }),
                             }) })
                         }),
-                        HistoryEvent::JoinSet { join_set_id } => grpc::execution_event::history_event::Event::JoinSetCreated(grpc::execution_event::history_event::JoinSetCreated {
-                            join_set_id: Some(join_set_id.into()),
-                        }),
+                        HistoryEvent::JoinSet { join_set_id, closing_strategy } =>
+                            grpc::execution_event::history_event::Event::JoinSetCreated(grpc::execution_event::history_event::JoinSetCreated {
+                                join_set_id: Some(join_set_id.into()),
+                                closing_strategy: match closing_strategy {
+                                    ClosingStrategy::Complete => grpc::execution_event::history_event::join_set_created::ClosingStrategy::Complete.into()
+                                }
+                            }),
                         HistoryEvent::JoinSetRequest { join_set_id, request } => grpc::execution_event::history_event::Event::JoinSetRequest(grpc::execution_event::history_event::JoinSetRequest {
                             join_set_id: Some(join_set_id.into()),
                             join_set_request: match request {

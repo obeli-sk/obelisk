@@ -8,9 +8,9 @@ use concepts::storage::{
 use concepts::storage::{DbPool, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
-use concepts::JoinSetId;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
 use concepts::{storage::HistoryEvent, FinishedExecutionResult};
+use concepts::{ClosingStrategy, JoinSetId};
 use concepts::{ComponentId, Params, StrVariant};
 use db_tests::Database;
 use db_tests::SOME_FFQN;
@@ -709,6 +709,7 @@ pub async fn append_batch_respond_to_parent(
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSet {
                         join_set_id: join_set_id.clone(),
+                        closing_strategy: ClosingStrategy::Complete,
                     },
                 },
             },

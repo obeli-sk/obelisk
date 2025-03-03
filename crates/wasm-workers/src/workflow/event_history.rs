@@ -19,6 +19,7 @@ use concepts::storage::{
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::time::ClockFn;
+use concepts::ClosingStrategy;
 use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
 use concepts::ExecutionMetadata;
@@ -169,7 +170,7 @@ impl<C: ClockFn> EventHistory<C> {
         self.event_history.iter().any(|(event, processing_status)|
             // Do not look into the future as it would break replay.
             *processing_status == ProcessingStatus::Processed &&
-            matches!(event, HistoryEvent::JoinSet { join_set_id: found }
+            matches!(event, HistoryEvent::JoinSet { join_set_id: found, .. }
                 if found.name.as_ref() == join_set_name && found.kind == kind))
     }
 
@@ -186,7 +187,8 @@ impl<C: ClockFn> EventHistory<C> {
                             join_set_id: JoinSetId {
                                 kind: found_kind,
                                 ..
-                            }
+                            },
+                            ..
                         }
                         if *found_kind == kind
                     )
@@ -354,7 +356,9 @@ impl<C: ClockFn> EventHistory<C> {
             .collect();
         for (event, _processing_sattus) in &self.event_history {
             match event {
-                HistoryEvent::JoinSet { join_set_id } if !delay_join_sets.contains(join_set_id) => {
+                HistoryEvent::JoinSet { join_set_id, .. }
+                    if !delay_join_sets.contains(join_set_id) =>
+                {
                     let old =
                         join_set_to_child_created_and_awaited.insert(join_set_id.clone(), (0, 0));
                     assert!(old.is_none());
@@ -523,6 +527,7 @@ impl<C: ClockFn> EventHistory<C> {
                 EventHistoryKey::CreateJoinSet { join_set_id },
                 HistoryEvent::JoinSet {
                     join_set_id: found_join_set_id,
+                    ..
                 },
             ) if *join_set_id == *found_join_set_id => {
                 trace!(%join_set_id, "Matched JoinSet");
@@ -903,9 +908,15 @@ impl<C: ClockFn> EventHistory<C> {
         // NB: Flush the cache before writing to the DB.
         trace!(%version, "append_to_db");
         match event_call {
-            EventCall::CreateJoinSet { join_set_id } => {
+            EventCall::CreateJoinSet {
+                join_set_id,
+                closing_strategy,
+            } => {
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
-                let event = HistoryEvent::JoinSet { join_set_id };
+                let event = HistoryEvent::JoinSet {
+                    join_set_id,
+                    closing_strategy,
+                };
                 let history_events = vec![event.clone()];
                 let join_set = AppendRequest {
                     created_at: called_at,
@@ -1102,6 +1113,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSet {
                     join_set_id: join_set_id.clone(),
+                    closing_strategy: ClosingStrategy::Complete,
                 };
                 history_events.push(event.clone());
                 let join_set = AppendRequest {
@@ -1178,6 +1190,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSet {
                     join_set_id: join_set_id.clone(),
+                    closing_strategy: ClosingStrategy::Complete,
                 };
                 history_events.push(event.clone());
                 let join_set = AppendRequest {
@@ -1253,6 +1266,7 @@ impl PollVariant {
 pub(crate) enum EventCall {
     CreateJoinSet {
         join_set_id: JoinSetId,
+        closing_strategy: ClosingStrategy,
     },
     StartAsync {
         ffqn: FunctionFqn,
@@ -1358,7 +1372,7 @@ enum JoinNextKind {
 impl EventCall {
     fn as_keys(&self) -> Vec<EventHistoryKey> {
         match self {
-            EventCall::CreateJoinSet { join_set_id } => {
+            EventCall::CreateJoinSet { join_set_id, .. } => {
                 vec![EventHistoryKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
                 }]
@@ -1442,7 +1456,7 @@ mod tests {
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::time::ClockFn;
     use concepts::{
-        ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params,
+        ClosingStrategy, ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params,
         SupportedFunctionReturnValue,
     };
     use concepts::{JoinSetId, StrVariant};
@@ -1543,6 +1557,7 @@ mod tests {
                     .apply(
                         EventCall::CreateJoinSet {
                             join_set_id: join_set_id.clone(),
+                            closing_strategy: ClosingStrategy::Complete,
                         },
                         &db_pool.connection(),
                         &mut version,
@@ -1650,6 +1665,7 @@ mod tests {
                 .apply(
                     EventCall::CreateJoinSet {
                         join_set_id: join_set_id.clone(),
+                        closing_strategy: ClosingStrategy::Complete,
                     },
                     &db_pool.connection(),
                     version,
@@ -1816,6 +1832,7 @@ mod tests {
                 .apply(
                     EventCall::CreateJoinSet {
                         join_set_id: join_set_id.clone(),
+                        closing_strategy: ClosingStrategy::Complete,
                     },
                     &db_pool.connection(),
                     version,

@@ -5,7 +5,12 @@ expression: imports
 {
   "obelisk:workflow/workflow-support@1.0.0.new-join-set-generated": [
     {
-      "params": [],
+      "params": [
+        {
+          "name": "closing-strategy",
+          "wit_type": "closing-strategy"
+        }
+      ],
       "return_type": "join-set-id"
     },
     "obelisk:workflow/workflow-support@1.0.0",

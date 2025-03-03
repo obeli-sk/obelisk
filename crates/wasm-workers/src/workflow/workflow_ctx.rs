@@ -11,7 +11,7 @@ use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
-use concepts::{ExecutionId, FunctionRegistry, IfcFqnName, StrVariant};
+use concepts::{ClosingStrategy, ExecutionId, FunctionRegistry, IfcFqnName, StrVariant};
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
 use executor::worker::FatalError;
@@ -433,13 +433,17 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         &mut self,
         name: String,
         kind: JoinSetKind,
+        closing_strategy: ClosingStrategy,
     ) -> wasmtime::Result<Resource<JoinSetId>> {
         if !self.event_history.join_set_name_exists(&name, kind) {
             let join_set_id = JoinSetId::new(kind, StrVariant::from(name))?;
             let res = self
                 .event_history
                 .apply(
-                    EventCall::CreateJoinSet { join_set_id },
+                    EventCall::CreateJoinSet {
+                        join_set_id,
+                        closing_strategy,
+                    },
                     &self.db_pool.connection(),
                     &mut self.version,
                     self.fn_registry.as_ref(),
@@ -555,7 +559,10 @@ mod workflow_support {
         WorkflowFunctionError,
     };
     use crate::{
-        host_exports::{self, DurationEnum},
+        host_exports::{
+            self, obelisk::workflow::workflow_support::ClosingStrategy as WitClosingStrategy,
+            DurationEnum,
+        },
         workflow::event_history::ChildReturnValue,
     };
     use concepts::{
@@ -563,7 +570,7 @@ mod workflow_support {
         storage::{self, PersistKind},
         JoinSetId, JoinSetKind, CHARSET_ALPHANUMERIC,
     };
-    use tracing::trace;
+    use tracing::{trace, warn};
     use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
 
@@ -655,16 +662,40 @@ mod workflow_support {
         async fn new_join_set_named(
             &mut self,
             name: String,
+            closing_strategy: WitClosingStrategy,
         ) -> wasmtime::Result<Resource<JoinSetId>> {
-            self.persist_join_set_with_kind(name, JoinSetKind::Named)
-                .await
+            match closing_strategy {
+                WitClosingStrategy::Complete => {}
+                WitClosingStrategy::Cancel => {
+                    warn!("ClosingStrategy::Cancel is not supported yet, using ClosingStrategy::Complete");
+                }
+            }
+            self.persist_join_set_with_kind(
+                name,
+                JoinSetKind::Named,
+                concepts::ClosingStrategy::Complete,
+            )
+            .await
         }
 
-        async fn new_join_set_generated(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
+        async fn new_join_set_generated(
+            &mut self,
+            closing_strategy: WitClosingStrategy,
+        ) -> wasmtime::Result<Resource<JoinSetId>> {
+            match closing_strategy {
+                WitClosingStrategy::Complete => {}
+                WitClosingStrategy::Cancel => {
+                    warn!("ClosingStrategy::Cancel is not supported yet, using ClosingStrategy::Complete");
+                }
+            }
             let name = self.next_join_set_name_index(JoinSetKind::Generated);
             trace!("new_join_set_generated: {name}");
-            self.persist_join_set_with_kind(name, JoinSetKind::Generated)
-                .await
+            self.persist_join_set_with_kind(
+                name,
+                JoinSetKind::Generated,
+                concepts::ClosingStrategy::Complete,
+            )
+            .await
         }
     }
 }
@@ -868,8 +899,10 @@ pub(crate) mod tests {
                     }
                     WorkflowStep::SubmitWithoutAwait { target_ffqn } => {
                         // Create new join set
-                        let join_set_resource =
-                            workflow_ctx.new_join_set_generated().await.unwrap();
+                        let join_set_resource = workflow_ctx
+                            .new_join_set_generated(crate::host_exports::obelisk::workflow::workflow_support::ClosingStrategy::Complete)
+                            .await
+                            .unwrap();
                         let join_set_id = workflow_ctx
                             .resource_table
                             .get(&join_set_resource)

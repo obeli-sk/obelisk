@@ -670,7 +670,7 @@ mod tests {
     };
     use concepts::time::Now;
     use concepts::{
-        FunctionMetadata, JoinSetKind, ParameterTypes, Params, StrVariant,
+        ClosingStrategy, FunctionMetadata, JoinSetKind, ParameterTypes, Params, StrVariant,
         SupportedFunctionReturnValue, TrapKind,
     };
     use db_tests::Database;
@@ -1198,6 +1198,7 @@ mod tests {
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSet {
                         join_set_id: join_set_id.clone(),
+                        closing_strategy: ClosingStrategy::Complete,
                     },
                 },
             };
