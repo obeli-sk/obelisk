@@ -3,6 +3,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/obeli-sk/obelisk/compare/v0.16.3...v0.17.0)
+
+### ⛰️ Features
+
+- *(wit)* [**breaking**] Add `closing-strategy` - ([cfd27ad](https://github.com/obeli-sk/obelisk/commit/cfd27adc231faefa4ad2ddeb60b7d65cfd87581c))
+
+### 📚 Documentation
+
+- Add description to scripts - ([d166811](https://github.com/obeli-sk/obelisk/commit/d16681107b735ec0d98358791be973acd1d410cd))
+
+
 ## [0.16.3](https://github.com/obeli-sk/obelisk/compare/v0.16.2...v0.16.3)
 
 ### ⛰️ Features
