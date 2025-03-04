@@ -650,7 +650,7 @@ impl<C: ClockFn> EventHistory<C> {
                                     root_cause_id,
                                 }) => {
                                     error!(%child_execution_id,
-                                            "Child execution finished with an execution error, failing the parent");
+                                            "Child execution finished with an execution error");
                                     Err(ApplyError::UnhandledChildExecutionError {
                                         child_execution_id: child_execution_id.clone(),
                                         root_cause_id: root_cause_id.clone(), // Copy the original root cause
@@ -659,7 +659,7 @@ impl<C: ClockFn> EventHistory<C> {
                                 // All other FinishedExecutionErrors are unhandled with current child being the root cause
                                 Err(_) => {
                                     error!(%child_execution_id,
-                                            "Child execution finished with an execution error, failing the parent");
+                                            "Child execution finished with an execution error");
                                     Err(ApplyError::UnhandledChildExecutionError {
                                         child_execution_id: child_execution_id.clone(),
                                         // The child is the root cause
@@ -739,7 +739,7 @@ impl<C: ClockFn> EventHistory<C> {
                                         root_cause_id,
                                     }) => {
                                         error!(%child_execution_id,
-                                                "Child execution finished with an execution error, failing the parent");
+                                                "Child execution finished with an execution error");
                                         Err(ApplyError::UnhandledChildExecutionError {
                                             child_execution_id: child_execution_id.clone(),
                                             root_cause_id: root_cause_id.clone(), // Copy the original root cause
@@ -748,7 +748,7 @@ impl<C: ClockFn> EventHistory<C> {
                                     // All other FinishedExecutionErrors are unhandled with current child being the root cause
                                     Err(_) => {
                                         error!(%child_execution_id,
-                                                "Child execution finished with an execution error, failing the parent");
+                                                "Child execution finished with an execution error");
                                         Err(ApplyError::UnhandledChildExecutionError {
                                             child_execution_id: child_execution_id.clone(),
                                             // The child is the root cause

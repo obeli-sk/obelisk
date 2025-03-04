@@ -6,7 +6,6 @@ interface workflow-support {
 
     /// The closing strategy of a join set. Join sets are closed when execution finishes or
     /// on drop.
-    // TODO: Implement closing on drop.
     enum closing-strategy {
         /// All submitted executions that were not polled are awaited.
         complete,

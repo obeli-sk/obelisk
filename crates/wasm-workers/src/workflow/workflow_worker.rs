@@ -18,7 +18,7 @@ use std::future;
 use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{error, info, instrument, trace, warn, Span};
+use tracing::{debug, error, info, instrument, trace, warn, Span};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{component::Val, Engine};
@@ -438,13 +438,19 @@ impl<
         match worker_result_refactored {
             WorkerResultRefactored::Ok(res, mut workflow_ctx) => {
                 match Self::close_join_sets(&mut workflow_ctx).await {
-                    Err(worker_result) => worker_result,
+                    Err(worker_result) => {
+                        debug!("Error while closing join sets {worker_result:?}");
+                        worker_result
+                    }
                     Ok(()) => WorkerResult::Ok(res, workflow_ctx.version),
                 }
             }
             WorkerResultRefactored::FatalError(err, mut workflow_ctx) => {
                 match Self::close_join_sets(&mut workflow_ctx).await {
-                    Err(worker_result) => worker_result,
+                    Err(worker_result) => {
+                        debug!("Error while closing join sets {worker_result:?}");
+                        worker_result
+                    }
                     Ok(()) => WorkerResult::Err(WorkerError::FatalError(err, workflow_ctx.version)),
                 }
             }

@@ -53,6 +53,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # non_blocking_event_batching = 100 # Number of non-blocking events that can be cached and written in a batch.
 # retry_on_trap = false # If set to true, traps(panics) will be handled as temporary failures and retried until the problem goes away.
 # convert_core_module = true # Transparently convert Core WASM modules to WASM Components during startup.
+# forward_unhandled_child_errors_in_completing_join_set_close = true # Forward unhandled child errors to the parent workflow when closing completing join sets.
 
 ### Webhook Endpoint section
 # [[http_server]]

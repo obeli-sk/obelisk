@@ -349,8 +349,8 @@ pub(crate) struct WorkflowConfigToml {
     pub(crate) retry_on_trap: bool,
     #[serde(default = "default_convert_core_module")]
     pub(crate) convert_core_module: bool,
-    #[serde(default = "default_forward_unhandled_child_errors_in_join_set_close")]
-    pub(crate) forward_unhandled_child_errors_in_join_set_close: bool,
+    #[serde(default = "default_forward_unhandled_child_errors_in_completing_join_set_close")]
+    pub(crate) forward_unhandled_child_errors_in_completing_join_set_close: bool,
 }
 
 #[derive(Debug)]
@@ -411,7 +411,7 @@ impl WorkflowConfigToml {
             non_blocking_event_batching: self.non_blocking_event_batching,
             retry_on_trap: self.retry_on_trap,
             forward_unhandled_child_errors_in_join_set_close: self
-                .forward_unhandled_child_errors_in_join_set_close,
+                .forward_unhandled_child_errors_in_completing_join_set_close,
         };
         Ok(WorkflowConfigVerified {
             content_digest,
@@ -978,8 +978,8 @@ const fn default_convert_core_module() -> bool {
     true
 }
 
-const fn default_forward_unhandled_child_errors_in_join_set_close() -> bool {
-    false
+const fn default_forward_unhandled_child_errors_in_completing_join_set_close() -> bool {
+    true
 }
 
 fn default_out_style() -> LoggingStyle {
