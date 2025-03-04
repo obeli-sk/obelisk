@@ -16,19 +16,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install protobuf-compiler -y
+      - name: Populate the nix store
+        run: nix develop --command echo
 
       - name: Install obelisk from current path
-        run: |
-          source "$HOME/.cargo/env"
-          cargo install --path . --locked
+        run: nix develop --command cargo install --path . --locked
 
       - name: Create temp directory
         run: mkdir temp
@@ -36,7 +32,6 @@ jobs:
       - name: Run the binary
         working-directory: temp
         run: |
-          source "$HOME/.cargo/env"
-          obelisk -v
-          obelisk server generate-config
-          obelisk server verify
+          $HOME/.cargo/bin/obelisk -v
+          $HOME/.cargo/bin/obelisk server generate-config
+          $HOME/.cargo/bin/obelisk server verify
