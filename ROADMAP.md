@@ -49,6 +49,12 @@ Enable allow/deny lists of remote hosts.
 
 ## feat: Request stack trace at any point of the workflow log
 
+## fix: Track all unhandled execution errors when closing join sets
+Currently only the first unhandled error is tracked, as well as only one root cause.
+
+## fix: Rename all gRPC history event messages to match storage.rs
+E.g. `JoinSetCreated` to `JoinSetCreate`.
+
 ## Future ideas
 * Interactive CLI for execution management
 * External activities gRPC API

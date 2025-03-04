@@ -1,7 +1,8 @@
 # Obelisk
 A deterministic workflow engine built on the WASM Component Model.
 
-> ⚠️ **Pre-release**: Expect changes in CLI, gRPC, WIT, and database schema.
+> [!WARNING]
+> **Pre-release**: Expect changes in CLI, gRPC, WIT, and database schema.
 
 ## What's Included
 - **Obelisk Runtime**: A single binary executing deterministic workflows, activities,
