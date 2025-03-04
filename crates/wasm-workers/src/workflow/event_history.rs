@@ -170,7 +170,7 @@ impl<C: ClockFn> EventHistory<C> {
         self.event_history.iter().any(|(event, processing_status)|
             // Do not look into the future as it would break replay.
             *processing_status == ProcessingStatus::Processed &&
-            matches!(event, HistoryEvent::JoinSet { join_set_id: found, .. }
+            matches!(event, HistoryEvent::JoinSetCreate { join_set_id: found, .. }
                 if found.name.as_ref() == join_set_name && found.kind == kind))
     }
 
@@ -183,7 +183,7 @@ impl<C: ClockFn> EventHistory<C> {
                 *processing_status == ProcessingStatus::Processed
                     && matches!(
                         event,
-                        HistoryEvent::JoinSet {
+                        HistoryEvent::JoinSetCreate {
                             join_set_id: JoinSetId {
                                 kind: found_kind,
                                 ..
@@ -356,7 +356,7 @@ impl<C: ClockFn> EventHistory<C> {
             .collect();
         for (event, _processing_sattus) in &self.event_history {
             match event {
-                HistoryEvent::JoinSet { join_set_id, .. }
+                HistoryEvent::JoinSetCreate { join_set_id, .. }
                     if !delay_join_sets.contains(join_set_id) =>
                 {
                     let old =
@@ -525,7 +525,7 @@ impl<C: ClockFn> EventHistory<C> {
         match (key, found_request_event) {
             (
                 EventHistoryKey::CreateJoinSet { join_set_id },
-                HistoryEvent::JoinSet {
+                HistoryEvent::JoinSetCreate {
                     join_set_id: found_join_set_id,
                     ..
                 },
@@ -650,7 +650,6 @@ impl<C: ClockFn> EventHistory<C> {
                                     root_cause_id,
                                 }) => {
                                     error!(%child_execution_id,
-                                            %join_set_id,
                                             "Child execution finished with an execution error, failing the parent");
                                     Err(ApplyError::UnhandledChildExecutionError {
                                         child_execution_id: child_execution_id.clone(),
@@ -660,7 +659,6 @@ impl<C: ClockFn> EventHistory<C> {
                                 // All other FinishedExecutionErrors are unhandled with current child being the root cause
                                 Err(_) => {
                                     error!(%child_execution_id,
-                                            %join_set_id,
                                             "Child execution finished with an execution error, failing the parent");
                                     Err(ApplyError::UnhandledChildExecutionError {
                                         child_execution_id: child_execution_id.clone(),
@@ -741,7 +739,6 @@ impl<C: ClockFn> EventHistory<C> {
                                         root_cause_id,
                                     }) => {
                                         error!(%child_execution_id,
-                                                %join_set_id,
                                                 "Child execution finished with an execution error, failing the parent");
                                         Err(ApplyError::UnhandledChildExecutionError {
                                             child_execution_id: child_execution_id.clone(),
@@ -751,7 +748,6 @@ impl<C: ClockFn> EventHistory<C> {
                                     // All other FinishedExecutionErrors are unhandled with current child being the root cause
                                     Err(_) => {
                                         error!(%child_execution_id,
-                                                %join_set_id,
                                                 "Child execution finished with an execution error, failing the parent");
                                         Err(ApplyError::UnhandledChildExecutionError {
                                             child_execution_id: child_execution_id.clone(),
@@ -913,7 +909,7 @@ impl<C: ClockFn> EventHistory<C> {
                 closing_strategy,
             } => {
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
-                let event = HistoryEvent::JoinSet {
+                let event = HistoryEvent::JoinSetCreate {
                     join_set_id,
                     closing_strategy,
                 };
@@ -1111,7 +1107,7 @@ impl<C: ClockFn> EventHistory<C> {
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let mut history_events = Vec::with_capacity(3);
-                let event = HistoryEvent::JoinSet {
+                let event = HistoryEvent::JoinSetCreate {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::Complete,
                 };
@@ -1188,7 +1184,7 @@ impl<C: ClockFn> EventHistory<C> {
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let mut history_events = Vec::with_capacity(3);
-                let event = HistoryEvent::JoinSet {
+                let event = HistoryEvent::JoinSetCreate {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::Complete,
                 };

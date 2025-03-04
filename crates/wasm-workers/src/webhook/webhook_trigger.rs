@@ -540,7 +540,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             let req_join_set_created = AppendRequest {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinSet {
+                    event: HistoryEvent::JoinSetCreate {
                         join_set_id: self.join_set_id_direct.clone(),
                         closing_strategy: ClosingStrategy::Complete,
                     },

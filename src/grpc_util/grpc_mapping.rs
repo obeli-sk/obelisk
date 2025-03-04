@@ -459,7 +459,7 @@ pub(crate) fn from_execution_event_to_grpc(
                                     grpc::execution_event::history_event::persist::persist_kind::RandomString {  }),
                             }) })
                         }),
-                        HistoryEvent::JoinSet { join_set_id, closing_strategy } =>
+                        HistoryEvent::JoinSetCreate { join_set_id, closing_strategy } =>
                             grpc::execution_event::history_event::Event::JoinSetCreated(grpc::execution_event::history_event::JoinSetCreated {
                                 join_set_id: Some(join_set_id.into()),
                                 closing_strategy: match closing_strategy {

@@ -1610,7 +1610,7 @@ impl<S: Sleep> SqlitePool<S> {
             }
             ExecutionEventInner::HistoryEvent {
                 event:
-                    HistoryEvent::JoinSet { .. }
+                    HistoryEvent::JoinSetCreate { .. }
                     | HistoryEvent::JoinSetRequest {
                         request: JoinSetRequest::ChildExecutionRequest { .. },
                         ..

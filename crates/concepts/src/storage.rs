@@ -236,7 +236,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     scheduled_by: None,
 };
 pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
-    event: HistoryEvent::JoinSet {
+    event: HistoryEvent::JoinSetCreate {
         join_set_id: JoinSetId {
             kind: crate::JoinSetKind::OneOff,
             name: StrVariant::empty(),
@@ -358,7 +358,7 @@ impl ExecutionEventInner {
             } => Some(join_set_id),
             Self::HistoryEvent {
                 event:
-                    HistoryEvent::JoinSet { join_set_id, .. }
+                    HistoryEvent::JoinSetCreate { join_set_id, .. }
                     | HistoryEvent::JoinSetRequest { join_set_id, .. }
                     | HistoryEvent::JoinNext { join_set_id, .. },
             } => Some(join_set_id),
@@ -418,8 +418,8 @@ pub enum HistoryEvent {
         value: Vec<u8>,
         kind: PersistKind,
     },
-    #[display("JoinSet({join_set_id})")]
-    JoinSet {
+    #[display("JoinSetCreate({join_set_id})")]
+    JoinSetCreate {
         join_set_id: JoinSetId,
         closing_strategy: ClosingStrategy,
     },

@@ -1196,7 +1196,7 @@ mod tests {
             let join_set = AppendRequest {
                 created_at: current_time,
                 event: ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinSet {
+                    event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id.clone(),
                         closing_strategy: ClosingStrategy::Complete,
                     },

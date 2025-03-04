@@ -707,7 +707,7 @@ pub async fn append_batch_respond_to_parent(
             AppendRequest {
                 created_at: sim_clock.now(),
                 event: ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinSet {
+                    event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id.clone(),
                         closing_strategy: ClosingStrategy::Complete,
                     },
