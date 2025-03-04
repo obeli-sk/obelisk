@@ -41,13 +41,12 @@ jobs:
       - id: git-info
         run: |
           VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         run: |
-
           echo "Releasing $TAG $SHA"
           body=$(./scripts/extract-release-info.sh "$VERSION" | jq -R -s .)
           curl -v --fail -X POST \
@@ -64,8 +63,9 @@ jobs:
             https://api.github.com/repos/obeli-sk/obelisk/releases
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.git-info.outputs.tag }}
           SHA: ${{ steps.git-info.outputs.sha }}
+          TAG: ${{ steps.git-info.outputs.tag }}
+          VERSION: ${{ steps.git-info.outputs.version }}
 
   upload-assets:
     name: ${{ matrix.target }}
