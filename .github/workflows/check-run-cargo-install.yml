@@ -24,7 +24,7 @@ jobs:
         run: nix develop --command echo
 
       - name: Install obelisk from current path
-        run: nix develop --command cargo install --path . --locked
+        run: nix develop --command cargo install --path . --locked --debug
 
       - name: Create temp directory
         run: mkdir temp
