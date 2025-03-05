@@ -1,5 +1,8 @@
 name: check-run-cargo-install
 
+# Run cargo install --path . on each push to main or latest, using
+# the default devshell in order to match the `rust-toolchain.toml` file.
+
 on:
   push:
     branches:
