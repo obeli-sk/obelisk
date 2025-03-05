@@ -57,8 +57,9 @@ jobs:
           VERSION: ${{ steps.git-info.outputs.version }}
 
       - name: Verify Obelisk
-        working-directory: temp
         run: |
+          mkdir tmp # Avoid conflict with existing obelisk.toml
+          cd tmp
           obelisk --version
           obelisk server generate-config
           obelisk server verify
