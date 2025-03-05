@@ -46,7 +46,7 @@ jobs:
         run: |
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 
-      - name: Download Obelisk
+      - name: Run cargo binstall
         run: |
           cargo binstall \
             --github-token ${{ secrets.GITHUB_TOKEN }} \
@@ -57,9 +57,8 @@ jobs:
           VERSION: ${{ steps.git-info.outputs.version }}
 
       - name: Verify Obelisk
+        working-directory: temp
         run: |
-          mkdir tmp # Avoid conflict with existing obelisk.toml
-          cd tmp
           obelisk --version
           obelisk server generate-config
           obelisk server verify
