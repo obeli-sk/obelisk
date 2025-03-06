@@ -1,7 +1,7 @@
-cargo-binstall 1.10.23
+cargo-binstall 1.11.1
 cargo-edit-upgrade 0.13.1
-cargo-expand 1.0.100
-cargo-nextest 0.9.91
+cargo-expand 1.0.101
+cargo-nextest 0.9.92
 cargo-semver-checks 0.39.0
 litecli Version: 1.12.3
 nixpkgs-fmt 1.3.0
