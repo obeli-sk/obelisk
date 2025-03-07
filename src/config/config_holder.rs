@@ -5,7 +5,11 @@ use directories::{BaseDirs, ProjectDirs};
 use std::path::{Path, PathBuf};
 use tracing::debug;
 
+// release: Include real file
+#[cfg(not(debug_assertions))]
 const EXAMPLE_TOML: &[u8] = include_bytes!("../../obelisk.toml");
+#[cfg(debug_assertions)]
+const EXAMPLE_TOML: &[u8] = b"not available in debug builds";
 
 pub(crate) struct ConfigHolder {
     paths: Vec<PathBuf>,
