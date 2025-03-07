@@ -434,8 +434,8 @@ impl FunctionFqn {
         ifc_fqn: &str,
         function_name: &str,
     ) -> Result<Self, FunctionFqnParseError> {
-        if ifc_fqn.contains('.') || function_name.contains('.') {
-            Err(FunctionFqnParseError::DelimiterFoundMoreThanOnce)
+        if function_name.contains('.') {
+            Err(FunctionFqnParseError::DelimiterFoundInFunctionName)
         } else {
             Ok(Self::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)))
         }
@@ -446,20 +446,16 @@ impl FunctionFqn {
 pub enum FunctionFqnParseError {
     #[error("delimiter `.` not found")]
     DelimiterNotFound,
-    #[error("delimiter `.` found more than once")]
-    DelimiterFoundMoreThanOnce,
+    #[error("delimiter `.` found in function name")]
+    DelimiterFoundInFunctionName,
 }
 
 impl FromStr for FunctionFqn {
     type Err = FunctionFqnParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some((ifc_fqn, function_name)) = s.split_once('.') {
-            if function_name.contains('.') {
-                Err(FunctionFqnParseError::DelimiterFoundMoreThanOnce)
-            } else {
-                Ok(Self::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)))
-            }
+        if let Some((ifc_fqn, function_name)) = s.rsplit_once('.') {
+            Ok(Self::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)))
         } else {
             Err(FunctionFqnParseError::DelimiterNotFound)
         }
@@ -1833,7 +1829,9 @@ impl opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'_
 #[cfg(test)]
 mod tests {
 
-    use crate::{prefixed_ulid::ExecutorId, ExecutionId, JoinSetId, JoinSetKind, StrVariant};
+    use crate::{
+        prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, JoinSetId, JoinSetKind, StrVariant,
+    };
     use std::{
         hash::{DefaultHasher, Hash, Hasher},
         str::FromStr,
@@ -1951,6 +1949,18 @@ mod tests {
         let right_hasher = right_hasher.finish();
         println!("left: {left_hasher:x}, right: {right_hasher:x}");
         assert_eq!(left_hasher, right_hasher);
+    }
+
+    #[test]
+    fn ffqn_from_tuple_with_version_should_work() {
+        let ffqn = FunctionFqn::try_from_tuple("wasi:cli/run@0.2.0", "run").unwrap();
+        assert_eq!(FunctionFqn::new_static("wasi:cli/run@0.2.0", "run"), ffqn);
+    }
+
+    #[test]
+    fn ffqn_from_str_with_version_should_work() {
+        let ffqn = FunctionFqn::from_str("wasi:cli/run@0.2.0.run").unwrap();
+        assert_eq!(FunctionFqn::new_static("wasi:cli/run@0.2.0", "run"), ffqn);
     }
 
     #[cfg(madsim)]
