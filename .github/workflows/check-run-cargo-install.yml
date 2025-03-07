@@ -36,5 +36,6 @@ jobs:
         working-directory: temp
         run: |
           $HOME/.cargo/bin/obelisk -v
-          $HOME/.cargo/bin/obelisk server generate-config
+          # $HOME/.cargo/bin/obelisk server generate-config # does not work for debug builds
+          cp ../obelisk.toml .
           $HOME/.cargo/bin/obelisk server verify
