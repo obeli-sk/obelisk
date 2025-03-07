@@ -29,15 +29,11 @@ impl FromStr for FunctionFqn {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some((ifc_fqn, function_name)) = s.split_once('.') {
-            if function_name.contains(".") {
-                bail!("delimiter `.` found more than once")
-            } else {
-                Ok(FunctionFqn {
-                    ifc_fqn: IfcFqn::from_str(ifc_fqn)?,
-                    function_name: function_name.to_string(),
-                })
-            }
+        if let Some((ifc_fqn, function_name)) = s.rsplit_once('.') {
+            Ok(FunctionFqn {
+                ifc_fqn: IfcFqn::from_str(ifc_fqn)?,
+                function_name: function_name.to_string(),
+            })
         } else {
             bail!("delimiter `.` not found")
         }
