@@ -9,9 +9,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest, DbConnection,
-    DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
-    ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
+    AppendBacktrace, AppendBatchResponse, AppendRequest, AppendResponse, ClientError,
+    CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
+    ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
     JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
     ResponseWithCursor, SpecificError, Version, VersionType,
 };
@@ -287,6 +287,16 @@ impl DbConnection for InMemoryDbConnection {
             .get(execution_id)
             .map_err(DbError::Specific)?
             .pending_state)
+    }
+
+    async fn append_backtrace(&self, _append: AppendBacktrace) -> Result<(), DbError> {
+        // noop, backtrace functionality is for reporting only and its absence should not affect the system.
+        Ok(())
+    }
+
+    async fn append_backtrace_batch(&self, _batch: Vec<AppendBacktrace>) -> Result<(), DbError> {
+        // noop, backtrace functionality is for reporting only and its absence should not affect the system.
+        Ok(())
     }
 
     async fn list_executions(

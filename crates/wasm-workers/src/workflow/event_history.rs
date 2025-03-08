@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage;
+use concepts::storage::AppendBacktrace;
 use concepts::storage::HistoryEventScheduledAt;
 use concepts::storage::PersistKind;
 use concepts::storage::SpecificError;
@@ -93,7 +94,6 @@ pub(crate) enum ApplyError {
 }
 
 #[expect(clippy::struct_field_names)]
-#[cfg_attr(test, derive(Clone))]
 pub(crate) struct EventHistory<C: ClockFn> {
     execution_id: ExecutionId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -109,12 +109,14 @@ pub(crate) struct EventHistory<C: ClockFn> {
     // TODO: optimize using start_from_idx: usize,
 }
 
-#[cfg_attr(test, derive(Clone))]
 enum NonBlockingCache {
     StartAsync {
         batch: Vec<AppendRequest>,
         version: Version,
         child_req: CreateRequest,
+    },
+    WasmBacktrace {
+        append_backtrace: AppendBacktrace,
     },
 }
 
@@ -403,6 +405,7 @@ impl<C: ClockFn> EventHistory<C> {
                         EventCall::BlockingChildAwaitNext {
                             join_set_id: join_set_id.clone(),
                             closing: true,
+                            wasm_backtrace: None, // TODO: Investigate capturing backtrace on execution end.
                         },
                         db_connection,
                         version,
@@ -846,6 +849,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let mut batches = Vec::with_capacity(non_blocking_event_batch.len());
                 let mut childs = Vec::with_capacity(non_blocking_event_batch.len());
                 let mut first_version = None;
+                let mut wasm_backtraces = Vec::with_capacity(non_blocking_event_batch.len());
                 for non_blocking in non_blocking_event_batch.drain(..) {
                     match non_blocking {
                         NonBlockingCache::StartAsync {
@@ -859,6 +863,9 @@ impl<C: ClockFn> EventHistory<C> {
                             childs.push(child_req);
                             batches.extend(batch);
                         }
+                        NonBlockingCache::WasmBacktrace { append_backtrace } => {
+                            wasm_backtraces.push(append_backtrace);
+                        }
                     }
                 }
                 db_connection
@@ -870,6 +877,9 @@ impl<C: ClockFn> EventHistory<C> {
                         childs,
                     )
                     .await?;
+                if let Err(err) = db_connection.append_backtrace_batch(wasm_backtraces).await {
+                    debug!("Ignoring error while appending backtrace: {err:?}");
+                }
             }
             _ => {}
         }
@@ -946,6 +956,7 @@ impl<C: ClockFn> EventHistory<C> {
                 join_set_id,
                 child_execution_id,
                 params,
+                wasm_backtrace,
             } => {
                 debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
                 let event = HistoryEvent::JoinSetRequest {
@@ -991,11 +1002,22 @@ impl<C: ClockFn> EventHistory<C> {
                             version: version.clone(),
                             child_req,
                         });
+                        let next_version = Version::new(version.0 + 1);
+                        if let Some(wasm_backtrace) = wasm_backtrace {
+                            non_blocking_event_batch.push(NonBlockingCache::WasmBacktrace {
+                                append_backtrace: AppendBacktrace {
+                                    execution_id: self.execution_id.clone(),
+                                    wasm_backtrace,
+                                    version_min_including: version.clone(),
+                                    version_max_excluding: next_version.clone(),
+                                },
+                            });
+                        }
                         self.flush_non_blocking_event_cache_if_full(db_connection, called_at)
                             .await?;
-                        Version::new(version.0 + 1)
+                        next_version
                     } else {
-                        db_connection
+                        let next_version = db_connection
                             .append_batch_create_new_execution(
                                 called_at,
                                 vec![child_exec_req],
@@ -1003,7 +1025,21 @@ impl<C: ClockFn> EventHistory<C> {
                                 version.clone(),
                                 vec![child_req],
                             )
-                            .await?
+                            .await?;
+                        if let Some(wasm_backtrace) = wasm_backtrace {
+                            if let Err(err) = db_connection
+                                .append_backtrace(AppendBacktrace {
+                                    execution_id: self.execution_id.clone(),
+                                    version_min_including: version.clone(),
+                                    version_max_excluding: next_version.clone(),
+                                    wasm_backtrace,
+                                })
+                                .await
+                            {
+                                debug!("Ignoring error while appending backtrace: {err:?}");
+                            }
+                        }
+                        next_version
                     };
                 Ok(history_events)
             }
@@ -1013,6 +1049,7 @@ impl<C: ClockFn> EventHistory<C> {
                 execution_id: new_execution_id,
                 ffqn,
                 params,
+                wasm_backtrace,
             } => {
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
@@ -1057,11 +1094,22 @@ impl<C: ClockFn> EventHistory<C> {
                             version: version.clone(),
                             child_req,
                         });
+                        let next_version = Version::new(version.0 + 1);
+                        if let Some(wasm_backtrace) = wasm_backtrace {
+                            non_blocking_event_batch.push(NonBlockingCache::WasmBacktrace {
+                                append_backtrace: AppendBacktrace {
+                                    execution_id: self.execution_id.clone(),
+                                    wasm_backtrace,
+                                    version_min_including: version.clone(),
+                                    version_max_excluding: next_version.clone(),
+                                },
+                            });
+                        }
                         self.flush_non_blocking_event_cache_if_full(db_connection, called_at)
                             .await?;
-                        Version::new(version.0 + 1)
+                        next_version
                     } else {
-                        db_connection
+                        let next_version = db_connection
                             .append_batch_create_new_execution(
                                 called_at,
                                 vec![child_exec_req],
@@ -1069,7 +1117,21 @@ impl<C: ClockFn> EventHistory<C> {
                                 version.clone(),
                                 vec![child_req],
                             )
-                            .await?
+                            .await?;
+                        if let Some(wasm_backtrace) = wasm_backtrace {
+                            if let Err(err) = db_connection
+                                .append_backtrace(AppendBacktrace {
+                                    execution_id: self.execution_id.clone(),
+                                    version_min_including: version.clone(),
+                                    version_max_excluding: next_version.clone(),
+                                    wasm_backtrace,
+                                })
+                                .await
+                            {
+                                debug!("Ignoring error while appending backtrace: {err:?}");
+                            }
+                        }
+                        next_version
                     };
                 Ok(history_events)
             }
@@ -1077,6 +1139,7 @@ impl<C: ClockFn> EventHistory<C> {
             EventCall::BlockingChildAwaitNext {
                 join_set_id,
                 closing,
+                wasm_backtrace,
             } => {
                 debug!(%join_set_id, "BlockingChildJoinNext: Flushing and appending JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
@@ -1091,9 +1154,23 @@ impl<C: ClockFn> EventHistory<C> {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
+                let version_min_including = version.clone();
                 *version = db_connection
                     .append(self.execution_id.clone(), version.clone(), join_next)
                     .await?;
+                if let Some(wasm_backtrace) = wasm_backtrace {
+                    if let Err(err) = db_connection
+                        .append_backtrace(AppendBacktrace {
+                            execution_id: self.execution_id.clone(),
+                            version_min_including,
+                            version_max_excluding: version.clone(),
+                            wasm_backtrace,
+                        })
+                        .await
+                    {
+                        debug!("Ignoring error while appending backtrace: {err:?}");
+                    }
+                }
                 Ok(history_events)
             }
 
@@ -1102,6 +1179,7 @@ impl<C: ClockFn> EventHistory<C> {
                 join_set_id,
                 child_execution_id,
                 params,
+                wasm_backtrace,
             } => {
                 debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Flushing and appending JoinSet,ChildExecutionRequest,JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
@@ -1163,6 +1241,7 @@ impl<C: ClockFn> EventHistory<C> {
                     component_id,
                     scheduled_by: None,
                 };
+                let version_min_including = version.clone();
                 *version = db_connection
                     .append_batch_create_new_execution(
                         called_at,
@@ -1172,6 +1251,21 @@ impl<C: ClockFn> EventHistory<C> {
                         vec![child],
                     )
                     .await?;
+
+                if let Some(wasm_backtrace) = wasm_backtrace {
+                    if let Err(err) = db_connection
+                        .append_backtrace(AppendBacktrace {
+                            execution_id: self.execution_id.clone(),
+                            version_min_including,
+                            version_max_excluding: version.clone(),
+                            wasm_backtrace,
+                        })
+                        .await
+                    {
+                        debug!("Ignoring error while appending backtrace: {err:?}");
+                    }
+                }
+
                 Ok(history_events)
             }
 
@@ -1269,16 +1363,19 @@ pub(crate) enum EventCall {
         join_set_id: JoinSetId,
         child_execution_id: ExecutionIdDerived,
         params: Params,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     ScheduleRequest {
         scheduled_at: HistoryEventScheduledAt,
         execution_id: ExecutionId,
         ffqn: FunctionFqn,
         params: Params,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     BlockingChildAwaitNext {
         join_set_id: JoinSetId,
         closing: bool,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     /// combines [`Self::CreateJoinSet`] [`Self::StartAsync`] [`Self::BlockingChildJoinNext`]
     /// Direct call
@@ -1287,6 +1384,7 @@ pub(crate) enum EventCall {
         join_set_id: JoinSetId,
         child_execution_id: ExecutionIdDerived,
         params: Params,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     BlockingDelayRequest {
         join_set_id: JoinSetId,
@@ -1310,13 +1408,12 @@ impl EventCall {
                     kind: JoinNextKind::DirectCall,
                 })
             }
-            EventCall::BlockingChildAwaitNext {
-                join_set_id,
-                closing: _,
-            } => Some(PollVariant::JoinNextChild {
-                join_set_id: join_set_id.clone(),
-                kind: JoinNextKind::AwaitNext,
-            }),
+            EventCall::BlockingChildAwaitNext { join_set_id, .. } => {
+                Some(PollVariant::JoinNextChild {
+                    join_set_id: join_set_id.clone(),
+                    kind: JoinNextKind::AwaitNext,
+                })
+            }
             EventCall::BlockingDelayRequest { join_set_id, .. } => {
                 Some(PollVariant::JoinNextDelay(join_set_id.clone()))
             }
@@ -1387,10 +1484,7 @@ impl EventCall {
                 join_set_id: join_set_id.clone(),
                 child_execution_id: child_execution_id.clone(),
             }],
-            EventCall::BlockingChildAwaitNext {
-                join_set_id,
-                closing: _,
-            } => {
+            EventCall::BlockingChildAwaitNext { join_set_id, .. } => {
                 vec![EventHistoryKey::JoinNextChild {
                     join_set_id: join_set_id.clone(),
                     kind: JoinNextKind::AwaitNext,
@@ -1569,6 +1663,7 @@ mod tests {
                             join_set_id: join_set_id.clone(),
                             child_execution_id: child_execution_id.clone(),
                             params: Params::empty(),
+                            wasm_backtrace: None,
                         },
                         &db_pool.connection(),
                         &mut version,
@@ -1581,6 +1676,7 @@ mod tests {
                         EventCall::BlockingChildAwaitNext {
                             join_set_id,
                             closing: false,
+                            wasm_backtrace: None,
                         },
                         &db_pool.connection(),
                         &mut version,
@@ -1676,6 +1772,7 @@ mod tests {
                         join_set_id,
                         child_execution_id,
                         params: Params::empty(),
+                        wasm_backtrace: None,
                     },
                     &db_pool.connection(),
                     version,
@@ -1778,6 +1875,7 @@ mod tests {
                 EventCall::BlockingChildAwaitNext {
                     join_set_id,
                     closing: false,
+                    wasm_backtrace: None,
                 },
                 &db_pool.connection(),
                 &mut version,
@@ -1843,6 +1941,7 @@ mod tests {
                         join_set_id: join_set_id.clone(),
                         child_execution_id: child_execution_id_a,
                         params: Params::empty(),
+                        wasm_backtrace: None,
                     },
                     &db_pool.connection(),
                     version,
@@ -1857,6 +1956,7 @@ mod tests {
                         join_set_id: join_set_id.clone(),
                         child_execution_id: child_execution_id_b,
                         params: Params::empty(),
+                        wasm_backtrace: None,
                     },
                     &db_pool.connection(),
                     version,
@@ -1869,6 +1969,7 @@ mod tests {
                     EventCall::BlockingChildAwaitNext {
                         join_set_id,
                         closing: false,
+                        wasm_backtrace: None,
                     },
                     &db_pool.connection(),
                     version,
@@ -2001,6 +2102,7 @@ mod tests {
                 EventCall::BlockingChildAwaitNext {
                     join_set_id,
                     closing: false,
+                    wasm_backtrace: None,
                 },
                 &db_pool.connection(),
                 &mut version,

@@ -850,6 +850,10 @@ pub trait DbConnection: Send + Sync {
         max_wait: Duration,
     );
 
+    async fn append_backtrace(&self, append: AppendBacktrace) -> Result<(), DbError>;
+
+    async fn append_backtrace_batch(&self, batch: Vec<AppendBacktrace>) -> Result<(), DbError>;
+
     /// Returns executions sorted in descending order.
     /// Used by gRPC only.
     async fn list_executions(
@@ -866,6 +870,72 @@ pub trait DbConnection: Send + Sync {
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
     ) -> Result<Vec<ResponseWithCursor>, DbError>;
+}
+
+pub struct AppendBacktrace {
+    pub execution_id: ExecutionId,
+    pub version_min_including: Version,
+    pub version_max_excluding: Version,
+    pub wasm_backtrace: WasmBacktrace,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WasmBacktrace {
+    pub frames: Vec<FrameInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FrameInfo {
+    pub module: String,
+    pub func_name: Option<String>,
+    pub symbols: Vec<FrameSymbol>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FrameSymbol {
+    pub func_name: Option<String>,
+    pub file: Option<String>,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+}
+
+mod wasm_backtrace {
+    use super::{FrameInfo, FrameSymbol, WasmBacktrace};
+
+    impl From<wasmtime::WasmBacktrace> for WasmBacktrace {
+        fn from(backtrace: wasmtime::WasmBacktrace) -> Self {
+            Self {
+                frames: backtrace.frames().iter().map(FrameInfo::from).collect(),
+            }
+        }
+    }
+
+    impl From<&wasmtime::FrameInfo> for FrameInfo {
+        fn from(frame: &wasmtime::FrameInfo) -> Self {
+            let module_name = frame.module().name().unwrap_or("<unknown>").to_string();
+
+            Self {
+                module: module_name,
+                func_name: frame.func_name().map(ToString::to_string),
+                symbols: frame
+                    .symbols()
+                    .iter()
+                    .map(std::convert::Into::into)
+                    .collect(),
+            }
+        }
+    }
+
+    impl From<&wasmtime::FrameSymbol> for FrameSymbol {
+        fn from(symbol: &wasmtime::FrameSymbol) -> Self {
+            Self {
+                func_name: symbol.name().map(ToString::to_string),
+                file: symbol.file().map(ToString::to_string),
+                line: symbol.line(),
+                col: symbol.column(),
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

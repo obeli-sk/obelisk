@@ -5,11 +5,11 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
-        DbConnection, DbError, DbPool, ExecutionEvent, ExecutionListPagination, ExecutionLog,
-        ExecutionWithState, ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        LockPendingResponse, LockResponse, Pagination, PendingState, ResponseWithCursor, Version,
-        VersionType,
+        AppendBacktrace, AppendBatchResponse, AppendRequest, AppendResponse, ClientError,
+        CreateRequest, DbConnection, DbError, DbPool, ExecutionEvent, ExecutionListPagination,
+        ExecutionLog, ExecutionWithState, ExpiredTimer, JoinSetResponseEvent,
+        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Pagination, PendingState,
+        ResponseWithCursor, Version, VersionType,
     },
     time::TokioSleep,
     ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn,
@@ -219,6 +219,14 @@ impl DbConnection for DbConnectionProxy {
         version: &Version,
     ) -> Result<ExecutionEvent, DbError> {
         self.0.get_execution_event(execution_id, version).await
+    }
+
+    async fn append_backtrace(&self, batch: AppendBacktrace) -> Result<(), DbError> {
+        self.0.append_backtrace(batch).await
+    }
+
+    async fn append_backtrace_batch(&self, batch: Vec<AppendBacktrace>) -> Result<(), DbError> {
+        self.0.append_backtrace_batch(batch).await
     }
 
     async fn list_executions(

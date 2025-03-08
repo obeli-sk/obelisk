@@ -612,6 +612,7 @@ impl<
         }
         let interrupt_on_timeout_container = Arc::new(std::sync::Mutex::new(None));
         let worker_span = ctx.worker_span.clone();
+        worker_span.in_scope(|| info!("Execution run started"));
         let execution_deadline = ctx.execution_deadline;
         let (store, func, params) = match self
             .prepare_func(ctx, interrupt_on_timeout_container.clone())

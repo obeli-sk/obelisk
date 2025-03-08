@@ -8,7 +8,7 @@ use crate::{host_exports, WasmFileError};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
-use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
+use concepts::storage::{self, DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{ClosingStrategy, ExecutionId, FunctionRegistry, IfcFqnName, StrVariant};
@@ -120,11 +120,11 @@ impl From<ApplyError> for WorkflowFunctionError {
 }
 
 pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
-    execution_id: ExecutionId,
+    pub(crate) execution_id: ExecutionId,
     event_history: EventHistory<C>,
     rng: StdRng,
     pub(crate) clock_fn: C,
-    db_pool: P,
+    pub(crate) db_pool: P,
     pub(crate) version: Version,
     fn_registry: Arc<dyn FunctionRegistry>,
     component_logger: ComponentLogger,
@@ -132,25 +132,29 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     phantom_data: PhantomData<DB>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) enum ImportedFnCall<'a> {
     Direct {
         ffqn: FunctionFqn,
         params: &'a [Val],
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     Schedule {
         target_ffqn: FunctionFqn,
         scheduled_at: HistoryEventScheduledAt,
         target_params: &'a [Val],
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     Submit {
         target_ffqn: FunctionFqn,
         join_set_id: JoinSetId,
         target_params: &'a [Val],
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     AwaitNext {
         target_ffqn: FunctionFqn,
         join_set_id: JoinSetId,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     },
 }
 
@@ -177,6 +181,13 @@ impl<'a> ImportedFnCall<'a> {
         store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C, DB, P>>,
         params: &'a [Val],
     ) -> Result<ImportedFnCall<'a>, WorkflowFunctionError> {
+        let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
+        let wasm_backtrace = if wasm_backtrace.frames().is_empty() {
+            None
+        } else {
+            Some(concepts::storage::WasmBacktrace::from(wasm_backtrace))
+        };
+
         if let Some(package_name) = called_ffqn.ifc_fqn.package_strip_extension_suffix() {
             let ifc_fqn = IfcFqnName::from_parts(
                 called_ffqn.ifc_fqn.namespace(),
@@ -200,6 +211,7 @@ impl<'a> ImportedFnCall<'a> {
                     target_ffqn,
                     join_set_id,
                     target_params: params,
+                    wasm_backtrace,
                 })
             } else if let Some(function_name) =
                 called_ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
@@ -230,6 +242,7 @@ impl<'a> ImportedFnCall<'a> {
                 Ok(ImportedFnCall::AwaitNext {
                     target_ffqn,
                     join_set_id,
+                    wasm_backtrace,
                 })
             } else if let Some(function_name) =
                 called_ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
@@ -274,6 +287,7 @@ impl<'a> ImportedFnCall<'a> {
                     target_ffqn,
                     scheduled_at,
                     target_params: params,
+                    wasm_backtrace,
                 })
             } else {
                 error!("Unrecognized extension function {called_ffqn}");
@@ -287,6 +301,7 @@ impl<'a> ImportedFnCall<'a> {
             Ok(ImportedFnCall::Direct {
                 ffqn: called_ffqn,
                 params,
+                wasm_backtrace,
             })
         }
     }
@@ -502,7 +517,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 
     fn imported_fn_to_event_call(&mut self, imported_fn_call: ImportedFnCall) -> EventCall {
         match imported_fn_call {
-            ImportedFnCall::Direct { ffqn, params } => {
+            ImportedFnCall::Direct {
+                ffqn,
+                params,
+                wasm_backtrace,
+            } => {
                 let join_set_id = self.next_join_set_one_off();
                 let child_execution_id = self.execution_id.next_level(&join_set_id);
                 EventCall::BlockingChildDirectCall {
@@ -510,12 +529,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     join_set_id,
                     params: Params::from_wasmtime(Arc::from(params)),
                     child_execution_id,
+                    wasm_backtrace,
                 }
             }
             ImportedFnCall::Schedule {
                 target_ffqn,
                 scheduled_at,
                 target_params,
+                wasm_backtrace,
             } => {
                 // TODO(edge case): handle ExecutionId conflict: This does not have to be deterministicly generated.
                 // Remove execution_id from EventCall::ScheduleRequest and add retries.
@@ -527,12 +548,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     execution_id,
                     ffqn: target_ffqn,
                     params: Params::from_wasmtime(Arc::from(target_params)),
+                    wasm_backtrace,
                 }
             }
             ImportedFnCall::Submit {
                 target_ffqn,
                 join_set_id,
                 target_params,
+                wasm_backtrace,
             } => {
                 let child_execution_id = self.next_child_id(&join_set_id);
                 EventCall::StartAsync {
@@ -540,14 +563,17 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     join_set_id,
                     params: Params::from_wasmtime(Arc::from(target_params)),
                     child_execution_id,
+                    wasm_backtrace,
                 }
             }
             ImportedFnCall::AwaitNext {
                 target_ffqn: _, // Currently multiple functions are not supported in one join set.
                 join_set_id,
+                wasm_backtrace,
             } => EventCall::BlockingChildAwaitNext {
                 join_set_id,
                 closing: false,
+                wasm_backtrace,
             },
         }
     }
@@ -588,6 +614,7 @@ mod workflow_support {
     {
     }
 
+    // TODO: Capture and persist backtrace for host functions.
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
         host_exports::obelisk::workflow::workflow_support::Host for WorkflowCtx<C, DB, P>
     {
@@ -891,6 +918,7 @@ pub(crate) mod tests {
                                 ImportedFnCall::Direct {
                                     ffqn: ffqn.clone(),
                                     params: &[],
+                                    wasm_backtrace: None,
                                 },
                                 &mut [],
                                 ffqn.clone(),
@@ -928,6 +956,7 @@ pub(crate) mod tests {
                                     target_ffqn: target_ffqn.clone(),
                                     join_set_id,
                                     target_params: &[],
+                                    wasm_backtrace: None,
                                 },
                                 &mut ret_val,
                                 submit_ffqn,

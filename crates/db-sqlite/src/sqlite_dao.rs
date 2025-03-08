@@ -4,13 +4,14 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, PrefixedUlid, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
-        DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
-        ExecutionListPagination, ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
-        LockResponse, LockedExecution, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, ResponseWithCursor, SpecificError, Version, VersionType,
-        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_TEMPORARILY_FAILED, DUMMY_TEMPORARILY_TIMED_OUT,
+        AppendBacktrace, AppendBatchResponse, AppendRequest, AppendResponse, ClientError,
+        CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
+        ExecutionEventInner, ExecutionListPagination, ExecutionWithState, ExpiredTimer,
+        HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
+        PendingState, PendingStateFinished, PendingStateFinishedResultKind, ResponseWithCursor,
+        SpecificError, Version, VersionType, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        DUMMY_TEMPORARILY_FAILED, DUMMY_TEMPORARILY_TIMED_OUT,
     },
     time::Sleep,
     ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, JoinSetId, StrVariant,
@@ -189,6 +190,20 @@ CREATE TABLE IF NOT EXISTS t_delay (
     expires_at TEXT NOT NULL,
     PRIMARY KEY (execution_id, join_set_id, delay_id)
 )
+";
+
+const CREATE_TABLE_T_BACKTRACE: &str = r"
+CREATE TABLE IF NOT EXISTS t_backtrace (
+    execution_id TEXT NOT NULL,
+    version_min_including INTEGER NOT NULL,
+    version_max_excluding INTEGER NOT NULL,
+    wasm_backtrace TEXT NOT NULL,
+    PRIMARY KEY (execution_id, version_min_including, version_max_excluding)
+);
+";
+// Index for searching backtraces by execution_id and version
+const IDX_T_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_backtrace_execution_id_version ON t_backtrace (execution_id, version_min_including, version_max_excluding);
 ";
 
 #[expect(clippy::needless_pass_by_value)]
@@ -541,6 +556,9 @@ impl<S: Sleep> SqlitePool<S> {
         execute(&conn, IDX_T_STATE_CREATED_AT, []);
         // t_delay
         execute(&conn, CREATE_TABLE_T_DELAY, []);
+        // t_backtrace
+        execute(&conn, CREATE_TABLE_T_BACKTRACE, []);
+        execute(&conn, IDX_T_BACKTRACE_EXECUTION_ID_VERSION, []);
         conn
     }
 
@@ -1795,6 +1813,32 @@ impl<S: Sleep> SqlitePool<S> {
         ))
     }
 
+    fn append_backtrace(tx: &Transaction, append: &AppendBacktrace) -> Result<(), DbError> {
+        let mut stmt = tx
+            .prepare(
+                "INSERT INTO t_backtrace (execution_id, version_min_including, version_max_excluding, wasm_backtrace) \
+                    VALUES (:execution_id, :version_min_including, :version_max_excluding, :wasm_backtrace)",
+            )
+            .map_err(convert_err)?;
+        let backtrace = serde_json::to_string(&append.wasm_backtrace)
+            .map_err(|err| {
+                error!(
+                    "Cannot serialize backtrace {:?} - {err:?}",
+                    append.wasm_backtrace
+                );
+                rusqlite::Error::ToSqlConversionFailure(err.into())
+            })
+            .map_err(convert_err)?;
+        stmt.execute(named_params! {
+            ":execution_id": append.execution_id.to_string(),
+            ":version_min_including": append.version_min_including.0,
+            ":version_max_excluding": append.version_max_excluding.0,
+            ":wasm_backtrace": backtrace,
+        })
+        .map_err(convert_err)?;
+        Ok(())
+    }
+
     #[cfg(feature = "test")]
     fn get(
         tx: &Transaction,
@@ -2563,6 +2607,31 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
             self.notify_pending(pending_at, created_at);
         }
         Ok(())
+    }
+
+    #[instrument(level = Level::DEBUG, skip_all)]
+    async fn append_backtrace(&self, append: AppendBacktrace) -> Result<(), DbError> {
+        debug!("append_backtrace");
+        self.transaction_write(
+            move |tx| Self::append_backtrace(tx, &append),
+            "append_backtrace",
+        )
+        .await
+    }
+
+    #[instrument(level = Level::DEBUG, skip_all)]
+    async fn append_backtrace_batch(&self, batch: Vec<AppendBacktrace>) -> Result<(), DbError> {
+        debug!("append_backtrace_batch");
+        self.transaction_write(
+            move |tx| {
+                for append in batch {
+                    Self::append_backtrace(tx, &append)?;
+                }
+                Ok(())
+            },
+            "append_backtrace",
+        )
+        .await
     }
 
     /// Get currently expired locks and async timers (delay requests)
