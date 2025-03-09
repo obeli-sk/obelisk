@@ -9,7 +9,7 @@ use concepts::{
         CreateRequest, DbConnection, DbError, DbPool, ExecutionEvent, ExecutionListPagination,
         ExecutionLog, ExecutionWithState, ExpiredTimer, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Pagination, PendingState,
-        ResponseWithCursor, Version, VersionType,
+        ResponseWithCursor, Version, VersionType, WasmBacktrace,
     },
     time::TokioSleep,
     ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn,
@@ -227,6 +227,13 @@ impl DbConnection for DbConnectionProxy {
 
     async fn append_backtrace_batch(&self, batch: Vec<AppendBacktrace>) -> Result<(), DbError> {
         self.0.append_backtrace_batch(batch).await
+    }
+
+    async fn get_last_backtrace(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<WasmBacktrace, DbError> {
+        self.0.get_last_backtrace(execution_id).await
     }
 
     async fn list_executions(

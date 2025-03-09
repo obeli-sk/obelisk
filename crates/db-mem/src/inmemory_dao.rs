@@ -13,7 +13,7 @@ use concepts::storage::{
     CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
     ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
     JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
-    ResponseWithCursor, SpecificError, Version, VersionType,
+    ResponseWithCursor, SpecificError, Version, VersionType, WasmBacktrace,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::JoinSetId;
@@ -297,6 +297,13 @@ impl DbConnection for InMemoryDbConnection {
     async fn append_backtrace_batch(&self, _batch: Vec<AppendBacktrace>) -> Result<(), DbError> {
         // noop, backtrace functionality is for reporting only and its absence should not affect the system.
         Ok(())
+    }
+
+    async fn get_last_backtrace(
+        &self,
+        _execution_id: &ExecutionId,
+    ) -> Result<WasmBacktrace, DbError> {
+        Err(DbError::Specific(SpecificError::NotFound))
     }
 
     async fn list_executions(

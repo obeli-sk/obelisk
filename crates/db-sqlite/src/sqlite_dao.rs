@@ -10,7 +10,7 @@ use concepts::{
         HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
         PendingState, PendingStateFinished, PendingStateFinishedResultKind, ResponseWithCursor,
-        SpecificError, Version, VersionType, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        SpecificError, Version, VersionType, WasmBacktrace, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
         DUMMY_TEMPORARILY_FAILED, DUMMY_TEMPORARILY_TIMED_OUT,
     },
     time::Sleep,
@@ -2632,6 +2632,35 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
             "append_backtrace",
         )
         .await
+    }
+
+    #[instrument(level = Level::DEBUG, skip_all)]
+    async fn get_last_backtrace(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<WasmBacktrace, DbError> {
+        debug!("get_last_backtrace");
+        let execution_id = execution_id.clone();
+        self.transaction_read(
+            move |tx| {
+                let mut stmt = tx
+                    .prepare(
+                        "SELECT wasm_backtrace FROM t_backtrace \
+                        WHERE execution_id = :execution_id ORDER BY version_min_including DESC LIMIT 1",
+                    )
+                    .map_err(convert_err)?;
+                stmt.query_row(
+                    named_params! {
+                        ":execution_id": execution_id.to_string(),
+                    },
+                    |row| {
+                        Ok(row.get::<_, JsonWrapper<WasmBacktrace>>("wasm_backtrace")?.0)
+                    },
+                )
+                .map_err(convert_err)
+            },
+            "get_last_backtrace",
+        ).await
     }
 
     /// Get currently expired locks and async timers (delay requests)
