@@ -12,7 +12,8 @@ service ExecutionRepository {
     rpc GetStatus(GetStatusRequest) returns (stream GetStatusResponse);
     rpc ListExecutions(ListExecutionsRequest) returns (ListExecutionsResponse);
     rpc ListExecutionEvents(ListExecutionEventsRequest) returns (ListExecutionEventsResponse);
-    rpc ListResponses (ListResponsesRequest) returns (ListResponsesResponse);
+    rpc ListResponses(ListResponsesRequest) returns (ListResponsesResponse);
+    rpc GetLastBacktrace(GetLastBacktraceRequest) returns (GetLastBacktraceResponse);
 }
 
 service FunctionRepository {
@@ -431,4 +432,29 @@ message GetWitRequest {
 
 message GetWitResponse {
     string content = 1;
+}
+
+message GetLastBacktraceRequest {
+    ExecutionId execution_id = 1;
+}
+
+message GetLastBacktraceResponse {
+  WasmBacktrace wasm_backtrace = 4;
+}
+
+message WasmBacktrace {
+  repeated FrameInfo frames = 1;
+}
+
+message FrameInfo {
+  string module = 1;
+  optional string func_name = 2;
+  repeated FrameSymbol symbols = 3;
+}
+
+message FrameSymbol {
+  optional string func_name = 1;
+  optional string file = 2;
+  optional uint32 line = 3;
+  optional uint32 col = 4;
 }

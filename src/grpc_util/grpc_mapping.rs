@@ -558,3 +558,36 @@ pub mod response {
         }
     }
 }
+
+mod backtrace {
+    use crate::command::grpc;
+
+    impl From<concepts::storage::WasmBacktrace> for grpc::WasmBacktrace {
+        fn from(backtrace: concepts::storage::WasmBacktrace) -> Self {
+            Self {
+                frames: backtrace.frames.into_iter().map(Into::into).collect(),
+            }
+        }
+    }
+
+    impl From<concepts::storage::FrameInfo> for grpc::FrameInfo {
+        fn from(frame: concepts::storage::FrameInfo) -> Self {
+            Self {
+                module: frame.module,
+                func_name: frame.func_name,
+                symbols: frame.symbols.into_iter().map(Into::into).collect(),
+            }
+        }
+    }
+
+    impl From<concepts::storage::FrameSymbol> for grpc::FrameSymbol {
+        fn from(symbol: concepts::storage::FrameSymbol) -> Self {
+            Self {
+                func_name: symbol.func_name,
+                file: symbol.file,
+                line: symbol.line,
+                col: symbol.col,
+            }
+        }
+    }
+}

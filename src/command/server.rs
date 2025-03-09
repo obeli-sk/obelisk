@@ -578,6 +578,27 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             responses,
         }))
     }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn get_last_backtrace(
+        &self,
+        request: tonic::Request<grpc::GetLastBacktraceRequest>,
+    ) -> std::result::Result<tonic::Response<grpc::GetLastBacktraceResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+
+        let conn = self.db_pool.connection();
+        let backtrace = conn.get_last_backtrace(&execution_id).await.to_status()?;
+
+        Ok(tonic::Response::new(grpc::GetLastBacktraceResponse {
+            wasm_backtrace: Some(backtrace.into()),
+        }))
+    }
 }
 
 fn to_finished_status(
