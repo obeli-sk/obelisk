@@ -670,6 +670,7 @@ pub(crate) mod tests {
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
     };
+    use wasmtime::WasmBacktraceDetails;
 
     pub const FIBO_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA,
@@ -693,7 +694,11 @@ pub(crate) mod tests {
     const FFQN_WORKFLOW_HTTP_GET_RESP: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_RESP);
 
     pub(crate) async fn compile_workflow(wasm_path: &str) -> (WasmComponent, ComponentId) {
-        let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
+        let engine = Engines::get_workflow_engine(
+            EngineConfig::on_demand_testing().await,
+            WasmBacktraceDetails::Disable,
+        )
+        .unwrap();
         compile_workflow_with_engine(wasm_path, &engine)
     }
 
@@ -722,8 +727,11 @@ pub(crate) mod tests {
         non_blocking_event_batching: u32,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
-        let workflow_engine =
-            Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
+        let workflow_engine = Engines::get_workflow_engine(
+            EngineConfig::on_demand_testing().await,
+            WasmBacktraceDetails::Disable,
+        )
+        .unwrap();
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             wasm_file_name(wasm_path),
@@ -939,8 +947,11 @@ pub(crate) mod tests {
         non_blocking_event_batching: u32,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Arc<WorkflowWorker<C, S, DB, P>> {
-        let workflow_engine =
-            Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
+        let workflow_engine = Engines::get_workflow_engine(
+            EngineConfig::on_demand_testing().await,
+            WasmBacktraceDetails::Disable,
+        )
+        .unwrap();
         Arc::new(
             WorkflowWorkerCompiled::new_with_config(
                 WasmComponent::new(

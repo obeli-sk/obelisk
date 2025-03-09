@@ -922,13 +922,16 @@ impl ServerVerified {
                 WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
+                    config.workflow_config.capture_backtrace(),
                 )?,
-                WasmtimeAllocatorConfig::OnDemand => {
-                    Engines::on_demand(codegen_cache_config_file_holder)?
-                }
+                WasmtimeAllocatorConfig::OnDemand => Engines::on_demand(
+                    codegen_cache_config_file_holder,
+                    config.workflow_config.capture_backtrace(),
+                )?,
                 WasmtimeAllocatorConfig::Pooling => Engines::pooling(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
+                    config.workflow_config.capture_backtrace(),
                 )?,
             }
         };

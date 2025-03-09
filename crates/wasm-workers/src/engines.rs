@@ -1,7 +1,7 @@
 use std::{error::Error, fmt::Debug, path::Path, rc::Rc, sync::Arc};
 use tempfile::NamedTempFile;
 use tracing::{debug, instrument, trace, warn};
-use wasmtime::{Engine, EngineWeak};
+use wasmtime::{Engine, EngineWeak, WasmBacktraceDetails};
 
 #[derive(thiserror::Error, Debug)]
 pub enum EngineError {
@@ -158,27 +158,33 @@ impl Engines {
 
     pub(crate) fn get_webhook_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+        wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
         wasmtime_config.epoch_interruption(true);
         Self::configure_common(wasmtime_config, config)
     }
 
     pub(crate) fn get_activity_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+        wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
         wasmtime_config.epoch_interruption(true);
         Self::configure_common(wasmtime_config, config)
     }
 
-    pub(crate) fn get_workflow_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+    pub(crate) fn get_workflow_engine(
+        config: EngineConfig,
+        backtrace_capture: WasmBacktraceDetails,
+    ) -> Result<Arc<Engine>, EngineError> {
         let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+        wasmtime_config.wasm_backtrace_details(backtrace_capture);
         wasmtime_config.epoch_interruption(true);
         Self::configure_common(wasmtime_config, config)
     }
 
     #[instrument(skip_all)]
-    pub fn on_demand(cache_config_file: Option<Rc<NamedTempFile>>) -> Result<Self, EngineError> {
+    pub fn on_demand(
+        cache_config_file: Option<Rc<NamedTempFile>>,
+        workflow_capture_backtrace: WasmBacktraceDetails,
+    ) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: None,
             cache_config_file,
@@ -186,7 +192,7 @@ impl Engines {
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
             webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
-            workflow_engine: Self::get_workflow_engine(engine_config)?,
+            workflow_engine: Self::get_workflow_engine(engine_config, workflow_capture_backtrace)?,
         })
     }
 
@@ -194,6 +200,7 @@ impl Engines {
     pub fn pooling(
         opts: PoolingOptions,
         cache_config_file: Option<Rc<NamedTempFile>>,
+        workflow_capture_backtrace: WasmBacktraceDetails,
     ) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: Some(opts),
@@ -202,18 +209,24 @@ impl Engines {
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
             webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
-            workflow_engine: Self::get_workflow_engine(engine_config)?,
+            workflow_engine: Self::get_workflow_engine(engine_config, workflow_capture_backtrace)?,
         })
     }
 
     pub fn auto_detect_allocator(
         pooling_opts: PoolingOptions,
         cache_config: Option<Rc<NamedTempFile>>,
+        workflow_capture_backtrace: WasmBacktraceDetails,
     ) -> Result<Self, EngineError> {
-        Self::pooling(pooling_opts, cache_config.clone()).or_else(|err| {
+        Self::pooling(
+            pooling_opts,
+            cache_config.clone(),
+            workflow_capture_backtrace,
+        )
+        .or_else(|err| {
             warn!("Falling back to on-demand allocator - {err}");
             debug!("{err:?}");
-            Self::on_demand(cache_config)
+            Self::on_demand(cache_config, workflow_capture_backtrace)
         })
     }
 

@@ -22,6 +22,7 @@ use wasm_workers::{
     envvar::EnvVar,
     workflow::workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig},
 };
+use wasmtime::WasmBacktraceDetails;
 use webhook::{HttpServer, WebhookComponent};
 
 const HOME_DIR_PREFIX: &str = "~/";
@@ -47,6 +48,8 @@ pub(crate) struct ConfigToml {
     pub(crate) sqlite: SqliteConfigToml,
     #[serde(default)]
     pub(crate) webui: WebUIConfig,
+    #[serde(default, rename = "workflows")]
+    pub(crate) workflow_config: WorkflowsConfigToml,
     #[serde(default)]
     wasm_cache_directory: Option<String>,
     #[serde(default)]
@@ -127,6 +130,28 @@ impl SqliteConfigToml {
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct WebUIConfig {
     pub(crate) listening_addr: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkflowsConfigToml {
+    #[serde(default = "default_capture_backtrace")]
+    pub(crate) capture_backtrace: bool,
+}
+impl WorkflowsConfigToml {
+    pub(crate) fn capture_backtrace(&self) -> WasmBacktraceDetails {
+        if self.capture_backtrace {
+            WasmBacktraceDetails::Enable
+        } else {
+            WasmBacktraceDetails::Disable
+        }
+    }
+}
+impl Default for WorkflowsConfigToml {
+    fn default() -> Self {
+        Self {
+            capture_backtrace: default_capture_backtrace(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -932,6 +957,10 @@ fn resolve_env_vars(
             },
         })
         .collect::<Result<_, _>>()
+}
+
+const fn default_capture_backtrace() -> bool {
+    true
 }
 
 const fn default_codegen_enabled() -> bool {
