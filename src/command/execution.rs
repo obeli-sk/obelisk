@@ -1,5 +1,6 @@
 use super::grpc;
 use super::grpc::execution_status::BlockedByJoinSet;
+use super::grpc::GetLastBacktraceResponse;
 use crate::command::grpc::execution_status::Finished;
 use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use crate::ExecutionRepositoryClient;
@@ -315,22 +316,29 @@ async fn fetch_backtrace(
         Ok(ok) => ok.into_inner(),
     };
 
-    // let backtrace_response = backtrace_response.to_anyhow()?.into_inner();
-    if let Some(backtrace) = backtrace_response.wasm_backtrace {
-        print_backtrace(&backtrace);
-    }
+    print_backtrace(backtrace_response, client).await;
     Ok(())
 }
 
-fn print_backtrace(backtrace: &grpc::WasmBacktrace) {
+async fn print_backtrace(
+    backtrace_response: GetLastBacktraceResponse,
+    client: &mut ExecutionRepositoryClient,
+) {
     println!("\nBacktrace:");
-    for (i, frame) in backtrace.frames.iter().enumerate() {
+    let mut frame_file = None;
+    for (i, frame) in backtrace_response
+        .wasm_backtrace
+        .expect("`wasm_backtrace` is sent")
+        .frames
+        .into_iter()
+        .enumerate()
+    {
         println!("{}. Module: {}", i, frame.module);
         if let Some(func_name) = &frame.func_name {
             println!("   Function: {func_name}");
         }
 
-        for (j, symbol) in frame.symbols.iter().enumerate() {
+        for (j, symbol) in frame.symbols.into_iter().enumerate() {
             println!("   Symbol {j}:");
             if let Some(func_name) = &symbol.func_name {
                 println!("     Function: {func_name}");
@@ -343,6 +351,27 @@ fn print_backtrace(backtrace: &grpc::WasmBacktrace) {
                 _ => "unknown location".to_string(),
             };
             println!("     Location: {location}");
+            match (symbol.file, symbol.line) {
+                (Some(file), Some(_line)) if frame_file.is_none() => {
+                    frame_file = Some(file);
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some(file) = frame_file {
+        let source_resp = client
+            .get_backtrace_source(tonic::Request::new(grpc::GetBacktraceSourceRequest {
+                component_id: Some(
+                    backtrace_response
+                        .component_id
+                        .expect("`component_id` is sent"),
+                ),
+                file,
+            }))
+            .await;
+        if let Ok(source) = source_resp.map(|resp| resp.into_inner().content) {
+            println!("source:\n{source}");
         }
     }
 }
