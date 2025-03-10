@@ -275,7 +275,7 @@ pub(crate) async fn get(
 ) -> anyhow::Result<()> {
     let mut stream = client
         .get_status(tonic::Request::new(grpc::GetStatusRequest {
-            execution_id: Some(grpc::ExecutionId::from(execution_id)),
+            execution_id: Some(grpc::ExecutionId::from(execution_id.clone())),
             follow,
             send_finished_status: true,
         }))
@@ -288,9 +288,61 @@ pub(crate) async fn get(
     }
     while let Some(status) = stream.message().await? {
         print_status(status, &mut old_pending_status, json_output_started)?;
+        if json_output_started.is_none() {
+            fetch_backtrace(&mut client, &execution_id).await?;
+        }
     }
     if json_output_started == Some(false) {
         println!("\n]");
     }
     Ok(())
+}
+
+async fn fetch_backtrace(
+    client: &mut ExecutionRepositoryClient,
+    execution_id: &ExecutionId,
+) -> anyhow::Result<()> {
+    let backtrace_response = client
+        .get_last_backtrace(tonic::Request::new(grpc::GetLastBacktraceRequest {
+            execution_id: Some(grpc::ExecutionId::from(execution_id)),
+        }))
+        .await;
+    let backtrace_response = match backtrace_response {
+        Err(status) if status.code() == tonic::Code::NotFound => {
+            return Ok(());
+        }
+        err @ Err(_) => return Err(err.to_anyhow().unwrap_err()),
+        Ok(ok) => ok.into_inner(),
+    };
+
+    // let backtrace_response = backtrace_response.to_anyhow()?.into_inner();
+    if let Some(backtrace) = backtrace_response.wasm_backtrace {
+        print_backtrace(&backtrace);
+    }
+    Ok(())
+}
+
+fn print_backtrace(backtrace: &grpc::WasmBacktrace) {
+    println!("\nBacktrace:");
+    for (i, frame) in backtrace.frames.iter().enumerate() {
+        println!("{}. Module: {}", i, frame.module);
+        if let Some(func_name) = &frame.func_name {
+            println!("   Function: {}", func_name);
+        }
+
+        for (j, symbol) in frame.symbols.iter().enumerate() {
+            println!("   Symbol {}:", j);
+            if let Some(func_name) = &symbol.func_name {
+                println!("     Function: {}", func_name);
+            }
+
+            let location = match (&symbol.file, symbol.line, symbol.col) {
+                (Some(file), Some(line), Some(col)) => format!("{}:{}:{}", file, line, col),
+                (Some(file), Some(line), None) => format!("{}:{}", file, line),
+                (Some(file), None, None) => file.clone(),
+                _ => "unknown location".to_string(),
+            };
+            println!("     Location: {}", location);
+        }
+    }
 }

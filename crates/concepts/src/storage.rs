@@ -854,7 +854,10 @@ pub trait DbConnection: Send + Sync {
 
     async fn append_backtrace_batch(&self, batch: Vec<AppendBacktrace>) -> Result<(), DbError>;
 
-    async fn get_last_backtrace(&self, execution_id: &ExecutionId) -> Result<WasmBacktrace, DbError>;
+    async fn get_last_backtrace(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<WasmBacktrace, DbError>;
 
     /// Returns executions sorted in descending order.
     /// Used by gRPC only.
