@@ -327,22 +327,22 @@ fn print_backtrace(backtrace: &grpc::WasmBacktrace) {
     for (i, frame) in backtrace.frames.iter().enumerate() {
         println!("{}. Module: {}", i, frame.module);
         if let Some(func_name) = &frame.func_name {
-            println!("   Function: {}", func_name);
+            println!("   Function: {func_name}");
         }
 
         for (j, symbol) in frame.symbols.iter().enumerate() {
-            println!("   Symbol {}:", j);
+            println!("   Symbol {j}:");
             if let Some(func_name) = &symbol.func_name {
-                println!("     Function: {}", func_name);
+                println!("     Function: {func_name}");
             }
 
             let location = match (&symbol.file, symbol.line, symbol.col) {
-                (Some(file), Some(line), Some(col)) => format!("{}:{}:{}", file, line, col),
-                (Some(file), Some(line), None) => format!("{}:{}", file, line),
+                (Some(file), Some(line), Some(col)) => format!("{file}:{line}:{col}"),
+                (Some(file), Some(line), None) => format!("{file}:{line}"),
                 (Some(file), None, None) => file.clone(),
                 _ => "unknown location".to_string(),
             };
-            println!("     Location: {}", location);
+            println!("     Location: {location}");
         }
     }
 }
