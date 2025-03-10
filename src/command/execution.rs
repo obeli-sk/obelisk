@@ -10,6 +10,7 @@ use chrono::DateTime;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::execution_status::Status;
 use serde_json::json;
+use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::instrument;
 
@@ -352,14 +353,14 @@ async fn print_backtrace(
             };
             println!("     Location: {location}");
             match (symbol.file, symbol.line) {
-                (Some(file), Some(_line)) if frame_file.is_none() => {
-                    frame_file = Some(file);
+                (Some(file), Some(line)) if frame_file.is_none() => {
+                    frame_file = Some((file, line));
                 }
                 _ => {}
             }
         }
     }
-    if let Some(file) = frame_file {
+    if let Some((frame_file, line)) = frame_file {
         let source_resp = client
             .get_backtrace_source(tonic::Request::new(grpc::GetBacktraceSourceRequest {
                 component_id: Some(
@@ -367,11 +368,16 @@ async fn print_backtrace(
                         .component_id
                         .expect("`component_id` is sent"),
                 ),
-                file,
+                file: frame_file.clone(),
             }))
             .await;
+        let frame_file = PathBuf::from(frame_file);
         if let Ok(source) = source_resp.map(|resp| resp.into_inner().content) {
-            println!("source:\n{source}");
+            println!("");
+            if let Some(frame_file) = frame_file.file_name().and_then(|f| f.to_str()) {
+                println!("source {}:{line}", frame_file);
+            }
+            println!("{source}");
         }
     }
 }
