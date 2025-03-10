@@ -15,7 +15,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tracing::instrument;
+use tracing::{instrument, warn};
 use util::{replace_path_prefix_mkdir, verify_file_exists};
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
@@ -461,10 +461,17 @@ impl WorkflowComponentConfigToml {
             .backtrace
             .frame_files_to_sources
             .into_iter()
-            .map(|(k, source)| {
-                verify_file_exists(&source, path_prefixes.as_ref()).map(|source| (k, source))
+            .filter_map(|(k, source)| {
+                match verify_file_exists(&source, path_prefixes.as_ref()).map(|source| (k, source))
+                {
+                    Ok((k, v)) => Some((k, v)),
+                    Err(err) => {
+                        warn!("Ignoring missing backtrace source - {err:?}");
+                        None
+                    }
+                }
             })
-            .collect::<Result<_, _>>()?;
+            .collect();
         Ok(WorkflowConfigVerified {
             content_digest,
             wasm_path,
@@ -916,6 +923,7 @@ impl From<InflightSemaphore> for Option<Arc<tokio::sync::Semaphore>> {
 
 mod util {
     use crate::config::config_holder::PathPrefixes;
+    use anyhow::bail;
     use std::path::PathBuf;
     use tracing::warn;
 
@@ -959,7 +967,7 @@ mod util {
         if path.exists() {
             Ok(path)
         } else {
-            todo!()
+            bail!("file does not exist: {path:?}")
         }
     }
 
