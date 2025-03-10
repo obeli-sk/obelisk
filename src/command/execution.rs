@@ -373,9 +373,9 @@ async fn print_backtrace(
             .await;
         let frame_file = PathBuf::from(frame_file);
         if let Ok(source) = source_resp.map(|resp| resp.into_inner().content) {
-            println!("");
+            println!();
             if let Some(frame_file) = frame_file.file_name().and_then(|f| f.to_str()) {
-                println!("source {}:{line}", frame_file);
+                println!("source {frame_file}:{line}");
             }
             println!("{source}");
         }
