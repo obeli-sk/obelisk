@@ -239,7 +239,6 @@ pub(crate) mod tests {
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
     use concepts::time::TokioSleep;
-    use concepts::COMPONENT_DIGEST_DUMMY;
     use concepts::{
         prefixed_ulid::ExecutorId,
         storage::{CreateRequest, DbConnection, DbPool},
@@ -336,7 +335,6 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id,
-            component_digest: COMPONENT_DIGEST_DUMMY,
             task_limiter: None,
         };
         ExecTask::spawn_new(
@@ -460,7 +458,6 @@ pub(crate) mod tests {
                     let execution_id = ExecutionId::generate();
                     let ctx = WorkerContext {
                         execution_id: execution_id.clone(),
-                        component_digest: COMPONENT_DIGEST_DUMMY,
                         metadata: concepts::ExecutionMetadata::empty(),
                         ffqn: FIBO_ACTIVITY_FFQN,
                         params: Params::from_json_values(vec![json!(fibo_input)]),
@@ -528,7 +525,6 @@ pub(crate) mod tests {
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_activity(),
-                component_digest: COMPONENT_DIGEST_DUMMY,
                 task_limiter: None,
             };
             let exec_task = ExecTask::spawn_new(
@@ -614,7 +610,6 @@ pub(crate) mod tests {
             let executed_at = sim_clock.now();
             let ctx = WorkerContext {
                 execution_id: ExecutionId::generate(),
-                component_digest: COMPONENT_DIGEST_DUMMY,
                 metadata: concepts::ExecutionMetadata::empty(),
                 ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
                 params: Params::from_json_values(vec![
@@ -657,7 +652,6 @@ pub(crate) mod tests {
 
             let ctx = WorkerContext {
                 execution_id: ExecutionId::generate(),
-                component_digest: COMPONENT_DIGEST_DUMMY,
                 metadata: concepts::ExecutionMetadata::empty(),
                 ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
                 params: Params::from_json_values(vec![
@@ -705,7 +699,6 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
-                component_digest: COMPONENT_DIGEST_DUMMY,
                 task_limiter: None,
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
@@ -812,7 +805,6 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
-                component_digest: COMPONENT_DIGEST_DUMMY,
                 task_limiter: None,
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);

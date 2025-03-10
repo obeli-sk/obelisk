@@ -1,8 +1,8 @@
 use super::{env_var::EnvVarConfig, ComponentLocation, ConfigStoreCommon};
 use anyhow::{anyhow, bail};
 use concepts::{
-    check_name, ComponentDigest, ComponentId, ComponentRetryConfig, ComponentType, ContentDigest,
-    InvalidNameError, StrVariant,
+    check_name, ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, InvalidNameError,
+    StrVariant,
 };
 use db_sqlite::sqlite_dao::SqliteConfig;
 use directories::{BaseDirs, ProjectDirs};
@@ -16,7 +16,7 @@ use std::{
 };
 use tracing::instrument;
 use util::replace_path_prefix_mkdir;
-use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
+use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
     activity::activity_worker::ActivityConfig,
     envvar::EnvVar,
@@ -285,14 +285,12 @@ impl ExecConfigToml {
     pub(crate) fn into_exec_exec_config(
         self,
         component_id: ComponentId,
-        component_digest: ComponentDigest,
     ) -> executor::executor::ExecConfig {
         executor::executor::ExecConfig {
             lock_expiry: self.lock_expiry.into(),
             tick_sleep: self.tick_sleep.into(),
             batch_size: self.batch_size,
             component_id,
-            component_digest,
             task_limiter: self.max_inflight_instances.into(),
         }
     }
@@ -365,14 +363,11 @@ impl ActivityComponentConfigToml {
             env_vars,
             retry_on_err: self.retry_on_err,
         };
-        let component_digest = ComponentDigest(calculate_sha256_file(&wasm_path).await?);
         Ok(ActivityWasmConfigVerified {
             content_digest,
             wasm_path,
             activity_config,
-            exec_config: self
-                .exec
-                .into_exec_exec_config(component_id, component_digest),
+            exec_config: self.exec.into_exec_exec_config(component_id),
             retry_config: ComponentRetryConfig {
                 max_retries: self.max_retries,
                 retry_exp_backoff: self.retry_exp_backoff.into(),
@@ -467,14 +462,11 @@ impl WorkflowComponentConfigToml {
             forward_unhandled_child_errors_in_join_set_close: self
                 .forward_unhandled_child_errors_in_completing_join_set_close,
         };
-        let component_digest = ComponentDigest(calculate_sha256_file(&wasm_path).await?);
         Ok(WorkflowConfigVerified {
             content_digest,
             wasm_path,
             workflow_config,
-            exec_config: self
-                .exec
-                .into_exec_exec_config(component_id, component_digest),
+            exec_config: self.exec.into_exec_exec_config(component_id),
             retry_config: ComponentRetryConfig {
                 max_retries: u32::MAX,
                 retry_exp_backoff,

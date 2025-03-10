@@ -1568,21 +1568,6 @@ impl ContentDigest {
     Debug,
     Clone,
     derive_more::Display,
-    derive_more::FromStr,
-    derive_more::Deref,
-    PartialEq,
-    Eq,
-    Hash,
-    serde_with::SerializeDisplay,
-    serde_with::DeserializeFromStr,
-)]
-pub struct ComponentDigest(pub ContentDigest);
-pub const COMPONENT_DIGEST_DUMMY: ComponentDigest = ComponentDigest(CONTENT_DIGEST_DUMMY);
-
-#[derive(
-    Debug,
-    Clone,
-    derive_more::Display,
     PartialEq,
     Eq,
     Hash,

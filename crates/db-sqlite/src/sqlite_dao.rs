@@ -1814,27 +1814,27 @@ impl<S: Sleep> SqlitePool<S> {
         ))
     }
 
-    fn append_backtrace(tx: &Transaction, append: &BacktraceInfo) -> Result<(), DbError> {
+    fn append_backtrace(tx: &Transaction, backtrace_info: &BacktraceInfo) -> Result<(), DbError> {
         let mut stmt = tx
             .prepare(
-                "INSERT INTO t_backtrace (execution_id, component_digest, version_min_including, version_max_excluding, wasm_backtrace) \
-                    VALUES (:execution_id, :component_digest, :version_min_including, :version_max_excluding, :wasm_backtrace)",
+                "INSERT INTO t_backtrace (execution_id, component_id, version_min_including, version_max_excluding, wasm_backtrace) \
+                    VALUES (:execution_id, :component_id, :version_min_including, :version_max_excluding, :wasm_backtrace)",
             )
             .map_err(convert_err)?;
-        let backtrace = serde_json::to_string(&append.wasm_backtrace)
+        let backtrace = serde_json::to_string(&backtrace_info.wasm_backtrace)
             .map_err(|err| {
                 error!(
                     "Cannot serialize backtrace {:?} - {err:?}",
-                    append.wasm_backtrace
+                    backtrace_info.wasm_backtrace
                 );
                 rusqlite::Error::ToSqlConversionFailure(err.into())
             })
             .map_err(convert_err)?;
         stmt.execute(named_params! {
-            ":execution_id": append.execution_id.to_string(),
-            ":component_digest": append.component_digest.to_string(),
-            ":version_min_including": append.version_min_including.0,
-            ":version_max_excluding": append.version_max_excluding.0,
+            ":execution_id": backtrace_info.execution_id.to_string(),
+            ":component_id": backtrace_info.component_id.to_string(),
+            ":version_min_including": backtrace_info.version_min_including.0,
+            ":version_max_excluding": backtrace_info.version_max_excluding.0,
             ":wasm_backtrace": backtrace,
         })
         .map_err(convert_err)?;
@@ -2647,7 +2647,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
             move |tx| {
                 let mut stmt = tx
                     .prepare(
-                        "SELECT component_digest, version_min_including, version_max_excluding, wasm_backtrace FROM t_backtrace \
+                        "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_backtrace \
                         WHERE execution_id = :execution_id ORDER BY version_min_including DESC LIMIT 1",
                     )
                     .map_err(convert_err)?;
@@ -2658,7 +2658,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                     |row| {
                         Ok(BacktraceInfo {
                             execution_id: execution_id.clone(),
-                            component_digest: row.get::<_, FromStrWrapper<_> >("component_digest")?.0,
+                            component_id: row.get::<_, FromStrWrapper<_> >("component_id")?.0,
                             version_min_including: Version::new(row.get::<_, VersionType>("version_min_including")?),
                             version_max_excluding: Version::new(row.get::<_, VersionType>("version_max_excluding")?),
                             wasm_backtrace: row.get::<_, JsonWrapper<_>>("wasm_backtrace")?.0,

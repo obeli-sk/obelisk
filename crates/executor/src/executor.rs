@@ -11,9 +11,7 @@ use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
     FinishedExecutionError,
 };
-use concepts::{
-    ComponentDigest, ComponentId, FinishedExecutionResult, FunctionMetadata, StrVariant,
-};
+use concepts::{ComponentId, FinishedExecutionResult, FunctionMetadata, StrVariant};
 use concepts::{JoinSetId, PermanentFailureKind};
 use std::marker::PhantomData;
 use std::{
@@ -32,7 +30,6 @@ pub struct ExecConfig {
     pub tick_sleep: Duration,
     pub batch_size: u32,
     pub component_id: ComponentId,
-    pub component_digest: ComponentDigest,
     pub task_limiter: Option<Arc<tokio::sync::Semaphore>>,
 }
 
@@ -238,7 +235,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 let db_pool = self.db_pool.clone();
                 let clock_fn = self.clock_fn.clone();
                 let run_id = locked_execution.run_id;
-                let component_digest = self.config.component_digest.clone();
                 let worker_span = info_span!(parent: None, "worker",
                     "otel.name" = format!("{}", locked_execution.ffqn),
                     %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.executor_id, component_id = %self.config.component_id);
@@ -252,7 +248,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             execution_deadline,
                             clock_fn,
                             locked_execution,
-                            component_digest,
                             worker_span2,
                         )
                         .await;
@@ -275,7 +270,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
         locked_execution: LockedExecution,
-        component_digest: ComponentDigest,
         worker_span: Span,
     ) -> Result<(), DbError> {
         debug!("Worker::run starting");
@@ -297,7 +291,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             );
         let ctx = WorkerContext {
             execution_id: locked_execution.execution_id.clone(),
-            component_digest,
             metadata: locked_execution.metadata,
             ffqn: locked_execution.ffqn,
             params: locked_execution.params,
@@ -679,7 +672,7 @@ mod tests {
     use concepts::time::Now;
     use concepts::{
         ClosingStrategy, FunctionMetadata, JoinSetKind, ParameterTypes, Params, StrVariant,
-        SupportedFunctionReturnValue, TrapKind, COMPONENT_DIGEST_DUMMY,
+        SupportedFunctionReturnValue, TrapKind,
     };
     use db_tests::Database;
     use indexmap::IndexMap;
@@ -749,7 +742,6 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
             component_id: ComponentId::dummy_activity(),
-            component_digest: COMPONENT_DIGEST_DUMMY,
             task_limiter: None,
         };
 
@@ -793,7 +785,6 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            component_digest: COMPONENT_DIGEST_DUMMY,
             task_limiter: None,
         };
 
@@ -920,7 +911,6 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            component_digest: COMPONENT_DIGEST_DUMMY,
             task_limiter: None,
         };
         let expected_reason = "error reason";
@@ -1042,7 +1032,6 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            component_digest: COMPONENT_DIGEST_DUMMY,
             task_limiter: None,
         };
 
@@ -1178,7 +1167,6 @@ mod tests {
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
-                component_digest: COMPONENT_DIGEST_DUMMY,
                 task_limiter: None,
             },
             sim_clock.clone(),
@@ -1260,7 +1248,6 @@ mod tests {
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
-                component_digest: COMPONENT_DIGEST_DUMMY,
                 task_limiter: None,
             },
             sim_clock.clone(),
@@ -1364,7 +1351,6 @@ mod tests {
             lock_expiry,
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            component_digest: COMPONENT_DIGEST_DUMMY,
             task_limiter: None,
         };
 

@@ -3,7 +3,6 @@ use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::RunId;
 use crate::ClosingStrategy;
-use crate::ComponentDigest;
 use crate::ComponentId;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
@@ -880,7 +879,7 @@ pub trait DbConnection: Send + Sync {
 
 pub struct BacktraceInfo {
     pub execution_id: ExecutionId,
-    pub component_digest: ComponentDigest,
+    pub component_id: ComponentId,
     pub version_min_including: Version,
     pub version_max_excluding: Version,
     pub wasm_backtrace: WasmBacktrace,

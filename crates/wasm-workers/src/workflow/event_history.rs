@@ -21,7 +21,6 @@ use concepts::storage::{
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::time::ClockFn;
 use concepts::ClosingStrategy;
-use concepts::ComponentDigest;
 use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
 use concepts::ExecutionMetadata;
@@ -97,7 +96,7 @@ pub(crate) enum ApplyError {
 #[expect(clippy::struct_field_names)]
 pub(crate) struct EventHistory<C: ClockFn> {
     execution_id: ExecutionId,
-    component_digest: ComponentDigest,
+    component_id: ComponentId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     execution_deadline: DateTime<Utc>,
     event_history: Vec<(HistoryEvent, ProcessingStatus)>,
@@ -133,7 +132,7 @@ impl<C: ClockFn> EventHistory<C> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
-        component_digest: ComponentDigest,
+        component_id: ComponentId,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -147,7 +146,7 @@ impl<C: ClockFn> EventHistory<C> {
         let non_blocking_event_batch_size = non_blocking_event_batching as usize;
         EventHistory {
             execution_id,
-            component_digest,
+            component_id,
             event_history: event_history
                 .into_iter()
                 .map(|event| (event, Unprocessed))
@@ -1011,7 +1010,7 @@ impl<C: ClockFn> EventHistory<C> {
                             non_blocking_event_batch.push(NonBlockingCache::WasmBacktrace {
                                 append_backtrace: BacktraceInfo {
                                     execution_id: self.execution_id.clone(),
-                                    component_digest: self.component_digest.clone(),
+                                    component_id: self.component_id.clone(),
                                     wasm_backtrace,
                                     version_min_including: version.clone(),
                                     version_max_excluding: next_version.clone(),
@@ -1035,7 +1034,7 @@ impl<C: ClockFn> EventHistory<C> {
                             if let Err(err) = db_connection
                                 .append_backtrace(BacktraceInfo {
                                     execution_id: self.execution_id.clone(),
-                                    component_digest: self.component_digest.clone(),
+                                    component_id: self.component_id.clone(),
                                     version_min_including: version.clone(),
                                     version_max_excluding: next_version.clone(),
                                     wasm_backtrace,
@@ -1105,7 +1104,7 @@ impl<C: ClockFn> EventHistory<C> {
                             non_blocking_event_batch.push(NonBlockingCache::WasmBacktrace {
                                 append_backtrace: BacktraceInfo {
                                     execution_id: self.execution_id.clone(),
-                                    component_digest: self.component_digest.clone(),
+                                    component_id: self.component_id.clone(),
                                     wasm_backtrace,
                                     version_min_including: version.clone(),
                                     version_max_excluding: next_version.clone(),
@@ -1129,7 +1128,7 @@ impl<C: ClockFn> EventHistory<C> {
                             if let Err(err) = db_connection
                                 .append_backtrace(BacktraceInfo {
                                     execution_id: self.execution_id.clone(),
-                                    component_digest: self.component_digest.clone(),
+                                    component_id: self.component_id.clone(),
                                     version_min_including: version.clone(),
                                     version_max_excluding: next_version.clone(),
                                     wasm_backtrace,
@@ -1170,7 +1169,7 @@ impl<C: ClockFn> EventHistory<C> {
                     if let Err(err) = db_connection
                         .append_backtrace(BacktraceInfo {
                             execution_id: self.execution_id.clone(),
-                            component_digest: self.component_digest.clone(),
+                            component_id: self.component_id.clone(),
                             version_min_including,
                             version_max_excluding: version.clone(),
                             wasm_backtrace,
@@ -1265,7 +1264,7 @@ impl<C: ClockFn> EventHistory<C> {
                     if let Err(err) = db_connection
                         .append_backtrace(BacktraceInfo {
                             execution_id: self.execution_id.clone(),
-                            component_digest: self.component_digest.clone(),
+                            component_id: self.component_id.clone(),
                             version_min_including,
                             version_max_excluding: version.clone(),
                             wasm_backtrace,
@@ -1557,7 +1556,7 @@ mod tests {
     use concepts::time::ClockFn;
     use concepts::{
         ClosingStrategy, ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params,
-        SupportedFunctionReturnValue, COMPONENT_DIGEST_DUMMY,
+        SupportedFunctionReturnValue,
     };
     use concepts::{JoinSetId, StrVariant};
     use db_tests::Database;
@@ -1582,7 +1581,7 @@ mod tests {
         let exec_log = db_connection.get(&execution_id).await.unwrap();
         let event_history = EventHistory::new(
             execution_id.clone(),
-            COMPONENT_DIGEST_DUMMY,
+            ComponentId::dummy_activity(),
             exec_log.event_history().collect(),
             exec_log
                 .responses

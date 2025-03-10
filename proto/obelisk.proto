@@ -77,7 +77,7 @@ message ListComponentsResponse {
 
 message Component {
     ComponentId component_id = 1;
-    string digest = 2;
+    string digest = 2; // Hash of the configuration
     string name = 3;
     ComponentType type = 4;
     reserved 5;
@@ -142,14 +142,6 @@ message DelayId {
 
 message ComponentId {
     string id = 1;
-}
-
-message ComponentDigest {
-    enum DigestKind {
-        SHA256 = 0;
-    }
-    DigestKind kind = 1;
-    string digest = 2;
 }
 
 message FunctionName {
@@ -447,7 +439,7 @@ message GetLastBacktraceRequest {
 }
 
 message GetLastBacktraceResponse {
-    ComponentDigest component_digest = 1;
+    ComponentId component_id = 1;
     WasmBacktrace wasm_backtrace = 2;
 }
 
