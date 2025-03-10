@@ -4,6 +4,7 @@ use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::HistoryEvent;
 use concepts::storage::Version;
+use concepts::ComponentDigest;
 use concepts::ExecutionId;
 use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
@@ -37,6 +38,7 @@ pub enum WorkerResult {
 #[derive(Debug)]
 pub struct WorkerContext {
     pub execution_id: ExecutionId,
+    pub component_digest: ComponentDigest,
     pub run_id: RunId,
     pub metadata: ExecutionMetadata,
     pub ffqn: FunctionFqn,

@@ -4,13 +4,13 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, PrefixedUlid, RunId},
     storage::{
-        AppendBacktrace, AppendBatchResponse, AppendRequest, AppendResponse, ClientError,
+        AppendBatchResponse, AppendRequest, AppendResponse, BacktraceInfo, ClientError,
         CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
         ExecutionEventInner, ExecutionListPagination, ExecutionWithState, ExpiredTimer,
         HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
         PendingState, PendingStateFinished, PendingStateFinishedResultKind, ResponseWithCursor,
-        SpecificError, Version, VersionType, WasmBacktrace, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        SpecificError, Version, VersionType, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
         DUMMY_TEMPORARILY_FAILED, DUMMY_TEMPORARILY_TIMED_OUT,
     },
     time::Sleep,
@@ -195,15 +195,16 @@ CREATE TABLE IF NOT EXISTS t_delay (
 const CREATE_TABLE_T_BACKTRACE: &str = r"
 CREATE TABLE IF NOT EXISTS t_backtrace (
     execution_id TEXT NOT NULL,
+    component_id TEXT NOT NULL,
     version_min_including INTEGER NOT NULL,
     version_max_excluding INTEGER NOT NULL,
     wasm_backtrace TEXT NOT NULL,
     PRIMARY KEY (execution_id, version_min_including, version_max_excluding)
 );
 ";
-// Index for searching backtraces by execution_id and version
-const IDX_T_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_backtrace_execution_id_version ON t_backtrace (execution_id, version_min_including, version_max_excluding);
+// Index for searching backtraces by component_id and version
+const IDX_T_BACKTRACE_COMPONENT_ID_VERSION: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_backtrace_component_id_version ON t_backtrace (component_id, version_min_including, version_max_excluding);
 ";
 
 #[expect(clippy::needless_pass_by_value)]
@@ -558,7 +559,7 @@ impl<S: Sleep> SqlitePool<S> {
         execute(&conn, CREATE_TABLE_T_DELAY, []);
         // t_backtrace
         execute(&conn, CREATE_TABLE_T_BACKTRACE, []);
-        execute(&conn, IDX_T_BACKTRACE_EXECUTION_ID_VERSION, []);
+        execute(&conn, IDX_T_BACKTRACE_COMPONENT_ID_VERSION, []);
         conn
     }
 
@@ -1813,11 +1814,11 @@ impl<S: Sleep> SqlitePool<S> {
         ))
     }
 
-    fn append_backtrace(tx: &Transaction, append: &AppendBacktrace) -> Result<(), DbError> {
+    fn append_backtrace(tx: &Transaction, append: &BacktraceInfo) -> Result<(), DbError> {
         let mut stmt = tx
             .prepare(
-                "INSERT INTO t_backtrace (execution_id, version_min_including, version_max_excluding, wasm_backtrace) \
-                    VALUES (:execution_id, :version_min_including, :version_max_excluding, :wasm_backtrace)",
+                "INSERT INTO t_backtrace (execution_id, component_digest, version_min_including, version_max_excluding, wasm_backtrace) \
+                    VALUES (:execution_id, :component_digest, :version_min_including, :version_max_excluding, :wasm_backtrace)",
             )
             .map_err(convert_err)?;
         let backtrace = serde_json::to_string(&append.wasm_backtrace)
@@ -1831,6 +1832,7 @@ impl<S: Sleep> SqlitePool<S> {
             .map_err(convert_err)?;
         stmt.execute(named_params! {
             ":execution_id": append.execution_id.to_string(),
+            ":component_digest": append.component_digest.to_string(),
             ":version_min_including": append.version_min_including.0,
             ":version_max_excluding": append.version_max_excluding.0,
             ":wasm_backtrace": backtrace,
@@ -2610,7 +2612,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
-    async fn append_backtrace(&self, append: AppendBacktrace) -> Result<(), DbError> {
+    async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbError> {
         debug!("append_backtrace");
         self.transaction_write(
             move |tx| Self::append_backtrace(tx, &append),
@@ -2620,7 +2622,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
-    async fn append_backtrace_batch(&self, batch: Vec<AppendBacktrace>) -> Result<(), DbError> {
+    async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbError> {
         debug!("append_backtrace_batch");
         self.transaction_write(
             move |tx| {
@@ -2638,14 +2640,14 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
     async fn get_last_backtrace(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<WasmBacktrace, DbError> {
+    ) -> Result<BacktraceInfo, DbError> {
         debug!("get_last_backtrace");
         let execution_id = execution_id.clone();
         self.transaction_read(
             move |tx| {
                 let mut stmt = tx
                     .prepare(
-                        "SELECT wasm_backtrace FROM t_backtrace \
+                        "SELECT component_digest, version_min_including, version_max_excluding, wasm_backtrace FROM t_backtrace \
                         WHERE execution_id = :execution_id ORDER BY version_min_including DESC LIMIT 1",
                     )
                     .map_err(convert_err)?;
@@ -2654,7 +2656,13 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                         ":execution_id": execution_id.to_string(),
                     },
                     |row| {
-                        Ok(row.get::<_, JsonWrapper<WasmBacktrace>>("wasm_backtrace")?.0)
+                        Ok(BacktraceInfo {
+                            execution_id: execution_id.clone(),
+                            component_digest: row.get::<_, FromStrWrapper<_> >("component_digest")?.0,
+                            version_min_including: Version::new(row.get::<_, VersionType>("version_min_including")?),
+                            version_max_excluding: Version::new(row.get::<_, VersionType>("version_max_excluding")?),
+                            wasm_backtrace: row.get::<_, JsonWrapper<_>>("wasm_backtrace")?.0,
+                        })
                     },
                 )
                 .map_err(convert_err)

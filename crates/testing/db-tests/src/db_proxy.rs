@@ -5,11 +5,11 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId},
     storage::{
-        AppendBacktrace, AppendBatchResponse, AppendRequest, AppendResponse, ClientError,
+        AppendBatchResponse, AppendRequest, AppendResponse, BacktraceInfo, ClientError,
         CreateRequest, DbConnection, DbError, DbPool, ExecutionEvent, ExecutionListPagination,
         ExecutionLog, ExecutionWithState, ExpiredTimer, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Pagination, PendingState,
-        ResponseWithCursor, Version, VersionType, WasmBacktrace,
+        ResponseWithCursor, Version, VersionType,
     },
     time::TokioSleep,
     ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn,
@@ -221,18 +221,18 @@ impl DbConnection for DbConnectionProxy {
         self.0.get_execution_event(execution_id, version).await
     }
 
-    async fn append_backtrace(&self, batch: AppendBacktrace) -> Result<(), DbError> {
+    async fn append_backtrace(&self, batch: BacktraceInfo) -> Result<(), DbError> {
         self.0.append_backtrace(batch).await
     }
 
-    async fn append_backtrace_batch(&self, batch: Vec<AppendBacktrace>) -> Result<(), DbError> {
+    async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbError> {
         self.0.append_backtrace_batch(batch).await
     }
 
     async fn get_last_backtrace(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<WasmBacktrace, DbError> {
+    ) -> Result<BacktraceInfo, DbError> {
         self.0.get_last_backtrace(execution_id).await
     }
 

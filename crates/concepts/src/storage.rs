@@ -3,6 +3,7 @@ use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::RunId;
 use crate::ClosingStrategy;
+use crate::ComponentDigest;
 use crate::ComponentId;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
@@ -850,14 +851,14 @@ pub trait DbConnection: Send + Sync {
         max_wait: Duration,
     );
 
-    async fn append_backtrace(&self, append: AppendBacktrace) -> Result<(), DbError>;
+    async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbError>;
 
-    async fn append_backtrace_batch(&self, batch: Vec<AppendBacktrace>) -> Result<(), DbError>;
+    async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbError>;
 
     async fn get_last_backtrace(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<WasmBacktrace, DbError>;
+    ) -> Result<BacktraceInfo, DbError>;
 
     /// Returns executions sorted in descending order.
     /// Used by gRPC only.
@@ -877,8 +878,9 @@ pub trait DbConnection: Send + Sync {
     ) -> Result<Vec<ResponseWithCursor>, DbError>;
 }
 
-pub struct AppendBacktrace {
+pub struct BacktraceInfo {
     pub execution_id: ExecutionId,
+    pub component_digest: ComponentDigest,
     pub version_min_including: Version,
     pub version_max_excluding: Version,
     pub wasm_backtrace: WasmBacktrace,

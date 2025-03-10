@@ -144,6 +144,14 @@ message ComponentId {
     string id = 1;
 }
 
+message ComponentDigest {
+    enum DigestKind {
+        SHA256 = 0;
+    }
+    DigestKind kind = 1;
+    string digest = 2;
+}
+
 message FunctionName {
     // `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
     string interface_name = 1;
@@ -439,7 +447,8 @@ message GetLastBacktraceRequest {
 }
 
 message GetLastBacktraceResponse {
-  WasmBacktrace wasm_backtrace = 4;
+    ComponentDigest component_digest = 1;
+    WasmBacktrace wasm_backtrace = 2;
 }
 
 message WasmBacktrace {

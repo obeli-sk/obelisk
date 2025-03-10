@@ -11,7 +11,9 @@ use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
 use concepts::storage::{self, DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
-use concepts::{ClosingStrategy, ExecutionId, FunctionRegistry, IfcFqnName, StrVariant};
+use concepts::{
+    ClosingStrategy, ComponentDigest, ExecutionId, FunctionRegistry, IfcFqnName, StrVariant,
+};
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
 use executor::worker::FatalError;
@@ -326,6 +328,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
+        component_digest: ComponentDigest,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         seed: u64,
@@ -344,6 +347,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             execution_id: execution_id.clone(),
             event_history: EventHistory::new(
                 execution_id,
+                component_digest,
                 event_history,
                 responses,
                 join_next_blocking_strategy,
@@ -772,6 +776,7 @@ pub(crate) mod tests {
     };
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
     use concepts::time::{ClockFn, Now};
+    use concepts::COMPONENT_DIGEST_DUMMY;
     use concepts::{ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, SUFFIX_PKG_EXT};
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
@@ -890,6 +895,7 @@ pub(crate) mod tests {
             let seed = ctx.execution_id.random_seed();
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id.clone(),
+                COMPONENT_DIGEST_DUMMY,
                 ctx.event_history,
                 ctx.responses,
                 seed,
@@ -1109,6 +1115,7 @@ pub(crate) mod tests {
             let mut worker_result = worker
                 .run(WorkerContext {
                     execution_id: execution_id.clone(),
+                    component_digest: COMPONENT_DIGEST_DUMMY,
                     metadata: ExecutionMetadata::empty(),
                     ffqn: FFQN_MOCK,
                     params: Params::empty(),
@@ -1190,6 +1197,7 @@ pub(crate) mod tests {
                 worker_result = worker
                     .run(WorkerContext {
                         execution_id: execution_id.clone(),
+                        component_digest: COMPONENT_DIGEST_DUMMY,
                         metadata: ExecutionMetadata::empty(),
                         ffqn: FFQN_MOCK,
                         params: Params::empty(),
@@ -1252,6 +1260,7 @@ pub(crate) mod tests {
         let worker_result = worker
             .run(WorkerContext {
                 execution_id: execution_id.clone(),
+                component_digest: COMPONENT_DIGEST_DUMMY,
                 metadata: ExecutionMetadata::empty(),
                 ffqn: FFQN_MOCK,
                 params: Params::empty(),
@@ -1359,6 +1368,7 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_activity(),
+                component_digest: COMPONENT_DIGEST_DUMMY,
                 task_limiter: None,
             };
             ExecTask::spawn_new(

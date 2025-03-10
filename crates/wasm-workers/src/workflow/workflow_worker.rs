@@ -271,6 +271,7 @@ impl<
         let seed = ctx.execution_id.random_seed();
         let workflow_ctx = WorkflowCtx::new(
             ctx.execution_id,
+            ctx.component_digest,
             ctx.event_history,
             ctx.responses,
             seed,
@@ -645,7 +646,6 @@ pub(crate) mod tests {
         tests::{fn_registry_dummy, TestingFnRegistry},
     };
     use assert_matches::assert_matches;
-    use concepts::time::TokioSleep;
     use concepts::{
         prefixed_ulid::{ExecutorId, RunId},
         storage::{
@@ -654,6 +654,7 @@ pub(crate) mod tests {
         },
         ComponentType,
     };
+    use concepts::{time::TokioSleep, COMPONENT_DIGEST_DUMMY};
     use concepts::{ExecutionId, Params};
     use db_tests::Database;
     use executor::executor::extract_ffqns_test;
@@ -767,6 +768,7 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
             component_id,
+            component_digest: COMPONENT_DIGEST_DUMMY,
             task_limiter: None,
         };
         ExecTask::spawn_new(
@@ -1012,6 +1014,7 @@ pub(crate) mod tests {
 
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
+            component_digest: COMPONENT_DIGEST_DUMMY,
             metadata: concepts::ExecutionMetadata::empty(),
             ffqn: SLEEP_HOST_ACTIVITY_FFQN,
             params: Params::from_json_values(vec![json!({"milliseconds": SLEEP_MILLIS})]),
@@ -1085,6 +1088,7 @@ pub(crate) mod tests {
                 lock_expiry: LOCK_DURATION,
                 tick_sleep: Duration::ZERO, // irrelevant here as we call tick manually
                 component_id: ComponentId::dummy_workflow(),
+                component_digest: COMPONENT_DIGEST_DUMMY,
                 task_limiter: None,
             };
             let ffqns = extract_ffqns_test(worker.as_ref());
@@ -1544,6 +1548,7 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_workflow(),
+                component_digest: COMPONENT_DIGEST_DUMMY,
                 task_limiter: None,
             },
             sim_clock.clone(),

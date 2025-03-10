@@ -59,6 +59,7 @@ use concepts::FunctionExtension;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
+use concepts::HashType;
 use concepts::IfcFqnName;
 use concepts::PackageIfcFns;
 use concepts::ParameterType;
@@ -593,10 +594,16 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
 
         let conn = self.db_pool.connection();
-        let backtrace = conn.get_last_backtrace(&execution_id).await.to_status()?;
+        let backtrace_info = conn.get_last_backtrace(&execution_id).await.to_status()?;
 
         Ok(tonic::Response::new(grpc::GetLastBacktraceResponse {
-            wasm_backtrace: Some(backtrace.into()),
+            wasm_backtrace: Some(backtrace_info.wasm_backtrace.into()),
+            component_digest: Some(grpc::ComponentDigest {
+                kind: match backtrace_info.component_digest.hash_type() {
+                    HashType::Sha256 => grpc::component_digest::DigestKind::Sha256 as i32,
+                },
+                digest: backtrace_info.component_digest.digest_base16().to_string(),
+            }),
         }))
     }
 }

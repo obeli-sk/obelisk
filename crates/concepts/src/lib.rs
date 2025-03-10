@@ -1551,7 +1551,11 @@ pub enum HashType {
     serde_with::SerializeDisplay,
     serde_with::DeserializeFromStr,
 )]
-pub struct ContentDigest(Digest);
+pub struct ContentDigest(pub Digest);
+pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest {
+    hash_type: HashType::Sha256,
+    hash_base16: StrVariant::empty(),
+});
 
 impl ContentDigest {
     #[must_use]
@@ -1559,6 +1563,21 @@ impl ContentDigest {
         Self(Digest::new(hash_type, hash_base16))
     }
 }
+
+#[derive(
+    Debug,
+    Clone,
+    derive_more::Display,
+    derive_more::FromStr,
+    derive_more::Deref,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub struct ComponentDigest(pub ContentDigest);
+pub const COMPONENT_DIGEST_DUMMY: ComponentDigest = ComponentDigest(CONTENT_DIGEST_DUMMY);
 
 #[derive(
     Debug,

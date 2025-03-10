@@ -9,11 +9,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
 use concepts::storage::{
-    AppendBacktrace, AppendBatchResponse, AppendRequest, AppendResponse, ClientError,
-    CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
-    ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
+    AppendBatchResponse, AppendRequest, AppendResponse, BacktraceInfo, ClientError, CreateRequest,
+    DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
+    ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
     JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
-    ResponseWithCursor, SpecificError, Version, VersionType, WasmBacktrace,
+    ResponseWithCursor, SpecificError, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::JoinSetId;
@@ -289,12 +289,12 @@ impl DbConnection for InMemoryDbConnection {
             .pending_state)
     }
 
-    async fn append_backtrace(&self, _append: AppendBacktrace) -> Result<(), DbError> {
+    async fn append_backtrace(&self, _append: BacktraceInfo) -> Result<(), DbError> {
         // noop, backtrace functionality is for reporting only and its absence should not affect the system.
         Ok(())
     }
 
-    async fn append_backtrace_batch(&self, _batch: Vec<AppendBacktrace>) -> Result<(), DbError> {
+    async fn append_backtrace_batch(&self, _batch: Vec<BacktraceInfo>) -> Result<(), DbError> {
         // noop, backtrace functionality is for reporting only and its absence should not affect the system.
         Ok(())
     }
@@ -302,7 +302,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn get_last_backtrace(
         &self,
         _execution_id: &ExecutionId,
-    ) -> Result<WasmBacktrace, DbError> {
+    ) -> Result<BacktraceInfo, DbError> {
         Err(DbError::Specific(SpecificError::NotFound))
     }
 
