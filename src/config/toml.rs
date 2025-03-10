@@ -23,7 +23,7 @@ use wasm_workers::{
     workflow::workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig},
 };
 use wasmtime::WasmBacktraceDetails;
-use webhook::{HttpServer, WebhookComponent};
+use webhook::{HttpServer, WebhookComponentConfigToml};
 
 const HOME_DIR_PREFIX: &str = "~/";
 const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
@@ -49,15 +49,15 @@ pub(crate) struct ConfigToml {
     #[serde(default)]
     pub(crate) webui: WebUIConfig,
     #[serde(default, rename = "workflows")]
-    pub(crate) workflow_config: WorkflowsConfigToml,
+    pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
     #[serde(default)]
     wasm_cache_directory: Option<String>,
     #[serde(default)]
     pub(crate) codegen_cache: CodegenCache,
     #[serde(default, rename = "activity_wasm")]
-    pub(crate) wasm_activities: Vec<ActivityWasmConfigToml>,
+    pub(crate) wasm_activities: Vec<ActivityComponentConfigToml>,
     #[serde(default, rename = "workflow")]
-    pub(crate) workflows: Vec<WorkflowConfigToml>,
+    pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
     #[serde(default)]
     pub(crate) wasmtime_allocator_config: WasmtimeAllocatorConfig,
     #[serde(default)]
@@ -70,7 +70,7 @@ pub(crate) struct ConfigToml {
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
     #[serde(default, rename = "webhook_endpoint")]
-    pub(crate) webhooks: Vec<WebhookComponent>,
+    pub(crate) webhooks: Vec<WebhookComponentConfigToml>,
 }
 
 impl ConfigToml {
@@ -133,11 +133,11 @@ pub(crate) struct WebUIConfig {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct WorkflowsConfigToml {
+pub(crate) struct WorkflowsGlobalConfigToml {
     #[serde(default = "default_capture_backtrace")]
     pub(crate) capture_backtrace: bool,
 }
-impl WorkflowsConfigToml {
+impl WorkflowsGlobalConfigToml {
     pub(crate) fn capture_backtrace(&self) -> WasmBacktraceDetails {
         if self.capture_backtrace {
             WasmBacktraceDetails::Enable
@@ -146,7 +146,7 @@ impl WorkflowsConfigToml {
         }
     }
 }
-impl Default for WorkflowsConfigToml {
+impl Default for WorkflowsGlobalConfigToml {
     fn default() -> Self {
         Self {
             capture_backtrace: default_capture_backtrace(),
@@ -279,7 +279,7 @@ impl ExecConfigToml {
 
 #[derive(Debug, Deserialize, Hash)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ActivityWasmConfigToml {
+pub(crate) struct ActivityComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     #[serde(default)]
@@ -313,7 +313,7 @@ impl ActivityWasmConfigVerified {
     }
 }
 
-impl ActivityWasmConfigToml {
+impl ActivityComponentConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
     pub(crate) async fn fetch_and_verify(
         self,
@@ -359,7 +359,7 @@ impl ActivityWasmConfigToml {
 
 #[derive(Debug, Deserialize, Hash)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkflowConfigToml {
+pub(crate) struct WorkflowComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     #[serde(default)]
@@ -393,7 +393,7 @@ impl WorkflowConfigVerified {
     }
 }
 
-impl WorkflowConfigToml {
+impl WorkflowComponentConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
     pub(crate) async fn fetch_and_verify(
         self,
@@ -742,7 +742,7 @@ pub(crate) mod webhook {
 
     #[derive(Debug, Deserialize, Hash)]
     #[serde(deny_unknown_fields)]
-    pub(crate) struct WebhookComponent {
+    pub(crate) struct WebhookComponentConfigToml {
         // TODO: Rename to WebhookComponentConfigToml
         #[serde(flatten)]
         pub(crate) common: ComponentCommon,
@@ -756,7 +756,7 @@ pub(crate) mod webhook {
         pub(crate) env_vars: Vec<EnvVarConfig>,
     }
 
-    impl WebhookComponent {
+    impl WebhookComponentConfigToml {
         #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id), err)]
         pub(crate) async fn fetch_and_verify(
             self,

@@ -6,7 +6,7 @@ use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookComponentVerified;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
-use crate::config::toml::ActivityWasmConfigToml;
+use crate::config::toml::ActivityComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ConfigName;
@@ -14,7 +14,7 @@ use crate::config::toml::ConfigToml;
 use crate::config::toml::InflightSemaphore;
 use crate::config::toml::StdOutput;
 use crate::config::toml::WasmtimeAllocatorConfig;
-use crate::config::toml::WorkflowConfigToml;
+use crate::config::toml::WorkflowComponentConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::ComponentConfig;
@@ -943,16 +943,16 @@ impl ServerVerified {
                 WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
-                    config.workflow_config.capture_backtrace(),
+                    config.workflows_global_config.capture_backtrace(),
                 )?,
                 WasmtimeAllocatorConfig::OnDemand => Engines::on_demand(
                     codegen_cache_config_file_holder,
-                    config.workflow_config.capture_backtrace(),
+                    config.workflows_global_config.capture_backtrace(),
                 )?,
                 WasmtimeAllocatorConfig::Pooling => Engines::pooling(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
-                    config.workflow_config.capture_backtrace(),
+                    config.workflows_global_config.capture_backtrace(),
                 )?,
             }
         };
@@ -968,7 +968,7 @@ impl ServerVerified {
                     .context("error converting `webui.listening_addr` to a socket address")?,
                 max_inflight_requests: InflightSemaphore::default(),
             });
-            webhooks.push(webhook::WebhookComponent {
+            webhooks.push(webhook::WebhookComponentConfigToml {
                 common: ComponentCommon {
                     name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
                     location: ComponentLocation::Oci(
@@ -1178,10 +1178,10 @@ struct ConfigVerified {
 
 #[instrument(skip_all)]
 async fn fetch_and_verify_all(
-    wasm_activities: Vec<ActivityWasmConfigToml>,
-    workflows: Vec<WorkflowConfigToml>,
+    wasm_activities: Vec<ActivityComponentConfigToml>,
+    workflows: Vec<WorkflowComponentConfigToml>,
     http_servers: Vec<webhook::HttpServer>,
-    webhooks: Vec<webhook::WebhookComponent>,
+    webhooks: Vec<webhook::WebhookComponentConfigToml>,
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
     ignore_missing_env_vars: bool,
