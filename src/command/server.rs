@@ -733,7 +733,7 @@ pub(crate) async fn run(
     config: Option<PathBuf>,
     params: RunParams,
 ) -> anyhow::Result<()> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config);
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
 
@@ -755,7 +755,7 @@ pub(crate) async fn verify(
     config: Option<PathBuf>,
     verify_params: VerifyParams,
 ) -> Result<(), anyhow::Error> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config);
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
     Box::pin(verify_internal(config, config_holder, verify_params)).await?;
@@ -774,12 +774,14 @@ async fn verify_internal(
         .get_sqlite_dir(
             config_holder.project_dirs.as_ref(),
             config_holder.base_dirs.as_ref(),
+            config_holder.obelisk_toml.as_ref(),
         )
         .await?;
     let wasm_cache_dir = config
         .get_wasm_cache_directory(
             config_holder.project_dirs.as_ref(),
             config_holder.base_dirs.as_ref(),
+            config_holder.obelisk_toml.as_ref(),
         )
         .await?;
     let codegen_cache = if config.codegen_cache.enabled {
@@ -789,6 +791,7 @@ async fn verify_internal(
                 .get_directory(
                     config_holder.project_dirs.as_ref(),
                     config_holder.base_dirs.as_ref(),
+                    config_holder.obelisk_toml.as_ref(),
                 )
                 .await?,
         )

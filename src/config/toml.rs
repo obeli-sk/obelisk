@@ -25,10 +25,13 @@ use wasm_workers::{
 use wasmtime::WasmBacktraceDetails;
 use webhook::{HttpServer, WebhookComponentConfigToml};
 
+// Path prefixes
 const HOME_DIR_PREFIX: &str = "~/";
 const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
 const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
 const CONFIG_DIR_PREFIX: &str = "${CONFIG_DIR}/";
+const OBELISK_TOML_DIR_PREFIX: &str = "${OBELISK_TOML_DIR}/";
+
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
 const DEFAULT_SQLITE_DIR: &str = "obelisk-sqlite";
@@ -78,6 +81,7 @@ impl ConfigToml {
         &self,
         project_dirs: Option<&ProjectDirs>,
         base_dirs: Option<&BaseDirs>,
+        obelisk_toml: &Path,
     ) -> Result<PathBuf, anyhow::Error> {
         let wasm_directory = self.wasm_cache_directory.as_deref().unwrap_or_else(|| {
             if project_dirs.is_some() {
@@ -86,7 +90,7 @@ impl ConfigToml {
                 DEFAULT_WASM_DIRECTORY
             }
         });
-        replace_path_prefix_mkdir(wasm_directory, project_dirs, base_dirs).await
+        replace_path_prefix_mkdir(wasm_directory, project_dirs, base_dirs, obelisk_toml).await
     }
 }
 
@@ -109,6 +113,7 @@ impl SqliteConfigToml {
         &self,
         project_dirs: Option<&ProjectDirs>,
         base_dirs: Option<&BaseDirs>,
+        obelisk_toml: &Path,
     ) -> Result<PathBuf, anyhow::Error> {
         let sqlite_file = self.directory.as_deref().unwrap_or_else(|| {
             if project_dirs.is_some() {
@@ -117,7 +122,7 @@ impl SqliteConfigToml {
                 DEFAULT_SQLITE_DIR
             }
         });
-        replace_path_prefix_mkdir(sqlite_file, project_dirs, base_dirs).await
+        replace_path_prefix_mkdir(sqlite_file, project_dirs, base_dirs, obelisk_toml).await
     }
 
     pub(crate) fn as_config(&self) -> SqliteConfig {
@@ -189,6 +194,7 @@ impl CodegenCache {
         &self,
         project_dirs: Option<&ProjectDirs>,
         base_dirs: Option<&BaseDirs>,
+        obelisk_toml: &Path,
     ) -> Result<PathBuf, anyhow::Error> {
         let directory = self.directory.as_deref().unwrap_or_else(|| {
             if project_dirs.is_some() {
@@ -197,7 +203,7 @@ impl CodegenCache {
                 DEFAULT_CODEGEN_CACHE_DIRECTORY
             }
         });
-        replace_path_prefix_mkdir(directory, project_dirs, base_dirs).await
+        replace_path_prefix_mkdir(directory, project_dirs, base_dirs, obelisk_toml).await
     }
 }
 
@@ -917,17 +923,21 @@ impl From<InflightSemaphore> for Option<Arc<tokio::sync::Semaphore>> {
 }
 
 mod util {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use directories::{BaseDirs, ProjectDirs};
     use tracing::warn;
 
-    use super::{CACHE_DIR_PREFIX, CONFIG_DIR_PREFIX, DATA_DIR_PREFIX, HOME_DIR_PREFIX};
+    use super::{
+        CACHE_DIR_PREFIX, CONFIG_DIR_PREFIX, DATA_DIR_PREFIX, HOME_DIR_PREFIX,
+        OBELISK_TOML_DIR_PREFIX,
+    };
 
     pub(crate) async fn replace_path_prefix_mkdir(
         dir: &str,
         project_dirs: Option<&ProjectDirs>,
         base_dirs: Option<&BaseDirs>,
+        obelisk_toml_dir: &Path,
     ) -> Result<PathBuf, anyhow::Error> {
         let path = if let (Some(project_dirs), Some(base_dirs)) = (project_dirs, base_dirs) {
             if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
@@ -938,6 +948,8 @@ mod util {
                 project_dirs.cache_dir().join(suffix)
             } else if let Some(suffix) = dir.strip_prefix(CONFIG_DIR_PREFIX) {
                 project_dirs.config_dir().join(suffix)
+            } else if let Some(suffix) = dir.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
+                obelisk_toml_dir.join(suffix)
             } else {
                 PathBuf::from(dir)
             }

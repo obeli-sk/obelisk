@@ -154,8 +154,9 @@ enabled = true
 # prefix = "obelisk_server_daily" # File name prefix
 
 ## Appendix: Supported path prefixes:
-# | Prefix       | Default path           | Details
-# | ~            | ~                      |
-# | ${DATA_DIR}  | ~/.local/share/obelisk | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dir
-# | ${CACHE_DIR} | ~/.cache/obelisk       | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.cache_dir
-# | ${CONFIG_DIR}| ~/.config/obelisk      | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.config_dir
+# | Prefix               | Default path           | Details
+# | ~                    | ~                      | Current user's home directory
+# | ${DATA_DIR}          | ~/.local/share/obelisk | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dir
+# | ${CACHE_DIR}         | ~/.cache/obelisk       | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.cache_dir
+# | ${CONFIG_DIR}        | ~/.config/obelisk      | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.config_dir
+# | ${OBELISK_TOML_DIR}  | N/A                    | Directory where the obelisk.toml file is located
