@@ -943,16 +943,16 @@ impl ServerVerified {
                 WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
-                    config.workflows_global_config.capture_backtrace(),
+                    config.workflows_global_config.backtrace.persist_backtrace(),
                 )?,
                 WasmtimeAllocatorConfig::OnDemand => Engines::on_demand(
                     codegen_cache_config_file_holder,
-                    config.workflows_global_config.capture_backtrace(),
+                    config.workflows_global_config.backtrace.persist_backtrace(),
                 )?,
                 WasmtimeAllocatorConfig::Pooling => Engines::pooling(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
-                    config.workflows_global_config.capture_backtrace(),
+                    config.workflows_global_config.backtrace.persist_backtrace(),
                 )?,
             }
         };

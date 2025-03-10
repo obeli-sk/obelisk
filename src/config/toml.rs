@@ -132,24 +132,31 @@ pub(crate) struct WebUIConfig {
     pub(crate) listening_addr: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub(crate) struct WorkflowsGlobalConfigToml {
-    #[serde(default = "default_capture_backtrace")]
-    pub(crate) capture_backtrace: bool,
+    #[serde(default)]
+    pub(crate) backtrace: WorkflowsGlobalBacktrace,
 }
-impl WorkflowsGlobalConfigToml {
-    pub(crate) fn capture_backtrace(&self) -> WasmBacktraceDetails {
-        if self.capture_backtrace {
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkflowsGlobalBacktrace {
+    #[serde(default = "default_global_backtrace_persist")]
+    pub(crate) persist: bool,
+}
+
+impl WorkflowsGlobalBacktrace {
+    pub(crate) fn persist_backtrace(&self) -> WasmBacktraceDetails {
+        if self.persist {
             WasmBacktraceDetails::Enable
         } else {
             WasmBacktraceDetails::Disable
         }
     }
 }
-impl Default for WorkflowsGlobalConfigToml {
+impl Default for WorkflowsGlobalBacktrace {
     fn default() -> Self {
         Self {
-            capture_backtrace: default_capture_backtrace(),
+            persist: default_global_backtrace_persist(),
         }
     }
 }
@@ -959,7 +966,7 @@ fn resolve_env_vars(
         .collect::<Result<_, _>>()
 }
 
-const fn default_capture_backtrace() -> bool {
+const fn default_global_backtrace_persist() -> bool {
     true
 }
 

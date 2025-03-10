@@ -7,7 +7,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 
 # wasm_cache_directory = "${CACHE_DIR}/wasm" # Path to directory where downloaded or transformed WASM files are stored. Supports path prefixes.
 
-# workflows.capture_backtrace = true        # Persist backtraces on side effect calls for all workflows.
+# workflows.backtrace.persist = true        # Persist backtraces on side effect calls for all workflows.
 
 # [codegen_cache]
 ## Defaults:
