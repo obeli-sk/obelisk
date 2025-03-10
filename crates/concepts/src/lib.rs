@@ -1426,24 +1426,21 @@ pub enum ComponentType {
     serde_with::DeserializeFromStr,
     derive_more::Display,
 )]
-#[display("{component_type}:{name}:{hash}")]
+#[display("{component_type}:{name}")]
 #[debug("{}", self)]
 #[non_exhaustive] // force using the constructor as much as possible due to validation
 pub struct ComponentId {
     pub component_type: ComponentType,
     pub name: StrVariant,
-    pub hash: StrVariant,
 }
 impl ComponentId {
     pub fn new(
         component_type: ComponentType,
         name: StrVariant,
-        hash: StrVariant,
     ) -> Result<Self, InvalidNameError<Self>> {
         Ok(Self {
             component_type,
             name: check_name(name, "_")?,
-            hash,
         })
     }
 
@@ -1452,7 +1449,6 @@ impl ComponentId {
         Self {
             component_type: ComponentType::ActivityWasm,
             name: StrVariant::empty(),
-            hash: StrVariant::empty(),
         }
     }
 
@@ -1461,7 +1457,6 @@ impl ComponentId {
         ComponentId {
             component_type: ComponentType::Workflow,
             name: StrVariant::empty(),
-            hash: StrVariant::empty(),
         }
     }
 }
@@ -1503,21 +1498,17 @@ pub enum ConfigIdParseError {
     DelimiterNotFound,
     #[error("cannot parse prefix of ComponentConfigHash - {0}")]
     ComponentTypeParseError(#[from] strum::ParseError),
-    #[error("cannot parse suffix of ComponentConfigHash - {0}")]
-    ContentDigestParseErrror(#[from] DigestParseErrror),
 }
 
 impl FromStr for ComponentId {
     type Err = ConfigIdParseError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let (component_type, input) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
-        let (name, hash) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
+        let (component_type, name) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
         let component_type = component_type.parse()?;
         Ok(Self {
             component_type,
             name: StrVariant::from(name.to_string()),
-            hash: StrVariant::from(hash.to_string()),
         })
     }
 }

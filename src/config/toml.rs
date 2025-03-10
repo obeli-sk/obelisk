@@ -226,7 +226,7 @@ impl<'de> Deserialize<'de> for ConfigName {
     }
 }
 
-#[derive(Debug, Deserialize, Hash)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentCommon {
     pub(crate) name: ConfigName,
@@ -257,7 +257,7 @@ impl ComponentCommon {
     }
 }
 
-#[derive(Debug, Deserialize, Hash)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecConfigToml {
     #[serde(default = "default_batch_size")]
@@ -296,7 +296,7 @@ impl ExecConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, Hash)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityComponentConfigToml {
     #[serde(flatten)]
@@ -340,16 +340,12 @@ impl ActivityComponentConfigToml {
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
-        let mut hasher = std::hash::DefaultHasher::new();
-        std::hash::Hash::hash(&self, &mut hasher);
         let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
-        std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
-        let component_id = crate::config::component_id(
+        let component_id = ComponentId::new(
             ComponentType::ActivityWasm,
-            std::hash::Hasher::finish(&hasher),
             StrVariant::from(common.name.clone()),
         )?;
 
@@ -376,7 +372,7 @@ impl ActivityComponentConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, Hash)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowComponentConfigToml {
     #[serde(flatten)]
@@ -397,7 +393,7 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) forward_unhandled_child_errors_in_completing_join_set_close: bool,
 }
 
-#[derive(Debug, Deserialize, Default, Hash)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowComponentBacktraceConfig {
     // pub(crate) sources: IndexMap<String, String>,
@@ -432,24 +428,20 @@ impl WorkflowComponentConfigToml {
                 self.common.name.0
             );
         }
-        let mut hasher = std::hash::DefaultHasher::new();
-        std::hash::Hash::hash(&self, &mut hasher);
         let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
         let wasm_path = if self.convert_core_module {
-            // no need to update the hash here, all inputs (file, `convert_core_module`) capture the config uniquely
             WasmComponent::convert_core_module_to_component(&wasm_path, &wasm_cache_dir)
                 .await?
                 .unwrap_or(wasm_path)
         } else {
             wasm_path
         };
-        std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
-        let component_id = crate::config::component_id(
+
+        let component_id = ComponentId::new(
             ComponentType::Workflow,
-            std::hash::Hasher::finish(&hasher),
             StrVariant::from(common.name.clone()),
         )?;
         let content_digest = common.content_digest.clone();
@@ -576,7 +568,7 @@ pub(crate) mod otlp {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Hash)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DurationConfig {
     Seconds(u64),
@@ -721,7 +713,7 @@ pub(crate) mod log {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, Default, Hash)]
+#[derive(Debug, Deserialize, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum StdOutput {
     #[default]
@@ -763,7 +755,7 @@ pub(crate) mod webhook {
         pub(crate) max_inflight_requests: InflightSemaphore,
     }
 
-    #[derive(Debug, Deserialize, Hash)]
+    #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookComponentConfigToml {
         // TODO: Rename to WebhookComponentConfigToml
@@ -787,16 +779,12 @@ pub(crate) mod webhook {
             metadata_dir: Arc<Path>,
             ignore_missing_env_vars: bool,
         ) -> Result<WebhookComponentVerified, anyhow::Error> {
-            let mut hasher = std::hash::DefaultHasher::new();
-            std::hash::Hash::hash(&self, &mut hasher);
             let (common, wasm_path) = self
                 .common
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
                 .await?;
-            std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
-            let component_id = crate::config::component_id(
+            let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
-                std::hash::Hasher::finish(&hasher),
                 StrVariant::from(common.name.clone()),
             )?;
 
@@ -819,7 +807,7 @@ pub(crate) mod webhook {
         }
     }
 
-    #[derive(Debug, Deserialize, Hash)]
+    #[derive(Debug, Deserialize)]
     #[serde(untagged)]
     pub(crate) enum WebhookRoute {
         String(String),
@@ -832,7 +820,7 @@ pub(crate) mod webhook {
         }
     }
 
-    #[derive(Debug, Deserialize, Hash)]
+    #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookRouteDetail {
         // Empty means all methods.
@@ -883,7 +871,7 @@ pub(crate) mod webhook {
     }
 }
 
-#[derive(Debug, Deserialize, Hash)]
+#[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum InflightSemaphore {
     Unlimited(Unlimited),
@@ -896,7 +884,7 @@ impl Default for InflightSemaphore {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Hash)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Unlimited {
     #[default]

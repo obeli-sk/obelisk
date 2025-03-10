@@ -6,11 +6,9 @@ use crate::oci;
 use anyhow::Context;
 use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
-use concepts::ComponentType;
 use concepts::ContentDigest;
 use concepts::FunctionMetadata;
 use concepts::PackageIfcFns;
-use concepts::StrVariant;
 use serde_with::serde_as;
 use std::path::{Path, PathBuf};
 use toml::ConfigName;
@@ -40,16 +38,6 @@ pub(crate) struct ConfigStoreCommon {
     pub(crate) name: ConfigName,
     pub(crate) location: ComponentLocation,
     pub(crate) content_digest: ContentDigest,
-}
-
-/// Create an identifier for given component configuration.
-pub(crate) fn component_id(
-    component_type: ComponentType,
-    hash: u64,
-    name: StrVariant,
-) -> Result<ComponentId, anyhow::Error> {
-    let hash = StrVariant::from(format!("{hash:x}"));
-    Ok(ComponentId::new(component_type, name, hash)?)
 }
 
 #[serde_as]

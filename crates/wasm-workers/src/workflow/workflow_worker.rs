@@ -707,12 +707,8 @@ pub(crate) mod tests {
         wasm_path: &str,
         engine: &Engine,
     ) -> (WasmComponent, ComponentId) {
-        let component_id = ComponentId::new(
-            ComponentType::Workflow,
-            wasm_file_name(wasm_path),
-            StrVariant::Static("dummy hash"),
-        )
-        .unwrap();
+        let component_id =
+            ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         (
             WasmComponent::new(wasm_path, engine, Some(component_id.component_type.into()))
                 .unwrap(),
@@ -733,12 +729,8 @@ pub(crate) mod tests {
             WasmBacktraceDetails::Disable,
         )
         .unwrap();
-        let component_id = ComponentId::new(
-            ComponentType::Workflow,
-            wasm_file_name(wasm_path),
-            StrVariant::Static("dummy hash"),
-        )
-        .unwrap();
+        let component_id =
+            ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         let worker = Arc::new(
             WorkflowWorkerCompiled::new_with_config(
                 WasmComponent::new(
