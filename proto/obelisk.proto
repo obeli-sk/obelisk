@@ -14,6 +14,7 @@ service ExecutionRepository {
     rpc ListExecutionEvents(ListExecutionEventsRequest) returns (ListExecutionEventsResponse);
     rpc ListResponses(ListResponsesRequest) returns (ListResponsesResponse);
     rpc GetLastBacktrace(GetLastBacktraceRequest) returns (GetLastBacktraceResponse);
+    rpc GetBacktraceSource(GetBacktraceSourceRequest) returns (GetBacktraceSourceResponse);
 }
 
 service FunctionRepository {
@@ -458,4 +459,13 @@ message FrameSymbol {
   optional string file = 2;
   optional uint32 line = 3;
   optional uint32 col = 4;
+}
+
+message GetBacktraceSourceRequest {
+    ComponentId component_id = 1;
+    string file = 2; // As appears in FrameSymbol
+}
+
+message GetBacktraceSourceResponse {
+    string content = 1;
 }

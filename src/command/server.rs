@@ -74,7 +74,6 @@ use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher;
 use executor::expired_timers_watcher::TimersWatcherConfig;
 use executor::worker::Worker;
-use hashbrown::HashSet;
 use itertools::Either;
 use serde::Deserialize;
 use serde_json::json;
@@ -115,18 +114,26 @@ use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 const EPOCH_MILLIS: u64 = 10;
 const WEBUI_OCI_REFERENCE: &str = include_str!("../../assets/webui-version.txt");
 
+type WorkflowSourceMap = hashbrown::HashMap<ComponentId, hashbrown::HashMap<String, PathBuf>>;
+
 #[derive(Debug)]
 struct GrpcServer<DB: DbConnection, P: DbPool<DB>> {
     db_pool: P,
     component_registry_ro: ComponentConfigRegistryRO,
+    workflow_source_map: WorkflowSourceMap,
     phantom_data: PhantomData<DB>,
 }
 
 impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
-    fn new(db_pool: P, component_registry_ro: ComponentConfigRegistryRO) -> Self {
+    fn new(
+        db_pool: P,
+        component_registry_ro: ComponentConfigRegistryRO,
+        workflow_source_map: WorkflowSourceMap,
+    ) -> Self {
         Self {
             db_pool,
             component_registry_ro,
+            workflow_source_map,
             phantom_data: PhantomData,
         }
     }
@@ -583,7 +590,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     async fn get_last_backtrace(
         &self,
         request: tonic::Request<grpc::GetLastBacktraceRequest>,
-    ) -> std::result::Result<tonic::Response<grpc::GetLastBacktraceResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<grpc::GetLastBacktraceResponse>, tonic::Status> {
         let request = request.into_inner();
         let execution_id: ExecutionId = request
             .execution_id
@@ -599,6 +606,33 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             wasm_backtrace: Some(backtrace_info.wasm_backtrace.into()),
             component_id: Some(backtrace_info.component_id.into()),
         }))
+    }
+
+    #[instrument(skip_all)]
+    async fn get_backtrace_source(
+        &self,
+        request: tonic::Request<grpc::GetBacktraceSourceRequest>,
+    ) -> Result<tonic::Response<grpc::GetBacktraceSourceResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let component_id =
+            ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
+        if let Some(inner_map) = self.workflow_source_map.get(&component_id) {
+            if let Some(actual_path) = inner_map.get(&request.file) {
+                match tokio::fs::read_to_string(actual_path).await {
+                    Ok(content) => Ok(tonic::Response::new(grpc::GetBacktraceSourceResponse {
+                        content,
+                    })),
+                    Err(err) => {
+                        error!(%component_id, "Cannot read backtrace source {actual_path:?} - {err:?}");
+                        Err(tonic::Status::internal("cannot read source file"))
+                    }
+                }
+            } else {
+                Err(tonic::Status::not_found("backtrace file mapping not found"))
+            }
+        } else {
+            Err(tonic::Status::not_found("component not found"))
+        }
     }
 }
 
@@ -859,7 +893,7 @@ async fn run_internal(
 ) -> anyhow::Result<()> {
     let span = info_span!("init");
     let api_listening_addr = config.api.listening_addr;
-    let verified = Box::pin(verify_internal(
+    let mut verified = Box::pin(verify_internal(
         config,
         config_holder,
         VerifyParams {
@@ -871,10 +905,15 @@ async fn run_internal(
     ))
     .instrument(span.clone())
     .await?;
+    let workflow_source_map = std::mem::take(&mut verified.workflow_source_map);
     let (init, component_registry_ro) = ServerInit::spawn_executors_and_webhooks(verified)
         .instrument(span)
         .await?;
-    let grpc_server = Arc::new(GrpcServer::new(init.db_pool.clone(), component_registry_ro));
+    let grpc_server = Arc::new(GrpcServer::new(
+        init.db_pool.clone(),
+        component_registry_ro,
+        workflow_source_map,
+    ));
 
     tonic::transport::Server::builder()
         .accept_http1(true)
@@ -927,6 +966,7 @@ struct ServerVerified {
     engines: Engines,
     sqlite_config: SqliteConfig,
     db_file: PathBuf,
+    workflow_source_map: WorkflowSourceMap,
 }
 
 impl ServerVerified {
@@ -991,7 +1031,7 @@ impl ServerVerified {
                 }],
             });
         }
-        let config = fetch_and_verify_all(
+        let mut config = fetch_and_verify_all(
             config.wasm_activities,
             config.workflows,
             http_servers,
@@ -1002,6 +1042,14 @@ impl ServerVerified {
         )
         .await?;
         debug!("Verified config: {config:#?}");
+        let workflow_source_map = {
+            let mut map = hashbrown::HashMap::new();
+            for workflow in config.workflows.iter_mut() {
+                let inner_map = std::mem::take(&mut workflow.frame_files_to_sources);
+                map.insert(workflow.component_id().clone(), inner_map);
+            }
+            map
+        };
         let (compiled_components, component_registry_ro) = compile_and_verify(
             &engines,
             config.wasm_activities,
@@ -1016,6 +1064,7 @@ impl ServerVerified {
             engines,
             sqlite_config,
             db_file: db_dir.join(SQLITE_FILE_NAME),
+            workflow_source_map,
         })
     }
 }

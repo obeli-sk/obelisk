@@ -56,6 +56,8 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # retry_on_trap = false # If set to true, traps(panics) will be handled as temporary failures and retried until the problem goes away.
 # convert_core_module = true # Transparently convert Core WASM modules to WASM Components during startup.
 # forward_unhandled_child_errors_in_completing_join_set_close = true # Forward unhandled child errors to the parent workflow when closing completing join sets.
+## Map from frame symbol file names to corresponding file paths on local filesystem.
+# backtrace.sources = {"frame symbol file path" = "path to the source file"}
 
 ### Webhook Endpoint section
 # [[http_server]]
@@ -98,6 +100,7 @@ max_retries = 0
 name = "test_programs_fibo_workflow"
 location.oci = "docker.io/getobelisk/test_programs_fibo_workflow:2025-03-09@sha256:2232c3b44c60bd52ffb1ffee172f68d633a45ef6a03a4eb590770f1ac0e4f3fb"
 exec.lock_expiry.seconds = 2
+backtrace.sources = {"/home/runner/work/obelisk/obelisk/crates/testing/test-programs/fibo/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs"}
 
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"

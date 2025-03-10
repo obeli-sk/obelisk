@@ -391,12 +391,17 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) convert_core_module: bool,
     #[serde(default = "default_forward_unhandled_child_errors_in_completing_join_set_close")]
     pub(crate) forward_unhandled_child_errors_in_completing_join_set_close: bool,
+    #[serde(default)]
+    pub(crate) backtrace: WorkflowComponentBacktraceConfig,
 }
+
+type BacktraceFrameFileToSourceMap = hashbrown::HashMap<String, PathBuf>;
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowComponentBacktraceConfig {
-    // pub(crate) sources: IndexMap<String, String>,
+    #[serde(rename = "sources")]
+    pub(crate) frame_files_to_sources: BacktraceFrameFileToSourceMap,
 }
 
 #[derive(Debug)]
@@ -406,6 +411,7 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) retry_config: ComponentRetryConfig,
+    pub(crate) frame_files_to_sources: BacktraceFrameFileToSourceMap,
 }
 
 impl WorkflowConfigVerified {
@@ -463,6 +469,7 @@ impl WorkflowComponentConfigToml {
                 max_retries: u32::MAX,
                 retry_exp_backoff,
             },
+            frame_files_to_sources: self.backtrace.frame_files_to_sources,
         })
     }
 }
