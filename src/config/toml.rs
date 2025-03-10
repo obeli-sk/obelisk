@@ -91,11 +91,13 @@ impl ConfigToml {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ApiConfig {
     pub(crate) listening_addr: SocketAddr,
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SqliteConfigToml {
     #[serde(default)]
     directory: Option<String>,
@@ -128,17 +130,20 @@ impl SqliteConfigToml {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WebUIConfig {
     pub(crate) listening_addr: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
     #[serde(default)]
     pub(crate) backtrace: WorkflowsGlobalBacktrace,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalBacktrace {
     #[serde(default = "default_global_backtrace_persist")]
     pub(crate) persist: bool,
@@ -162,6 +167,7 @@ impl Default for WorkflowsGlobalBacktrace {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CodegenCache {
     #[serde(default = "default_codegen_enabled")]
     pub enabled: bool,
@@ -633,9 +639,8 @@ pub(crate) mod log {
     }
 
     #[serde_as]
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, Default)]
     #[serde(deny_unknown_fields)]
-    #[derive(Default)]
     pub(crate) struct AppenderCommon {
         #[serde(default)]
         pub(crate) level: EnvFilter,
