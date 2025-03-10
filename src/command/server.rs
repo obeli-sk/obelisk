@@ -1239,19 +1239,6 @@ async fn fetch_and_verify_all(
     metadata_dir: Arc<Path>,
     ignore_missing_env_vars: bool,
 ) -> Result<ConfigVerified, anyhow::Error> {
-    // Check for name clashes which might make for confusing traces.
-    {
-        let mut seen = HashSet::new();
-        for name in wasm_activities
-            .iter()
-            .map(|a| &a.common.name)
-            .chain(workflows.iter().map(|w| &w.common.name))
-        {
-            if !seen.insert(name) {
-                warn!("Component with the same name already exists - {name}");
-            }
-        }
-    }
     // Check uniqueness of server and webhook names.
     {
         if http_servers.len()
