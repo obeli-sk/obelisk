@@ -11,10 +11,15 @@ const EXAMPLE_TOML: &[u8] = include_bytes!("../../obelisk.toml");
 #[cfg(debug_assertions)]
 const EXAMPLE_TOML: &[u8] = b"not available in debug builds";
 
-pub(crate) struct ConfigHolder {
-    pub(crate) obelisk_toml: PathBuf,
+pub(crate) struct PathPrefixes {
+    pub(crate) obelisk_toml_dir: PathBuf,
     pub(crate) project_dirs: Option<ProjectDirs>,
     pub(crate) base_dirs: Option<BaseDirs>,
+}
+
+pub(crate) struct ConfigHolder {
+    obelisk_toml: PathBuf,
+    pub(crate) path_prefixes: PathPrefixes,
 }
 
 impl ConfigHolder {
@@ -67,9 +72,15 @@ impl ConfigHolder {
             found
         };
         Ok(Self {
+            path_prefixes: PathPrefixes {
+                obelisk_toml_dir: obelisk_toml
+                    .parent()
+                    .expect("obelisk.toml file must have a parent directory")
+                    .to_path_buf(),
+                project_dirs,
+                base_dirs,
+            },
             obelisk_toml,
-            project_dirs,
-            base_dirs,
         })
     }
 

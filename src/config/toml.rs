@@ -1,11 +1,12 @@
-use super::{env_var::EnvVarConfig, ComponentLocation, ConfigStoreCommon};
+use super::{
+    config_holder::PathPrefixes, env_var::EnvVarConfig, ComponentLocation, ConfigStoreCommon,
+};
 use anyhow::{anyhow, bail};
 use concepts::{
     check_name, ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, InvalidNameError,
     StrVariant,
 };
 use db_sqlite::sqlite_dao::SqliteConfig;
-use directories::{BaseDirs, ProjectDirs};
 use log::{LoggingConfig, LoggingStyle};
 use serde::{Deserialize, Deserializer};
 use std::{
@@ -15,7 +16,7 @@ use std::{
     time::Duration,
 };
 use tracing::instrument;
-use util::replace_path_prefix_mkdir;
+use util::{replace_path_prefix_mkdir, verify_file_exists};
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
     activity::activity_worker::ActivityConfig,
@@ -79,18 +80,16 @@ pub(crate) struct ConfigToml {
 impl ConfigToml {
     pub(crate) async fn get_wasm_cache_directory(
         &self,
-        project_dirs: Option<&ProjectDirs>,
-        base_dirs: Option<&BaseDirs>,
-        obelisk_toml: &Path,
+        path_prefixes: &PathPrefixes,
     ) -> Result<PathBuf, anyhow::Error> {
         let wasm_directory = self.wasm_cache_directory.as_deref().unwrap_or_else(|| {
-            if project_dirs.is_some() {
+            if path_prefixes.project_dirs.is_some() {
                 DEFAULT_WASM_DIRECTORY_IF_PROJECT_DIRS
             } else {
                 DEFAULT_WASM_DIRECTORY
             }
         });
-        replace_path_prefix_mkdir(wasm_directory, project_dirs, base_dirs, obelisk_toml).await
+        replace_path_prefix_mkdir(wasm_directory, path_prefixes).await
     }
 }
 
@@ -111,18 +110,16 @@ pub(crate) struct SqliteConfigToml {
 impl SqliteConfigToml {
     pub(crate) async fn get_sqlite_dir(
         &self,
-        project_dirs: Option<&ProjectDirs>,
-        base_dirs: Option<&BaseDirs>,
-        obelisk_toml: &Path,
+        path_prefixes: &PathPrefixes,
     ) -> Result<PathBuf, anyhow::Error> {
         let sqlite_file = self.directory.as_deref().unwrap_or_else(|| {
-            if project_dirs.is_some() {
+            if path_prefixes.project_dirs.is_some() {
                 DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS
             } else {
                 DEFAULT_SQLITE_DIR
             }
         });
-        replace_path_prefix_mkdir(sqlite_file, project_dirs, base_dirs, obelisk_toml).await
+        replace_path_prefix_mkdir(sqlite_file, path_prefixes).await
     }
 
     pub(crate) fn as_config(&self) -> SqliteConfig {
@@ -192,18 +189,16 @@ impl Default for CodegenCache {
 impl CodegenCache {
     pub(crate) async fn get_directory(
         &self,
-        project_dirs: Option<&ProjectDirs>,
-        base_dirs: Option<&BaseDirs>,
-        obelisk_toml: &Path,
+        path_prefixes: &PathPrefixes,
     ) -> Result<PathBuf, anyhow::Error> {
         let directory = self.directory.as_deref().unwrap_or_else(|| {
-            if project_dirs.is_some() {
+            if path_prefixes.project_dirs.is_some() {
                 DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS
             } else {
                 DEFAULT_CODEGEN_CACHE_DIRECTORY
             }
         });
-        replace_path_prefix_mkdir(directory, project_dirs, base_dirs, obelisk_toml).await
+        replace_path_prefix_mkdir(directory, path_prefixes).await
     }
 }
 
@@ -395,13 +390,14 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) backtrace: WorkflowComponentBacktraceConfig,
 }
 
-type BacktraceFrameFileToSourceMap = hashbrown::HashMap<String, PathBuf>;
+type BacktraceFrameFilesToSourcesUnverified = hashbrown::HashMap<String, String>;
+type BacktraceFrameFilesToSourcesVerified = hashbrown::HashMap<String, PathBuf>;
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowComponentBacktraceConfig {
     #[serde(rename = "sources")]
-    pub(crate) frame_files_to_sources: BacktraceFrameFileToSourceMap,
+    pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesUnverified,
 }
 
 #[derive(Debug)]
@@ -411,7 +407,7 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) retry_config: ComponentRetryConfig,
-    pub(crate) frame_files_to_sources: BacktraceFrameFileToSourceMap,
+    pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesVerified,
 }
 
 impl WorkflowConfigVerified {
@@ -426,6 +422,7 @@ impl WorkflowComponentConfigToml {
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
+        path_prefixes: impl AsRef<PathPrefixes>,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
         let retry_exp_backoff = Duration::from(self.retry_exp_backoff);
         if retry_exp_backoff == Duration::ZERO {
@@ -460,6 +457,14 @@ impl WorkflowComponentConfigToml {
             forward_unhandled_child_errors_in_join_set_close: self
                 .forward_unhandled_child_errors_in_completing_join_set_close,
         };
+        let frame_files_to_sources = self
+            .backtrace
+            .frame_files_to_sources
+            .into_iter()
+            .map(|(k, source)| {
+                verify_file_exists(&source, path_prefixes.as_ref()).map(|source| (k, source))
+            })
+            .collect::<Result<_, _>>()?;
         Ok(WorkflowConfigVerified {
             content_digest,
             wasm_path,
@@ -469,7 +474,7 @@ impl WorkflowComponentConfigToml {
                 max_retries: u32::MAX,
                 retry_exp_backoff,
             },
-            frame_files_to_sources: self.backtrace.frame_files_to_sources,
+            frame_files_to_sources,
         })
     }
 }
@@ -910,9 +915,8 @@ impl From<InflightSemaphore> for Option<Arc<tokio::sync::Semaphore>> {
 }
 
 mod util {
-    use std::path::{Path, PathBuf};
-
-    use directories::{BaseDirs, ProjectDirs};
+    use crate::config::config_holder::PathPrefixes;
+    use std::path::PathBuf;
     use tracing::warn;
 
     use super::{
@@ -920,13 +924,52 @@ mod util {
         OBELISK_TOML_DIR_PREFIX,
     };
 
+    pub(crate) fn verify_file_exists(
+        input_path: &str,
+        path_prefixes: &PathPrefixes,
+    ) -> Result<PathBuf, anyhow::Error> {
+        let path = if let (Some(project_dirs), Some(base_dirs)) =
+            (&path_prefixes.project_dirs, &path_prefixes.base_dirs)
+        {
+            if let Some(suffix) = input_path.strip_prefix(HOME_DIR_PREFIX) {
+                base_dirs.home_dir().join(suffix)
+            } else if let Some(suffix) = input_path.strip_prefix(DATA_DIR_PREFIX) {
+                project_dirs.data_dir().join(suffix)
+            } else if let Some(suffix) = input_path.strip_prefix(CACHE_DIR_PREFIX) {
+                project_dirs.cache_dir().join(suffix)
+            } else if let Some(suffix) = input_path.strip_prefix(CONFIG_DIR_PREFIX) {
+                project_dirs.config_dir().join(suffix)
+            } else if let Some(suffix) = input_path.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
+                path_prefixes.obelisk_toml_dir.join(suffix)
+            } else {
+                PathBuf::from(input_path)
+            }
+        } else {
+            if input_path.starts_with(HOME_DIR_PREFIX)
+                || input_path.starts_with(DATA_DIR_PREFIX)
+                || input_path.starts_with(CACHE_DIR_PREFIX)
+                || input_path.starts_with(CONFIG_DIR_PREFIX)
+                || input_path.starts_with(OBELISK_TOML_DIR_PREFIX)
+            {
+                warn!("Not expanding prefix of `{input_path}`");
+            }
+
+            PathBuf::from(input_path)
+        };
+        if path.exists() {
+            Ok(path)
+        } else {
+            todo!()
+        }
+    }
+
     pub(crate) async fn replace_path_prefix_mkdir(
         dir: &str,
-        project_dirs: Option<&ProjectDirs>,
-        base_dirs: Option<&BaseDirs>,
-        obelisk_toml_dir: &Path,
+        path_prefixes: &PathPrefixes,
     ) -> Result<PathBuf, anyhow::Error> {
-        let path = if let (Some(project_dirs), Some(base_dirs)) = (project_dirs, base_dirs) {
+        let path = if let (Some(project_dirs), Some(base_dirs)) =
+            (&path_prefixes.project_dirs, &path_prefixes.base_dirs)
+        {
             if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
                 base_dirs.home_dir().join(suffix)
             } else if let Some(suffix) = dir.strip_prefix(DATA_DIR_PREFIX) {
@@ -936,7 +979,7 @@ mod util {
             } else if let Some(suffix) = dir.strip_prefix(CONFIG_DIR_PREFIX) {
                 project_dirs.config_dir().join(suffix)
             } else if let Some(suffix) = dir.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
-                obelisk_toml_dir.join(suffix)
+                path_prefixes.obelisk_toml_dir.join(suffix)
             } else {
                 PathBuf::from(dir)
             }
@@ -945,6 +988,7 @@ mod util {
                 || dir.starts_with(DATA_DIR_PREFIX)
                 || dir.starts_with(CACHE_DIR_PREFIX)
                 || dir.starts_with(CONFIG_DIR_PREFIX)
+                || dir.starts_with(OBELISK_TOML_DIR_PREFIX)
             {
                 warn!("Not expanding prefix of `{dir}`");
             }

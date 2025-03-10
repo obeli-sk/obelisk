@@ -1,6 +1,7 @@
 use super::grpc;
 use super::grpc::GenerateExecutionIdResponse;
 use crate::config::config_holder::ConfigHolder;
+use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookComponentVerified;
@@ -799,28 +800,16 @@ async fn verify_internal(
     debug!("Using toml config: {config:#?}");
     let db_dir = config
         .sqlite
-        .get_sqlite_dir(
-            config_holder.project_dirs.as_ref(),
-            config_holder.base_dirs.as_ref(),
-            config_holder.obelisk_toml.as_ref(),
-        )
+        .get_sqlite_dir(&config_holder.path_prefixes)
         .await?;
     let wasm_cache_dir = config
-        .get_wasm_cache_directory(
-            config_holder.project_dirs.as_ref(),
-            config_holder.base_dirs.as_ref(),
-            config_holder.obelisk_toml.as_ref(),
-        )
+        .get_wasm_cache_directory(&config_holder.path_prefixes)
         .await?;
     let codegen_cache = if config.codegen_cache.enabled {
         Some(
             config
                 .codegen_cache
-                .get_directory(
-                    config_holder.project_dirs.as_ref(),
-                    config_holder.base_dirs.as_ref(),
-                    config_holder.obelisk_toml.as_ref(),
-                )
+                .get_directory(&config_holder.path_prefixes)
                 .await?,
         )
     } else {
@@ -880,6 +869,7 @@ async fn verify_internal(
         Arc::from(metadata_dir),
         db_dir,
         params.ignore_missing_env_vars,
+        config_holder.path_prefixes,
     )
     .await?;
     info!("Server configuration was verified");
@@ -978,6 +968,7 @@ impl ServerVerified {
         metadata_dir: Arc<Path>,
         db_dir: PathBuf,
         ignore_missing_env_vars: bool,
+        path_prefixes: PathPrefixes,
     ) -> Result<Self, anyhow::Error> {
         let engines = {
             let codegen_cache_config_file_holder = Engines::write_codegen_config(codegen_cache)
@@ -1039,12 +1030,13 @@ impl ServerVerified {
             wasm_cache_dir,
             metadata_dir,
             ignore_missing_env_vars,
+            path_prefixes,
         )
         .await?;
         debug!("Verified config: {config:#?}");
         let workflow_source_map = {
             let mut map = hashbrown::HashMap::new();
-            for workflow in config.workflows.iter_mut() {
+            for workflow in &mut config.workflows {
                 let inner_map = std::mem::take(&mut workflow.frame_files_to_sources);
                 map.insert(workflow.component_id().clone(), inner_map);
             }
@@ -1230,6 +1222,7 @@ struct ConfigVerified {
 }
 
 #[instrument(skip_all)]
+#[expect(clippy::too_many_arguments)]
 async fn fetch_and_verify_all(
     wasm_activities: Vec<ActivityComponentConfigToml>,
     workflows: Vec<WorkflowComponentConfigToml>,
@@ -1238,6 +1231,7 @@ async fn fetch_and_verify_all(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
     ignore_missing_env_vars: bool,
+    path_prefixes: PathPrefixes,
 ) -> Result<ConfigVerified, anyhow::Error> {
     // Check uniqueness of server and webhook names.
     {
@@ -1313,12 +1307,14 @@ async fn fetch_and_verify_all(
             })
         })
         .collect::<Vec<_>>();
+    let path_prefixes = Arc::new(path_prefixes);
     let workflows = workflows
         .into_iter()
         .map(|workflow| {
+            let path_prefixes = path_prefixes.clone();
             tokio::spawn(
                 workflow
-                    .fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone())
+                    .fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone(), path_prefixes)
                     .in_current_span(),
             )
         })
