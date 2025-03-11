@@ -127,8 +127,11 @@ async fn main() -> Result<(), anyhow::Error> {
                     json: json_output,
                 }) => {
                     let client = get_execution_repository_client(api_url).await?;
-                    let json_output_started = if json_output { Some(false) } else { None };
-                    command::execution::get(client, execution_id, follow, json_output_started).await
+                    if json_output {
+                        command::execution::get_json(client, execution_id, follow, false).await
+                    } else {
+                        command::execution::get(client, execution_id, follow).await
+                    }
                 }
             }
         }

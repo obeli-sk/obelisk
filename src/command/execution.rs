@@ -51,8 +51,11 @@ pub(crate) async fn submit(
         println!("{execution_id}");
     }
     if follow {
-        let json_output_started = if json_output { Some(true) } else { None };
-        get(client, execution_id, follow, json_output_started).await?;
+        if json_output {
+            get_json(client, execution_id, true, true).await?;
+        } else {
+            get(client, execution_id, true).await?;
+        }
     }
     if json_output {
         println!("\n]");
@@ -269,11 +272,11 @@ fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> String {
     json.to_string()
 }
 
-pub(crate) async fn get(
+pub(crate) async fn get_json(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionId,
     follow: bool,
-    json_output_started: Option<bool>, // None if json is disabled. Some(true) if `[{..}` was printed alraedy.
+    json_output_started: bool, // true if `[{..}` was printed alraedy.
 ) -> anyhow::Result<()> {
     let mut stream = client
         .get_status(tonic::Request::new(grpc::GetStatusRequest {
@@ -285,17 +288,36 @@ pub(crate) async fn get(
         .to_anyhow()?
         .into_inner();
     let mut old_pending_status = String::new();
-    if json_output_started == Some(false) {
+    if !json_output_started {
         println!("[");
     }
     while let Some(status) = stream.message().await? {
-        print_status(status, &mut old_pending_status, json_output_started)?;
-        if json_output_started.is_none() {
-            fetch_backtrace(&mut client, &execution_id).await?;
-        }
+        print_status(status, &mut old_pending_status, Some(json_output_started))?;
     }
-    if json_output_started == Some(false) {
+    if !json_output_started {
         println!("\n]");
+    }
+    Ok(())
+}
+
+pub(crate) async fn get(
+    mut client: ExecutionRepositoryClient,
+    execution_id: ExecutionId,
+    follow: bool,
+) -> anyhow::Result<()> {
+    let mut stream = client
+        .get_status(tonic::Request::new(grpc::GetStatusRequest {
+            execution_id: Some(grpc::ExecutionId::from(execution_id.clone())),
+            follow,
+            send_finished_status: true,
+        }))
+        .await
+        .to_anyhow()?
+        .into_inner();
+    let mut old_pending_status = String::new();
+    while let Some(status) = stream.message().await? {
+        print_status(status, &mut old_pending_status, None)?;
+        fetch_backtrace(&mut client, &execution_id).await?;
     }
     Ok(())
 }
