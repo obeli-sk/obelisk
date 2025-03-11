@@ -893,7 +893,7 @@ pub struct WasmBacktrace {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FrameInfo {
     pub module: String,
-    pub func_name: Option<String>,
+    pub func_name: String,
     pub symbols: Vec<FrameSymbol>,
 }
 
@@ -919,10 +919,16 @@ mod wasm_backtrace {
     impl From<&wasmtime::FrameInfo> for FrameInfo {
         fn from(frame: &wasmtime::FrameInfo) -> Self {
             let module_name = frame.module().name().unwrap_or("<unknown>").to_string();
-
+            let mut func_name = String::new();
+            wasmtime_environ::demangle_function_name_or_index(
+                &mut func_name,
+                frame.func_name(),
+                frame.func_index() as usize,
+            )
+            .expect("writing to string must succeed");
             Self {
                 module: module_name,
-                func_name: frame.func_name().map(ToString::to_string),
+                func_name,
                 symbols: frame
                     .symbols()
                     .iter()
@@ -934,8 +940,15 @@ mod wasm_backtrace {
 
     impl From<&wasmtime::FrameSymbol> for FrameSymbol {
         fn from(symbol: &wasmtime::FrameSymbol) -> Self {
+            let func_name = symbol.name().map(|name| {
+                let mut writer = String::new();
+                wasmtime_environ::demangle_function_name(&mut writer, name)
+                    .expect("writing to string must succeed");
+                writer
+            });
+
             Self {
-                func_name: symbol.name().map(ToString::to_string),
+                func_name,
                 file: symbol.file().map(ToString::to_string),
                 line: symbol.line(),
                 col: symbol.column(),

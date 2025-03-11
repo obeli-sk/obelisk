@@ -450,7 +450,7 @@ message WasmBacktrace {
 
 message FrameInfo {
   string module = 1;
-  optional string func_name = 2;
+  string func_name = 2;
   repeated FrameSymbol symbols = 3;
 }
 

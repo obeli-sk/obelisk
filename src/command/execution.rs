@@ -354,9 +354,7 @@ pub(crate) async fn get(
                 .enumerate()
             {
                 println!("{}. Module: {}", i, frame.module);
-                if let Some(func_name) = &frame.func_name {
-                    println!("   Function: {func_name}");
-                }
+                println!("   Function: {}", frame.func_name);
 
                 for (j, symbol) in frame.symbols.into_iter().enumerate() {
                     println!("   Symbol {j}:");
