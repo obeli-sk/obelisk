@@ -7,6 +7,8 @@ use crate::ExecutionRepositoryClient;
 use anyhow::anyhow;
 use anyhow::Context;
 use chrono::DateTime;
+use concepts::JoinSetKind;
+use concepts::JOIN_SET_ID_INFIX;
 use concepts::{ExecutionId, FunctionFqn};
 use crossterm::{
     cursor,
@@ -111,13 +113,11 @@ fn format_pending_status(pending_status: grpc::ExecutionStatus) -> String {
             join_set_id: Some(grpc::JoinSetId { name, kind }),
             lock_expires_at: _,
         }) => {
-            let kind = grpc::join_set_id::JoinSetKind::try_from(kind)
-                .expect("JoinSetKind must be valid")
-                .as_str_name()
-                .to_lowercase();
-
-            let closing = if closing { "-closing" } else { "" };
-            format!("BlockedByJoinSet {kind} `{name}`{closing}")
+            let kind = JoinSetKind::from(
+                grpc::join_set_id::JoinSetKind::try_from(kind).expect("JoinSetKind must be valid"),
+            );
+            let closing = if closing { " (closing)" } else { "" };
+            format!("BlockedByJoinSet {kind}{JOIN_SET_ID_INFIX}{name}{closing}")
         }
         Status::Finished(Finished { .. }) => {
             // the final result will be sent in the next message, since we set `send_finished_status` to true.

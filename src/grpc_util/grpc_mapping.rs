@@ -49,6 +49,16 @@ impl From<JoinSetKind> for grpc::join_set_id::JoinSetKind {
     }
 }
 
+impl From<grpc::join_set_id::JoinSetKind> for JoinSetKind {
+    fn from(value: grpc::join_set_id::JoinSetKind) -> Self {
+        match value {
+            grpc::join_set_id::JoinSetKind::OneOff => JoinSetKind::OneOff,
+            grpc::join_set_id::JoinSetKind::Named => JoinSetKind::Named,
+            grpc::join_set_id::JoinSetKind::Generated => JoinSetKind::Generated,
+        }
+    }
+}
+
 impl From<RunId> for grpc::RunId {
     fn from(value: RunId) -> Self {
         Self {

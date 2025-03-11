@@ -1349,7 +1349,7 @@ impl FromStr for JoinSetKind {
     }
 }
 
-const JOIN_SET_ID_INFIX: char = ':';
+pub const JOIN_SET_ID_INFIX: char = ':';
 const CHARSET_EXTRA_JSON_SET: &str = "_-/";
 
 impl FromStr for JoinSetId {
