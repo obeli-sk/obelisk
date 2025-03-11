@@ -8,10 +8,22 @@ use anyhow::anyhow;
 use anyhow::Context;
 use chrono::DateTime;
 use concepts::{ExecutionId, FunctionFqn};
+use crossterm::{
+    cursor,
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    terminal::{self, ClearType},
+    ExecutableCommand,
+};
 use grpc::execution_status::Status;
 use serde_json::json;
+use std::io::Stdout;
+use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{Style, ThemeSet};
+use syntect::parsing::SyntaxSetBuilder;
+use syntect::util::as_24_bit_terminal_escaped;
 use tracing::instrument;
 
 // TODO: CamelCase + snake_case  mixed in JSON output
@@ -63,49 +75,34 @@ pub(crate) async fn submit(
     Ok(())
 }
 
+/// Return true if the status is Finished.
 fn print_status(
     response: grpc::GetStatusResponse,
     old_pending_status: &mut String,
-    json_output_started: Option<bool>, // None if json is disabled. Some(true) if `[{..}` was printed alraedy.
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     use grpc::get_status_response::Message;
     let message = response.message.expect("message expected");
-    if json_output_started.is_some() {
-        if !old_pending_status.is_empty() || json_output_started == Some(true) {
-            println!(",");
+    match message {
+        Message::Summary(summary) => {
+            let ffqn = FunctionFqn::try_from(summary.function_name.expect("sent by server"))
+                .expect("ffqn sent by the server must be valid");
+            println!("Function: {ffqn}");
+
+            print_pending_status(
+                summary.current_status.expect("sent by server"),
+                old_pending_status,
+            );
+            Ok(false)
         }
-        *old_pending_status = match message {
-            Message::Summary(_) => {
-                serde_json::to_string(&message).expect("summary must be serializable")
-            }
-            Message::CurrentStatus(_) => {
-                serde_json::to_string(&message).expect("pending_status must be serializable")
-            }
-            Message::FinishedStatus(finished_sattus) => print_finished_status_json(finished_sattus),
-        };
-
-        print!("{old_pending_status}");
-    } else {
-        match message {
-            Message::Summary(summary) => {
-                let ffqn = FunctionFqn::try_from(summary.function_name.expect("sent by server"))
-                    .expect("ffqn sent by the server must be valid");
-                println!("Function: {ffqn}");
-
-                print_pending_status(
-                    summary.current_status.expect("sent by server"),
-                    old_pending_status,
-                );
-            }
-            Message::CurrentStatus(pending_status) => {
-                print_pending_status(pending_status, old_pending_status);
-            }
-            Message::FinishedStatus(finished_sattus) => {
-                print_finished_status(finished_sattus)?;
-            }
+        Message::CurrentStatus(pending_status) => {
+            print_pending_status(pending_status, old_pending_status);
+            Ok(false)
+        }
+        Message::FinishedStatus(finished_sattus) => {
+            print_finished_status(finished_sattus)?;
+            Ok(true)
         }
     }
-    Ok(())
 }
 
 fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_status: &mut String) {
@@ -292,11 +289,36 @@ pub(crate) async fn get_json(
         println!("[");
     }
     while let Some(status) = stream.message().await? {
-        print_status(status, &mut old_pending_status, Some(json_output_started))?;
+        print_status_json(status, &mut old_pending_status, json_output_started)?;
     }
     if !json_output_started {
         println!("\n]");
     }
+    Ok(())
+}
+
+fn print_status_json(
+    response: grpc::GetStatusResponse,
+    old_pending_status: &mut String,
+    json_output_started: bool,
+) -> anyhow::Result<()> {
+    use grpc::get_status_response::Message;
+    let message = response.message.expect("message expected");
+
+    if !old_pending_status.is_empty() || json_output_started {
+        println!(",");
+    }
+    *old_pending_status = match message {
+        Message::Summary(_) => {
+            serde_json::to_string(&message).expect("summary must be serializable")
+        }
+        Message::CurrentStatus(_) => {
+            serde_json::to_string(&message).expect("pending_status must be serializable")
+        }
+        Message::FinishedStatus(finished_sattus) => print_finished_status_json(finished_sattus),
+    };
+
+    print!("{old_pending_status}");
     Ok(())
 }
 
@@ -315,17 +337,180 @@ pub(crate) async fn get(
         .to_anyhow()?
         .into_inner();
     let mut old_pending_status = String::new();
+
+    let mut stdout = stdout();
+    let (_terminal_cols, terminal_rows) = terminal::size()?;
+
     while let Some(status) = stream.message().await? {
-        print_status(status, &mut old_pending_status, None)?;
-        fetch_backtrace(&mut client, &execution_id).await?;
+        // Move to (0, 0).
+        stdout.execute(cursor::MoveTo(0, 0))?;
+        // Clear the ENTIRE screen, line by line.
+        for _ in 0..terminal_rows {
+            stdout.execute(terminal::Clear(ClearType::CurrentLine))?;
+            stdout.execute(cursor::MoveDown(1))?;
+        }
+        stdout.execute(cursor::MoveTo(0, 0))?;
+        println!("{execution_id}");
+
+        let finished = print_status(status, &mut old_pending_status)?;
+        if finished {
+            // Do not print last backtrace on finished.
+            return Ok(());
+        }
+        if let Some(backtrace_response) = fetch_backtrace(&mut client, &execution_id).await? {
+            let mut seen_lines = hashbrown::HashSet::new();
+            println!("\nBacktrace:");
+            for (i, frame) in backtrace_response
+                .wasm_backtrace
+                .expect("`wasm_backtrace` is sent")
+                .frames
+                .into_iter()
+                .enumerate()
+            {
+                println!("{}. Module: {}", i, frame.module);
+                if let Some(func_name) = &frame.func_name {
+                    println!("   Function: {func_name}");
+                }
+
+                for (j, symbol) in frame.symbols.into_iter().enumerate() {
+                    println!("   Symbol {j}:");
+                    if let Some(func_name) = &symbol.func_name {
+                        println!("     Function: {func_name}");
+                    }
+
+                    let location = match (&symbol.file, symbol.line, symbol.col) {
+                        (Some(file), Some(line), Some(col)) => format!("{file}:{line}:{col}"),
+                        (Some(file), Some(line), None) => format!("{file}:{line}"),
+                        (Some(file), None, None) => file.clone(),
+                        _ => "unknown location".to_string(),
+                    };
+                    // Print header.
+                    stdout
+                        .execute(SetForegroundColor(Color::Green))?
+                        .execute(Print(format!("=== {location} ===\n")))?
+                        .execute(ResetColor)?;
+                    // Print source file.
+                    if let (Some(file), Some(line)) = (&symbol.file, symbol.line) {
+                        let new = seen_lines.insert((file.clone(), line));
+                        if new {
+                            if let Ok(source) = client
+                                .get_backtrace_source(tonic::Request::new(
+                                    // FIXME: Cache
+                                    grpc::GetBacktraceSourceRequest {
+                                        component_id: Some(
+                                            backtrace_response
+                                                .component_id
+                                                .clone()
+                                                .expect("`component_id` is sent"),
+                                        ),
+                                        file: file.clone(),
+                                    },
+                                ))
+                                .await
+                            {
+                                let source = source.into_inner().content;
+                                print_backtrace_with_content(
+                                    &mut stdout,
+                                    source,
+                                    PathBuf::from(file).extension().and_then(|e| e.to_str()),
+                                    usize::try_from(line).unwrap(),
+                                    symbol.col.map(|col| usize::try_from(col).unwrap()),
+                                )?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
+    Ok(())
+}
+
+fn print_backtrace_with_content(
+    stdout: &mut Stdout,
+    file_content: String,
+    extension: Option<&str>,
+    line: usize,
+    col: Option<usize>,
+) -> Result<(), anyhow::Error> {
+    const BEFORE: usize = 2;
+    const AFTER: usize = 2;
+
+    let col = col.unwrap_or_default(); // 0 == not available
+
+    let ts = ThemeSet::load_defaults();
+    let mut builder = SyntaxSetBuilder::new();
+    builder.add_plain_text_syntax();
+    let ss = builder.build();
+
+    let syntax = extension
+        .and_then(|extension| ss.find_syntax_by_extension(extension))
+        .unwrap_or_else(|| ss.find_syntax_plain_text());
+
+    let theme = &ts.themes["base16-ocean.dark"];
+    let mut h = HighlightLines::new(syntax, theme);
+
+    let row = line - 1;
+
+    let start_line = row.saturating_sub(BEFORE);
+    let end_line = (row + AFTER + 1).min(file_content.lines().count());
+
+    // --- Print Output ---
+
+    for (line_number, line) in file_content
+        .lines()
+        .enumerate()
+        .skip(start_line)
+        .take(end_line.saturating_sub(start_line))
+    {
+        // Highlight only the line number.
+        if line_number == row {
+            stdout.execute(SetBackgroundColor(Color::White))?;
+            stdout.execute(SetForegroundColor(Color::Black))?;
+        }
+        stdout.execute(Print(format!("{:>4} ", line_number + 1)))?;
+        stdout.execute(ResetColor)?;
+
+        let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ss).unwrap();
+
+        if line_number == row && col > 0 {
+            // Highlight the character.
+            let col = col - 1; // switch from 1-based.
+            let mut current_col = 0;
+            for (style, text) in ranges {
+                if current_col <= col && col < current_col + text.len() {
+                    let (before, rest) = text.split_at(col - current_col);
+                    let (highlighted, after) = rest.split_at(1);
+
+                    print!("{}", as_24_bit_terminal_escaped(&[(style, before)], false));
+                    stdout.execute(SetBackgroundColor(Color::Yellow))?;
+                    print!(
+                        "{}",
+                        as_24_bit_terminal_escaped(&[(style, highlighted)], false)
+                    );
+                    stdout.execute(ResetColor)?;
+                    print!("{}", as_24_bit_terminal_escaped(&[(style, after)], false));
+                } else {
+                    print!("{}", as_24_bit_terminal_escaped(&[(style, text)], false));
+                }
+                current_col += text.len();
+            }
+            println!();
+        } else {
+            // Normal line.
+            print!("{}", as_24_bit_terminal_escaped(&ranges[..], false));
+            println!();
+        }
+    }
+    stdout.flush()?;
+
     Ok(())
 }
 
 async fn fetch_backtrace(
     client: &mut ExecutionRepositoryClient,
     execution_id: &ExecutionId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<GetLastBacktraceResponse>> {
     let backtrace_response = client
         .get_last_backtrace(tonic::Request::new(grpc::GetLastBacktraceRequest {
             execution_id: Some(grpc::ExecutionId::from(execution_id)),
@@ -333,73 +518,10 @@ async fn fetch_backtrace(
         .await;
     let backtrace_response = match backtrace_response {
         Err(status) if status.code() == tonic::Code::NotFound => {
-            return Ok(());
+            return Ok(None);
         }
         err @ Err(_) => return Err(err.to_anyhow().unwrap_err()),
         Ok(ok) => ok.into_inner(),
     };
-
-    print_backtrace(backtrace_response, client).await;
-    Ok(())
-}
-
-async fn print_backtrace(
-    backtrace_response: GetLastBacktraceResponse,
-    client: &mut ExecutionRepositoryClient,
-) {
-    println!("\nBacktrace:");
-    let mut frame_file = None;
-    for (i, frame) in backtrace_response
-        .wasm_backtrace
-        .expect("`wasm_backtrace` is sent")
-        .frames
-        .into_iter()
-        .enumerate()
-    {
-        println!("{}. Module: {}", i, frame.module);
-        if let Some(func_name) = &frame.func_name {
-            println!("   Function: {func_name}");
-        }
-
-        for (j, symbol) in frame.symbols.into_iter().enumerate() {
-            println!("   Symbol {j}:");
-            if let Some(func_name) = &symbol.func_name {
-                println!("     Function: {func_name}");
-            }
-
-            let location = match (&symbol.file, symbol.line, symbol.col) {
-                (Some(file), Some(line), Some(col)) => format!("{file}:{line}:{col}"),
-                (Some(file), Some(line), None) => format!("{file}:{line}"),
-                (Some(file), None, None) => file.clone(),
-                _ => "unknown location".to_string(),
-            };
-            println!("     Location: {location}");
-            match (symbol.file, symbol.line) {
-                (Some(file), Some(line)) if frame_file.is_none() => {
-                    frame_file = Some((file, line));
-                }
-                _ => {}
-            }
-        }
-    }
-    if let Some((frame_file, line)) = frame_file {
-        let source_resp = client
-            .get_backtrace_source(tonic::Request::new(grpc::GetBacktraceSourceRequest {
-                component_id: Some(
-                    backtrace_response
-                        .component_id
-                        .expect("`component_id` is sent"),
-                ),
-                file: frame_file.clone(),
-            }))
-            .await;
-        let frame_file = PathBuf::from(frame_file);
-        if let Ok(source) = source_resp.map(|resp| resp.into_inner().content) {
-            println!();
-            if let Some(frame_file) = frame_file.file_name().and_then(|f| f.to_str()) {
-                println!("source {frame_file}:{line}");
-            }
-            println!("{source}");
-        }
-    }
+    Ok(Some(backtrace_response))
 }
