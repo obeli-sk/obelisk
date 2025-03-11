@@ -84,10 +84,6 @@ fn print_status(
     let message = response.message.expect("message expected");
     match message {
         Message::Summary(summary) => {
-            let ffqn = FunctionFqn::try_from(summary.function_name.expect("sent by server"))
-                .expect("ffqn sent by the server must be valid");
-            println!("Function: {ffqn}");
-
             print_pending_status(
                 summary.current_status.expect("sent by server"),
                 old_pending_status,
@@ -341,6 +337,8 @@ pub(crate) async fn get(
     let mut stdout = stdout();
     let (_terminal_cols, terminal_rows) = terminal::size()?;
 
+    let mut source_cache = hashbrown::HashMap::new();
+
     while let Some(status) = stream.message().await? {
         // Move to (0, 0).
         stdout.execute(cursor::MoveTo(0, 0))?;
@@ -358,7 +356,7 @@ pub(crate) async fn get(
             return Ok(());
         }
         if let Some(backtrace_response) = fetch_backtrace(&mut client, &execution_id).await? {
-            let mut seen_lines = hashbrown::HashSet::new();
+            let mut seen_positions = hashbrown::HashSet::new();
             println!("\nBacktrace:");
             for (i, frame) in backtrace_response
                 .wasm_backtrace
@@ -391,27 +389,38 @@ pub(crate) async fn get(
                         .execute(ResetColor)?;
                     // Print source file.
                     if let (Some(file), Some(line)) = (&symbol.file, symbol.line) {
-                        let new = seen_lines.insert((file.clone(), line));
-                        if new {
-                            if let Ok(source) = client
-                                .get_backtrace_source(tonic::Request::new(
-                                    // FIXME: Cache
-                                    grpc::GetBacktraceSourceRequest {
-                                        component_id: Some(
-                                            backtrace_response
-                                                .component_id
-                                                .clone()
-                                                .expect("`component_id` is sent"),
-                                        ),
-                                        file: file.clone(),
-                                    },
-                                ))
-                                .await
-                            {
-                                let source = source.into_inner().content;
+                        let new_position = seen_positions.insert((file.clone(), line));
+                        if new_position {
+                            let source = {
+                                if let Some(source) = source_cache.get(file.as_str()) {
+                                    Some(source)
+                                } else {
+                                    if let Ok(source) = client
+                                        .get_backtrace_source(tonic::Request::new(
+                                            grpc::GetBacktraceSourceRequest {
+                                                component_id: Some(
+                                                    backtrace_response
+                                                        .component_id
+                                                        .clone()
+                                                        .expect("`component_id` is sent"),
+                                                ),
+                                                file: file.clone(),
+                                            },
+                                        ))
+                                        .await
+                                    {
+                                        source_cache
+                                            .insert(file.clone(), source.into_inner().content);
+                                        source_cache.get(file.as_str())
+                                    } else {
+                                        None
+                                    }
+                                }
+                            };
+                            if let Some(source) = source {
                                 print_backtrace_with_content(
                                     &mut stdout,
-                                    source,
+                                    source.as_str(),
                                     PathBuf::from(file).extension().and_then(|e| e.to_str()),
                                     usize::try_from(line).unwrap(),
                                     symbol.col.map(|col| usize::try_from(col).unwrap()),
@@ -428,7 +437,7 @@ pub(crate) async fn get(
 
 fn print_backtrace_with_content(
     stdout: &mut Stdout,
-    file_content: String,
+    file_content: &str,
     extension: Option<&str>,
     line: usize,
     col: Option<usize>,
