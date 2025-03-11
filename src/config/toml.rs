@@ -335,18 +335,18 @@ impl ActivityComponentConfigToml {
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
+        let component_id = ComponentId::new(
+            ComponentType::ActivityWasm,
+            StrVariant::from(self.common.name.clone()),
+        )?;
+        tracing::Span::current().record("component_id", tracing::field::display(&component_id));
+
         let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
-        let component_id = ComponentId::new(
-            ComponentType::ActivityWasm,
-            StrVariant::from(common.name.clone()),
-        )?;
 
-        let content_digest = common.content_digest.clone();
         let env_vars = resolve_env_vars(self.env_vars, ignore_missing_env_vars)?;
-        tracing::Span::current().record("component_id", tracing::field::display(&component_id));
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
             forward_stdout: self.forward_stdout.into(),
@@ -355,7 +355,7 @@ impl ActivityComponentConfigToml {
             retry_on_err: self.retry_on_err,
         };
         Ok(ActivityWasmConfigVerified {
-            content_digest,
+            content_digest: common.content_digest,
             wasm_path,
             activity_config,
             exec_config: self.exec.into_exec_exec_config(component_id),
@@ -424,6 +424,12 @@ impl WorkflowComponentConfigToml {
         metadata_dir: Arc<Path>,
         path_prefixes: impl AsRef<PathPrefixes>,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
+        let component_id = ComponentId::new(
+            ComponentType::Workflow,
+            StrVariant::from(self.common.name.clone()),
+        )?;
+        tracing::Span::current().record("component_id", tracing::field::display(&component_id));
+
         let retry_exp_backoff = Duration::from(self.retry_exp_backoff);
         if retry_exp_backoff == Duration::ZERO {
             bail!(
@@ -443,12 +449,6 @@ impl WorkflowComponentConfigToml {
             wasm_path
         };
 
-        let component_id = ComponentId::new(
-            ComponentType::Workflow,
-            StrVariant::from(common.name.clone()),
-        )?;
-        let content_digest = common.content_digest.clone();
-        tracing::Span::current().record("component_id", tracing::field::display(&component_id));
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
             join_next_blocking_strategy: self.join_next_blocking_strategy,
@@ -473,7 +473,7 @@ impl WorkflowComponentConfigToml {
             })
             .collect();
         Ok(WorkflowConfigVerified {
-            content_digest,
+            content_digest: common.content_digest,
             wasm_path,
             workflow_config,
             exec_config: self.exec.into_exec_exec_config(component_id),
@@ -798,17 +798,16 @@ pub(crate) mod webhook {
             metadata_dir: Arc<Path>,
             ignore_missing_env_vars: bool,
         ) -> Result<WebhookComponentVerified, anyhow::Error> {
+            let component_id = ComponentId::new(
+                ComponentType::WebhookEndpoint,
+                StrVariant::from(self.common.name.clone()),
+            )?;
+            tracing::Span::current().record("component_id", tracing::field::display(&component_id));
+
             let (common, wasm_path) = self
                 .common
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
                 .await?;
-            let component_id = ComponentId::new(
-                ComponentType::WebhookEndpoint,
-                StrVariant::from(common.name.clone()),
-            )?;
-
-            let content_digest = common.content_digest.clone();
-            tracing::Span::current().record("component_id", tracing::field::display(&component_id));
 
             Ok(WebhookComponentVerified {
                 component_id,
@@ -821,7 +820,7 @@ pub(crate) mod webhook {
                 forward_stdout: self.forward_stdout.into(),
                 forward_stderr: self.forward_stderr.into(),
                 env_vars: resolve_env_vars(self.env_vars, ignore_missing_env_vars)?,
-                content_digest,
+                content_digest: common.content_digest,
             })
         }
     }
