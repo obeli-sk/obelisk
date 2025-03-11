@@ -355,7 +355,7 @@ pub(crate) async fn get(
             for (i, frame) in wasm_backtrace.frames.into_iter().enumerate() {
                 println!("{i}: {}, function: {}", frame.module, frame.func_name);
 
-                for symbol in frame.symbols.into_iter() {
+                for symbol in frame.symbols {
                     // Print location.
                     let location = match (&symbol.file, symbol.line, symbol.col) {
                         (Some(file), Some(line), Some(col)) => format!("{file}:{line}:{col}"),
@@ -371,7 +371,7 @@ pub(crate) async fn get(
                     // Print function name if it's different from frameinfo
                     match &symbol.func_name {
                         Some(func_name) if *func_name != frame.func_name => {
-                            println!(" - {func_name}")
+                            println!(" - {func_name}");
                         }
                         _ => println!(),
                     }
