@@ -285,7 +285,7 @@ pub(crate) async fn get_json(
         println!("[");
     }
     while let Some(status) = stream.message().await? {
-        print_status_json(status, &mut old_pending_status, json_output_started)?;
+        print_status_json(status, &mut old_pending_status, json_output_started);
     }
     if !json_output_started {
         println!("\n]");
@@ -297,7 +297,7 @@ fn print_status_json(
     response: grpc::GetStatusResponse,
     old_pending_status: &mut String,
     json_output_started: bool,
-) -> anyhow::Result<()> {
+) {
     use grpc::get_status_response::Message;
     let message = response.message.expect("message expected");
 
@@ -315,7 +315,6 @@ fn print_status_json(
     };
 
     print!("{old_pending_status}");
-    Ok(())
 }
 
 pub(crate) async fn get(
@@ -388,27 +387,24 @@ pub(crate) async fn get(
                             let source = {
                                 if let Some(source) = source_cache.get(file.as_str()) {
                                     Some(source)
+                                } else if let Ok(source) = client
+                                    .get_backtrace_source(tonic::Request::new(
+                                        grpc::GetBacktraceSourceRequest {
+                                            component_id: Some(
+                                                backtrace_response
+                                                    .component_id
+                                                    .clone()
+                                                    .expect("`component_id` is sent"),
+                                            ),
+                                            file: file.clone(),
+                                        },
+                                    ))
+                                    .await
+                                {
+                                    source_cache.insert(file.clone(), source.into_inner().content);
+                                    source_cache.get(file.as_str())
                                 } else {
-                                    if let Ok(source) = client
-                                        .get_backtrace_source(tonic::Request::new(
-                                            grpc::GetBacktraceSourceRequest {
-                                                component_id: Some(
-                                                    backtrace_response
-                                                        .component_id
-                                                        .clone()
-                                                        .expect("`component_id` is sent"),
-                                                ),
-                                                file: file.clone(),
-                                            },
-                                        ))
-                                        .await
-                                    {
-                                        source_cache
-                                            .insert(file.clone(), source.into_inner().content);
-                                        source_cache.get(file.as_str())
-                                    } else {
-                                        None
-                                    }
+                                    None
                                 }
                             };
                             if let Some(source) = source {
