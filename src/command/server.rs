@@ -114,6 +114,7 @@ use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 
 const EPOCH_MILLIS: u64 = 10;
 const WEBUI_OCI_REFERENCE: &str = include_str!("../../assets/webui-version.txt");
+const GET_STATUS_POLLING_SLEEP: Duration = Duration::from_secs(1);
 
 type WorkflowSourceMap = hashbrown::HashMap<ComponentId, hashbrown::HashMap<String, PathBuf>>;
 
@@ -387,7 +388,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             tokio::spawn(
                 async move {
                     loop {
-                        let sleep_until = now_tokio_instant() + Duration::from_millis(500);
+                        let sleep_until = now_tokio_instant() + GET_STATUS_POLLING_SLEEP;
                         loop {
                             tokio::time::sleep(Duration::from_millis(10)).await;
                             if db_pool.is_closing() {
