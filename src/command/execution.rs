@@ -15,6 +15,7 @@ use crossterm::{
     ExecutableCommand,
 };
 use grpc::execution_status::Status;
+use itertools::Either;
 use serde_json::json;
 use std::io::Stdout;
 use std::io::{stdout, Write};
@@ -76,36 +77,35 @@ pub(crate) async fn submit(
 }
 
 /// Return true if the status is Finished.
-fn print_status(
-    response: grpc::GetStatusResponse,
-    old_pending_status: &mut String,
-) -> anyhow::Result<bool> {
+fn print_status(response: grpc::GetStatusResponse) -> anyhow::Result<bool> {
     use grpc::get_status_response::Message;
     let message = response.message.expect("message expected");
-    match message {
-        Message::Summary(summary) => {
-            print_pending_status(
-                summary.current_status.expect("sent by server"),
-                old_pending_status,
-            );
+
+    let status_or_finished = match message {
+        Message::Summary(summary) => Either::Left(summary.current_status.expect("sent by server")),
+        Message::CurrentStatus(status) => Either::Left(status),
+        Message::FinishedStatus(finished) => Either::Right(finished),
+    };
+    match status_or_finished {
+        Either::Left(status) => {
+            println!("{}", format_pending_status(status));
             Ok(false)
         }
-        Message::CurrentStatus(pending_status) => {
-            print_pending_status(pending_status, old_pending_status);
-            Ok(false)
-        }
-        Message::FinishedStatus(finished_sattus) => {
-            print_finished_status(finished_sattus)?;
+        Either::Right(finished) => {
+            print_finished_status(finished)?;
             Ok(true)
         }
     }
 }
 
-fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_status: &mut String) {
+fn format_pending_status(pending_status: grpc::ExecutionStatus) -> String {
     let status = pending_status.status.expect("status is sent by the server");
-    let new_pending_status = match status {
+    match status {
         Status::Locked(_) => "Locked".to_string(),
-        Status::PendingAt(_) => "Pending".to_string(),
+        Status::PendingAt(grpc::execution_status::PendingAt { scheduled_at }) => {
+            let scheduled_at = scheduled_at.expect("sent by the server");
+            format!("Pending at {scheduled_at}")
+        }
         Status::BlockedByJoinSet(BlockedByJoinSet {
             closing,
             join_set_id: Some(grpc::JoinSetId { name, kind }),
@@ -120,14 +120,10 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_statu
             format!("BlockedByJoinSet {kind} `{name}`{closing}")
         }
         Status::Finished(Finished { .. }) => {
-            // Skip, the final result will be sent in the next message, since we set `send_finished_status` to true.
-            return;
+            // the final result will be sent in the next message, since we set `send_finished_status` to true.
+            "Finished".to_string()
         }
         illegal @ Status::BlockedByJoinSet(_) => panic!("illegal state {illegal:?}"),
-    };
-    if *old_pending_status != new_pending_status {
-        println!("{new_pending_status}");
-        let _ = std::mem::replace(old_pending_status, new_pending_status);
     }
 }
 
@@ -331,7 +327,6 @@ pub(crate) async fn get(
         .await
         .to_anyhow()?
         .into_inner();
-    let mut old_pending_status = String::new();
 
     let mut stdout = stdout();
 
@@ -343,7 +338,7 @@ pub(crate) async fn get(
         stdout.execute(cursor::MoveTo(0, 0))?;
         println!("{execution_id}");
 
-        let finished = print_status(status, &mut old_pending_status)?;
+        let finished = print_status(status)?;
         if finished {
             // Do not print last backtrace on finished.
             return Ok(());
@@ -469,6 +464,7 @@ fn print_backtrace_with_content(
         }
         stdout.execute(Print(format!("{:>4} ", line_number + 1)))?;
         stdout.execute(ResetColor)?;
+        stdout.execute(Print(" "))?;
 
         let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ss).unwrap();
 
@@ -482,7 +478,7 @@ fn print_backtrace_with_content(
                     let (highlighted, after) = rest.split_at(1);
 
                     print!("{}", as_24_bit_terminal_escaped(&[(style, before)], false));
-                    stdout.execute(SetBackgroundColor(Color::Yellow))?;
+                    stdout.execute(SetBackgroundColor(Color::DarkGrey))?;
                     print!(
                         "{}",
                         as_24_bit_terminal_escaped(&[(style, highlighted)], false)
