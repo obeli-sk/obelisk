@@ -442,6 +442,8 @@ message GetLastBacktraceRequest {
 message GetLastBacktraceResponse {
     ComponentId component_id = 1;
     WasmBacktrace wasm_backtrace = 2;
+    uint32 version_min_including = 3;
+    uint32 version_max_excluding = 4;
 }
 
 message WasmBacktrace {

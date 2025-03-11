@@ -152,6 +152,7 @@ pub type VersionType = u32;
     Eq,
     Hash,
     derive_more::Display,
+    derive_more::Into,
     serde::Serialize,
     serde::Deserialize,
 )]

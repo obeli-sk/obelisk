@@ -607,6 +607,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         Ok(tonic::Response::new(grpc::GetLastBacktraceResponse {
             wasm_backtrace: Some(backtrace_info.wasm_backtrace.into()),
             component_id: Some(backtrace_info.component_id.into()),
+            version_min_including: backtrace_info.version_min_including.into(),
+            version_max_excluding: backtrace_info.version_max_excluding.into(),
         }))
     }
 

@@ -345,14 +345,14 @@ pub(crate) async fn get(
         }
         if let Some(backtrace_response) = fetch_backtrace(&mut client, &execution_id).await? {
             let mut seen_positions = hashbrown::HashSet::new();
-            println!("\nBacktrace:");
-            for (i, frame) in backtrace_response
+            println!(
+                "\nBacktrace (version {}):",
+                backtrace_response.version_min_including
+            );
+            let wasm_backtrace = backtrace_response
                 .wasm_backtrace
-                .expect("`wasm_backtrace` is sent")
-                .frames
-                .into_iter()
-                .enumerate()
-            {
+                .expect("`wasm_backtrace` is sent");
+            for (i, frame) in wasm_backtrace.frames.into_iter().enumerate() {
                 println!("{i}: {}, function: {}", frame.module, frame.func_name);
 
                 for symbol in frame.symbols.into_iter() {
