@@ -353,26 +353,29 @@ pub(crate) async fn get(
                 .into_iter()
                 .enumerate()
             {
-                println!("{}. Module: {}", i, frame.module);
-                println!("   Function: {}", frame.func_name);
+                println!("{i}: {}, function: {}", frame.module, frame.func_name);
 
-                for (j, symbol) in frame.symbols.into_iter().enumerate() {
-                    println!("   Symbol {j}:");
-                    if let Some(func_name) = &symbol.func_name {
-                        println!("     Function: {func_name}");
-                    }
-
+                for symbol in frame.symbols.into_iter() {
+                    // Print location.
                     let location = match (&symbol.file, symbol.line, symbol.col) {
                         (Some(file), Some(line), Some(col)) => format!("{file}:{line}:{col}"),
                         (Some(file), Some(line), None) => format!("{file}:{line}"),
                         (Some(file), None, None) => file.clone(),
                         _ => "unknown location".to_string(),
                     };
-                    // Print header.
                     stdout
                         .execute(SetForegroundColor(Color::Green))?
-                        .execute(Print(format!("=== {location} ===\n")))?
+                        .execute(Print(format!("    at {location}")))?
                         .execute(ResetColor)?;
+
+                    // Print function name if it's different from frameinfo
+                    match &symbol.func_name {
+                        Some(func_name) if *func_name != frame.func_name => {
+                            println!(" - {func_name}")
+                        }
+                        _ => println!(),
+                    }
+
                     // Print source file.
                     if let (Some(file), Some(line)) = (&symbol.file, symbol.line) {
                         let new_position = seen_positions.insert((file.clone(), line));
