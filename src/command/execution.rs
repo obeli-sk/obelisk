@@ -335,18 +335,12 @@ pub(crate) async fn get(
     let mut old_pending_status = String::new();
 
     let mut stdout = stdout();
-    let (_terminal_cols, terminal_rows) = terminal::size()?;
 
     let mut source_cache = hashbrown::HashMap::new();
 
     while let Some(status) = stream.message().await? {
-        // Move to (0, 0).
-        stdout.execute(cursor::MoveTo(0, 0))?;
-        // Clear the ENTIRE screen, line by line.
-        for _ in 0..terminal_rows {
-            stdout.execute(terminal::Clear(ClearType::CurrentLine))?;
-            stdout.execute(cursor::MoveDown(1))?;
-        }
+        // Clear the screen.
+        stdout.execute(terminal::Clear(ClearType::All))?;
         stdout.execute(cursor::MoveTo(0, 0))?;
         println!("{execution_id}");
 
