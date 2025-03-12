@@ -23,6 +23,7 @@ use std::io::Stdout;
 use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSetBuilder;
@@ -69,7 +70,7 @@ pub(crate) async fn submit(
         if json_output {
             get_json(client, execution_id, true, true).await?;
         } else {
-            get(client, execution_id, true).await?;
+            poll_status_and_backtrace_with_reconnect(client, execution_id, true).await?;
         }
     }
     if json_output {
@@ -309,14 +310,50 @@ fn print_status_json(
         }
         Message::FinishedStatus(finished_sattus) => print_finished_status_json(finished_sattus),
     };
-
     print!("{old_pending_status}");
 }
 
-pub(crate) async fn get(
+pub(crate) async fn poll_status_and_backtrace_with_reconnect(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionId,
     follow: bool,
+) -> anyhow::Result<()> {
+    let mut stdout = stdout();
+    let mut source_cache = hashbrown::HashMap::new();
+    loop {
+        match poll_stream(
+            &mut client,
+            &execution_id,
+            follow,
+            &mut stdout,
+            &mut source_cache,
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(err) if follow => {
+                clear_screen(&mut stdout)?;
+                println!("Got error while polling the status, reconnecting - {err}");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn clear_screen(stdout: &mut Stdout) -> anyhow::Result<()> {
+    // Clear the screen.
+    stdout.execute(terminal::Clear(ClearType::All))?;
+    stdout.execute(cursor::MoveTo(0, 0))?;
+    Ok(())
+}
+
+async fn poll_stream(
+    client: &mut ExecutionRepositoryClient,
+    execution_id: &ExecutionId,
+    follow: bool,
+    stdout: &mut Stdout,
+    source_cache: &mut hashbrown::HashMap<String, String>,
 ) -> anyhow::Result<()> {
     let mut stream = client
         .get_status(tonic::Request::new(grpc::GetStatusRequest {
@@ -327,15 +364,8 @@ pub(crate) async fn get(
         .await
         .to_anyhow()?
         .into_inner();
-
-    let mut stdout = stdout();
-
-    let mut source_cache = hashbrown::HashMap::new();
-
     while let Some(status) = stream.message().await? {
-        // Clear the screen.
-        stdout.execute(terminal::Clear(ClearType::All))?;
-        stdout.execute(cursor::MoveTo(0, 0))?;
+        clear_screen(stdout)?;
         println!("{execution_id}");
 
         let finished = print_status(status)?;
@@ -343,7 +373,7 @@ pub(crate) async fn get(
             // Do not print last backtrace on finished.
             return Ok(());
         }
-        if let Some(backtrace_response) = fetch_backtrace(&mut client, &execution_id).await? {
+        if let Some(backtrace_response) = fetch_backtrace(client, execution_id).await? {
             let mut seen_positions = hashbrown::HashSet::new();
             println!(
                 "\nBacktrace (version {}):",
@@ -405,7 +435,7 @@ pub(crate) async fn get(
                             };
                             if let Some(source) = source {
                                 print_backtrace_with_content(
-                                    &mut stdout,
+                                    stdout,
                                     source.as_str(),
                                     PathBuf::from(file).extension().and_then(|e| e.to_str()),
                                     usize::try_from(line).unwrap(),

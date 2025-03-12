@@ -130,7 +130,12 @@ async fn main() -> Result<(), anyhow::Error> {
                     if json_output {
                         command::execution::get_json(client, execution_id, follow, false).await
                     } else {
-                        command::execution::get(client, execution_id, follow).await
+                        command::execution::poll_status_and_backtrace_with_reconnect(
+                            client,
+                            execution_id,
+                            follow,
+                        )
+                        .await
                     }
                 }
             }
