@@ -3,6 +3,56 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.18.0](https://github.com/obeli-sk/obelisk/compare/v0.17.0...v0.18.0)
+
+### ⛰️ Features
+
+- *(cli)* Reconnect TUI on status polling - ([fdcf6c2](https://github.com/obeli-sk/obelisk/commit/fdcf6c2adb6f020f6c627ce47ab218e15788b342))
+- *(cli)* Print source hunk in `submit` and `get` - ([72f9237](https://github.com/obeli-sk/obelisk/commit/72f9237fe8537811be8ffd438d524d333f265706))
+- *(cli)* Show the whole source file of the first frame with file and line - ([eacb121](https://github.com/obeli-sk/obelisk/commit/eacb121115c5efa8efff97ca3db3dce8942b21a2))
+- *(cli)* Display last backtrace - ([6354e9b](https://github.com/obeli-sk/obelisk/commit/6354e9b4b7bebd9959ff83dd76a2c4cfea137b9e))
+- *(db)* Implement `get_last_backtrace` - ([fd98793](https://github.com/obeli-sk/obelisk/commit/fd9879305ca9fc94d8a334fb5c835b9247b188db))
+- *(grpc)* Include version in `GetLastBacktraceResponse` - ([c0409b9](https://github.com/obeli-sk/obelisk/commit/c0409b926224d0b60662057d5e8953fb37e93fdf))
+- *(grpc)* Demangle function names, make `FrameInfo.func_name` required - ([2e91456](https://github.com/obeli-sk/obelisk/commit/2e91456618c3e4fe2f4eb2d6d7f64933f2d2dc3e))
+- *(grpc)* Implement `rpc GetBacktraceSource` - ([fcef6b5](https://github.com/obeli-sk/obelisk/commit/fcef6b51cbb87b9003ecd3c51522cbba24b04163))
+- *(grpc)* Implement `rpc GetLastBacktrace` - ([77adffc](https://github.com/obeli-sk/obelisk/commit/77adffc8ac916cb80677c86cd51d142c63f55f88))
+- *(grpc,db)* Add `ComponentDigest` to `BacktraceInfo` and `GetLastBacktraceResponse` - ([1d93c49](https://github.com/obeli-sk/obelisk/commit/1d93c49cdb83eea2230392f2e2ebea15233df8b5))
+- *(toml)* Introduce `OBELISK_TOML_DIR` path prefix - ([d58db23](https://github.com/obeli-sk/obelisk/commit/d58db2374ae059b04cae4eb0d1a32c7ae084f313))
+- Enable path prefixes on mapped backtrace sources - ([539c9f4](https://github.com/obeli-sk/obelisk/commit/539c9f46232e10121ae774a1385d360d5d0170a5))
+- Allow workflows to share name with activities - ([e7d570a](https://github.com/obeli-sk/obelisk/commit/e7d570ad4d6b02f29c02de477919b8e4a4fd81ce))
+- Allow turning off backtrace capture - ([69c958f](https://github.com/obeli-sk/obelisk/commit/69c958f0bace8937dbd852ff5f0e4d42ece12f36))
+- Enable `forward_unhandled_child_errors_in_completing_join_set_close` by default - ([aacdfa7](https://github.com/obeli-sk/obelisk/commit/aacdfa7357344581f1e209e6c6e4672e0b3d67da))
+- Capture and persist backtrace for direct, submit, await-next, schedule calls - ([2a260bc](https://github.com/obeli-sk/obelisk/commit/2a260bca756e1473f4bec6847c6de70336698eb5))
+- Enable wasm backtrace details for workflow engine - ([9265458](https://github.com/obeli-sk/obelisk/commit/9265458272606c671461062358aa0f81bcf00d17))
+
+### 🐛 Bug Fixes
+
+- *(cli)* Display the full join set id - ([668bd2a](https://github.com/obeli-sk/obelisk/commit/668bd2a77de4ecc95b488317e3c56a8df2992db3))
+- Downgrade missing backtrace source to a warning - ([2f31659](https://github.com/obeli-sk/obelisk/commit/2f31659e1f400d93faf89fc1fa5da32c8397aeae))
+- Fix parsing ffqn containing version - ([7f1072e](https://github.com/obeli-sk/obelisk/commit/7f1072e8c24aebbadbf8c94b4db3b2b9524eb50e))
+
+### 📚 Documentation
+
+- Expand roadmap todos - ([cef24a0](https://github.com/obeli-sk/obelisk/commit/cef24a012741f257783309b6360d7b0bfbb08c5e))
+
+### 🚜 Refactor
+
+- *(cli)* Simplify backtrace output - ([24a1f2e](https://github.com/obeli-sk/obelisk/commit/24a1f2e76dafaf813a9de36a283fe7d5774d5304))
+- *(cli)* Get rid of `old_pending_status` - ([88b857b](https://github.com/obeli-sk/obelisk/commit/88b857b96900fc89a01a64d76770ee6408c17150))
+- *(cli)* Simplify screen cleaning - ([6824ec4](https://github.com/obeli-sk/obelisk/commit/6824ec41d850d8b6520afc8da1af0dca04800048))
+- *(cli)* Cache sources - ([bfa25e9](https://github.com/obeli-sk/obelisk/commit/bfa25e9d160d0f7f2cacc6d63f6d97722fbc35e1))
+- *(cli)* Extract `get_json` - ([9396d9a](https://github.com/obeli-sk/obelisk/commit/9396d9a5e3cd4dc1ef40e33fa262b2af55c83f43))
+- *(cli)* Clean up source file formatting - ([7ebc1ef](https://github.com/obeli-sk/obelisk/commit/7ebc1ef50ec4362dc14fde22589bfa9d8b2981cc))
+- *(db)* [**breaking**] Rename `HistoryEvent::JoinSet` to `JoinSetCreate` - ([d8d3f20](https://github.com/obeli-sk/obelisk/commit/d8d3f20c819f6ecc2174639c923f1b4603223aba))
+- *(grpc, db)* Replace `ComponentDigest` with `ComponentId` in backtrace support - ([6627759](https://github.com/obeli-sk/obelisk/commit/6627759e8eb8bc8d5e0291840bf13f71962800a8))
+- *(toml)* Add `#[serde(deny_unknown_fields)]` to all structs - ([ce64955](https://github.com/obeli-sk/obelisk/commit/ce649558c1f35d2f26317951276649b9f30435b6))
+- *(toml)* Rename `workflows.backtrace.persist` - ([be23736](https://github.com/obeli-sk/obelisk/commit/be23736fba39f42eb24a8ee64c3fe58da320a103))
+- Wait 1s when polling for execution status - ([7ffe506](https://github.com/obeli-sk/obelisk/commit/7ffe506cd953b01e4d0de7a9b47dd7ab22283b8a))
+- Record `content_id` at beginning of each `fetch_and_verify` - ([8f90818](https://github.com/obeli-sk/obelisk/commit/8f90818a1a24d3b8d907ddee68e36e9013ef880f))
+- Remove configuration hash from `ComponentId` - ([3375ee4](https://github.com/obeli-sk/obelisk/commit/3375ee40a31d22f7961f21f96682cc20f757fc59))
+- Rename toml structs - ([cd6c0bb](https://github.com/obeli-sk/obelisk/commit/cd6c0bb39a2ec32894274f0a234c079a02fc4fff))
+
+
 ## [0.17.0](https://github.com/obeli-sk/obelisk/compare/v0.16.3...v0.17.0)
 
 ### ⛰️ Features
