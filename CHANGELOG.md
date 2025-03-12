@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.18.1](https://github.com/obeli-sk/obelisk/compare/v0.18.0...v0.18.1)
+
+### ⛰️ Features
+
+- Support path prefixes on both sides of `backtrace.sources` - ([521c489](https://github.com/obeli-sk/obelisk/commit/521c489441b62069f2a42a7b652079851774cdf6))
+
+
 ## [0.18.0](https://github.com/obeli-sk/obelisk/compare/v0.17.0...v0.18.0)
 
 ### ⛰️ Features
