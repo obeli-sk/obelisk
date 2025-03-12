@@ -331,7 +331,7 @@ pub(crate) async fn poll_status_and_backtrace_with_reconnect(
         .await
         {
             Ok(()) => return Ok(()),
-            Err(err) if follow => {
+            Err(err) if follow && err.downcast_ref::<tonic::Status>().is_some() => {
                 clear_screen(&mut stdout)?;
                 println!("Got error while polling the status, reconnecting - {err}");
                 tokio::time::sleep(Duration::from_secs(1)).await;
