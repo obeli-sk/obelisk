@@ -173,7 +173,7 @@ bytes = "1.10"
 cargo_metadata = "0.19"
 cfg-if = "1.0.0"
 chrono = { version = "0.4.40", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.31", features = ["derive"] }
+clap = { version = "4.5.32", features = ["derive"] }
 config = { version = "0.15.9", default-features = false, features = [
     "toml",
     "preserve_order",
@@ -200,11 +200,11 @@ fxhash = "0.2.1"
 getrandom = "=0.2.11" # For madsim patch
 hashbrown = { version = "0.15.2", features = ["serde"] }
 hdrhistogram = "7.5.4"
-http = "1.2.0"
+http = "1.3.1"
 http-body-util = "0.1"
 hyper = "1.6.0"
 hyper-util = { version = "0.1", features = ["tokio"] }
-indexmap = { version = "2.7", features = ["serde"] }
+indexmap = { version = "2.8", features = ["serde"] }
 insta = { version = "1.42.2", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
@@ -229,7 +229,7 @@ rusqlite = { version = "0.34.0", features = [
     "chrono",
     "serde_json",
 ] }
-serde = { version = "1.0.218", features = ["derive"] }
+serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 serde_with = "3.12.0"
 sha2 = "0.10.8"
@@ -267,10 +267,10 @@ wiremock = "0.6"
 
 # webui
 id-arena = "2.2.1"
-implicit-clone = "0.5.0"
+implicit-clone = "0.5.1"
 log = "0.4.26"
 semver = "1.0.26"
-tonic-web-wasm-client = "0.6.1"
+tonic-web-wasm-client = "0.6.2"
 wasm-bindgen = "=0.2.100"                                                     # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml.
 wasm-bindgen-futures = "=0.4.50"                                              # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/futures/Cargo.toml
 web-sys = "=0.3.77"                                                           # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/web-sys/Cargo.toml
@@ -287,13 +287,13 @@ wasmtime-wasi = "30.0.2"
 wasmtime-wasi-http = "30.0.2"
 wasmtime-environ = "30.0.2"
 # wasm-tools
-wast = "227.0.0"
-wit-parser = "0.227.0"
-wasmparser = "0.227.0"
-wit-component = "0.227.0"
+wast = "227.0.1"
+wit-parser = "0.227.1"
+wasmparser = "0.227.1"
+wit-component = "0.227.1"
 
 # testing components
-wit-bindgen = "0.39.0"
+wit-bindgen = "0.40.0"
 
 # otlp
 opentelemetry = "0.28.0"
