@@ -1,5 +1,5 @@
 use super::toml::ConfigToml;
-use anyhow::bail;
+use anyhow::{bail, Context as _};
 use config::{builder::AsyncState, ConfigBuilder, Environment, File, FileFormat};
 use directories::{BaseDirs, ProjectDirs};
 use std::path::{Path, PathBuf};
@@ -74,8 +74,14 @@ impl ConfigHolder {
         Ok(Self {
             path_prefixes: PathPrefixes {
                 obelisk_toml_dir: obelisk_toml
+                    .canonicalize()
+                    .with_context(|| {
+                        format!(
+                            "error while calling canonicalize on parent path of {obelisk_toml:?}"
+                        )
+                    })?
                     .parent()
-                    .expect("obelisk.toml file must have a parent directory")
+                    .with_context(|| format!("error getting parent path of {obelisk_toml:?}"))?
                     .to_path_buf(),
                 project_dirs,
                 base_dirs,

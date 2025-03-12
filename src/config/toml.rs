@@ -16,7 +16,9 @@ use std::{
     time::Duration,
 };
 use tracing::{instrument, warn};
-use util::{replace_path_prefix_mkdir, verify_file_exists};
+use util::{
+    replace_file_prefix_no_verify, replace_file_prefix_verify_exists, replace_path_prefix_mkdir,
+};
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
     activity::activity_worker::ActivityConfig,
@@ -461,9 +463,16 @@ impl WorkflowComponentConfigToml {
             .backtrace
             .frame_files_to_sources
             .into_iter()
-            .filter_map(|(k, source)| {
-                match verify_file_exists(&source, path_prefixes.as_ref()).map(|source| (k, source))
-                {
+            .filter_map(|(key, value)| {
+                // Remove all entries where destination file is not found.
+                match replace_file_prefix_verify_exists(&value, path_prefixes.as_ref()).map(
+                    |value| {
+                        (
+                            replace_file_prefix_no_verify(&key, path_prefixes.as_ref()),
+                            value,
+                        )
+                    },
+                ) {
                     Ok((k, v)) => Some((k, v)),
                     Err(err) => {
                         warn!("Ignoring missing backtrace source - {err:?}");
@@ -931,7 +940,7 @@ mod util {
         OBELISK_TOML_DIR_PREFIX,
     };
 
-    pub(crate) fn verify_file_exists(
+    pub(crate) fn replace_file_prefix_verify_exists(
         input_path: &str,
         path_prefixes: &PathPrefixes,
     ) -> Result<PathBuf, anyhow::Error> {
@@ -968,6 +977,40 @@ mod util {
         } else {
             bail!("file does not exist: {path:?}")
         }
+    }
+    pub(crate) fn replace_file_prefix_no_verify(
+        input_path: &str,
+        path_prefixes: &PathPrefixes,
+    ) -> String {
+        let path = if let (Some(project_dirs), Some(base_dirs)) =
+            (&path_prefixes.project_dirs, &path_prefixes.base_dirs)
+        {
+            if let Some(suffix) = input_path.strip_prefix(HOME_DIR_PREFIX) {
+                base_dirs.home_dir().join(suffix)
+            } else if let Some(suffix) = input_path.strip_prefix(DATA_DIR_PREFIX) {
+                project_dirs.data_dir().join(suffix)
+            } else if let Some(suffix) = input_path.strip_prefix(CACHE_DIR_PREFIX) {
+                project_dirs.cache_dir().join(suffix)
+            } else if let Some(suffix) = input_path.strip_prefix(CONFIG_DIR_PREFIX) {
+                project_dirs.config_dir().join(suffix)
+            } else if let Some(suffix) = input_path.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
+                path_prefixes.obelisk_toml_dir.join(suffix)
+            } else {
+                PathBuf::from(input_path)
+            }
+        } else {
+            if input_path.starts_with(HOME_DIR_PREFIX)
+                || input_path.starts_with(DATA_DIR_PREFIX)
+                || input_path.starts_with(CACHE_DIR_PREFIX)
+                || input_path.starts_with(CONFIG_DIR_PREFIX)
+                || input_path.starts_with(OBELISK_TOML_DIR_PREFIX)
+            {
+                warn!("Not expanding prefix of `{input_path}`");
+            }
+
+            PathBuf::from(input_path)
+        };
+        path.to_string_lossy().into_owned()
     }
 
     pub(crate) async fn replace_path_prefix_mkdir(

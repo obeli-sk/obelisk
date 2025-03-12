@@ -632,9 +632,14 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     }
                 }
             } else {
+                warn!(
+                    "Backtrace file mapping not found for {component_id}, src {}",
+                    request.file
+                );
                 Err(tonic::Status::not_found("backtrace file mapping not found"))
             }
         } else {
+            warn!("Component {component_id} not found");
             Err(tonic::Status::not_found("component not found"))
         }
     }

@@ -56,7 +56,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # retry_on_trap = false # If set to true, traps(panics) will be handled as temporary failures and retried until the problem goes away.
 # convert_core_module = true # Transparently convert Core WASM modules to WASM Components during startup.
 # forward_unhandled_child_errors_in_completing_join_set_close = true # Forward unhandled child errors to the parent workflow when closing completing join sets.
-## Map from frame symbol file names to corresponding file paths on local filesystem. Mapped sources support path path prefixes.
+## Map from frame symbol file names to corresponding file paths on local filesystem. Supports path path prefixes on both sides.
 # backtrace.sources = {"frame symbol file path" = "path to the source file"}
 
 ### Webhook Endpoint section
@@ -117,6 +117,7 @@ forward_stderr = "stderr"
 [[workflow]]
 name = "test_programs_http_get_workflow"
 location.oci = "docker.io/getobelisk/test_programs_http_get_workflow:2025-03-09@sha256:424f95a522e07c01d46855f4967b5c71a1a254297fa12327033289cabdc8b66b"
+backtrace.sources = {"/home/runner/work/obelisk/obelisk/crates/testing/test-programs/http/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs"}
 
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
@@ -126,6 +127,7 @@ exec.lock_expiry.seconds = 10
 [[workflow]]
 name = "test_programs_sleep_workflow"
 location.oci = "docker.io/getobelisk/test_programs_sleep_workflow:2025-03-09@sha256:299793c437f89a33fbf1a42fe393a6dd316cb52a1fe4a8100cd806ee376c9405"
+backtrace.sources = {"/home/runner/work/obelisk/obelisk/crates/testing/test-programs/sleep/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs"}
 
 ### Send spans via gRPC to an OTLP collector.
 # [otlp]
