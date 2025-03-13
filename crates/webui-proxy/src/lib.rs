@@ -5,27 +5,27 @@ use wstd::http::{Client, HeaderValue, Request, Response, Uri};
 use wstd::io::{copy, AsyncWrite};
 
 #[wstd::http_server]
-async fn main(mut incoming_req: Request<IncomingBody>, incoming_responder: Responder) -> Finished {
-    match incoming_req.uri().path_and_query().unwrap().as_str() {
+async fn main(mut server_req: Request<IncomingBody>, responder: Responder) -> Finished {
+    match server_req.uri().path_and_query().unwrap().as_str() {
         "/webui_bg.wasm" => {
             let content = get_webui_bg_wasm();
             let content_type = "application/wasm";
-            write_static_response(content, content_type, incoming_responder).await
+            write_static_response(content, content_type, responder).await
         }
         "/webui.js" => {
             let content = get_webui_js();
             let content_type = "text/javascript";
-            write_static_response(content, content_type, incoming_responder).await
+            write_static_response(content, content_type, responder).await
         }
         "/blueprint.css" => {
             let content = get_blueprint_css();
             let content_type = "text/css";
-            write_static_response(content, content_type, incoming_responder).await
+            write_static_response(content, content_type, responder).await
         }
         "/styles.css" => {
             let content = get_styles_css();
             let content_type = "text/css";
-            write_static_response(content, content_type, incoming_responder).await
+            write_static_response(content, content_type, responder).await
         }
         api_prefixed_path if api_prefixed_path.starts_with("/api") => {
             // Remove /api prefix
@@ -41,27 +41,27 @@ async fn main(mut incoming_req: Request<IncomingBody>, incoming_responder: Respo
             .expect("final target url should be parseable");
 
             let client = Client::new();
-            let mut client_request = Request::builder();
-            client_request = client_request.uri(target_url).method(incoming_req.method());
+            let mut client_req = Request::builder();
+            client_req = client_req.uri(target_url).method(server_req.method());
 
             // copy headers from incoming request to the client_request
-            for (key, value) in incoming_req.headers() {
-                client_request = client_request.header(key, value);
+            for (key, value) in server_req.headers() {
+                client_req = client_req.header(key, value);
             }
 
             // Send the request.
-            let client_request = client_request
+            let client_req = client_req
                 .body(BodyForthcoming)
-                .expect("client_request.body failed");
-            let (mut client_outgoing_body, client_response) = client
-                .start_request(client_request)
+                .expect("client_req.body failed");
+            let (mut client_request_body, client_resp) = client
+                .start_request(client_req)
                 .await
                 .expect("client.start_request failed");
 
             // Copy the outgoing request body to client_outgoing_body
-            let req_to_req = async {
-                let res = copy(incoming_req.body_mut(), &mut client_outgoing_body).await;
-                Client::finish(client_outgoing_body, None)
+            let server_req_to_client_req = async {
+                let res = copy(server_req.body_mut(), &mut client_request_body).await;
+                Client::finish(client_request_body, None)
                     .map_err(|_http_err| {
                         std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
@@ -72,35 +72,35 @@ async fn main(mut incoming_req: Request<IncomingBody>, incoming_responder: Respo
             };
 
             // Copy the client_response headers to incoming response
-            let resp_to_resp = async {
-                let client_response = client_response.await.unwrap();
-                let mut incoming_response = Response::builder();
-                for (key, value) in client_response.headers() {
-                    incoming_response
+            let client_resp_to_server_resp = async {
+                let client_resp = client_resp.await.unwrap();
+                let mut server_resp = Response::builder();
+                for (key, value) in client_resp.headers() {
+                    server_resp
                         .headers_mut()
                         .unwrap()
                         .append(key, value.clone());
                 }
                 // Start sending the incoming_response.
-                let incoming_response = incoming_response.body(BodyForthcoming).unwrap();
-                let mut incoming_response = incoming_responder.start_response(incoming_response);
+                let server_resp = server_resp.body(BodyForthcoming).unwrap();
+                let mut server_resp = responder.start_response(server_resp);
 
                 (
-                    copy(client_response.into_body(), &mut incoming_response).await,
-                    incoming_response,
+                    copy(client_resp.into_body(), &mut server_resp).await,
+                    server_resp,
                 )
             };
 
-            let (req_to_req, (resp_to_resp, incoming_response)) =
-                (req_to_req, resp_to_resp).join().await;
-            let is_success = req_to_req.and(resp_to_resp);
+            let (server_req_to_client_req, (client_resp_to_server_resp, server_resp)) =
+                (server_req_to_client_req, client_resp_to_server_resp).join().await;
+            let is_success = server_req_to_client_req.and(client_resp_to_server_resp);
 
-            Finished::finish(incoming_response, is_success, None)
+            Finished::finish(server_resp, is_success, None)
         }
         _ => {
             let content = get_index();
             let content_type = "text/html";
-            write_static_response(content, content_type, incoming_responder).await
+            write_static_response(content, content_type, responder).await
         }
     }
 }
