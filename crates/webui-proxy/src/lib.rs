@@ -58,12 +58,17 @@ async fn main(mut incoming_req: Request<IncomingBody>, incoming_responder: Respo
                 .await
                 .expect("client.start_request failed");
 
-            // Copy the incoming request body to client_outgoing_body
+            // Copy the outgoing request body to client_outgoing_body
             let req_to_req = async {
                 let res = copy(incoming_req.body_mut(), &mut client_outgoing_body).await;
-                // TODO: Convert to io error if necessary
-                let _ = Client::finish(client_outgoing_body, None);
-                res
+                Client::finish(client_outgoing_body, None)
+                    .map_err(|_http_err| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Failed write the HTTP request body",
+                        )
+                    })
+                    .and(res)
             };
 
             // Copy the client_response headers to incoming response
