@@ -92,7 +92,9 @@ async fn main(mut server_req: Request<IncomingBody>, responder: Responder) -> Fi
             };
 
             let (server_req_to_client_req, (client_resp_to_server_resp, server_resp)) =
-                (server_req_to_client_req, client_resp_to_server_resp).join().await;
+                (server_req_to_client_req, client_resp_to_server_resp)
+                    .join()
+                    .await;
             let is_success = server_req_to_client_req.and(client_resp_to_server_resp);
 
             Finished::finish(server_resp, is_success, None)
