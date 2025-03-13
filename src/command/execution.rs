@@ -30,8 +30,6 @@ use syntect::parsing::SyntaxSetBuilder;
 use syntect::util::as_24_bit_terminal_escaped;
 use tracing::instrument;
 
-// TODO: CamelCase + snake_case  mixed in JSON output
-
 #[instrument(skip_all)]
 pub(crate) async fn submit(
     mut client: ExecutionRepositoryClient,
@@ -72,9 +70,6 @@ pub(crate) async fn submit(
         } else {
             poll_status_and_backtrace_with_reconnect(client, execution_id, true).await?;
         }
-    }
-    if json_output {
-        println!("\n]");
     }
     Ok(())
 }
@@ -210,7 +205,7 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> anyhow::Resul
     res
 }
 
-fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> String {
+fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> Result<(), anyhow::Error> {
     let created_at = finished_status
         .created_at
         .expect("`created_at` is sent by the server");
@@ -221,7 +216,7 @@ fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> String {
         .finished_at
         .expect("`finished_at` is sent by the server");
 
-    let mut json = match finished_status
+    let (mut json, res) = match finished_status
         .result_detail
         .expect("`result_detail` is sent by the server")
         .value
@@ -231,42 +226,54 @@ fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> String {
         })) => {
             let return_value: serde_json::Value = serde_json::from_slice(&return_value.value)
                 .expect("return_value must be JSON encoded");
-            json!({"ok": return_value})
+            (json!({"ok": return_value}), Ok(()))
         }
         Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok { return_value: None })) => {
-            json!({"ok": null})
+            (json!({"ok": null}), Ok(()))
         }
         Some(grpc::result_detail::Value::FallibleError(grpc::result_detail::FallibleError {
             return_value: Some(return_value),
         })) => {
             let return_value: serde_json::Value = serde_json::from_slice(&return_value.value)
                 .expect("return_value must be JSON encoded");
-            json!({"fallible_error": return_value})
+            (
+                json!({"fallible_error": return_value}),
+                Err(anyhow!("fallible error")),
+            )
         }
-        Some(grpc::result_detail::Value::Timeout(_)) => json!({"timeout": null}),
+        Some(grpc::result_detail::Value::Timeout(_)) => {
+            (json!({"timeout": null}), Err(anyhow!("timeout")))
+        }
         Some(grpc::result_detail::Value::ExecutionFailure(
             grpc::result_detail::ExecutionFailure { reason, detail },
-        )) => json!({"execution_failure": {"reason": reason, "detail": detail}}),
+        )) => (
+            json!({"execution_failure": {"reason": reason, "detail": detail}}),
+            Err(anyhow!("failure")),
+        ),
         Some(grpc::result_detail::Value::UnhandledChildExecutionError(
             grpc::result_detail::UnhandledChildExecutionError {
                 child_execution_id,
                 root_cause_id,
             },
-        )) => json!({"unhandled_child_execution_error": {"child_execution_id": child_execution_id,
+        )) => (
+            json!({"unhandled_child_execution_error": {"child_execution_id": child_execution_id,
                 "root_cause_id": root_cause_id}}),
+            Err(anyhow!("unhandled child execution error")),
+        ),
         other => unreachable!("unexpected variant {other:?}"),
     };
     json["created_at"] = serde_json::Value::String(created_at.to_string());
     json["scheduled_at"] = serde_json::Value::String(scheduled_at.to_string());
     json["finished_at"] = serde_json::Value::String(finished_at.to_string());
-    json.to_string()
+    print!("{json}");
+    res
 }
 
 pub(crate) async fn get_json(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionId,
     follow: bool,
-    json_output_started: bool, // true if `[{..}` was printed alraedy.
+    mut json_output_started: bool, // true if `[{..}` was printed alraedy.
 ) -> anyhow::Result<()> {
     let mut stream = client
         .get_status(tonic::Request::new(grpc::GetStatusRequest {
@@ -277,40 +284,39 @@ pub(crate) async fn get_json(
         .await
         .to_anyhow()?
         .into_inner();
-    let mut old_pending_status = String::new();
+
     if !json_output_started {
         println!("[");
     }
+    let mut res = Ok(());
     while let Some(status) = stream.message().await? {
-        print_status_json(status, &mut old_pending_status, json_output_started);
+        if json_output_started {
+            println!(",");
+        }
+        res = print_status_json(status);
+        if res.is_err() {
+            break;
+        }
+        json_output_started = true;
     }
-    if !json_output_started {
-        println!("\n]");
-    }
-    Ok(())
+    println!("\n]");
+    res
 }
 
-fn print_status_json(
-    response: grpc::GetStatusResponse,
-    old_pending_status: &mut String,
-    json_output_started: bool,
-) {
+fn print_status_json(response: grpc::GetStatusResponse) -> Result<(), anyhow::Error> {
     use grpc::get_status_response::Message;
     let message = response.message.expect("message expected");
 
-    if !old_pending_status.is_empty() || json_output_started {
-        println!(",");
-    }
-    *old_pending_status = match message {
-        Message::Summary(_) => {
-            serde_json::to_string(&message).expect("summary must be serializable")
-        }
-        Message::CurrentStatus(_) => {
-            serde_json::to_string(&message).expect("pending_status must be serializable")
+    match message {
+        Message::Summary(_) | Message::CurrentStatus(_) => {
+            print!(
+                "{}",
+                serde_json::to_string(&message).expect("must be serializable")
+            );
+            Ok(())
         }
         Message::FinishedStatus(finished_sattus) => print_finished_status_json(finished_sattus),
-    };
-    print!("{old_pending_status}");
+    }
 }
 
 pub(crate) async fn poll_status_and_backtrace_with_reconnect(
