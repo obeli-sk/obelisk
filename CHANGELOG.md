@@ -3,6 +3,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.18.2](https://github.com/obeli-sk/obelisk/compare/v0.18.1...v0.18.2)
+
+### ⛰️ Features
+
+- *(cli)* Send execution error via exit code on json output - ([d02e574](https://github.com/obeli-sk/obelisk/commit/d02e574b6db02f62feee32e1befaad499ed14791))
+
+### 🐛 Bug Fixes
+
+- *(cli)* Reconnect only on tonic errors - ([23fa4b5](https://github.com/obeli-sk/obelisk/commit/23fa4b56ebf647bae6f72d1adc24c392017f346e))
+
+
 ## [0.18.1](https://github.com/obeli-sk/obelisk/compare/v0.18.0...v0.18.1)
 
 ### ⛰️ Features
