@@ -4,8 +4,7 @@ interface workflow-support {
     use obelisk:types/time@1.0.0.{duration};
     use obelisk:types/execution@1.0.0.{join-set-id};
 
-    /// The closing strategy of a join set. Join sets are closed when execution finishes or
-    /// on drop.
+    /// The closing strategy of a join set. Join sets are closed when execution finishes.
     enum closing-strategy {
         /// All submitted executions that were not polled are awaited.
         complete,
