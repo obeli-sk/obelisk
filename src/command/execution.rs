@@ -499,7 +499,7 @@ fn print_backtrace_with_content(
             stdout.execute(SetBackgroundColor(Color::White))?;
             stdout.execute(SetForegroundColor(Color::Black))?;
         }
-        stdout.execute(Print(format!("{:>4} ", line_number + 1)))?;
+        stdout.execute(Print(format!("{:>8} ", line_number + 1)))?;
         stdout.execute(ResetColor)?;
         stdout.execute(Print(" "))?;
 
