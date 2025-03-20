@@ -282,10 +282,10 @@ yewprint-css = "0.4.0"
 wstd = "0.5.3"
 
 # wasmtime
-wasmtime = { version = "30.0.2", features = ["memory-protection-keys"] }
-wasmtime-wasi = "30.0.2"
-wasmtime-wasi-http = "30.0.2"
-wasmtime-environ = "30.0.2"
+wasmtime = { version = "31.0.0", features = ["memory-protection-keys"] }
+wasmtime-wasi = "31.0.0"
+wasmtime-wasi-http = "31.0.0"
+wasmtime-environ = "31.0.0"
 # wasm-tools
 wast = "227.0.1"
 wit-parser = "0.227.1"
@@ -293,7 +293,7 @@ wasmparser = "0.227.1"
 wit-component = "0.227.1"
 
 # testing components
-wit-bindgen = "0.40.0"
+wit-bindgen = "0.41.0"
 
 # otlp
 opentelemetry = "0.28.0"
