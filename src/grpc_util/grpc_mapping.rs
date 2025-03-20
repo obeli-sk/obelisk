@@ -3,9 +3,10 @@ use anyhow::anyhow;
 use concepts::{
     prefixed_ulid::{DelayId, RunId},
     storage::{
-        DbError, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, HistoryEvent,
-        HistoryEventScheduledAt, JoinSetRequest, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedError, PendingStateFinishedResultKind, SpecificError, VersionType,
+        http_client_trace::HttpClientTrace, DbError, ExecutionEvent, ExecutionEventInner,
+        ExecutionListPagination, HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Pagination,
+        PendingState, PendingStateFinished, PendingStateFinishedError,
+        PendingStateFinishedResultKind, SpecificError, VersionType,
     },
     ClosingStrategy, ComponentId, ComponentType, ExecutionId, FinishedExecutionError,
     FinishedExecutionResult, FunctionFqn, SupportedFunctionReturnValue,
@@ -438,21 +439,23 @@ pub(crate) fn from_execution_event_to_grpc(
                     reason_full,
                     reason_inner: _,
                     detail,
-                    http_client_trace: _todo
+                    http_client_trace
                 } => grpc::execution_event::Event::Failed(grpc::execution_event::TemporarilyFailed {
                     reason: reason_full.to_string(),
                     detail,
                     backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
+                    http_client_trace: http_client_trace.unwrap_or_default().into_iter().map(grpc::HttpClientTrace::from).collect(),
                 }),
                 ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at } => {
                     grpc::execution_event::Event::TimedOut(grpc::execution_event::TemporarilyTimedOut {
                         backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                     })
                 },
-                ExecutionEventInner::Finished { result, http_client_trace: _todo } => grpc::execution_event::Event::Finished(grpc::execution_event::Finished {
+                ExecutionEventInner::Finished { result, http_client_trace } => grpc::execution_event::Event::Finished(grpc::execution_event::Finished {
                     result_detail: Some(
-                        result.into()
+                        grpc::ResultDetail::from(result)
                     ),
+                    http_client_trace: http_client_trace.unwrap_or_default().into_iter().map(grpc::HttpClientTrace::from).collect(),
 
                 }),
                 ExecutionEventInner::HistoryEvent { event } => grpc::execution_event::Event::HistoryVariant(grpc::execution_event::HistoryEvent {
@@ -600,6 +603,21 @@ mod backtrace {
                 line: symbol.line,
                 col: symbol.col,
             }
+        }
+    }
+}
+
+impl From<HttpClientTrace> for grpc::HttpClientTrace {
+    fn from(value: HttpClientTrace) -> Self {
+        Self {
+            sent_at: Some(value.req.sent_at.into()),
+            uri: value.req.uri,
+            method: value.req.method,
+            finished_at: value.resp.as_ref().map(|resp| resp.finished_at.into()),
+            result: value.resp.map(|resp| match resp.status {
+                Ok(status) => grpc::http_client_trace::Result::Status(u32::from(status)),
+                Err(err) => grpc::http_client_trace::Result::Error(err),
+            }),
         }
     }
 }

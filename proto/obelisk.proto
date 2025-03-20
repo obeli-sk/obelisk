@@ -11,7 +11,9 @@ service ExecutionRepository {
     rpc Submit(SubmitRequest) returns (SubmitResponse);
     rpc GetStatus(GetStatusRequest) returns (stream GetStatusResponse);
     rpc ListExecutions(ListExecutionsRequest) returns (ListExecutionsResponse);
+    // Get the execution log
     rpc ListExecutionEvents(ListExecutionEventsRequest) returns (ListExecutionEventsResponse);
+    // List child execution responses
     rpc ListResponses(ListResponsesRequest) returns (ListResponsesResponse);
     rpc GetLastBacktrace(GetLastBacktraceRequest) returns (GetLastBacktraceResponse);
     rpc GetBacktraceSource(GetBacktraceSourceRequest) returns (GetBacktraceSourceResponse);
@@ -278,6 +280,7 @@ message ExecutionEvent {
         string reason = 1;
         optional string detail = 2;
         google.protobuf.Timestamp backoff_expires_at = 3;
+        repeated HttpClientTrace http_client_trace = 4;
     }
 
     message TemporarilyTimedOut {
@@ -286,6 +289,7 @@ message ExecutionEvent {
 
     message Finished {
         ResultDetail result_detail = 1;
+        repeated HttpClientTrace http_client_trace = 2;
     }
 
     message HistoryEvent {
@@ -380,6 +384,17 @@ message ExecutionEvent {
         TemporarilyTimedOut timed_out = 7;
         Finished finished = 8;
         HistoryEvent history_variant = 9;
+    }
+}
+
+message HttpClientTrace {
+    google.protobuf.Timestamp sent_at = 1;
+    string uri = 2;
+    string method = 3;
+    optional google.protobuf.Timestamp finished_at = 4;
+    oneof result {
+        uint32 status = 5;
+        string error = 6;
     }
 }
 
