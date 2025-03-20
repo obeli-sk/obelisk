@@ -3221,6 +3221,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+ "strum 0.27.1",
  "tempfile",
  "test-programs-fibo-activity-builder",
  "test-programs-fibo-webhook-builder",

@@ -7,7 +7,7 @@ use concepts::time::ClockFn;
 use concepts::ExecutionId;
 use hyper::body::Body;
 use tokio::sync::oneshot;
-use tracing::{debug, Span};
+use tracing::{debug, info_span, Instrument, Span};
 use wasmtime::component::Resource;
 use wasmtime::Engine;
 use wasmtime::{component::ResourceTable, Store};
@@ -64,6 +64,11 @@ impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
         request: hyper::Request<HyperOutgoingBody>,
         config: OutgoingRequestConfig,
     ) -> HttpResult<HostFutureIncomingResponse> {
+        let span = info_span!(parent: &self.component_logger.span, "send_request",
+            otel.name = format!("send_request {} {}", request.method(), request.uri()),
+            method = %request.method(),
+            uri = %request.uri(),
+        );
         let req = RequestTrace {
             sent_at: self.clock_fn.now(),
             uri: request.uri().to_string(),
@@ -72,20 +77,23 @@ impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
         let (resp_trace_tx, resp_trace_rx) = oneshot::channel();
         self.http_client_trace.push((req, resp_trace_rx));
         let clock_fn = self.clock_fn.clone();
-        debug!("Sending {request:?}");
-        let handle = wasmtime_wasi::runtime::spawn(async move {
-            let resp_result = default_send_request_handler(request, config).await;
-            debug!("Got response {resp_result:?}");
-            let resp_trace = ResponseTrace {
-                finished_at: clock_fn.now(),
-                status: resp_result
-                    .as_ref()
-                    .map(|resp| resp.resp.status().as_u16())
-                    .map_err(std::string::ToString::to_string),
-            };
-            let _ = resp_trace_tx.send(resp_trace);
-            Ok(resp_result)
-        });
+        span.in_scope(|| debug!("Sending {request:?}"));
+        let handle = wasmtime_wasi::runtime::spawn(
+            async move {
+                let resp_result = default_send_request_handler(request, config).await;
+                debug!("Got response {resp_result:?}");
+                let resp_trace = ResponseTrace {
+                    finished_at: clock_fn.now(),
+                    status: resp_result
+                        .as_ref()
+                        .map(|resp| resp.resp.status().as_u16())
+                        .map_err(std::string::ToString::to_string),
+                };
+                let _ = resp_trace_tx.send(resp_trace);
+                Ok(resp_result)
+            }
+            .instrument(span),
+        );
         Ok(HostFutureIncomingResponse::pending(handle))
     }
 }

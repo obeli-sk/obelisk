@@ -177,7 +177,7 @@ impl<'a> ImportedFnCall<'a> {
         Ok((join_set_id, params))
     }
 
-    #[instrument(skip_all, fields(ffqn = %called_ffqn))]
+    #[instrument(skip_all, fields(ffqn = %called_ffqn, otel.name = format!("imported_fn_call {called_ffqn}")), name = "imported_fn_call")]
     pub(crate) fn new<'ctx, C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
         called_ffqn: FunctionFqn,
         store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C, DB, P>>,

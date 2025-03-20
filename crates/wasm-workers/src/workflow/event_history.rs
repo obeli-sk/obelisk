@@ -34,7 +34,9 @@ use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use indexmap::IndexMap;
 use std::fmt::Debug;
+use std::fmt::Display;
 use std::sync::Arc;
+use strum::IntoStaticStr;
 use tracing::instrument;
 use tracing::Level;
 use tracing::Span;
@@ -222,7 +224,7 @@ impl<C: ClockFn> EventHistory<C> {
 
     /// Apply the event and wait if new, replay if already in the event history, or
     /// apply with an interrupt.
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(otel.name = format!("apply {event_call}"), ?event_call))]
     pub(crate) async fn apply<DB: DbConnection>(
         &mut self,
         event_call: EventCall,
@@ -1361,7 +1363,7 @@ impl PollVariant {
     }
 }
 
-#[derive(derive_more::Debug, Clone)]
+#[derive(derive_more::Debug, Clone, IntoStaticStr)]
 pub(crate) enum EventCall {
     CreateJoinSet {
         join_set_id: JoinSetId,
@@ -1372,6 +1374,7 @@ pub(crate) enum EventCall {
         join_set_id: JoinSetId,
         child_execution_id: ExecutionIdDerived,
         params: Params,
+        #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     ScheduleRequest {
@@ -1379,11 +1382,13 @@ pub(crate) enum EventCall {
         execution_id: ExecutionId,
         ffqn: FunctionFqn,
         params: Params,
+        #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     BlockingChildAwaitNext {
         join_set_id: JoinSetId,
         closing: bool,
+        #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     /// combines [`Self::CreateJoinSet`] [`Self::StartAsync`] [`Self::BlockingChildJoinNext`]
@@ -1393,6 +1398,7 @@ pub(crate) enum EventCall {
         join_set_id: JoinSetId,
         child_execution_id: ExecutionIdDerived,
         params: Params,
+        #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     BlockingDelayRequest {
@@ -1405,6 +1411,13 @@ pub(crate) enum EventCall {
         value: Vec<u8>,
         kind: PersistKind,
     },
+}
+
+impl Display for EventCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s: &'static str = self.into();
+        write!(f, "{s}")
+    }
 }
 
 impl EventCall {

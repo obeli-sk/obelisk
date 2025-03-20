@@ -236,7 +236,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 let clock_fn = self.clock_fn.clone();
                 let run_id = locked_execution.run_id;
                 let worker_span = info_span!(parent: None, "worker",
-                    "otel.name" = format!("{}", locked_execution.ffqn),
+                    "otel.name" = format!("worker {}", locked_execution.ffqn),
                     %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.executor_id, component_id = %self.config.component_id);
                 locked_execution.metadata.enrich(&worker_span);
                 tokio::spawn({
