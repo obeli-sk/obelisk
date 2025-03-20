@@ -687,6 +687,7 @@ pub(crate) mod tests {
             assert_matches!(err, WorkerError::TemporaryTimeout);
         }
 
+        #[expect(clippy::too_many_lines)]
         #[tokio::test]
         async fn http_get_simple() {
             use std::ops::Deref;
@@ -810,6 +811,7 @@ pub(crate) mod tests {
             db_pool.close().await.unwrap();
         }
 
+        #[expect(clippy::too_many_lines)]
         #[tokio::test]
         async fn http_get_activity_trap_should_be_turned_into_finished_execution_error_permanent_failure(
         ) {
@@ -817,8 +819,8 @@ pub(crate) mod tests {
                 matchers::{method, path},
                 Mock, MockServer, ResponseTemplate,
             };
-            test_utils::set_up();
             const STATUS: u16 = 418; // I'm a teapot causes trap
+            test_utils::set_up();
             info!("All set up");
             let sim_clock = SimClock::default();
             let (_guard, db_pool) = Database::Memory.set_up().await;
