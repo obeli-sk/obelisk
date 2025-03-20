@@ -418,6 +418,7 @@ pub(crate) mod tests {
             prefixed_ulid::RunId,
             storage::{ExecutionEventInner, Version},
         };
+        use concepts::{FinishedExecutionError, PermanentFailureKind};
         use test_utils::{env_or_default, sim_clock::SimClock};
         use tracing::{debug, info, info_span};
 
@@ -797,6 +798,130 @@ pub(crate) mod tests {
                     },
                     resp: Some(ResponseTrace {
                         status: Ok(200),
+                        finished_at: _
+                    })
+                }
+                => (method, uri)
+            );
+            assert_eq!("GET", method);
+            assert_eq!(uri, *uri_actual);
+            drop(db_connection);
+            drop(exec_task);
+            db_pool.close().await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn http_get_activity_trap_should_be_turned_into_finished_execution_error_permanent_failure(
+        ) {
+            use wiremock::{
+                matchers::{method, path},
+                Mock, MockServer, ResponseTemplate,
+            };
+            test_utils::set_up();
+            const STATUS: u16 = 418; // I'm a teapot causes trap
+            info!("All set up");
+            let sim_clock = SimClock::default();
+            let (_guard, db_pool) = Database::Memory.set_up().await;
+            let engine =
+                Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
+            let (worker, _) = new_activity_worker(
+                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                engine,
+                sim_clock.clone(),
+                TokioSleep,
+            );
+            let exec_config = ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: Duration::ZERO,
+                component_id: ComponentId::dummy_activity(),
+                task_limiter: None,
+            };
+            let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
+            let exec_task = ExecTask::new(
+                worker,
+                exec_config,
+                sim_clock.clone(),
+                db_pool.clone(),
+                ffqns,
+            );
+
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let server_address = listener
+                .local_addr()
+                .expect("Failed to get server address.");
+            let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
+            let params = Params::from_json_values(vec![json!(uri.clone())]);
+            let execution_id = ExecutionId::generate();
+            let created_at = sim_clock.now();
+            let db_connection = db_pool.connection();
+            info!("Creating execution");
+            let stopwatch = std::time::Instant::now();
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id: execution_id.clone(),
+                    ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
+                    params,
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: created_at,
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                    component_id: ComponentId::dummy_activity(),
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+
+            let server = MockServer::builder().listener(listener).start().await;
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(STATUS).set_body_string(""))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            assert_eq!(
+                1,
+                exec_task
+                    .tick_test(sim_clock.now())
+                    .await
+                    .unwrap()
+                    .wait_for_tasks()
+                    .await
+                    .unwrap()
+            );
+            let exec_log = db_connection.get(&execution_id).await.unwrap();
+            let stopwatch = stopwatch.elapsed();
+            info!("Finished in {stopwatch:?}");
+            let (res, http_client_trace) = assert_matches!(
+                exec_log.last_event().event.clone(),
+                ExecutionEventInner::Finished { result, http_client_trace: Some(http_client_trace) }
+                => (result, http_client_trace));
+            let res = res.unwrap_err();
+            assert_matches!(
+                res,
+                FinishedExecutionError::PermanentFailure {
+                    reason_inner: _,
+                    reason_full: _,
+                    kind: PermanentFailureKind::ActivityTrap,
+                    detail: _
+                }
+            );
+
+            assert_eq!(1, http_client_trace.len());
+            let http_client_trace = http_client_trace.into_iter().next().unwrap();
+            let (method, uri_actual) = assert_matches!(
+                http_client_trace,
+                HttpClientTrace {
+                    req: RequestTrace {
+                        method,
+                        sent_at: _,
+                        uri
+                    },
+                    resp: Some(ResponseTrace {
+                        status: Ok(STATUS),
                         finished_at: _
                     })
                 }

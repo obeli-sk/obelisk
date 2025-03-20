@@ -423,7 +423,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             (
                                 ExecutionEventInner::Finished {
                                     result,
-                                    http_client_trace: None,
+                                    http_client_trace,
                                 },
                                 child_finished,
                                 version,
