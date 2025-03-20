@@ -1,45 +1,103 @@
 use super::activity_worker::ActivityConfig;
 use crate::component_logger::{log_activities, ComponentLogger};
 use crate::std_output_stream::LogStream;
+use bytes::Bytes;
+use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
+use concepts::time::ClockFn;
 use concepts::ExecutionId;
-use tracing::Span;
+use hyper::body::Body;
+use tokio::sync::oneshot;
+use tracing::{debug, Span};
+use wasmtime::component::Resource;
 use wasmtime::Engine;
 use wasmtime::{component::ResourceTable, Store};
 use wasmtime_wasi::{self, IoView, WasiCtx, WasiCtxBuilder, WasiView};
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+use wasmtime_wasi_http::bindings::http::types::Scheme;
+use wasmtime_wasi_http::body::HyperOutgoingBody;
+use wasmtime_wasi_http::types::{
+    default_send_request_handler, HostFutureIncomingResponse, HostIncomingRequest,
+    OutgoingRequestConfig,
+};
+use wasmtime_wasi_http::{HttpResult, WasiHttpCtx, WasiHttpView};
 
-pub struct ActivityCtx {
+pub struct ActivityCtx<C: ClockFn> {
     table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
     component_logger: ComponentLogger,
+    clock_fn: C,
+    pub(crate) http_client_trace: Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>,
 }
 
-impl WasiView for ActivityCtx {
+impl<C: ClockFn> WasiView for ActivityCtx<C> {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi_ctx
     }
 }
 
-impl IoView for ActivityCtx {
+impl<C: ClockFn> IoView for ActivityCtx<C> {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
 }
 
-impl WasiHttpView for ActivityCtx {
+impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http_ctx
+    }
+
+    fn new_incoming_request<B>(
+        &mut self,
+        _scheme: Scheme,
+        _req: hyper::Request<B>,
+    ) -> wasmtime::Result<Resource<HostIncomingRequest>>
+    where
+        B: Body<Data = Bytes, Error = hyper::Error> + Send + Sync + 'static,
+        Self: Sized,
+    {
+        unreachable!("incoming requests cannot be made")
+    }
+
+    /// Send an outgoing request.
+    fn send_request(
+        &mut self,
+        request: hyper::Request<HyperOutgoingBody>,
+        config: OutgoingRequestConfig,
+    ) -> HttpResult<HostFutureIncomingResponse> {
+        let req = RequestTrace {
+            sent_at: self.clock_fn.now(),
+            uri: request.uri().to_string(),
+            method: request.method().to_string(),
+        };
+        let (resp_trace_tx, resp_trace_rx) = oneshot::channel();
+        self.http_client_trace.push((req, resp_trace_rx));
+        let clock_fn = self.clock_fn.clone();
+        debug!("Sending {request:?}");
+        let handle = wasmtime_wasi::runtime::spawn(async move {
+            let resp_result = default_send_request_handler(request, config).await;
+            debug!("Got response {resp_result:?}");
+            let resp_trace = ResponseTrace {
+                finished_at: clock_fn.now(),
+                status: resp_result
+                    .as_ref()
+                    .map(|resp| resp.resp.status().as_u16())
+                    .map_err(std::string::ToString::to_string),
+            };
+            let _ = resp_trace_tx.send(resp_trace);
+            Ok(resp_result)
+        });
+        Ok(HostFutureIncomingResponse::pending(handle))
     }
 }
 
 #[must_use]
-pub fn store(
+pub fn store<C: ClockFn>(
     engine: &Engine,
     execution_id: &ExecutionId,
     config: &ActivityConfig,
     worker_span: Span,
-) -> Store<ActivityCtx> {
+    clock_fn: C,
+) -> Store<ActivityCtx<C>> {
     let mut wasi_ctx = WasiCtxBuilder::new();
     if let Some(stdout) = config.forward_stdout {
         let stdout = LogStream::new(
@@ -69,11 +127,13 @@ pub fn store(
         wasi_ctx: wasi_ctx.build(),
         http_ctx: WasiHttpCtx::new(),
         component_logger: ComponentLogger { span: worker_span },
+        http_client_trace: Vec::new(),
+        clock_fn,
     };
     Store::new(engine, ctx)
 }
 
-impl log_activities::obelisk::log::log::Host for ActivityCtx {
+impl<C: ClockFn> log_activities::obelisk::log::log::Host for ActivityCtx<C> {
     fn trace(&mut self, message: String) {
         self.component_logger.trace(&message);
     }

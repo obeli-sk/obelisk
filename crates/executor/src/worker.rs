@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::prefixed_ulid::RunId;
+use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::storage::HistoryEvent;
 use concepts::storage::Version;
 use concepts::ExecutionId;
@@ -29,7 +30,11 @@ pub trait Worker: Send + Sync + 'static {
 #[must_use]
 #[derive(Debug)]
 pub enum WorkerResult {
-    Ok(SupportedFunctionReturnValue, Version),
+    Ok(
+        SupportedFunctionReturnValue,
+        Version,
+        Option<Vec<HttpClientTrace>>,
+    ),
     DbUpdatedByWorker,
     Err(WorkerError),
 }
@@ -59,12 +64,14 @@ pub enum WorkerError {
         trap_kind: TrapKind,
         detail: String,
         version: Version,
+        http_client_trace: Option<Vec<HttpClientTrace>>,
     },
     // Used by activity worker, must not be returned when retries are exhausted.
     #[error("activity returned error")]
     ActivityReturnedError {
         detail: Option<String>,
         version: Version,
+        http_client_trace: Option<Vec<HttpClientTrace>>,
     },
     /// Workflow trap when `retry_on_trap` is enabled.
     #[error("workflow trap handled as temporary error: {reason}")]

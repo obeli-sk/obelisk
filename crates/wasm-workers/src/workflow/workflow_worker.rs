@@ -443,7 +443,7 @@ impl<
                         debug!("Error while closing join sets {worker_result:?}");
                         worker_result
                     }
-                    Ok(()) => WorkerResult::Ok(res, workflow_ctx.version),
+                    Ok(()) => WorkerResult::Ok(res, workflow_ctx.version, None),
                 }
             }
             WorkerResultRefactored::FatalError(err, mut workflow_ctx) => {

@@ -437,7 +437,8 @@ pub(crate) fn from_execution_event_to_grpc(
                     backoff_expires_at,
                     reason_full,
                     reason_inner: _,
-                    detail
+                    detail,
+                    http_client_trace: _todo
                 } => grpc::execution_event::Event::Failed(grpc::execution_event::TemporarilyFailed {
                     reason: reason_full.to_string(),
                     detail,
@@ -448,10 +449,11 @@ pub(crate) fn from_execution_event_to_grpc(
                         backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                     })
                 },
-                ExecutionEventInner::Finished { result } => grpc::execution_event::Event::Finished(grpc::execution_event::Finished {
+                ExecutionEventInner::Finished { result, http_client_trace: _todo } => grpc::execution_event::Event::Finished(grpc::execution_event::Finished {
                     result_detail: Some(
                         result.into()
                     ),
+
                 }),
                 ExecutionEventInner::HistoryEvent { event } => grpc::execution_event::Event::HistoryVariant(grpc::execution_event::HistoryEvent {
                     event: Some(match event {

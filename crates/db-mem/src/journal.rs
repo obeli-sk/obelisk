@@ -147,7 +147,7 @@ impl ExecutionJournal {
                     })
                 }
 
-                ExecutionEventInner::Finished { result } => {
+                ExecutionEventInner::Finished { result, .. } => {
                     assert_eq!(self.execution_events.len() - 1, idx);
                     Some(PendingState::Finished {
                         finished: PendingStateFinished {

@@ -4,11 +4,13 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
 use crate::WasmFileError;
 use async_trait::async_trait;
+use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::time::{now_tokio_instant, ClockFn, Sleep};
 use concepts::{ComponentId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue, TrapKind};
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
+use itertools::Itertools;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{info, trace};
 use utils::wasm_tools::{ExIm, WasmComponent};
@@ -28,7 +30,7 @@ pub struct ActivityConfig {
 #[derive(Clone)]
 pub struct ActivityWorker<C: ClockFn, S: Sleep> {
     engine: Arc<Engine>,
-    instance_pre: InstancePre<ActivityCtx>,
+    instance_pre: InstancePre<ActivityCtx<C>>,
     exim: ExIm,
     clock_fn: C,
     sleep: S,
@@ -36,7 +38,7 @@ pub struct ActivityWorker<C: ClockFn, S: Sleep> {
     config: ActivityConfig,
 }
 
-impl<C: ClockFn, S: Sleep> ActivityWorker<C, S> {
+impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
     #[tracing::instrument(skip_all, fields(%config.component_id), err)]
     pub fn new_with_config(
         wasm_component: WasmComponent,
@@ -56,9 +58,10 @@ impl<C: ClockFn, S: Sleep> ActivityWorker<C, S> {
         // wasi-http
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(linking_err)?;
         // obelisk:log
-        log_activities::obelisk::log::log::add_to_linker(&mut linker, |state: &mut ActivityCtx| {
-            state
-        })
+        log_activities::obelisk::log::log::add_to_linker(
+            &mut linker,
+            |state: &mut ActivityCtx<C>| state,
+        )
         .map_err(linking_err)?;
 
         // Attempt to pre-instantiate to catch missing imports
@@ -108,6 +111,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
             &ctx.execution_id,
             &self.config,
             ctx.worker_span.clone(),
+            self.clock_fn.clone(),
         );
 
         let instance = match self.instance_pre.instantiate_async(&mut store).await {
@@ -153,12 +157,21 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
         let call_function = {
             let worker_span = ctx.worker_span.clone();
             async move {
-                if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
+                let res = func.call_async(&mut store, &params, &mut results).await;
+                let http_client_trace = std::mem::take(&mut store.data_mut().http_client_trace)
+                    .into_iter()
+                    .map(|(req, mut resp)| HttpClientTrace {
+                        req,
+                        resp: resp.try_recv().ok(),
+                    })
+                    .collect_vec();
+                if let Err(err) = res {
                     return WorkerResult::Err(WorkerError::ActivityTrap {
                         reason: err.to_string(),
                         trap_kind: TrapKind::Trap,
                         detail: format!("{err:?}"),
                         version: ctx.version,
+                        http_client_trace: Some(http_client_trace),
                     });
                 };
                 let result = match SupportedFunctionReturnValue::new(
@@ -172,12 +185,14 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         ));
                     }
                 };
+
                 if let Err(err) = func.post_return_async(&mut store).await {
                     return WorkerResult::Err(WorkerError::ActivityTrap {
                         reason: err.to_string(),
                         trap_kind: TrapKind::PostReturnTrap,
                         detail: format!("{err:?}"),
                         version: ctx.version,
+                        http_client_trace: Some(http_client_trace),
                     });
                 }
 
@@ -191,6 +206,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                             return WorkerResult::Err(WorkerError::ActivityReturnedError {
                                 detail: Some(detail),
                                 version: ctx.version,
+                                http_client_trace: Some(http_client_trace),
                             });
                         }
                         // else: log and pass the retval as is to be stored.
@@ -199,7 +215,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         });
                     }
                 }
-                WorkerResult::Ok(result, ctx.version)
+                WorkerResult::Ok(result, ctx.version, Some(http_client_trace))
             }
         };
         let started_at = self.clock_fn.now();
@@ -396,6 +412,7 @@ pub(crate) mod tests {
     pub mod wasmtime_nosim {
         use super::*;
         use crate::engines::PoolingOptions;
+        use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
         use concepts::time::Now;
         use concepts::{
             prefixed_ulid::RunId,
@@ -710,11 +727,8 @@ pub(crate) mod tests {
             let server_address = listener
                 .local_addr()
                 .expect("Failed to get server address.");
-
-            let params = Params::from_json_values(vec![json!(format!(
-                "http://127.0.0.1:{port}/",
-                port = server_address.port()
-            ))]);
+            let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
+            let params = Params::from_json_values(vec![json!(uri.clone())]);
             let execution_id = ExecutionId::generate();
             let created_at = sim_clock.now();
             let db_connection = db_pool.connection();
@@ -758,7 +772,10 @@ pub(crate) mod tests {
             let exec_log = db_connection.get(&execution_id).await.unwrap();
             let stopwatch = stopwatch.elapsed();
             info!("Finished in {stopwatch:?}");
-            let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionEventInner::Finished { result } => result);
+            let (res, http_client_trace) = assert_matches!(
+                exec_log.last_event().event.clone(),
+                ExecutionEventInner::Finished { result, http_client_trace: Some(http_client_trace) }
+                => (result, http_client_trace));
             let res = res.unwrap();
             let wast_val = assert_matches!(res.fallible_ok(), Some(Some(wast_val)) => wast_val);
             let val = assert_matches!(wast_val, WastVal::String(val) => val);
@@ -768,6 +785,25 @@ pub(crate) mod tests {
                 assert_matches!(res.val_type(), Some(TypeWrapper::Result{ok, err}) => (ok, err));
             assert_eq!(Some(Box::new(TypeWrapper::String)), *ok);
             assert_eq!(Some(Box::new(TypeWrapper::String)), *err);
+            assert_eq!(1, http_client_trace.len());
+            let http_client_trace = http_client_trace.into_iter().next().unwrap();
+            let (method, uri_actual) = assert_matches!(
+                http_client_trace,
+                HttpClientTrace {
+                    req: RequestTrace {
+                        method,
+                        sent_at: _,
+                        uri
+                    },
+                    resp: Some(ResponseTrace {
+                        status: Ok(200),
+                        finished_at: _
+                    })
+                }
+                => (method, uri)
+            );
+            assert_eq!("GET", method);
+            assert_eq!(uri, *uri_actual);
             drop(db_connection);
             drop(exec_task);
             db_pool.close().await.unwrap();
@@ -816,11 +852,8 @@ pub(crate) mod tests {
             let server_address = listener
                 .local_addr()
                 .expect("Failed to get server address.");
-
-            let params = Params::from_json_values(vec![json!(format!(
-                "http://127.0.0.1:{port}/",
-                port = server_address.port()
-            ))]);
+            let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
+            let params = Params::from_json_values(vec![json!(uri.clone())]);
             let execution_id = ExecutionId::generate();
             let created_at = sim_clock.now();
             let db_connection = db_pool.connection();
@@ -864,15 +897,16 @@ pub(crate) mod tests {
                 );
                 let exec_log = db_connection.get(&execution_id).await.unwrap();
 
-                let (reason_full, reason_inner, detail, found_expires_at) = assert_matches!(
+                let (reason_full, reason_inner, detail, found_expires_at, http_client_trace) = assert_matches!(
                     &exec_log.last_event().event,
                     ExecutionEventInner::TemporarilyFailed {
                         backoff_expires_at,
                         reason_full,
                         reason_inner,
                         detail: Some(detail),
+                        http_client_trace: Some(http_client_trace)
                     }
-                    => (reason_full, reason_inner, detail, *backoff_expires_at)
+                    => (reason_full, reason_inner, detail, *backoff_expires_at, http_client_trace)
                 );
                 assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
                 assert_eq!("activity returned error", reason_inner.deref());
@@ -881,6 +915,26 @@ pub(crate) mod tests {
                     detail.contains("wrong status code: 500"),
                     "Unexpected {detail}"
                 );
+
+                assert_eq!(1, http_client_trace.len());
+                let http_client_trace = http_client_trace.iter().next().unwrap();
+                let (method, uri_actual) = assert_matches!(
+                    http_client_trace,
+                    HttpClientTrace {
+                        req: RequestTrace {
+                            method,
+                            sent_at: _,
+                            uri
+                        },
+                        resp: Some(ResponseTrace {
+                            status: Ok(500),
+                            finished_at: _
+                        })
+                    }
+                    => (method, uri)
+                );
+                assert_eq!("GET", method);
+                assert_eq!(uri, *uri_actual);
                 server.verify().await;
             }
             // Noop until the timeout expires
@@ -918,7 +972,7 @@ pub(crate) mod tests {
                     .unwrap()
             );
             let exec_log = db_connection.get(&execution_id).await.unwrap();
-            let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionEventInner::Finished { result } => result);
+            let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionEventInner::Finished { result, .. } => result);
             let res = res.unwrap();
             if succeed_eventually {
                 let wast_val = assert_matches!(res.fallible_ok(), Some(Some(wast_val)) => wast_val);

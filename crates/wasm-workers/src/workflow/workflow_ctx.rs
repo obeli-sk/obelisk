@@ -999,7 +999,11 @@ pub(crate) mod tests {
             let res = match workflow_ctx.close_opened_join_sets().await {
                 Ok(()) => {
                     info!("Finishing");
-                    WorkerResult::Ok(SupportedFunctionReturnValue::None, workflow_ctx.version)
+                    WorkerResult::Ok(
+                        SupportedFunctionReturnValue::None,
+                        workflow_ctx.version,
+                        None,
+                    )
                 }
                 Err(ApplyError::InterruptRequested) => {
                     info!("Interrupting");
@@ -1221,7 +1225,7 @@ pub(crate) mod tests {
             }
             let (finished_value, version) = assert_matches!(
                 worker_result,
-                WorkerResult::Ok(finished_value, version) => (finished_value, version),
+                WorkerResult::Ok(finished_value, version, _http_client_trace) => (finished_value, version),
                 "should be finished"
             );
             info!("Appending finished result");
@@ -1233,6 +1237,7 @@ pub(crate) mod tests {
                         created_at: sim_clock.now(),
                         event: concepts::storage::ExecutionEventInner::Finished {
                             result: Ok(finished_value),
+                            http_client_trace: None,
                         },
                     },
                 )
@@ -1468,6 +1473,7 @@ pub(crate) mod tests {
                     created_at: sim_clock.now(),
                     event: concepts::storage::ExecutionEventInner::Finished {
                         result: Ok(SupportedFunctionReturnValue::None),
+                        http_client_trace: None,
                     },
                 }],
                 child_log.next_version.clone(),

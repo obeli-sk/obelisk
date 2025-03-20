@@ -338,7 +338,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         unlock_expiry_on_limit_reached: Duration,
     ) -> Result<Option<Append>, DbError> {
         Ok(match worker_result {
-            WorkerResult::Ok(result, new_version) => {
+            WorkerResult::Ok(result, new_version, http_client_trace) => {
                 info!(
                     "Execution finished: {}",
                     result.as_pending_state_finished_result()
@@ -353,7 +353,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     );
                 let primary_event = AppendRequest {
                     created_at: result_obtained_at,
-                    event: ExecutionEventInner::Finished { result: Ok(result) },
+                    event: ExecutionEventInner::Finished {
+                        result: Ok(result),
+                        http_client_trace,
+                    },
                 };
 
                 Some(Append {
@@ -381,6 +384,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         trap_kind,
                         detail,
                         version,
+                        http_client_trace,
                     } => {
                         if let Some(duration) = can_be_retried {
                             let expires_at = result_obtained_at + duration;
@@ -393,6 +397,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                                     reason_full: StrVariant::from(reason),
                                     reason_inner: StrVariant::from(reason_inner),
                                     detail: Some(detail),
+                                    http_client_trace,
                                 },
                                 None,
                                 version,
@@ -416,13 +421,20 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                                     }
                                 });
                             (
-                                ExecutionEventInner::Finished { result },
+                                ExecutionEventInner::Finished {
+                                    result,
+                                    http_client_trace: None,
+                                },
                                 child_finished,
                                 version,
                             )
                         }
                     }
-                    WorkerError::ActivityReturnedError { detail, version } => {
+                    WorkerError::ActivityReturnedError {
+                        detail,
+                        version,
+                        http_client_trace,
+                    } => {
                         let duration = can_be_retried.expect(
                             "ActivityReturnedError must not be returned when retries are exhausted",
                         );
@@ -434,6 +446,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                                 reason_full: StrVariant::Static("activity returned error"),
                                 reason_inner: StrVariant::Static("activity returned error"),
                                 detail,
+                                http_client_trace,
                             },
                             None,
                             version,
@@ -456,6 +469,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                                 reason_full: StrVariant::from(reason),
                                 reason_inner: StrVariant::from(reason_inner),
                                 detail,
+                                http_client_trace: None,
                             },
                             None,
                             version,
@@ -490,7 +504,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                                 }
                             });
                         (
-                            ExecutionEventInner::Finished { result },
+                            ExecutionEventInner::Finished {
+                                result,
+                                http_client_trace: None,
+                            },
                             child_finished,
                             version,
                         )
@@ -759,6 +776,7 @@ mod tests {
             Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
                 SupportedFunctionReturnValue::None,
                 Version::new(2),
+                None,
             ))),
             tick_fn,
         )
@@ -768,6 +786,7 @@ mod tests {
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionReturnValue::None),
+                    http_client_trace: None
                 },
                 created_at: _,
             }
@@ -791,6 +810,7 @@ mod tests {
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
             SupportedFunctionReturnValue::None,
             Version::new(2),
+            None,
         )));
         let exec_task = ExecTask::spawn_new(
             worker.clone(),
@@ -825,6 +845,7 @@ mod tests {
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionReturnValue::None),
+                    http_client_trace: None
                 },
                 created_at: _,
             }
@@ -921,6 +942,7 @@ mod tests {
                 trap_kind: concepts::TrapKind::Trap,
                 detail: expected_detail.to_string(),
                 version: Version::new(2),
+                http_client_trace: None,
             },
         )));
         let retry_exp_backoff = Duration::from_millis(100);
@@ -950,6 +972,7 @@ mod tests {
                         reason_full,
                         detail,
                         backoff_expires_at,
+                        http_client_trace: None,
                     },
                     created_at: at,
                 }
@@ -969,7 +992,7 @@ mod tests {
                 Version::new(4),
                 (
                     vec![],
-                    WorkerResult::Ok(SupportedFunctionReturnValue::None, Version::new(4)),
+                    WorkerResult::Ok(SupportedFunctionReturnValue::None, Version::new(4), None),
                 ),
             )])),
         )));
@@ -1014,6 +1037,7 @@ mod tests {
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionReturnValue::None),
+                    http_client_trace: None
                 },
                 created_at: finished_at,
             } if *finished_at == sim_clock.now()
@@ -1043,6 +1067,7 @@ mod tests {
                 trap_kind: concepts::TrapKind::Trap,
                 detail: expected_detail.to_string(),
                 version: Version::new(2),
+                http_client_trace: None,
             },
         )));
         let execution_log = create_and_tick(
@@ -1065,7 +1090,8 @@ mod tests {
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished{
-                    result: Err(FinishedExecutionError::PermanentFailure{reason_inner, kind, detail, reason_full:_})
+                    result: Err(FinishedExecutionError::PermanentFailure{reason_inner, kind, detail, reason_full:_}),
+                    http_client_trace: None
                 },
                 created_at: at,
             } if *at == created_at
@@ -1085,6 +1111,7 @@ mod tests {
             trap_kind: TrapKind::Trap,
             detail: "detail".to_string(),
             version: Version::new(2),
+            http_client_trace: None,
         };
         let expected_child_err = FinishedExecutionError::PermanentFailure {
             reason_full: "activity trap: error reason".to_string(),
@@ -1276,7 +1303,8 @@ mod tests {
         );
         assert_eq!(
             ExecutionEventInner::Finished {
-                result: Err(expected_child_err)
+                result: Err(expected_child_err),
+                http_client_trace: None
             },
             child_log.last_event().event
         );
@@ -1327,7 +1355,7 @@ mod tests {
     impl Worker for SleepyWorker {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             tokio::time::sleep(self.duration).await;
-            WorkerResult::Ok(self.result.clone(), ctx.version)
+            WorkerResult::Ok(self.result.clone(), ctx.version, None)
         }
 
         fn exported_functions(&self) -> &[FunctionMetadata] {

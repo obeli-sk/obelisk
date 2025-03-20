@@ -1617,7 +1617,7 @@ impl<S: Sleep> SqlitePool<S> {
             } => IndexAction::PendingStateChanged(PendingState::PendingAt {
                 scheduled_at: *backoff_expires_at,
             }),
-            ExecutionEventInner::Finished { result } => {
+            ExecutionEventInner::Finished { result, .. } => {
                 next_version = appending_version.clone();
                 IndexAction::PendingStateChanged(PendingState::Finished {
                     finished: PendingStateFinished {
@@ -2035,7 +2035,7 @@ impl<S: Sleep> SqlitePool<S> {
             }),
             (None, Some(child_execution_id), Some(finished_version), Some(result)) => {
                 match result.0 {
-                    ExecutionEventInner::Finished { result } => {
+                    ExecutionEventInner::Finished { result, .. } => {
                         Ok(JoinSetResponse::ChildExecutionFinished {
                             child_execution_id,
                             finished_version: Version(finished_version),
@@ -2788,7 +2788,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                             if let PendingState::Finished { finished } = pending_state {
                                 let event =
                                     Self::get_execution_event(tx, &execution_id, finished.version)?;
-                                if let ExecutionEventInner::Finished { result } = event.event {
+                                if let ExecutionEventInner::Finished { result, ..} = event.event {
                                     Ok(Some(result))
                                 } else {
                                     error!("Mismatch, expected Finished row: {event:?} based on t_state {finished}");

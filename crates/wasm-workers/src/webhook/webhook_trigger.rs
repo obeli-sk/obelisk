@@ -708,6 +708,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                                     kind: PermanentFailureKind::WebhookEndpointError,
                                     detail: Some(format!("{err:?}")),
                                 }),
+                            http_client_trace: None,
                         },
                     },
                 )

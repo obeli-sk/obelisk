@@ -15,6 +15,7 @@ use crate::SupportedFunctionReturnValue;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use http_client_trace::HttpClientTrace;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -104,7 +105,7 @@ impl ExecutionLog {
     #[must_use]
     pub fn into_finished_result(mut self) -> Option<FinishedExecutionResult> {
         if let ExecutionEvent {
-            event: ExecutionEventInner::Finished { result },
+            event: ExecutionEventInner::Finished { result, .. },
             ..
         } = self.events.pop().expect("must contain at least one event")
         {
@@ -254,6 +255,7 @@ pub const DUMMY_TEMPORARILY_FAILED: ExecutionEventInner = ExecutionEventInner::T
     reason_full: StrVariant::empty(),
     reason_inner: StrVariant::empty(),
     detail: None,
+    http_client_trace: None,
 };
 
 #[derive(
@@ -318,6 +320,8 @@ pub enum ExecutionEventInner {
         #[arbitrary(value = StrVariant::Static("reason inner"))]
         reason_inner: StrVariant,
         detail: Option<String>,
+        #[arbitrary(value = None)]
+        http_client_trace: Option<Vec<HttpClientTrace>>,
     },
     // Created by the executor holding last lock.
     // After expiry interpreted as pending.
@@ -330,6 +334,8 @@ pub enum ExecutionEventInner {
     Finished {
         #[arbitrary(value = Ok(SupportedFunctionReturnValue::None))]
         result: FinishedExecutionResult,
+        #[arbitrary(value = None)]
+        http_client_trace: Option<Vec<HttpClientTrace>>,
     },
 
     #[display("HistoryEvent({event})")]
@@ -810,7 +816,7 @@ pub trait DbConnection: Send + Sync {
         let last_event = self
             .get_execution_event(execution_id, &Version::new(finished.version))
             .await?;
-        if let ExecutionEventInner::Finished { result } = last_event.event {
+        if let ExecutionEventInner::Finished { result, .. } = last_event.event {
             Ok(Some(result))
         } else {
             Ok(None)
@@ -1207,6 +1213,30 @@ impl PendingState {
 pub enum LockKind {
     Extending,
     CreatingNewLock,
+}
+
+pub mod http_client_trace {
+    use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct HttpClientTrace {
+        pub req: RequestTrace,
+        pub resp: Option<ResponseTrace>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct RequestTrace {
+        pub sent_at: DateTime<Utc>,
+        pub uri: String,
+        pub method: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct ResponseTrace {
+        pub finished_at: DateTime<Utc>,
+        pub status: Result<u16, String>,
+    }
 }
 
 #[cfg(test)]

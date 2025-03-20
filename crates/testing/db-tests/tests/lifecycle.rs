@@ -479,6 +479,7 @@ async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         let req = AppendRequest {
             event: ExecutionEventInner::Finished {
                 result: FinishedExecutionResult::Ok(concepts::SupportedFunctionReturnValue::None),
+                http_client_trace: None,
             },
             created_at,
         };
@@ -493,6 +494,7 @@ async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         let req = AppendRequest {
             event: ExecutionEventInner::Finished {
                 result: FinishedExecutionResult::Ok(concepts::SupportedFunctionReturnValue::None),
+                http_client_trace: None,
             },
             created_at,
         };
@@ -778,6 +780,7 @@ pub async fn append_batch_respond_to_parent(
                     created_at: sim_clock.now(),
                     event: ExecutionEventInner::Finished {
                         result: Ok(concepts::SupportedFunctionReturnValue::None),
+                        http_client_trace: None,
                     },
                 }],
                 child_version.clone(),
@@ -826,6 +829,7 @@ pub async fn append_batch_respond_to_parent(
             created_at: sim_clock.now(),
             event: ExecutionEventInner::Finished {
                 result: Ok(concepts::SupportedFunctionReturnValue::None),
+                http_client_trace: None,
             },
         }];
 
