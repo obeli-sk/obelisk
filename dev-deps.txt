@@ -1,17 +1,17 @@
-cargo-binstall 1.11.1
-cargo-edit-upgrade 0.13.1
-cargo-expand 1.0.101
+cargo-binstall 1.12.0
+cargo-edit-upgrade 0.13.2
+cargo-expand 1.0.102
 cargo-nextest 0.9.92
-cargo-semver-checks 0.39.0
+cargo-semver-checks 0.40.0
 litecli Version: 1.12.3
 nixpkgs-fmt 1.3.0
 pkg-config 0.29.2
 libprotoc 29.3
 rustc 1.84.1 (e71f9a9a9 2025-01-27)
 tokio-console 0.1.13
-wasm-tools 1.226.0
+wasm-tools 1.227.1
 wasmtime 30.0.2
 wasm-opt version 120
-trunk 0.21.8
+trunk 0.21.9
 wasm-bindgen 0.2.100
 ldd (GNU libc) 2.40
