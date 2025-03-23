@@ -174,7 +174,7 @@ cargo_metadata = "0.19"
 cfg-if = "1.0.0"
 chrono = { version = "0.4.40", features = ["arbitrary", "serde"] }
 clap = { version = "4.5.32", features = ["derive"] }
-config = { version = "0.15.9", default-features = false, features = [
+config = { version = "0.15.11", default-features = false, features = [
     "toml",
     "preserve_order",
     "async",
