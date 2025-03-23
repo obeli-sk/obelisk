@@ -1,0 +1,70 @@
+name: scheduled-bump-flake-lock
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Runs every Sunday at 00:00 UTC
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump-cargo-lock:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Generate Unique Branch Name
+        id: branch-name
+        run: echo "branch_name=bump-cargo-lock-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+
+      - uses: nixbuild/nix-quick-install-action@v29
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Populate the nix store
+        run: |
+          nix develop --command echo
+
+      - name: Bump flake.lock
+        run: |
+          nix flake update
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit Changes
+        run: |
+          git checkout -b ${{ steps.branch-name.outputs.branch_name }}
+          git add flake.lock
+          if [ -n "$(git status --porcelain)" ]; then
+              git commit -m "chore: Bump `flake.lock`"
+              git push origin ${{ steps.branch-name.outputs.branch_name }}
+
+              OWNER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
+              REPO=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+              curl -v --fail -X POST \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                https://api.github.com/repos/$OWNER/$REPO/pulls \
+                -d '{
+                  "title": "Bump `flake.lock`",
+                  "head": "'${{ steps.branch-name.outputs.branch_name }}'",
+                  "base": "main",
+                  "body": ""
+                }'
+          else
+              echo "No changes to commit."
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
