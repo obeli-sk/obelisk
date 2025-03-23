@@ -5,6 +5,13 @@ on:
     branches:
       - main
       - latest
+  pull_request:
+    
+# If new code is pushed to a PR branch, then cancel in progress workflows for that PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 
 defaults:
   run:
