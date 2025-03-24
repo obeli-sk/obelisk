@@ -1,4 +1,5 @@
 use crate::{
+    components::execution_trace::trace_view::TraceView,
     grpc::{
         ffqn::FunctionFqn,
         grpc_client::{self, ComponentId, ExecutionId},
@@ -78,6 +79,10 @@ pub enum Route {
     ExecutionDetail {
         execution_id: grpc_client::ExecutionId,
     },
+    #[at("/execution/:execution_id/trace")]
+    ExecutionTrace {
+        execution_id: grpc_client::ExecutionId,
+    },
     #[not_found]
     #[at("/404")]
     NotFound,
@@ -110,6 +115,9 @@ impl Route {
 
             Route::ExecutionListByFfqn { ffqn } => {
                 html! { <ExecutionListPage filter={ExecutionFilter::Ffqn { ffqn } } /> }
+            }
+            Route::ExecutionTrace { execution_id } => {
+                html! { <TraceView {execution_id} /> }
             }
             Route::NotFound => html! { <NotFound /> },
         }

@@ -1,0 +1,64 @@
+use std::time::Duration;
+
+#[derive(Clone, PartialEq)]
+pub enum TraceData {
+    Root(TraceDataRoot),
+    Child(TraceDataChild),
+}
+impl TraceData {
+    pub fn name(&self) -> &str {
+        match self {
+            TraceData::Root(root) => root.name.as_str(),
+            TraceData::Child(child) => child.name.as_str(),
+        }
+    }
+
+    pub fn started_at(&self) -> Duration {
+        match self {
+            TraceData::Root(root) => root.started_at,
+            TraceData::Child(child) => child.started_at,
+        }
+    }
+
+    pub fn finished_at(&self) -> Option<Duration> {
+        match self {
+            TraceData::Root(root) => Some(root.finished_at),
+            TraceData::Child(child) => child.finished_at,
+        }
+    }
+
+    pub fn children(&self) -> &[TraceDataChild] {
+        match self {
+            TraceData::Root(root) => &root.children,
+            TraceData::Child(child) => &child.children,
+        }
+    }
+
+    pub fn details(&self) -> Option<&TraceDetails> {
+        match self {
+            TraceData::Root(root) => root.details.as_ref(),
+            TraceData::Child(child) => child.details.as_ref(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct TraceDataRoot {
+    pub name: String,
+    pub started_at: Duration,
+    pub finished_at: Duration,
+    pub children: Vec<TraceDataChild>,
+    pub details: Option<TraceDetails>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct TraceDataChild {
+    pub name: String,
+    pub started_at: Duration,
+    pub finished_at: Option<Duration>,
+    pub children: Vec<TraceDataChild>,
+    pub details: Option<TraceDetails>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct TraceDetails {}

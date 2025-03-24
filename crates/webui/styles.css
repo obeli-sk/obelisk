@@ -137,3 +137,54 @@ ul li span {
     width: 100%;
     overflow-x: auto;
 }
+
+.execution-step {
+    margin-bottom: 5px;
+}
+
+.step-row {
+    display: flex;
+    align-items: center;
+    padding: 5px;
+    border-bottom: 1px solid #eee;
+}
+
+.step-icon {
+    margin-right: 5px;
+}
+
+.step-name {
+    flex-grow: 1;
+    /* Allows the name to take up available space */
+}
+
+.relative-duration-container {
+    width: 300px;
+    /* Adjust as needed */
+    height: 10px;
+    /* Add margin or padding as needed */
+    margin-left: auto;
+    /* Pushes the container to the right */
+}
+
+.total-duration-line {
+    height: 100%;
+    background-color: #ddd;
+    /* Grey line */
+    position: relative;
+    /* Required for absolute positioning of the busy line */
+}
+
+.busy-duration-line {
+    position: absolute;
+    height: 100%;
+    background-color: steelblue;
+    /* Or your desired color */
+    /* margin-left: [calculated percentage]%; This is done inline in the component */
+}
+
+/* Indentation for children */
+.indented-children {
+    margin-left: 20px;
+    /* Adjust the indentation as needed */
+}
