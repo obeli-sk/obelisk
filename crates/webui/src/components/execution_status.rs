@@ -160,9 +160,8 @@ pub fn execution_status(
                 .to_std()
                 .expect("must be non-negative");
             html! {<>
-                // <p>{result}</p>
-                <FinishedEvent result_detail={result_detail.clone()} />
 
+                <FinishedEvent result_detail={result_detail.clone()} />
                 <p>{format!("Execution completed {since_scheduled:?} after being scheduled.")}</p>
             </>}
         }

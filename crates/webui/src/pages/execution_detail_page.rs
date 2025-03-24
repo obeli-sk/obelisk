@@ -6,6 +6,7 @@ use crate::components::execution_detail::history::join_set_created::HistoryJoinS
 use crate::components::execution_detail::history::join_set_request::HistoryJoinSetRequestEvent;
 use crate::components::execution_detail::history::persist::HistoryPersistEvent;
 use crate::components::execution_detail::history::schedule::HistoryScheduleEvent;
+use crate::components::execution_detail::http_trace::HttpTraceEvent;
 use crate::components::execution_detail::locked::LockedEvent;
 use crate::components::execution_detail::temporarily_failed::TemporarilyFailedEvent;
 use crate::components::execution_detail::timed_out::TemporarilyTimedOutEvent;
@@ -252,9 +253,14 @@ fn render_execution_details(
                 execution_event::Event::Unlocked(event) => html! {
                     <UnlockedEvent event={event.clone()}/>
                 },
-                execution_event::Event::Failed(event) => html! {
-                    <TemporarilyFailedEvent event={event.clone()} />
-                },
+                execution_event::Event::Failed(event) => {
+                    html! {
+                        <>
+                            <HttpTraceEvent http_client_traces={event.http_client_trace.clone()} />
+                            <TemporarilyFailedEvent event={event.clone()} />
+                        </>
+                    }
+                }
                 execution_event::Event::TimedOut(event) => html! {
                     <TemporarilyTimedOutEvent event={*event} />
                 },
@@ -264,8 +270,10 @@ fn render_execution_details(
                         .as_ref()
                         .expect("`result_detail` is sent in the `Finished` message")
                         .clone();
-                    html! {
+                    html! {<>
+                        <HttpTraceEvent http_client_traces={event.http_client_trace.clone()} />
                         <FinishedEvent {result_detail} />
+                        </>
                     }
                 }
                 execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
