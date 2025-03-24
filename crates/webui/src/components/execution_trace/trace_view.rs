@@ -75,9 +75,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
 
                     // TODO: Loop until the whole execution log is collected?
 
-                    if events.is_empty() {
-                        return;
-                    }
                     let execution_scheduled_at = {
                         let create_event = events
                             .first()
@@ -99,7 +96,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                     let last_event_at = DateTime::from(
                         events
                             .last()
-                            .expect("checked that events are not empty")
+                            .expect("not found is sent as an error")
                             .created_at
                             .expect("created_at must be sent"),
                     );
@@ -141,17 +138,13 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                                 .as_ref()
                                                 .map(|finished_at| DateTime::from(*finished_at));
                                             let name = format!(
-                                                "{} {} ({})",
-                                                trace.method,
-                                                trace.uri,
-                                                if let Some(finished_at) = finished_at {
-                                                    let duration =
-                                                        (finished_at - sent_at).to_std().expect(
-                                                            "duration should never be negative",
-                                                        );
-                                                    format!("{duration:?}")
-                                                } else {
-                                                    "No response".to_string()
+                                                "{method} {uri}{result}",
+                                                method = trace.method,
+                                                uri = trace.uri,
+                                                result = match &trace.result {
+                                                    Some(grpc_client::http_client_trace::Result::Status(status)) => format!(" ({status})"),
+                                                    Some(grpc_client::http_client_trace::Result::Error(err)) => format!(" (error: {err}"),
+                                                    None => String::new()
                                                 }
                                             );
                                             let finished_at = finished_at.map(|finished_at| {
@@ -159,7 +152,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                                     .to_std()
                                                     .expect("must not be negative")
                                             });
-
                                             TraceDataChild {
                                                 name,
                                                 started_at,
@@ -169,7 +161,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                             }
                                         })
                                         .collect();
-
                                     Some(children)
                                 }
                                 _ => None,
@@ -184,63 +175,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
             }
         }
     });
-
-    /*
-    // Create some dummy trace data
-    let trace_data1 = TraceData {
-        name: "Trace 1 - Root".to_string(),
-        started_at: Duration::from_millis(0),
-        finished_at: Duration::from_millis(800),
-        children: vec![
-            TraceData {
-                name: "Trace 1 - Child 1".to_string(),
-                started_at: Duration::from_millis(100),
-                finished_at: Duration::from_millis(400),
-                children: vec![],
-                details: None,
-            },
-            TraceData {
-                name: "Trace 1 - Child 2".to_string(),
-                started_at: Duration::from_millis(50),
-                finished_at: Duration::from_millis(250),
-                children: vec![],
-                details: None,
-            },
-        ],
-        details: None,
-    };
-
-    let trace_data2 = TraceData {
-        name: "Trace 2 - Root".to_string(),
-        started_at: Duration::from_millis(200),
-        finished_at: Duration::from_millis(1200),
-        children: vec![
-            TraceData {
-                name: "Trace 2 - Child 1".to_string(),
-                started_at: Duration::from_millis(0),
-                finished_at: Duration::from_millis(500),
-                children: vec![],
-                details: None,
-            },
-            TraceData {
-                name: "Trace 2 - Child 2".to_string(),
-                started_at: Duration::from_millis(100),
-                finished_at: Duration::from_millis(350),
-                children: vec![TraceData {
-                    name: "Trace 2 - Grandchild 1".to_string(),
-                    started_at: Duration::from_millis(50),
-                    finished_at: Duration::from_millis(150),
-                    children: vec![],
-                    details: None,
-                }],
-                details: None,
-            },
-        ],
-        details: None,
-    };
-
-    let trace_data = vec![trace_data1, trace_data2];
-    */
 
     if let Some(root_trace) = root_trace_state.deref() {
         html! {
