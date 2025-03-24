@@ -89,7 +89,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                         debug!("Got {} events", new_events.len());
                         events.extend(new_events);
                         let last_event = events.last().expect("not found is sent as an error");
-                        
                         let execution_scheduled_at = {
                             let create_event = events
                                 .first()
@@ -107,8 +106,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                     .expect("`scheduled_at` is sent by the server"),
                             )
                         };
-
-
 
                         let mut root = TraceDataRoot {
                             name: execution_id.to_string(),
