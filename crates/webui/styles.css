@@ -154,33 +154,39 @@ ul li span {
 }
 
 .step-name {
-    flex-grow: 1;
     /* Allows the name to take up available space */
+    flex-grow: 1;
+    /* Prevent text wrapping */
+    white-space: nowrap;
+    overflow: hidden;
+    /* Add an ellipsis (...) */
+    text-overflow: ellipsis;
+    /* allow text-overflow */
+    min-width: 0;
 }
 
 .relative-duration-container {
     width: 300px;
     /* Adjust as needed */
     height: 10px;
-    /* Add margin or padding as needed */
-    margin-left: auto;
     /* Pushes the container to the right */
+    margin-left: auto;
+    /*  Prevent shrinking */
+    flex-shrink: 0;
 }
 
 .total-duration-line {
     height: 100%;
-    background-color: #ddd;
     /* Grey line */
-    position: relative;
+    background-color: #ddd;
     /* Required for absolute positioning of the busy line */
+    position: relative;
 }
 
 .busy-duration-line {
     position: absolute;
     height: 100%;
     background-color: steelblue;
-    /* Or your desired color */
-    /* margin-left: [calculated percentage]%; This is done inline in the component */
 }
 
 /* Indentation for children */

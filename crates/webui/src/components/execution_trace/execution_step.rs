@@ -47,11 +47,12 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
     } else {
         "No response (yet)".to_string()
     };
+    let name = props.data.name().to_string();
     html! {
         <div class="execution-step">
             <div class="step-row">
                 <span class="step-icon">{"▶"}</span>
-                <span class="step-name">{&props.data.name()}</span>
+                <span class="step-name" title={name.clone()}>{name}</span>
                 <div class="relative-duration-container">
                     <div class="total-duration-line" style={format!("width: {}%", total_percentage)} title={tooltip}>
                         <div
