@@ -266,6 +266,7 @@ wasm-logger = "0.2.0"
 wiremock = "0.6"
 
 # webui
+gloo = "0.11.0"
 id-arena = "2.2.1"
 implicit-clone = "0.5.1"
 log = "0.4.26"

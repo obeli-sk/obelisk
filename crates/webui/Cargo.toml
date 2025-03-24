@@ -18,6 +18,7 @@ assert_matches.workspace = true
 chrono.workspace = true
 derive_more.workspace = true
 futures.workspace = true
+gloo.workspace = true
 hashbrown.workspace = true
 implicit-clone.workspace = true
 indexmap.workspace = true
