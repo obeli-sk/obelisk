@@ -41,13 +41,11 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
     }
     let tooltip = if let TraceData::Root(_) = props.data {
         format!("Total duration: {:?}", props.total_duration)
+    } else if let Some(finished_at) = props.data.finished_at() {
+        let duration = finished_at - props.data.started_at();
+        format!("{duration:?}")
     } else {
-        if let Some(finished_at) = props.data.finished_at() {
-            let duration = finished_at - props.data.started_at();
-            format!("{duration:?}")
-        } else {
-            "No response (yet)".to_string()
-        }
+        "No response (yet)".to_string()
     };
     html! {
         <div class="execution-step">
