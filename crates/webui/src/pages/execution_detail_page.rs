@@ -18,6 +18,7 @@ use crate::grpc::grpc_client::{
 };
 use assert_matches::assert_matches;
 use chrono::DateTime;
+use gloo::timers::future::TimeoutFuture;
 use hashbrown::HashMap;
 use log::{debug, trace};
 use std::ops::Deref;
@@ -39,32 +40,42 @@ pub fn execution_detail_page(
     let events_state: UseStateHandle<Vec<ExecutionEvent>> = use_state(Vec::new);
     let responses_state: UseStateHandle<(HashMap<_, Vec<_>>, u32)> =
         use_state(|| (HashMap::new(), 0));
-    let next_page_state = use_state(|| 0_u32); // any change triggers requests to get next execution events and responses.
+    let is_fetching_state = use_state(|| false); // Track if we're currently fetching
 
     // Cleanup the state on execution_id change.
     use_effect_with(execution_id.clone(), {
         let execution_id_state = execution_id_state.clone();
         let events_state = events_state.clone();
         let responses_state = responses_state.clone();
-        let next_page_state = next_page_state.clone();
+        let is_fetching_state = is_fetching_state.clone();
+
         move |execution_id| {
             if *execution_id != *execution_id_state.deref() {
                 debug!("Execution ID changed");
                 execution_id_state.set(execution_id.clone());
                 events_state.set(Default::default());
                 responses_state.set(Default::default());
-                next_page_state.set(Default::default());
+                is_fetching_state.set(false);
             }
         }
     });
 
     // Fetch ListExecutionEvents
     use_effect_with(
-        (execution_id_state.deref().clone(), *next_page_state.deref()),
+        (
+            execution_id_state.deref().clone(),
+            *is_fetching_state.deref(),
+        ),
         {
             let events_state = events_state.clone();
             let responses_state = responses_state.clone();
-            move |(execution_id, _)| {
+            move |(execution_id, is_fetching)| {
+                if *is_fetching {
+                    trace!("Prevented concurrent fetches");
+                    return;
+                }
+                trace!("Setting is_fetching_state=true");
+                is_fetching_state.set(true);
                 // Request ListExecutionEvents
                 {
                     let execution_id = execution_id.clone();
@@ -89,7 +100,19 @@ pub fn execution_detail_page(
                             .events;
                         debug!("Got {} events", new_events.len());
                         events.extend(new_events);
+                        let last_event = events.last().expect("not found is sent as an error");
+                        let is_finished =
+                            matches!(last_event.event, Some(execution_event::Event::Finished(_)));
                         events_state.set(events);
+                        if is_finished {
+                            debug!("Execution Finished");
+                            // Keep is_fetching_state as true, the use_effect_with will not be triggered again.
+                        } else {
+                            trace!("Timeout: start");
+                            TimeoutFuture::new(1000).await;
+                            trace!("Timeout: Triggering refetch");
+                            is_fetching_state.set(false); // Trigger use_effect_with again.
+                        }
                     });
                 }
                 // Request ListResponses
@@ -159,26 +182,12 @@ pub fn execution_detail_page(
 
     let details_html = render_execution_details(events, &join_next_version_to_response);
 
-    let load_more_callback = Callback::from(move |_| {
-        let request_version = next_page_state.deref().wrapping_add(1);
-        next_page_state.set(request_version);
-    });
-    let finished = matches!(
-        events.last(),
-        Some(ExecutionEvent {
-            event: Some(execution_event::Event::Finished(_)),
-            ..
-        })
-    );
     html! {
         <>
         <h3>{ execution_parts }</h3>
         <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
         if !events.is_empty() {
             {details_html}
-            if !finished {
-                <button onclick={load_more_callback} >{"Load more"} </button>
-            }
         } else {
             <p>{"Loading details..."}</p>
         }
