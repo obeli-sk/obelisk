@@ -111,15 +111,15 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                         .iter()
                         .filter_map(|event| {
                             match event.event.as_ref().expect("event is sent by the server") {
-                                execution_event::Event::Failed(TemporarilyFailed {
-                                    http_client_traces: children,
+                                execution_event::Event::TemporarilyFailed(TemporarilyFailed {
+                                    http_client_traces,
                                     ..
                                 })
                                 | execution_event::Event::Finished(Finished {
-                                    http_client_traces: children,
+                                    http_client_traces,
                                     ..
                                 }) => {
-                                    let children: Vec<_> = children
+                                    let children: Vec<_> = http_client_traces
                                         .iter()
                                         .map(|trace| {
                                             let sent_at =

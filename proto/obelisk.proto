@@ -380,8 +380,8 @@ message ExecutionEvent {
         Created created = 3;
         Locked locked = 4;
         Unlocked unlocked = 5;
-        TemporarilyFailed failed = 6;
-        TemporarilyTimedOut timed_out = 7;
+        TemporarilyFailed temporarily_failed = 6;
+        TemporarilyTimedOut temporarily_timed_out = 7;
         Finished finished = 8;
         HistoryEvent history_variant = 9;
     }

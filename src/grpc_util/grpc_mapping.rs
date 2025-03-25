@@ -440,14 +440,14 @@ pub(crate) fn from_execution_event_to_grpc(
                     reason_inner: _,
                     detail,
                     http_client_traces
-                } => grpc::execution_event::Event::Failed(grpc::execution_event::TemporarilyFailed {
+                } => grpc::execution_event::Event::TemporarilyFailed(grpc::execution_event::TemporarilyFailed {
                     reason: reason_full.to_string(),
                     detail,
                     backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                     http_client_traces: http_client_traces.unwrap_or_default().into_iter().map(grpc::HttpClientTrace::from).collect(),
                 }),
                 ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at } => {
-                    grpc::execution_event::Event::TimedOut(grpc::execution_event::TemporarilyTimedOut {
+                    grpc::execution_event::Event::TemporarilyTimedOut(grpc::execution_event::TemporarilyTimedOut {
                         backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                     })
                 },

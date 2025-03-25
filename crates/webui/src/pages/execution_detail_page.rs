@@ -262,7 +262,7 @@ fn render_execution_details(
                 execution_event::Event::Unlocked(event) => html! {
                     <UnlockedEvent event={event.clone()}/>
                 },
-                execution_event::Event::Failed(event) => {
+                execution_event::Event::TemporarilyFailed(event) => {
                     html! {
                         <>
                             <HttpTraceEvent http_client_traces={event.http_client_traces.clone()} />
@@ -270,7 +270,7 @@ fn render_execution_details(
                         </>
                     }
                 }
-                execution_event::Event::TimedOut(event) => html! {
+                execution_event::Event::TemporarilyTimedOut(event) => html! {
                     <TemporarilyTimedOutEvent event={*event} />
                 },
                 execution_event::Event::Finished(event) => {
