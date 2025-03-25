@@ -15,6 +15,7 @@ service ExecutionRepository {
     rpc ListExecutionEvents(ListExecutionEventsRequest) returns (ListExecutionEventsResponse);
     // List child execution responses
     rpc ListResponses(ListResponsesRequest) returns (ListResponsesResponse);
+    rpc ListExecutionEventsAndResponses(ListExecutionEventsAndResponsesRequest) returns (ListExecutionEventsAndResponsesResponse);
     rpc GetLastBacktrace(GetLastBacktraceRequest) returns (GetLastBacktraceResponse);
     rpc GetBacktraceSource(GetBacktraceSourceRequest) returns (GetBacktraceSourceResponse);
 }
@@ -403,7 +404,6 @@ message ListExecutionEventsRequest {
     uint32 version_from = 2; // 0 to request the first page
     uint32 length = 3;
 }
-
 message ListExecutionEventsResponse {
     repeated ExecutionEvent events = 2;
 }
@@ -437,9 +437,21 @@ message ListResponsesRequest {
     uint32 length = 3;
     bool including_cursor = 4; // true to request the first page
 }
-
 message ListResponsesResponse {
     repeated ResponseWithCursor responses = 1;
+}
+
+message ListExecutionEventsAndResponsesRequest {
+    ExecutionId execution_id = 1;
+    uint32 version_from = 2; // 0 to request the first page of execution events
+    uint32 events_length = 3;
+    uint32 responses_cursor_from = 4; // 0 to request the first page of responses
+    uint32 responses_length = 5;
+    bool responses_including_cursor = 6; // true to request the first page of responses
+}
+message ListExecutionEventsAndResponsesResponse {
+    repeated ExecutionEvent events = 1;
+    repeated ResponseWithCursor responses = 2;
 }
 
 message GetWitRequest {

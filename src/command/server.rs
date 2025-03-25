@@ -589,6 +589,61 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     }
 
     #[instrument(skip_all, fields(execution_id))]
+    async fn list_execution_events_and_responses(
+        &self,
+        request: tonic::Request<grpc::ListExecutionEventsAndResponsesRequest>,
+    ) -> std::result::Result<
+        tonic::Response<grpc::ListExecutionEventsAndResponsesResponse>,
+        tonic::Status,
+    > {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+
+        let conn = self.db_pool.connection();
+        let events = conn
+            .list_execution_events(
+                &execution_id,
+                &Version(request.version_from),
+                request.events_length,
+            )
+            .await
+            .to_status()?
+            .into_iter()
+            .enumerate()
+            .map(|(idx, execution_event)| {
+                from_execution_event_to_grpc(
+                    execution_event,
+                    request.version_from
+                        + VersionType::try_from(idx).expect("both from and to are VersionType"),
+                )
+            })
+            .collect();
+
+        let responses = conn
+            .list_responses(
+                &execution_id,
+                concepts::storage::Pagination::NewerThan {
+                    length: request.responses_length,
+                    cursor: request.responses_cursor_from,
+                    including_cursor: request.responses_including_cursor,
+                },
+            )
+            .await
+            .to_status()?
+            .into_iter()
+            .map(grpc::ResponseWithCursor::from)
+            .collect();
+
+        Ok(tonic::Response::new(
+            grpc::ListExecutionEventsAndResponsesResponse { events, responses },
+        ))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
     async fn get_last_backtrace(
         &self,
         request: tonic::Request<grpc::GetLastBacktraceRequest>,
