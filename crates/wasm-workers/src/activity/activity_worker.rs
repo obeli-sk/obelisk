@@ -158,7 +158,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
             let worker_span = ctx.worker_span.clone();
             async move {
                 let res = func.call_async(&mut store, &params, &mut results).await;
-                let http_client_trace = std::mem::take(&mut store.data_mut().http_client_trace)
+                let http_client_traces = std::mem::take(&mut store.data_mut().http_client_traces)
                     .into_iter()
                     .map(|(req, mut resp)| HttpClientTrace {
                         req,
@@ -171,7 +171,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         trap_kind: TrapKind::Trap,
                         detail: format!("{err:?}"),
                         version: ctx.version,
-                        http_client_trace: Some(http_client_trace),
+                        http_client_traces: Some(http_client_traces),
                     });
                 };
                 let result = match SupportedFunctionReturnValue::new(
@@ -192,7 +192,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         trap_kind: TrapKind::PostReturnTrap,
                         detail: format!("{err:?}"),
                         version: ctx.version,
-                        http_client_trace: Some(http_client_trace),
+                        http_client_traces: Some(http_client_traces),
                     });
                 }
 
@@ -206,7 +206,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                             return WorkerResult::Err(WorkerError::ActivityReturnedError {
                                 detail: Some(detail),
                                 version: ctx.version,
-                                http_client_trace: Some(http_client_trace),
+                                http_client_traces: Some(http_client_traces),
                             });
                         }
                         // else: log and pass the retval as is to be stored.
@@ -215,7 +215,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         });
                     }
                 }
-                WorkerResult::Ok(result, ctx.version, Some(http_client_trace))
+                WorkerResult::Ok(result, ctx.version, Some(http_client_traces))
             }
         };
         let started_at = self.clock_fn.now();
@@ -774,10 +774,10 @@ pub(crate) mod tests {
             let exec_log = db_connection.get(&execution_id).await.unwrap();
             let stopwatch = stopwatch.elapsed();
             info!("Finished in {stopwatch:?}");
-            let (res, http_client_trace) = assert_matches!(
+            let (res, http_client_traces) = assert_matches!(
                 exec_log.last_event().event.clone(),
-                ExecutionEventInner::Finished { result, http_client_trace: Some(http_client_trace) }
-                => (result, http_client_trace));
+                ExecutionEventInner::Finished { result, http_client_traces: Some(http_client_traces) }
+                => (result, http_client_traces));
             let res = res.unwrap();
             let wast_val = assert_matches!(res.fallible_ok(), Some(Some(wast_val)) => wast_val);
             let val = assert_matches!(wast_val, WastVal::String(val) => val);
@@ -787,8 +787,8 @@ pub(crate) mod tests {
                 assert_matches!(res.val_type(), Some(TypeWrapper::Result{ok, err}) => (ok, err));
             assert_eq!(Some(Box::new(TypeWrapper::String)), *ok);
             assert_eq!(Some(Box::new(TypeWrapper::String)), *err);
-            assert_eq!(1, http_client_trace.len());
-            let http_client_trace = http_client_trace.into_iter().next().unwrap();
+            assert_eq!(1, http_client_traces.len());
+            let http_client_trace = http_client_traces.into_iter().next().unwrap();
             let (method, uri_actual) = assert_matches!(
                 http_client_trace,
                 HttpClientTrace {
@@ -897,10 +897,10 @@ pub(crate) mod tests {
             let exec_log = db_connection.get(&execution_id).await.unwrap();
             let stopwatch = stopwatch.elapsed();
             info!("Finished in {stopwatch:?}");
-            let (res, http_client_trace) = assert_matches!(
+            let (res, http_client_traces) = assert_matches!(
                 exec_log.last_event().event.clone(),
-                ExecutionEventInner::Finished { result, http_client_trace: Some(http_client_trace) }
-                => (result, http_client_trace));
+                ExecutionEventInner::Finished { result, http_client_traces: Some(http_client_traces) }
+                => (result, http_client_traces));
             let res = res.unwrap_err();
             assert_matches!(
                 res,
@@ -912,8 +912,8 @@ pub(crate) mod tests {
                 }
             );
 
-            assert_eq!(1, http_client_trace.len());
-            let http_client_trace = http_client_trace.into_iter().next().unwrap();
+            assert_eq!(1, http_client_traces.len());
+            let http_client_trace = http_client_traces.into_iter().next().unwrap();
             let (method, uri_actual) = assert_matches!(
                 http_client_trace,
                 HttpClientTrace {
@@ -1024,16 +1024,16 @@ pub(crate) mod tests {
                 );
                 let exec_log = db_connection.get(&execution_id).await.unwrap();
 
-                let (reason_full, reason_inner, detail, found_expires_at, http_client_trace) = assert_matches!(
+                let (reason_full, reason_inner, detail, found_expires_at, http_client_traces) = assert_matches!(
                     &exec_log.last_event().event,
                     ExecutionEventInner::TemporarilyFailed {
                         backoff_expires_at,
                         reason_full,
                         reason_inner,
                         detail: Some(detail),
-                        http_client_trace: Some(http_client_trace)
+                        http_client_traces: Some(http_client_traces)
                     }
-                    => (reason_full, reason_inner, detail, *backoff_expires_at, http_client_trace)
+                    => (reason_full, reason_inner, detail, *backoff_expires_at, http_client_traces)
                 );
                 assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
                 assert_eq!("activity returned error", reason_inner.deref());
@@ -1043,8 +1043,8 @@ pub(crate) mod tests {
                     "Unexpected {detail}"
                 );
 
-                assert_eq!(1, http_client_trace.len());
-                let http_client_trace = http_client_trace.iter().next().unwrap();
+                assert_eq!(1, http_client_traces.len());
+                let http_client_trace = http_client_traces.iter().next().unwrap();
                 let (method, uri_actual) = assert_matches!(
                     http_client_trace,
                     HttpClientTrace {

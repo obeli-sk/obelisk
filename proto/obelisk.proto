@@ -280,7 +280,7 @@ message ExecutionEvent {
         string reason = 1;
         optional string detail = 2;
         google.protobuf.Timestamp backoff_expires_at = 3;
-        repeated HttpClientTrace http_client_trace = 4;
+        repeated HttpClientTrace http_client_traces = 4;
     }
 
     message TemporarilyTimedOut {
@@ -289,7 +289,7 @@ message ExecutionEvent {
 
     message Finished {
         ResultDetail result_detail = 1;
-        repeated HttpClientTrace http_client_trace = 2;
+        repeated HttpClientTrace http_client_traces = 2;
     }
 
     message HistoryEvent {

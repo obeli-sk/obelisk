@@ -265,7 +265,7 @@ fn render_execution_details(
                 execution_event::Event::Failed(event) => {
                     html! {
                         <>
-                            <HttpTraceEvent http_client_traces={event.http_client_trace.clone()} />
+                            <HttpTraceEvent http_client_traces={event.http_client_traces.clone()} />
                             <TemporarilyFailedEvent event={event.clone()} />
                         </>
                     }
@@ -280,7 +280,7 @@ fn render_execution_details(
                         .expect("`result_detail` is sent in the `Finished` message")
                         .clone();
                     html! {<>
-                        <HttpTraceEvent http_client_traces={event.http_client_trace.clone()} />
+                        <HttpTraceEvent http_client_traces={event.http_client_traces.clone()} />
                         <FinishedEvent {result_detail} />
                         </>
                     }

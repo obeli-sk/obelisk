@@ -64,14 +64,14 @@ pub enum WorkerError {
         trap_kind: TrapKind,
         detail: String,
         version: Version,
-        http_client_trace: Option<Vec<HttpClientTrace>>,
+        http_client_traces: Option<Vec<HttpClientTrace>>,
     },
     // Used by activity worker, must not be returned when retries are exhausted.
     #[error("activity returned error")]
     ActivityReturnedError {
         detail: Option<String>,
         version: Version,
-        http_client_trace: Option<Vec<HttpClientTrace>>,
+        http_client_traces: Option<Vec<HttpClientTrace>>,
     },
     /// Workflow trap when `retry_on_trap` is enabled.
     #[error("workflow trap handled as temporary error: {reason}")]

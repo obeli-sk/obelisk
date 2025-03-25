@@ -439,23 +439,23 @@ pub(crate) fn from_execution_event_to_grpc(
                     reason_full,
                     reason_inner: _,
                     detail,
-                    http_client_trace
+                    http_client_traces
                 } => grpc::execution_event::Event::Failed(grpc::execution_event::TemporarilyFailed {
                     reason: reason_full.to_string(),
                     detail,
                     backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
-                    http_client_trace: http_client_trace.unwrap_or_default().into_iter().map(grpc::HttpClientTrace::from).collect(),
+                    http_client_traces: http_client_traces.unwrap_or_default().into_iter().map(grpc::HttpClientTrace::from).collect(),
                 }),
                 ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at } => {
                     grpc::execution_event::Event::TimedOut(grpc::execution_event::TemporarilyTimedOut {
                         backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                     })
                 },
-                ExecutionEventInner::Finished { result, http_client_trace } => grpc::execution_event::Event::Finished(grpc::execution_event::Finished {
+                ExecutionEventInner::Finished { result, http_client_traces } => grpc::execution_event::Event::Finished(grpc::execution_event::Finished {
                     result_detail: Some(
                         grpc::ResultDetail::from(result)
                     ),
-                    http_client_trace: http_client_trace.unwrap_or_default().into_iter().map(grpc::HttpClientTrace::from).collect(),
+                    http_client_traces: http_client_traces.unwrap_or_default().into_iter().map(grpc::HttpClientTrace::from).collect(),
 
                 }),
                 ExecutionEventInner::HistoryEvent { event } => grpc::execution_event::Event::HistoryVariant(grpc::execution_event::HistoryEvent {

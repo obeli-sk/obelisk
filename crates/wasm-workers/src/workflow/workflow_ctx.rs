@@ -1225,7 +1225,7 @@ pub(crate) mod tests {
             }
             let (finished_value, version) = assert_matches!(
                 worker_result,
-                WorkerResult::Ok(finished_value, version, _http_client_trace) => (finished_value, version),
+                WorkerResult::Ok(finished_value, version, _http_client_traces) => (finished_value, version),
                 "should be finished"
             );
             info!("Appending finished result");
@@ -1237,7 +1237,7 @@ pub(crate) mod tests {
                         created_at: sim_clock.now(),
                         event: concepts::storage::ExecutionEventInner::Finished {
                             result: Ok(finished_value),
-                            http_client_trace: None,
+                            http_client_traces: None,
                         },
                     },
                 )
@@ -1473,7 +1473,7 @@ pub(crate) mod tests {
                     created_at: sim_clock.now(),
                     event: concepts::storage::ExecutionEventInner::Finished {
                         result: Ok(SupportedFunctionReturnValue::None),
-                        http_client_trace: None,
+                        http_client_traces: None,
                     },
                 }],
                 child_log.next_version.clone(),

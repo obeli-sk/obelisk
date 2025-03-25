@@ -255,7 +255,7 @@ pub const DUMMY_TEMPORARILY_FAILED: ExecutionEventInner = ExecutionEventInner::T
     reason_full: StrVariant::empty(),
     reason_inner: StrVariant::empty(),
     detail: None,
-    http_client_trace: None,
+    http_client_traces: None,
 };
 
 #[derive(
@@ -321,7 +321,7 @@ pub enum ExecutionEventInner {
         reason_inner: StrVariant,
         detail: Option<String>,
         #[arbitrary(value = None)]
-        http_client_trace: Option<Vec<HttpClientTrace>>,
+        http_client_traces: Option<Vec<HttpClientTrace>>,
     },
     // Created by the executor holding last lock.
     // After expiry interpreted as pending.
@@ -335,7 +335,7 @@ pub enum ExecutionEventInner {
         #[arbitrary(value = Ok(SupportedFunctionReturnValue::None))]
         result: FinishedExecutionResult,
         #[arbitrary(value = None)]
-        http_client_trace: Option<Vec<HttpClientTrace>>,
+        http_client_traces: Option<Vec<HttpClientTrace>>,
     },
 
     #[display("HistoryEvent({event})")]

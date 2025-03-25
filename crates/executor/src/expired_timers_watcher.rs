@@ -160,7 +160,7 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                             created_at: executed_at,
                             event: ExecutionEventInner::Finished {
                                 result: finished_exec_result,
-                                http_client_trace: None,
+                                http_client_traces: None,
                             },
                         },
                         execution_id: execution_id.clone(),

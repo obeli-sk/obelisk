@@ -205,7 +205,7 @@ mod nomadsim {
             result: FinishedExecutionResult::Ok(
                 concepts::SupportedFunctionReturnValue::InfallibleOrResultOk(wast_val_with_type),
             ),
-            http_client_trace: None,
+            http_client_traces: None,
         };
         // Finished
         let version = {

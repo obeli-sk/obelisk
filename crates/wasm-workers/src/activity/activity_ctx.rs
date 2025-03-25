@@ -26,7 +26,7 @@ pub struct ActivityCtx<C: ClockFn> {
     http_ctx: WasiHttpCtx,
     component_logger: ComponentLogger,
     clock_fn: C,
-    pub(crate) http_client_trace: Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>,
+    pub(crate) http_client_traces: Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>,
 }
 
 impl<C: ClockFn> WasiView for ActivityCtx<C> {
@@ -75,7 +75,7 @@ impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
             method: request.method().to_string(),
         };
         let (resp_trace_tx, resp_trace_rx) = oneshot::channel();
-        self.http_client_trace.push((req, resp_trace_rx));
+        self.http_client_traces.push((req, resp_trace_rx));
         let clock_fn = self.clock_fn.clone();
         span.in_scope(|| debug!("Sending {request:?}"));
         let handle = wasmtime_wasi::runtime::spawn(
@@ -135,7 +135,7 @@ pub fn store<C: ClockFn>(
         wasi_ctx: wasi_ctx.build(),
         http_ctx: WasiHttpCtx::new(),
         component_logger: ComponentLogger { span: worker_span },
-        http_client_trace: Vec::new(),
+        http_client_traces: Vec::new(),
         clock_fn,
     };
     Store::new(engine, ctx)
