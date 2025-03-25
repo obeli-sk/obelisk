@@ -21,7 +21,7 @@ pub struct TraceViewProps {
     pub execution_id: grpc_client::ExecutionId,
 }
 
-const PAGE: u32 = 20;
+const PAGE: u32 = 100;
 
 #[function_component(TraceView)]
 pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {

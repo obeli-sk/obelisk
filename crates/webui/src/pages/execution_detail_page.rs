@@ -25,7 +25,7 @@ use std::ops::Deref;
 use yew::prelude::*;
 use yew_router::prelude::Link;
 
-const PAGE: u32 = 20;
+const PAGE: u32 = 100;
 
 #[derive(Properties, PartialEq)]
 pub struct ExecutionDetailPageProps {
