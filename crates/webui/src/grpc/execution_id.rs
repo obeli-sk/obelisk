@@ -1,6 +1,14 @@
 use super::grpc_client::{self};
-use std::{fmt::Display, str::FromStr};
+use std::{fmt::Display, hash::Hash, str::FromStr};
 use yew::{html, ToHtml};
+
+impl Eq for grpc_client::ExecutionId {}
+
+impl Hash for grpc_client::ExecutionId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
 
 pub trait ExecutionIdExt {
     fn generate() -> grpc_client::ExecutionId {

@@ -11,7 +11,7 @@ use crate::{
             history_event::{join_set_request, JoinSetRequest},
             Finished, TemporarilyFailed,
         },
-        JoinSetResponseEvent,
+        join_set_response_event, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent,
     },
 };
 use assert_matches::assert_matches;
@@ -34,7 +34,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     let execution_id_state = use_state(|| execution_id.clone());
     let events_state: UseStateHandle<Vec<grpc_client::ExecutionEvent>> = use_state(Vec::new);
     let responses_state: UseStateHandle<(
-        HashMap<grpc_client::JoinSetId, Vec<JoinSetResponseEvent>>,
+        HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
         u32, /* Cursor */
     )> = use_state(|| (HashMap::new(), 0));
     // let root_trace_state: UseStateHandle<Option<TraceDataRoot>> = use_state(|| None);
@@ -178,6 +178,14 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                         .expect("`scheduled_at` is sent by the server"),
                 )
             };
+            let since_scheduled_at = |timestamp: ::prost_wkt_types::Timestamp| {
+                (DateTime::from(timestamp) - execution_scheduled_at)
+                    .to_std()
+                    .expect("must not be negative")
+            };
+
+            let child_ids_to_responses =
+                compute_child_execution_id_to_response(events, &responses_state.0);
 
             let children = events
                 .iter()
@@ -193,18 +201,13 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                             let children: Vec<_> = http_client_traces
                                 .iter()
                                 .map(|trace| {
-                                    let sent_at = DateTime::from(
-                                        trace
-                                            .sent_at
-                                            .expect("HttpClientTrace.sent_at is always sent"),
-                                    );
-                                    let started_at = (sent_at - execution_scheduled_at)
-                                        .to_std()
-                                        .expect("must not be negative");
+                                    let started_at = since_scheduled_at(trace
+                                        .sent_at
+                                        .expect("HttpClientTrace.sent_at is always sent"));
                                     let finished_at = trace
                                         .finished_at
                                         .as_ref()
-                                        .map(|finished_at| DateTime::from(*finished_at));
+                                        .map(|finished_at| since_scheduled_at(*finished_at));
                                     let name = format!(
                                         "{method} {uri}{result}",
                                         method = trace.method,
@@ -217,15 +220,10 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                             ) => format!(" ({status})"),
                                             Some(
                                                 grpc_client::http_client_trace::Result::Error(err),
-                                            ) => format!(" (error: {err}"),
+                                            ) => format!(" (error: {err})"),
                                             None => String::new(),
                                         }
                                     );
-                                    let finished_at = finished_at.map(|finished_at| {
-                                        (finished_at - execution_scheduled_at)
-                                            .to_std()
-                                            .expect("must not be negative")
-                                    });
                                     TraceDataChild {
                                         name,
                                         started_at,
@@ -247,15 +245,19 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                     },
                                 )),
                         }) => {
-                            //
+
+
+
+                            let finished_at = if let Some(JoinSetResponseEvent{created_at: Some(created_at), ..}) = child_ids_to_responses.get(child_execution_id) {
+                                Some(since_scheduled_at(*created_at))
+                            } else {
+                                None
+                            };
                             Some(vec![
                                 TraceDataChild {
                                     name: format!("{child_execution_id}"),
-                                    started_at: (
-                                        DateTime::from(event.created_at.expect("event.created_at must be sent")) - execution_scheduled_at)
-                                        .to_std()
-                                        .expect("must not be negative"),
-                                    finished_at: None, // TODO: match with response
+                                    started_at: since_scheduled_at(event.created_at.expect("event.created_at must be sent")),
+                                    finished_at,
                                     children: vec![],
                                     details: None,
                                 }
@@ -273,11 +275,9 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                     if is_finished { "finished" } else { "loading" }
                 ),
                 started_at: Duration::ZERO,
-                finished_at: (DateTime::from(
+                finished_at: since_scheduled_at(
                     last_event.created_at.expect("created_at must be sent"),
-                ) - execution_scheduled_at)
-                    .to_std()
-                    .expect("must not be negative"),
+                ),
                 children,
                 details: None,
             })
@@ -298,4 +298,43 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
             "Loading..."
         }
     }
+}
+
+fn compute_child_execution_id_to_response<'a>(
+    events: &[ExecutionEvent],
+    responses: &'a HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
+) -> HashMap<ExecutionId, &'a JoinSetResponseEvent> {
+    let mut map = HashMap::new();
+    let mut seen_join_nexts: HashMap<&JoinSetId, usize> = HashMap::new();
+    for event in events {
+        if let Some(execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+            event: Some(execution_event::history_event::Event::JoinNext(join_next)),
+        })) = &event.event
+        {
+            let join_set_id = join_next
+                .join_set_id
+                .as_ref()
+                .expect("`join_set_id` is sent in `JoinNext`");
+            let counter_val = seen_join_nexts.entry(join_set_id).or_default();
+            if let Some(
+                resp @ JoinSetResponseEvent {
+                    response:
+                        Some(join_set_response_event::Response::ChildExecutionFinished(
+                            join_set_response_event::ChildExecutionFinished {
+                                child_execution_id: Some(child_execution_id),
+                                ..
+                            },
+                        )),
+                    ..
+                },
+            ) = responses
+                .get(join_set_id)
+                .and_then(|responses| responses.get(*counter_val))
+            {
+                map.insert(child_execution_id.clone(), resp);
+            }
+            *counter_val += 1;
+        }
+    }
+    map
 }
