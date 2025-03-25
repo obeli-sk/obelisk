@@ -62,7 +62,7 @@ pub fn execution_detail_page(
         }
     });
 
-    // Fetch ListExecutionEvents
+    // Fetch ListExecutionEventsAndResponses
     use_effect_with(
         (
             execution_id_state.deref().clone(),
@@ -78,34 +78,62 @@ pub fn execution_detail_page(
                 }
                 trace!("Setting is_fetching_state=true");
                 is_fetching_state.set(true);
-                // Request ListExecutionEvents
                 {
                     let execution_id = execution_id.clone();
                     wasm_bindgen_futures::spawn_local(async move {
                         let mut events = events_state.deref().clone();
                         let version_from = events.last().map(|e| e.version + 1).unwrap_or_default();
+                        let (mut responses, responses_cursor_from) =
+                            responses_state.deref().clone();
                         trace!("list_execution_events {execution_id} {version_from}");
                         let base_url = "/api";
                         let mut execution_client =
                         grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
                             tonic_web_wasm_client::Client::new(base_url.to_string()),
                         );
-                        let new_events = execution_client
-                            .list_execution_events(grpc_client::ListExecutionEventsRequest {
-                                execution_id: Some(execution_id.clone()),
-                                version_from,
-                                length: PAGE,
-                            })
+                        let new_events_and_responses = execution_client
+                            .list_execution_events_and_responses(
+                                grpc_client::ListExecutionEventsAndResponsesRequest {
+                                    execution_id: Some(execution_id.clone()),
+                                    version_from,
+                                    events_length: PAGE,
+                                    responses_cursor_from,
+                                    responses_length: PAGE,
+                                    responses_including_cursor: responses_cursor_from == 0,
+                                },
+                            )
                             .await
                             .unwrap()
-                            .into_inner()
-                            .events;
-                        debug!("Got {} events", new_events.len());
-                        events.extend(new_events);
+                            .into_inner();
+                        debug!(
+                            "Got {} events, {} responses",
+                            new_events_and_responses.events.len(),
+                            new_events_and_responses.responses.len()
+                        );
+                        events.extend(new_events_and_responses.events);
                         let last_event = events.last().expect("not found is sent as an error");
                         let is_finished =
                             matches!(last_event.event, Some(execution_event::Event::Finished(_)));
                         events_state.set(events);
+                        {
+                            let responses_cursor_from = new_events_and_responses
+                                .responses
+                                .last()
+                                .map(|r| r.cursor)
+                                .unwrap_or(responses_cursor_from);
+                            for response in new_events_and_responses.responses {
+                                let response = response
+                                    .event
+                                    .expect("`event` is sent in `ResponseWithCursor`");
+                                let join_set_id = response
+                                    .join_set_id
+                                    .clone()
+                                    .expect("`join_set_id` is sent in `JoinSetResponseEvent`");
+                                let execution_responses = responses.entry(join_set_id).or_default();
+                                execution_responses.push(response);
+                            }
+                            responses_state.set((responses, responses_cursor_from));
+                        }
                         if is_finished {
                             debug!("Execution Finished");
                             // Keep is_fetching_state as true, the use_effect_with will not be triggered again.
@@ -115,47 +143,6 @@ pub fn execution_detail_page(
                             trace!("Timeout: Triggering refetch");
                             is_fetching_state.set(false); // Trigger use_effect_with again.
                         }
-                    });
-                }
-                // Request ListResponses
-                {
-                    let execution_id = execution_id.clone();
-                    wasm_bindgen_futures::spawn_local(async move {
-                        let (mut responses, cursor_from) = responses_state.deref().clone();
-                        trace!("list_responses {execution_id} {cursor_from}");
-                        let base_url = "/api";
-                        let mut execution_client =
-                        grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
-                            tonic_web_wasm_client::Client::new(base_url.to_string()),
-                        );
-                        let new_responses = execution_client
-                            .list_responses(grpc_client::ListResponsesRequest {
-                                execution_id: Some(execution_id.clone()),
-                                cursor_from,
-                                length: PAGE,
-                                including_cursor: cursor_from == 0,
-                            })
-                            .await
-                            .unwrap()
-                            .into_inner()
-                            .responses;
-                        debug!("Got {} responses", new_responses.len());
-                        let cursor_from = new_responses
-                            .last()
-                            .map(|r| r.cursor)
-                            .unwrap_or(cursor_from);
-                        for response in new_responses {
-                            let response = response
-                                .event
-                                .expect("`event` is sent in `ResponseWithCursor`");
-                            let join_set_id = response
-                                .join_set_id
-                                .clone()
-                                .expect("`join_set_id` is sent in `JoinSetResponseEvent`");
-                            let execution_responses = responses.entry(join_set_id).or_default();
-                            execution_responses.push(response);
-                        }
-                        responses_state.set((responses, cursor_from));
                     });
                 }
             }
