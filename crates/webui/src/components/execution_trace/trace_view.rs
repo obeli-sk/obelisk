@@ -107,18 +107,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                             )
                         };
 
-                        let mut root = TraceDataRoot {
-                            name: execution_id.to_string(),
-                            started_at: Duration::ZERO,
-                            finished_at: (DateTime::from(
-                                last_event.created_at.expect("created_at must be sent"),
-                            ) - execution_scheduled_at)
-                                .to_std()
-                                .expect("must not be negative"),
-                            children: Vec::new(),
-                            details: None,
-                        };
-
                         let children = events
                         .iter()
                         .filter_map(|event| {
@@ -178,7 +166,22 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                         .collect();
                         let is_finished =
                             matches!(last_event.event, Some(execution_event::Event::Finished(_)));
-                        root.children = children;
+
+                        let root = TraceDataRoot {
+                            name: format!(
+                                "{execution_id} ({})",
+                                if is_finished { "finished" } else { "loading" }
+                            ),
+                            started_at: Duration::ZERO,
+                            finished_at: (DateTime::from(
+                                last_event.created_at.expect("created_at must be sent"),
+                            ) - execution_scheduled_at)
+                                .to_std()
+                                .expect("must not be negative"),
+                            children,
+                            details: None,
+                        };
+
                         root_trace_state.set(Some(root));
                         events_state.set(events);
 
