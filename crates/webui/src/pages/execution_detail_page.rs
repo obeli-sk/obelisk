@@ -38,8 +38,10 @@ pub fn execution_detail_page(
     debug!("<ExecutionDetailPage />");
     let execution_id_state = use_state(|| execution_id.clone());
     let events_state: UseStateHandle<Vec<ExecutionEvent>> = use_state(Vec::new);
-    let responses_state: UseStateHandle<(HashMap<_, Vec<_>>, u32)> =
-        use_state(|| (HashMap::new(), 0));
+    let responses_state: UseStateHandle<(
+        HashMap<grpc_client::JoinSetId, Vec<JoinSetResponseEvent>>,
+        u32, /* Cursor */
+    )> = use_state(|| (HashMap::new(), 0));
     let is_fetching_state = use_state(|| false); // Track if we're currently fetching
 
     // Cleanup the state on execution_id change.
@@ -194,10 +196,10 @@ pub fn execution_detail_page(
     </>}
 }
 
-fn compute_join_next_to_response<'a>(
+pub fn compute_join_next_to_response<'a>(
     events: &[ExecutionEvent],
     responses: &'a HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
-) -> HashMap<u32, &'a JoinSetResponseEvent> {
+) -> HashMap<u32 /* version of JoinNext */, &'a JoinSetResponseEvent> {
     let mut map = HashMap::new();
     let mut seen_join_nexts: HashMap<&JoinSetId, usize> = HashMap::new();
     for event in events {
