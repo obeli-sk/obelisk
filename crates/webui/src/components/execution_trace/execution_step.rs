@@ -21,7 +21,8 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
             let busy_duration = finished_at - props.data.started_at();
             (busy_duration.as_millis() as f64 / props.total_duration.as_millis() as f64) * 100.0
         } else {
-            100.0 - start_percentage
+            // Fill until the end
+            100.0 - start_percentage + 1.0
         }
     };
 
