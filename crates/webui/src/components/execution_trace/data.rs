@@ -14,55 +14,30 @@ impl TraceData {
         }
     }
 
-    pub fn start_percentage(
-        &self,
-        root_scheduled_at: DateTime<Utc>,
-        root_last_event_at: DateTime<Utc>,
-    ) -> f64 {
+    fn busy(&self) -> &[BusyInterval] {
         match self {
-            TraceData::Root(_) => 0.0,
-            TraceData::Child(child) => {
-                let total_duration = root_last_event_at - root_scheduled_at;
-                100.0 * (child.started_at - root_scheduled_at).num_milliseconds() as f64
-                    / total_duration.num_milliseconds() as f64
-            }
+            TraceData::Root(TraceDataRoot { busy, .. }) => busy,
+            TraceData::Child(TraceDataChild { busy, .. }) => busy,
         }
     }
 
-    pub fn busy_end_percentage(
+    pub fn busy_intervals(
         &self,
         root_scheduled_at: DateTime<Utc>,
         root_last_event_at: DateTime<Utc>,
-    ) -> f64 {
-        match self {
-            TraceData::Root(_) => 100.0,
-            TraceData::Child(child) => {
-                let total_duration = root_last_event_at - root_scheduled_at;
-                100.0
-                    * (child.finished_at.unwrap_or(root_last_event_at) - child.started_at)
-                        .num_milliseconds() as f64
-                    / total_duration.num_milliseconds() as f64
-            }
-        }
+    ) -> Vec<(f64, f64)> {
+        self.busy()
+            .iter()
+            .map(|interval| interval.as_percentage(root_scheduled_at, root_last_event_at))
+            .collect()
     }
 
-    pub fn start_to_end(&self, root_last_event_at: DateTime<Utc>) -> Duration {
-        match self {
-            TraceData::Root(TraceDataRoot {
-                scheduled_at,
-                last_event_at,
-                ..
-            }) => (*last_event_at - *scheduled_at)
-                .to_std()
-                .expect("scheduled_at must be <= last_event_at"),
-            TraceData::Child(TraceDataChild {
-                started_at,
-                finished_at,
-                ..
-            }) => (finished_at.unwrap_or(root_last_event_at) - *started_at)
-                .to_std()
-                .expect("started_at must be <= finished_at"),
-        }
+    pub fn busy_duration(&self, root_last_event_at: DateTime<Utc>) -> Duration {
+        self.busy()
+            .iter()
+            .map(|interval| interval.duration(root_last_event_at))
+            .reduce(|acc, current| acc + current)
+            .unwrap_or_default()
     }
 
     pub fn children(&self) -> &[TraceDataChild] {
@@ -73,25 +48,48 @@ impl TraceData {
     }
 }
 
-// #[derive(Clone, PartialEq)]
-// pub struct BusyInterval {
-//     pub started_at: DateTime<Utc>,
-//     pub finished_at: DateTime<Utc>,
-// }
+#[derive(Clone, PartialEq)]
+pub struct BusyInterval {
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+impl BusyInterval {
+    fn as_percentage(
+        &self,
+        root_scheduled_at: DateTime<Utc>,
+        root_last_event_at: DateTime<Utc>,
+    ) -> (f64, f64) {
+        let total_duration = root_last_event_at - root_scheduled_at;
+        let start_percentage = 100.0
+            * (self.started_at - root_scheduled_at).num_milliseconds() as f64
+            / total_duration.num_milliseconds() as f64;
+
+        let end_percentage = 100.0
+            * (self.finished_at.unwrap_or(root_last_event_at) - self.started_at).num_milliseconds()
+                as f64
+            / total_duration.num_milliseconds() as f64;
+        (start_percentage, end_percentage)
+    }
+
+    fn duration(&self, root_last_event_at: DateTime<Utc>) -> Duration {
+        (self.finished_at.unwrap_or(root_last_event_at) - self.started_at)
+            .to_std()
+            .expect("started_at must be <= finished_at")
+    }
+}
 
 #[derive(Clone, PartialEq)]
 pub struct TraceDataRoot {
     pub name: String,
     pub scheduled_at: DateTime<Utc>,
     pub last_event_at: DateTime<Utc>,
-    // pub busy: Vec<BusyInterval>,
+    pub busy: Vec<BusyInterval>,
     pub children: Vec<TraceDataChild>,
 }
 
 #[derive(Clone, PartialEq)]
 pub struct TraceDataChild {
     pub name: String,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
+    pub busy: Vec<BusyInterval>,
     pub children: Vec<TraceDataChild>,
 }

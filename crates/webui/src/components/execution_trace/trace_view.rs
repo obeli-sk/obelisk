@@ -1,7 +1,7 @@
 use super::data::TraceData;
 use crate::{
     components::execution_trace::{
-        data::{TraceDataChild, TraceDataRoot},
+        data::{BusyInterval, TraceDataChild, TraceDataRoot},
         execution_step::ExecutionStep,
     },
     grpc::{
@@ -210,8 +210,10 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                     );
                                     TraceDataChild {
                                         name,
-                                        started_at: DateTime::from(trace.sent_at.expect("sent_at is sent")),
-                                        finished_at: trace.finished_at.clone().map(DateTime::from),
+                                        busy: vec![BusyInterval {
+                                            started_at: DateTime::from(trace.sent_at.expect("sent_at is sent")),
+                                            finished_at: trace.finished_at.clone().map(DateTime::from),
+                                        }],
                                         children: vec![],
                                     }
                                 })
@@ -236,8 +238,10 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                             Some(vec![
                                 TraceDataChild {
                                     name,
-                                    started_at: DateTime::from(event.created_at.expect("event.created_at must be sent")),
-                                    finished_at: child_ids_to_responses_creation.get(child_execution_id).cloned(),
+                                    busy: vec![BusyInterval {
+                                        started_at: DateTime::from(event.created_at.expect("event.created_at must be sent")),
+                                        finished_at: child_ids_to_responses_creation.get(child_execution_id).cloned(),
+                                    }],
                                     children: vec![],
                                 }
                             ])
@@ -248,6 +252,42 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                 .flatten()
                 .collect();
 
+            let mut current_locked_at = None;
+            let mut busy = vec![];
+            for event in events {
+                match event.event.as_ref().unwrap() {
+                    execution_event::Event::Locked(..) => {
+                        if current_locked_at.is_none() {
+                            current_locked_at = Some(DateTime::from(
+                                event.created_at.expect("event.created_at is always sent"),
+                            ));
+                        } // otherwise we are extending the lock
+                    }
+                    execution_event::Event::TemporarilyFailed(..)
+                    | execution_event::Event::Unlocked(..)
+                    | execution_event::Event::TemporarilyTimedOut(..)
+                    | execution_event::Event::Finished(..) => {
+                        let started_at = current_locked_at
+                            .take()
+                            .expect("must have been locked at this point");
+                        busy.push(BusyInterval {
+                            started_at,
+                            finished_at: Some(DateTime::from(
+                                event.created_at.expect("event.created_at is always sent"),
+                            )),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            // If there is locked without unlocked, add the unfinished interval
+            if let Some(started_at) = current_locked_at {
+                busy.push(BusyInterval {
+                    started_at,
+                    finished_at: None,
+                });
+            }
+
             Some(TraceDataRoot {
                 name: format!(
                     "{execution_id} ({})",
@@ -255,6 +295,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                 ),
                 scheduled_at: execution_scheduled_at,
                 last_event_at,
+                busy,
                 children,
             })
         }
