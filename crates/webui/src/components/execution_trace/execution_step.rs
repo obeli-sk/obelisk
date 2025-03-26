@@ -54,12 +54,12 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
     } else {
         format!("{:?}", props.data.busy_duration(props.root_last_event_at))
     };
-    let name = props.data.name().to_string();
+
     html! {
         <div class="execution-step">
             <div class="step-row">
                 <span class="step-icon">{"▶"}</span>
-                <span class="step-name" title={name.clone()}>{name}</span>
+                <span class="step-name" title={props.data.title().to_string()}>{props.data.name().clone()}</span>
                 <div class="relative-duration-container">
                     <div class="total-duration-line" style="width: 100%" title={tooltip}>
                         {intervals}

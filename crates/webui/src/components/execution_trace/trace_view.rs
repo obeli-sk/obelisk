@@ -1,5 +1,6 @@
 use super::data::TraceData;
 use crate::{
+    app::Route,
     components::execution_trace::{
         data::{BusyInterval, TraceDataChild, TraceDataRoot},
         execution_step::ExecutionStep,
@@ -24,6 +25,7 @@ use hashbrown::HashMap;
 use log::{debug, trace};
 use std::ops::Deref as _;
 use yew::prelude::*;
+use yew_router::prelude::Link;
 
 #[derive(Properties, PartialEq)]
 pub struct TraceViewProps {
@@ -209,7 +211,8 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                         }
                                     );
                                     TraceDataChild {
-                                        name,
+                                        name: name.to_html(),
+                                        title: name,
                                         busy: vec![BusyInterval {
                                             started_at: DateTime::from(trace.sent_at.expect("sent_at is sent")),
                                             finished_at: trace.finished_at.map(DateTime::from),
@@ -237,7 +240,13 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                             };
                             Some(vec![
                                 TraceDataChild {
-                                    name,
+                                    name: html!{
+                                        <Link<Route> to={Route::ExecutionTrace { execution_id: child_execution_id.clone() }}>
+                                            {name}
+                                        </Link<Route>>
+
+                                    },
+                                    title: child_execution_id.to_string(),
                                     busy: vec![BusyInterval {
                                         started_at: DateTime::from(event.created_at.expect("event.created_at must be sent")),
                                         finished_at: child_ids_to_responses_creation.get(child_execution_id).cloned(),
@@ -288,11 +297,13 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                 });
             }
 
+            let name = format!(
+                "{execution_id} ({})",
+                if is_finished { "finished" } else { "loading" }
+            );
             Some(TraceDataRoot {
-                name: format!(
-                    "{execution_id} ({})",
-                    if is_finished { "finished" } else { "loading" }
-                ),
+                name: name.to_html(),
+                title: name,
                 scheduled_at: execution_scheduled_at,
                 last_event_at,
                 busy,

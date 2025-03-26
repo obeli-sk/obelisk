@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::time::Duration;
+use yew::Html;
 
 #[derive(Clone, PartialEq)]
 pub enum TraceData {
@@ -7,10 +8,10 @@ pub enum TraceData {
     Child(TraceDataChild),
 }
 impl TraceData {
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &Html {
         match self {
-            TraceData::Root(root) => root.name.as_str(),
-            TraceData::Child(child) => child.name.as_str(),
+            TraceData::Root(root) => &root.name,
+            TraceData::Child(child) => &child.name,
         }
     }
 
@@ -44,6 +45,13 @@ impl TraceData {
         match self {
             TraceData::Root(root) => &root.children,
             TraceData::Child(child) => &child.children,
+        }
+    }
+
+    pub fn title(&self) -> &str {
+        match self {
+            TraceData::Root(root) => &root.title,
+            TraceData::Child(child) => &child.title,
         }
     }
 }
@@ -80,7 +88,8 @@ impl BusyInterval {
 
 #[derive(Clone, PartialEq)]
 pub struct TraceDataRoot {
-    pub name: String,
+    pub name: Html,
+    pub title: String,
     pub scheduled_at: DateTime<Utc>,
     pub last_event_at: DateTime<Utc>,
     pub busy: Vec<BusyInterval>,
@@ -89,7 +98,8 @@ pub struct TraceDataRoot {
 
 #[derive(Clone, PartialEq)]
 pub struct TraceDataChild {
-    pub name: String,
+    pub name: Html,
+    pub title: String,
     pub busy: Vec<BusyInterval>,
     pub children: Vec<TraceDataChild>,
 }
