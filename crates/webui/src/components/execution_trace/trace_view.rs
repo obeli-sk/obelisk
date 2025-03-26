@@ -4,14 +4,17 @@ use crate::{
         data::{TraceDataChild, TraceDataRoot},
         execution_step::ExecutionStep,
     },
-    grpc::grpc_client::{
-        self,
-        execution_event::{
+    grpc::{
+        execution_id::EXECUTION_ID_INFIX,
+        grpc_client::{
             self,
-            history_event::{join_set_request, JoinSetRequest},
-            Finished, TemporarilyFailed,
+            execution_event::{
+                self,
+                history_event::{join_set_request, JoinSetRequest},
+                Finished, TemporarilyFailed,
+            },
+            join_set_response_event, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent,
         },
-        join_set_response_event, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent,
     },
 };
 use assert_matches::assert_matches;
@@ -242,9 +245,14 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                 )),
                         }) => {
                             let finished_at = child_ids_to_responses_creation.get(child_execution_id).map(|created_at| since_scheduled_at(*created_at));
+                            let name = if let Some(suffix) =  child_execution_id.id.strip_prefix(&format!("{execution_id}{EXECUTION_ID_INFIX}")) {
+                                suffix.to_string()
+                            } else {
+                                child_execution_id.to_string()
+                            };
                             Some(vec![
                                 TraceDataChild {
-                                    name: format!("{child_execution_id}"),
+                                    name,
                                     started_at: since_scheduled_at(event.created_at.expect("event.created_at must be sent")),
                                     finished_at: finished_at.unwrap_or(total_duration),
                                     children: vec![],
