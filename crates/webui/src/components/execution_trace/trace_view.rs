@@ -216,6 +216,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                         busy: vec![BusyInterval {
                                             started_at: DateTime::from(trace.sent_at.expect("sent_at is sent")),
                                             finished_at: trace.finished_at.map(DateTime::from),
+                                            title: None,
                                         }],
                                         children: vec![],
                                     }
@@ -250,6 +251,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                     busy: vec![BusyInterval {
                                         started_at: DateTime::from(event.created_at.expect("event.created_at must be sent")),
                                         finished_at: child_ids_to_responses_creation.get(child_execution_id).cloned(),
+                                        title: None,
                                     }],
                                     children: vec![],
                                 }
@@ -279,11 +281,31 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                         let started_at = current_locked_at
                             .take()
                             .expect("must have been locked at this point");
+                        let finished_at = DateTime::from(
+                            event.created_at.expect("event.created_at is always sent"),
+                        );
+                        let duration = (finished_at - started_at)
+                            .to_std()
+                            .expect("started_at must be <= finished_at");
+                        let title = match event.event.as_ref().unwrap() {
+                            execution_event::Event::TemporarilyFailed(..) => {
+                                Some(format!("Temporarily failed after {duration:?}"))
+                            }
+                            execution_event::Event::Unlocked(..) => {
+                                Some(format!("Unlocked after {duration:?}"))
+                            }
+                            execution_event::Event::TemporarilyTimedOut(..) => {
+                                Some(format!("Temporarily timed out after {duration:?}"))
+                            }
+                            execution_event::Event::Finished(..) => {
+                                Some(format!("Finished in {duration:?}"))
+                            }
+                            _ => unreachable!(),
+                        };
                         busy.push(BusyInterval {
                             started_at,
-                            finished_at: Some(DateTime::from(
-                                event.created_at.expect("event.created_at is always sent"),
-                            )),
+                            finished_at: Some(finished_at),
+                            title,
                         });
                     }
                     _ => {}
@@ -294,12 +316,13 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                 busy.push(BusyInterval {
                     started_at,
                     finished_at: None,
+                    title: Some("pending".to_string()),
                 });
             }
 
             let name = format!(
                 "{execution_id} ({})",
-                if is_finished { "finished" } else { "loading" }
+                if is_finished { "finished" } else { "pending" }
             );
             Some(TraceDataRoot {
                 name: name.to_html(),

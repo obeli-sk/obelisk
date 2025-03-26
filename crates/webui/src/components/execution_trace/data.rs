@@ -15,22 +15,11 @@ impl TraceData {
         }
     }
 
-    fn busy(&self) -> &[BusyInterval] {
+    pub fn busy(&self) -> &[BusyInterval] {
         match self {
             TraceData::Root(TraceDataRoot { busy, .. }) => busy,
             TraceData::Child(TraceDataChild { busy, .. }) => busy,
         }
-    }
-
-    pub fn busy_intervals(
-        &self,
-        root_scheduled_at: DateTime<Utc>,
-        root_last_event_at: DateTime<Utc>,
-    ) -> Vec<(f64, f64)> {
-        self.busy()
-            .iter()
-            .map(|interval| interval.as_percentage(root_scheduled_at, root_last_event_at))
-            .collect()
     }
 
     pub fn busy_duration(&self, root_last_event_at: DateTime<Utc>) -> Duration {
@@ -60,9 +49,10 @@ impl TraceData {
 pub struct BusyInterval {
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
+    pub title: Option<String>,
 }
 impl BusyInterval {
-    fn as_percentage(
+    pub fn as_percentage(
         &self,
         root_scheduled_at: DateTime<Utc>,
         root_last_event_at: DateTime<Utc>,

@@ -17,12 +17,15 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
 
     let intervals: Vec<_> = props
         .data
-        .busy_intervals(props.root_scheduled_at, props.root_last_event_at)
+        .busy()
         .into_iter()
-        .map(|(start_percentage, busy_percentage)| {
+        .map(|interval| {
+            let (start_percentage, busy_percentage) =
+                interval.as_percentage(props.root_scheduled_at, props.root_last_event_at);
             html! {
                 <div
                 class="busy-duration-line"
+                title={interval.title.clone()}
                 style={format!("width: {}%; margin-left: {}%", busy_percentage, start_percentage)}
             >
             </div>
