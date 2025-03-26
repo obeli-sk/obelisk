@@ -15,7 +15,7 @@ impl TraceData {
 
     pub fn started_at(&self) -> Duration {
         match self {
-            TraceData::Root(root) => root.started_at,
+            TraceData::Root(_) => Duration::ZERO,
             TraceData::Child(child) => child.started_at,
         }
     }
@@ -33,22 +33,13 @@ impl TraceData {
             TraceData::Child(child) => &child.children,
         }
     }
-
-    pub fn details(&self) -> Option<&TraceDetails> {
-        match self {
-            TraceData::Root(root) => root.details.as_ref(),
-            TraceData::Child(child) => child.details.as_ref(),
-        }
-    }
 }
 
 #[derive(Clone, PartialEq)]
 pub struct TraceDataRoot {
     pub name: String,
-    pub started_at: Duration,
     pub finished_at: Duration,
     pub children: Vec<TraceDataChild>,
-    pub details: Option<TraceDetails>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -57,8 +48,4 @@ pub struct TraceDataChild {
     pub started_at: Duration,
     pub finished_at: Option<Duration>,
     pub children: Vec<TraceDataChild>,
-    pub details: Option<TraceDetails>,
 }
-
-#[derive(Clone, PartialEq)]
-pub struct TraceDetails {}

@@ -19,7 +19,7 @@ use chrono::DateTime;
 use gloo::timers::future::TimeoutFuture;
 use hashbrown::HashMap;
 use log::{debug, trace};
-use std::{ops::Deref as _, time::Duration};
+use std::ops::Deref as _;
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
@@ -221,7 +221,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                         started_at,
                                         finished_at,
                                         children: vec![],
-                                        details: None,
                                     }
                                 })
                                 .collect();
@@ -244,7 +243,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                     started_at: since_scheduled_at(event.created_at.expect("event.created_at must be sent")),
                                     finished_at,
                                     children: vec![],
-                                    details: None,
                                 }
                             ])
                         },
@@ -259,14 +257,12 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                     "{execution_id} ({})",
                     if is_finished { "finished" } else { "loading" }
                 ),
-                started_at: Duration::ZERO,
                 finished_at: since_scheduled_at(compute_current_finished_at(
                     last_event,
                     is_finished,
                     &responses_state.0,
                 )),
                 children,
-                details: None,
             })
         }
     };

@@ -63,9 +63,6 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
                         </div>
                     </div>
                 </div>
-                if props.data.details().is_some() {
-                    <button>{"Details"}</button>
-                }
             </div>
             {children_html}
         </div>
