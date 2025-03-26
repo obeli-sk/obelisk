@@ -402,27 +402,41 @@ fn compute_root_trace(
             .flatten()
             .collect();
 
-    let mut current_locked_at = None;
+    let mut current_locked_at: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
     let mut busy = vec![];
     for event in events {
         match event.event.as_ref().unwrap() {
-            execution_event::Event::Locked(..) => {
-                if current_locked_at.is_none() {
-                    current_locked_at = Some(DateTime::from(
-                        event.created_at.expect("event.created_at is always sent"),
-                    ));
-                } // otherwise we are extending the lock
+            execution_event::Event::Locked(locked) => {
+                if let Some((locked_at, lock_expires_at)) = current_locked_at.take() {
+                    // if the created_at..expires_at includes the current lock's created_at, we are extending the lock
+                    let duration = (lock_expires_at - locked_at)
+                        .to_std()
+                        .expect("locked_at must be <= expires_at");
+                    busy.push(BusyInterval {
+                        started_at: locked_at,
+                        finished_at: Some(lock_expires_at),
+                        title: Some(format!("Locked for {duration:?}")),
+                    });
+                }
+                let locked_at =
+                    DateTime::from(event.created_at.expect("event.created_at is always sent"));
+                let expires_at = DateTime::from(
+                    locked
+                        .lock_expires_at
+                        .expect("Locked.lock_expires_at is sent"),
+                );
+                current_locked_at = Some((locked_at, expires_at));
             }
             execution_event::Event::TemporarilyFailed(..)
             | execution_event::Event::Unlocked(..)
             | execution_event::Event::TemporarilyTimedOut(..)
             | execution_event::Event::Finished(..) => {
-                let started_at = current_locked_at
+                let (locked_at, _) = current_locked_at
                     .take()
                     .expect("must have been locked at this point");
                 let finished_at =
                     DateTime::from(event.created_at.expect("event.created_at is always sent"));
-                let duration = (finished_at - started_at)
+                let duration = (finished_at - locked_at)
                     .to_std()
                     .expect("started_at must be <= finished_at");
                 let title = match event.event.as_ref().unwrap() {
@@ -441,7 +455,7 @@ fn compute_root_trace(
                     _ => unreachable!(),
                 };
                 busy.push(BusyInterval {
-                    started_at,
+                    started_at: locked_at,
                     finished_at: Some(finished_at),
                     title,
                 });
@@ -449,10 +463,11 @@ fn compute_root_trace(
             _ => {}
         }
     }
-    // If there is locked without unlocked, add the unfinished interval
-    if let Some(started_at) = current_locked_at {
+    // If there is locked without unlocked, add the unfinished interval.
+    // Ignore the lock_expires_at as it might be in the future or beyond the last seen event.
+    if let Some((locked_at, _lock_expires_at)) = current_locked_at {
         busy.push(BusyInterval {
-            started_at,
+            started_at: locked_at,
             finished_at: None,
             title: Some("pending".to_string()),
         });
