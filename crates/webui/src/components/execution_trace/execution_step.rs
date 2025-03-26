@@ -1,25 +1,26 @@
 use super::data::TraceData;
-use std::time::Duration;
+use chrono::{DateTime, Utc};
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
 pub struct ExecutionStepProps {
     pub data: TraceData,
-    pub total_duration: Duration,
+    pub root_scheduled_at: DateTime<Utc>,
+    pub root_last_event_at: DateTime<Utc>,
 }
 
 #[function_component(ExecutionStep)]
 pub fn execution_step(props: &ExecutionStepProps) -> Html {
-    let total_percentage =
-        (props.total_duration.as_millis() as f64 / props.total_duration.as_millis() as f64) * 100.0;
-    let start_percentage = (props.data.started_at().as_millis() as f64
-        / props.total_duration.as_millis() as f64)
-        * 100.0;
+    let total_duration = (props.root_last_event_at - props.root_scheduled_at)
+        .to_std()
+        .expect("root_scheduled_at must be lower or equal to root_last_event");
+    let start_percentage = props
+        .data
+        .start_percentage(props.root_scheduled_at, props.root_last_event_at);
 
-    let busy_percentage = {
-        let busy_duration = props.data.finished_at() - props.data.started_at();
-        (busy_duration.as_millis() as f64 / props.total_duration.as_millis() as f64) * 100.0
-    };
+    let busy_percentage = props
+        .data
+        .busy_end_percentage(props.root_scheduled_at, props.root_last_event_at);
 
     let has_children = !props.data.children().is_empty();
     let mut children_html = Html::default();
@@ -30,16 +31,17 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
                 { for props.data.children().iter().map(|child| html! {
                     <ExecutionStep
                         data={TraceData::Child(child.clone())}
-                        total_duration={props.total_duration} />
+                        root_scheduled_at={props.root_scheduled_at}
+                        root_last_event_at={props.root_last_event_at}
+                         />
                 })}
             </div>
         };
     }
     let tooltip = if let TraceData::Root(_) = props.data {
-        format!("Total duration: {:?}", props.total_duration)
+        format!("Total duration: {total_duration:?}")
     } else {
-        let duration = props.data.finished_at() - props.data.started_at();
-        format!("{duration:?}")
+        format!("{:?}", props.data.start_to_end(props.root_last_event_at))
     };
     let name = props.data.name().to_string();
     html! {
@@ -48,7 +50,7 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
                 <span class="step-icon">{"▶"}</span>
                 <span class="step-name" title={name.clone()}>{name}</span>
                 <div class="relative-duration-container">
-                    <div class="total-duration-line" style={format!("width: {}%", total_percentage)} title={tooltip}>
+                    <div class="total-duration-line" style="width: 100%" title={tooltip}>
                         <div
                             class="busy-duration-line"
                             style={format!("width: {}%; margin-left: {}%", busy_percentage, start_percentage)}

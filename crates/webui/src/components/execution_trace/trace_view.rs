@@ -1,7 +1,7 @@
 use super::data::TraceData;
 use crate::{
     components::execution_trace::{
-        data::{BusyInterval, TraceDataChild, TraceDataRoot},
+        data::{TraceDataChild, TraceDataRoot},
         execution_step::ExecutionStep,
     },
     grpc::{
@@ -18,11 +18,11 @@ use crate::{
     },
 };
 use assert_matches::assert_matches;
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 use gloo::timers::future::TimeoutFuture;
 use hashbrown::HashMap;
 use log::{debug, trace};
-use std::{ops::Deref as _, time::Duration};
+use std::ops::Deref as _;
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
@@ -155,6 +155,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
         } else {
             let last_event = events.last().expect("not found is sent as an error");
             let is_finished = matches!(last_event.event, Some(execution_event::Event::Finished(_)));
+            let last_event_at = compute_last_event_at(last_event, is_finished, &responses_state.0);
 
             let execution_scheduled_at = {
                 let create_event = events
@@ -173,16 +174,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                         .expect("`scheduled_at` is sent by the server"),
                 )
             };
-            let since_scheduled_at = |timestamp: ::prost_wkt_types::Timestamp| {
-                (DateTime::from(timestamp) - execution_scheduled_at)
-                    .to_std()
-                    .expect("must not be negative")
-            };
-            let total_duration = since_scheduled_at(compute_current_finished_at(
-                last_event,
-                is_finished,
-                &responses_state.0,
-            ));
 
             let child_ids_to_responses_creation =
                 compute_child_execution_id_to_response_created_at(&responses_state.0);
@@ -201,13 +192,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                             let children: Vec<_> = http_client_traces
                                 .iter()
                                 .map(|trace| {
-                                    let started_at = since_scheduled_at(trace
-                                        .sent_at
-                                        .expect("HttpClientTrace.sent_at is always sent"));
-                                    let finished_at = trace
-                                        .finished_at
-                                        .as_ref()
-                                        .map(|finished_at| since_scheduled_at(*finished_at));
                                     let name = format!(
                                         "{method} {uri}{result}",
                                         method = trace.method,
@@ -226,8 +210,8 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                     );
                                     TraceDataChild {
                                         name,
-                                        started_at,
-                                        finished_at: finished_at.unwrap_or(total_duration),
+                                        started_at: DateTime::from(trace.sent_at.expect("sent_at is sent")),
+                                        finished_at: trace.finished_at.clone().map(DateTime::from),
                                         children: vec![],
                                     }
                                 })
@@ -244,7 +228,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                     },
                                 )),
                         }) => {
-                            let finished_at = child_ids_to_responses_creation.get(child_execution_id).map(|created_at| since_scheduled_at(*created_at));
                             let name = if let Some(suffix) =  child_execution_id.id.strip_prefix(&format!("{execution_id}{EXECUTION_ID_INFIX}")) {
                                 suffix.to_string()
                             } else {
@@ -253,8 +236,8 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                             Some(vec![
                                 TraceDataChild {
                                     name,
-                                    started_at: since_scheduled_at(event.created_at.expect("event.created_at must be sent")),
-                                    finished_at: finished_at.unwrap_or(total_duration),
+                                    started_at: DateTime::from(event.created_at.expect("event.created_at must be sent")),
+                                    finished_at: child_ids_to_responses_creation.get(child_execution_id).cloned(),
                                     children: vec![],
                                 }
                             ])
@@ -270,11 +253,8 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                     "{execution_id} ({})",
                     if is_finished { "finished" } else { "loading" }
                 ),
-                finished_at: total_duration,
-                busy: vec![BusyInterval {
-                    started_at: Duration::ZERO,
-                    finished_at: total_duration,
-                }],
+                scheduled_at: execution_scheduled_at,
+                last_event_at,
                 children,
             })
         }
@@ -284,7 +264,8 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
         html! {
             <div class="trace-view">
                 <ExecutionStep
-                    total_duration={root_trace.finished_at}
+                    root_scheduled_at={root_trace.scheduled_at}
+                    root_last_event_at={root_trace.last_event_at}
                     data={TraceData::Root(root_trace)}
                 />
             </div>
@@ -298,7 +279,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
 
 fn compute_child_execution_id_to_response_created_at(
     responses: &HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
-) -> HashMap<ExecutionId, prost_wkt_types::Timestamp> {
+) -> HashMap<ExecutionId, DateTime<Utc>> {
     responses
         .values()
         .flatten()
@@ -316,7 +297,7 @@ fn compute_child_execution_id_to_response_created_at(
             {
                 Some((
                     child_execution_id.clone(),
-                    resp.created_at.expect("response.created_at is sent"),
+                    DateTime::from(resp.created_at.expect("response.created_at is sent")),
                 ))
             } else {
                 None
@@ -325,18 +306,18 @@ fn compute_child_execution_id_to_response_created_at(
         .collect()
 }
 
-fn compute_current_finished_at(
+fn compute_last_event_at(
     last_event: &ExecutionEvent,
     is_finished: bool,
     responses: &HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
-) -> ::prost_wkt_types::Timestamp {
-    let candidate = last_event.created_at.expect("event.created_at is sent");
+) -> DateTime<Utc> {
+    let candidate = DateTime::from(last_event.created_at.expect("event.created_at is sent"));
     if !is_finished {
         responses
             .values()
             .filter_map(|vec| vec.last())
             .map(|e| DateTime::from(e.created_at.expect("event.created_at is sent")))
-            .chain(std::iter::once(DateTime::from(candidate)))
+            .chain(std::iter::once(candidate))
             .max()
             .expect("chained with last_event so cannot be empty")
             .into()
