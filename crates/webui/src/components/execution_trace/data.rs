@@ -20,9 +20,9 @@ impl TraceData {
         }
     }
 
-    pub fn finished_at(&self) -> Option<Duration> {
+    pub fn finished_at(&self) -> Duration {
         match self {
-            TraceData::Root(root) => Some(root.finished_at),
+            TraceData::Root(root) => root.finished_at,
             TraceData::Child(child) => child.finished_at,
         }
     }
@@ -46,6 +46,6 @@ pub struct TraceDataRoot {
 pub struct TraceDataChild {
     pub name: String,
     pub started_at: Duration,
-    pub finished_at: Option<Duration>,
+    pub finished_at: Duration,
     pub children: Vec<TraceDataChild>,
 }

@@ -175,6 +175,11 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                     .to_std()
                     .expect("must not be negative")
             };
+            let total_duration = since_scheduled_at(compute_current_finished_at(
+                last_event,
+                is_finished,
+                &responses_state.0,
+            ));
 
             let child_ids_to_responses_creation =
                 compute_child_execution_id_to_response_created_at(&responses_state.0);
@@ -219,7 +224,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                     TraceDataChild {
                                         name,
                                         started_at,
-                                        finished_at,
+                                        finished_at: finished_at.unwrap_or(total_duration),
                                         children: vec![],
                                     }
                                 })
@@ -241,7 +246,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                 TraceDataChild {
                                     name: format!("{child_execution_id}"),
                                     started_at: since_scheduled_at(event.created_at.expect("event.created_at must be sent")),
-                                    finished_at,
+                                    finished_at: finished_at.unwrap_or(total_duration),
                                     children: vec![],
                                 }
                             ])
@@ -257,11 +262,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                     "{execution_id} ({})",
                     if is_finished { "finished" } else { "loading" }
                 ),
-                finished_at: since_scheduled_at(compute_current_finished_at(
-                    last_event,
-                    is_finished,
-                    &responses_state.0,
-                )),
+                finished_at: total_duration,
                 children,
             })
         }
