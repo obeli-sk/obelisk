@@ -36,9 +36,16 @@ impl TraceData {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct BusyInterval {
+    pub started_at: Duration,
+    pub finished_at: Duration,
+}
+
+#[derive(Clone, PartialEq)]
 pub struct TraceDataRoot {
     pub name: String,
     pub finished_at: Duration,
+    pub busy: Vec<BusyInterval>,
     pub children: Vec<TraceDataChild>,
 }
 

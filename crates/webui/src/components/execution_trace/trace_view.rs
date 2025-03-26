@@ -1,7 +1,7 @@
 use super::data::TraceData;
 use crate::{
     components::execution_trace::{
-        data::{TraceDataChild, TraceDataRoot},
+        data::{BusyInterval, TraceDataChild, TraceDataRoot},
         execution_step::ExecutionStep,
     },
     grpc::{
@@ -22,7 +22,7 @@ use chrono::DateTime;
 use gloo::timers::future::TimeoutFuture;
 use hashbrown::HashMap;
 use log::{debug, trace};
-use std::ops::Deref as _;
+use std::{ops::Deref as _, time::Duration};
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
@@ -271,6 +271,10 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                     if is_finished { "finished" } else { "loading" }
                 ),
                 finished_at: total_duration,
+                busy: vec![BusyInterval {
+                    started_at: Duration::ZERO,
+                    finished_at: total_duration,
+                }],
                 children,
             })
         }
