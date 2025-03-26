@@ -1,4 +1,5 @@
 use super::activity_ctx::{self, ActivityCtx};
+use crate::activity::activity_ctx::HttpClientTracesContainer;
 use crate::component_logger::log_activities;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
@@ -106,12 +107,14 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Params: {params:?}", params = ctx.params);
         assert!(ctx.event_history.is_empty());
+        let http_client_traces = HttpClientTracesContainer::default();
         let mut store = activity_ctx::store(
             &self.engine,
             &ctx.execution_id,
             &self.config,
             ctx.worker_span.clone(),
             self.clock_fn.clone(),
+            http_client_traces.clone(),
         );
 
         let instance = match self.instance_pre.instantiate_async(&mut store).await {
@@ -156,10 +159,14 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
         let retry_on_err = self.config.retry_on_err;
         let call_function = {
             let worker_span = ctx.worker_span.clone();
+            let http_client_traces = http_client_traces.clone();
+            let version = ctx.version.clone();
             async move {
                 let res = func.call_async(&mut store, &params, &mut results).await;
-                let http_client_traces = std::mem::take(&mut store.data_mut().http_client_traces)
-                    .into_iter()
+                let http_client_traces = http_client_traces
+                    .lock()
+                    .unwrap()
+                    .drain(..)
                     .map(|(req, mut resp)| HttpClientTrace {
                         req,
                         resp: resp.try_recv().ok(),
@@ -170,7 +177,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         reason: err.to_string(),
                         trap_kind: TrapKind::Trap,
                         detail: format!("{err:?}"),
-                        version: ctx.version,
+                        version,
                         http_client_traces: Some(http_client_traces),
                     });
                 };
@@ -181,7 +188,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                     Err(err) => {
                         return WorkerResult::Err(WorkerError::FatalError(
                             FatalError::ResultParsingError(err),
-                            ctx.version,
+                            version,
                         ));
                     }
                 };
@@ -191,7 +198,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         reason: err.to_string(),
                         trap_kind: TrapKind::PostReturnTrap,
                         detail: format!("{err:?}"),
-                        version: ctx.version,
+                        version,
                         http_client_traces: Some(http_client_traces),
                     });
                 }
@@ -205,7 +212,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                             );
                             return WorkerResult::Err(WorkerError::ActivityReturnedError {
                                 detail: Some(detail),
-                                version: ctx.version,
+                                version,
                                 http_client_traces: Some(http_client_traces),
                             });
                         }
@@ -215,7 +222,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         });
                     }
                 }
-                WorkerResult::Ok(result, ctx.version, Some(http_client_traces))
+                WorkerResult::Ok(result, version, Some(http_client_traces))
             }
         };
         let started_at = self.clock_fn.now();
@@ -224,7 +231,10 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
             ctx.worker_span.in_scope(||
                 info!(execution_deadline = %ctx.execution_deadline, %started_at, "Timed out - started_at later than execution_deadline")
             );
-            return WorkerResult::Err(WorkerError::TemporaryTimeout);
+            return WorkerResult::Err(WorkerError::TemporaryTimeout {
+                http_client_traces: None,
+                version: ctx.version,
+            });
         };
         let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
 
@@ -243,7 +253,19 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                 ctx.worker_span.in_scope(||
                         info!(duration = ?stopwatch_for_reporting.elapsed(), %started_at, ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %self.clock_fn.now(), "Timed out")
                     );
-                return WorkerResult::Err(WorkerError::TemporaryTimeout);
+                let http_client_traces = http_client_traces
+                    .lock()
+                    .unwrap()
+                    .drain(..)
+                        .map(|(req, mut resp)| HttpClientTrace {
+                            req,
+                            resp: resp.try_recv().ok(),
+                        })
+                        .collect_vec();
+                return WorkerResult::Err(WorkerError::TemporaryTimeout{
+                    http_client_traces: Some(http_client_traces),
+                    version: ctx.version,
+                });
             }
         }
     }
@@ -622,6 +644,7 @@ pub(crate) mod tests {
             );
 
             let executed_at = sim_clock.now();
+            let version = Version::new(10);
             let ctx = WorkerContext {
                 execution_id: ExecutionId::generate(),
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -633,7 +656,7 @@ pub(crate) mod tests {
                 ]),
                 event_history: Vec::new(),
                 responses: Vec::new(),
-                version: Version::new(0),
+                version: version.clone(),
                 execution_deadline: executed_at + TIMEOUT,
                 can_be_retried: false,
                 run_id: RunId::generate(),
@@ -642,7 +665,16 @@ pub(crate) mod tests {
             let WorkerResult::Err(err) = worker.run(ctx).await else {
                 panic!()
             };
-            assert_matches!(err, WorkerError::TemporaryTimeout);
+            let (http_client_traces, actual_version) = assert_matches!(
+                err,
+                WorkerError::TemporaryTimeout {
+                    http_client_traces,
+                    version
+                }
+                => (http_client_traces, version)
+            );
+            assert_eq!(http_client_traces, Some(Vec::new()));
+            assert_eq!(version, actual_version);
         }
 
         #[tokio::test]
@@ -663,7 +695,7 @@ pub(crate) mod tests {
             sim_clock
                 .move_time_forward(Duration::from_millis(100))
                 .await;
-
+            let version = Version::new(10);
             let ctx = WorkerContext {
                 execution_id: ExecutionId::generate(),
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -675,7 +707,7 @@ pub(crate) mod tests {
                 ]),
                 event_history: Vec::new(),
                 responses: Vec::new(),
-                version: Version::new(0),
+                version: version.clone(),
                 execution_deadline,
                 can_be_retried: false,
                 run_id: RunId::generate(),
@@ -684,7 +716,15 @@ pub(crate) mod tests {
             let WorkerResult::Err(err) = worker.run(ctx).await else {
                 panic!()
             };
-            assert_matches!(err, WorkerError::TemporaryTimeout);
+            let actual_version = assert_matches!(
+                err,
+                WorkerError::TemporaryTimeout {
+                    http_client_traces: None,
+                    version: actual_version,
+                }
+                => actual_version
+            );
+            assert_eq!(version, actual_version);
         }
 
         #[expect(clippy::too_many_lines)]

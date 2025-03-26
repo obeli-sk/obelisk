@@ -86,7 +86,13 @@ pub enum WorkerError {
     LimitReached { reason: String, version: Version },
     // Used by activity worker, best effort. If this is not persisted, the expired timers watcher will append it.
     #[error("temporary timeout")]
-    TemporaryTimeout,
+    TemporaryTimeout {
+        http_client_traces: Option<Vec<HttpClientTrace>>,
+        version: Version,
+    },
+    #[error("temporary timeout handled by watcher")]
+    // only applicable to workflows
+    TemporaryTimeoutHandledByWatcher,
     #[error(transparent)]
     DbError(DbError),
     // non-retriable errors

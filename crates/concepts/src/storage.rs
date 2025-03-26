@@ -249,6 +249,7 @@ pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::Histor
 pub const DUMMY_TEMPORARILY_TIMED_OUT: ExecutionEventInner =
     ExecutionEventInner::TemporarilyTimedOut {
         backoff_expires_at: DateTime::from_timestamp_nanos(0),
+        http_client_traces: None,
     };
 pub const DUMMY_TEMPORARILY_FAILED: ExecutionEventInner = ExecutionEventInner::TemporarilyFailed {
     backoff_expires_at: DateTime::from_timestamp_nanos(0),
@@ -326,7 +327,11 @@ pub enum ExecutionEventInner {
     // Created by the executor holding last lock.
     // After expiry interpreted as pending.
     #[display("TemporarilyTimedOut(`{backoff_expires_at}`)")]
-    TemporarilyTimedOut { backoff_expires_at: DateTime<Utc> },
+    TemporarilyTimedOut {
+        backoff_expires_at: DateTime<Utc>,
+        #[arbitrary(value = None)]
+        http_client_traces: Option<Vec<HttpClientTrace>>,
+    },
     // Created by the executor holding last lock.
     // Processed by a scheduler if a parent execution needs to be notified,
     // also when

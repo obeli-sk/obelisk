@@ -12,7 +12,7 @@ use crate::{
             execution_event::{
                 self,
                 history_event::{join_set_request, JoinSetRequest},
-                Finished, TemporarilyFailed,
+                Finished, TemporarilyFailed, TemporarilyTimedOut,
             },
             join_set_response_event, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent,
         },
@@ -278,6 +278,10 @@ fn compute_root_trace(
             .filter_map(|event| {
                 match event.event.as_ref().expect("event is sent by the server") {
                     execution_event::Event::TemporarilyFailed(TemporarilyFailed {
+                        http_client_traces,
+                        ..
+                    })
+                    | execution_event::Event::TemporarilyTimedOut(TemporarilyTimedOut{
                         http_client_traces,
                         ..
                     })

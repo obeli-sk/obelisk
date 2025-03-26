@@ -275,6 +275,7 @@ async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             created_at,
             event: ExecutionEventInner::TemporarilyTimedOut {
                 backoff_expires_at: created_at + lock_expiry,
+                http_client_traces: None,
             },
         };
 

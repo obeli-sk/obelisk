@@ -1611,7 +1611,9 @@ impl<S: Sleep> SqlitePool<S> {
             ExecutionEventInner::TemporarilyFailed {
                 backoff_expires_at, ..
             }
-            | ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at }
+            | ExecutionEventInner::TemporarilyTimedOut {
+                backoff_expires_at, ..
+            }
             | ExecutionEventInner::Unlocked {
                 backoff_expires_at, ..
             } => IndexAction::PendingStateChanged(PendingState::PendingAt {

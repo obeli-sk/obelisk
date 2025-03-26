@@ -6,6 +6,7 @@ use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
 use concepts::ExecutionId;
 use hyper::body::Body;
+use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 use tracing::{debug, info_span, Instrument, Span};
 use wasmtime::component::Resource;
@@ -20,13 +21,16 @@ use wasmtime_wasi_http::types::{
 };
 use wasmtime_wasi_http::{HttpResult, WasiHttpCtx, WasiHttpView};
 
+pub type HttpClientTracesContainer =
+    Arc<Mutex<Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>>>;
+
 pub struct ActivityCtx<C: ClockFn> {
     table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
     component_logger: ComponentLogger,
     clock_fn: C,
-    pub(crate) http_client_traces: Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>,
+    http_client_traces: HttpClientTracesContainer,
 }
 
 impl<C: ClockFn> WasiView for ActivityCtx<C> {
@@ -75,7 +79,10 @@ impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
             method: request.method().to_string(),
         };
         let (resp_trace_tx, resp_trace_rx) = oneshot::channel();
-        self.http_client_traces.push((req, resp_trace_rx));
+        self.http_client_traces
+            .lock()
+            .unwrap()
+            .push((req, resp_trace_rx));
         let clock_fn = self.clock_fn.clone();
         span.in_scope(|| debug!("Sending {request:?}"));
         let handle = wasmtime_wasi::runtime::spawn(
@@ -105,6 +112,7 @@ pub fn store<C: ClockFn>(
     config: &ActivityConfig,
     worker_span: Span,
     clock_fn: C,
+    http_client_traces: HttpClientTracesContainer,
 ) -> Store<ActivityCtx<C>> {
     let mut wasi_ctx = WasiCtxBuilder::new();
     if let Some(stdout) = config.forward_stdout {
@@ -135,7 +143,7 @@ pub fn store<C: ClockFn>(
         wasi_ctx: wasi_ctx.build(),
         http_ctx: WasiHttpCtx::new(),
         component_logger: ComponentLogger { span: worker_span },
-        http_client_traces: Vec::new(),
+        http_client_traces,
         clock_fn,
     };
     Store::new(engine, ctx)

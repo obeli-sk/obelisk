@@ -286,6 +286,7 @@ message ExecutionEvent {
 
     message TemporarilyTimedOut {
         google.protobuf.Timestamp backoff_expires_at = 1;
+        repeated HttpClientTrace http_client_traces = 2;
     }
 
     message Finished {

@@ -259,9 +259,10 @@ fn render_execution_details(
                         </>
                     }
                 }
-                execution_event::Event::TemporarilyTimedOut(event) => html! {
-                    <TemporarilyTimedOutEvent event={*event} />
-                },
+                execution_event::Event::TemporarilyTimedOut(event) => html! {<>
+                    <HttpTraceEvent http_client_traces={event.http_client_traces.clone()} />
+                    <TemporarilyTimedOutEvent event={event.clone()} />
+                </>},
                 execution_event::Event::Finished(event) => {
                     let result_detail = event
                         .result_detail

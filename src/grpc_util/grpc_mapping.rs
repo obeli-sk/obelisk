@@ -446,9 +446,14 @@ pub(crate) fn from_execution_event_to_grpc(
                     backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                     http_client_traces: http_client_traces.unwrap_or_default().into_iter().map(grpc::HttpClientTrace::from).collect(),
                 }),
-                ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at } => {
+                ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at, http_client_traces } => {
                     grpc::execution_event::Event::TemporarilyTimedOut(grpc::execution_event::TemporarilyTimedOut {
                         backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
+                        http_client_traces: http_client_traces
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(grpc::HttpClientTrace::from)
+                            .collect(),
                     })
                 },
                 ExecutionEventInner::Finished { result, http_client_traces } => grpc::execution_event::Event::Finished(grpc::execution_event::Finished {

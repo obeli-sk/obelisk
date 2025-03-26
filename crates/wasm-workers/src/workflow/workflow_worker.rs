@@ -390,7 +390,7 @@ impl<
             worker_span.in_scope(||
                 info!(%execution_deadline, %started_at, "Timed out - started_at later than execution_deadline")
             );
-            return WorkerResult::Err(WorkerError::TemporaryTimeout);
+            return WorkerResult::Err(WorkerError::TemporaryTimeoutHandledByWatcher);
         };
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! { // future's liveness: Dropping the loser immediately.
@@ -409,7 +409,7 @@ impl<
                     worker_span.in_scope(||
                         info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %self.clock_fn.now(), "Timed out")
                     );
-                    WorkerResult::Err(WorkerError::TemporaryTimeout)
+                    WorkerResult::Err(WorkerError::TemporaryTimeoutHandledByWatcher)
                 }
             }
         }
@@ -636,7 +636,6 @@ impl<
 
 #[cfg(test)]
 pub(crate) mod tests {
-    // TODO: test timeouts
     use super::*;
     use crate::{
         activity::activity_worker::tests::{
@@ -1019,7 +1018,7 @@ pub(crate) mod tests {
         let WorkerResult::Err(err) = worker.run(ctx).await else {
             panic!()
         };
-        assert_matches!(err, WorkerError::TemporaryTimeout);
+        assert_matches!(err, WorkerError::TemporaryTimeoutHandledByWatcher);
     }
 
     #[rstest]

@@ -39,7 +39,7 @@ pub type FinishedExecutionResult = Result<SupportedFunctionReturnValue, Finished
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FinishedExecutionError {
-    // Activity only
+    // Activity only, because workflows will be retried forever
     #[error("permanent timeout")]
     PermanentTimeout,
     // Workflow only
@@ -62,7 +62,7 @@ impl FinishedExecutionError {
     #[must_use]
     pub fn as_pending_state_finished_error(&self) -> PendingStateFinishedError {
         match self {
-            FinishedExecutionError::PermanentTimeout => PendingStateFinishedError::Timeout,
+            FinishedExecutionError::PermanentTimeout { .. } => PendingStateFinishedError::Timeout,
             FinishedExecutionError::UnhandledChildExecutionError { .. } => {
                 PendingStateFinishedError::UnhandledChildExecutionError
             }

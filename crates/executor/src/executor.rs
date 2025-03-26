@@ -371,10 +371,45 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             WorkerResult::Err(err) => {
                 let reason = err.to_string();
                 let (primary_event, child_finished, version) = match err {
-                    WorkerError::TemporaryTimeout => {
-                        info!("Temporary timeout");
-                        // Will be updated by `expired_timers_watcher`.
+                    WorkerError::TemporaryTimeoutHandledByWatcher => {
+                        info!("Temporary timeout handled by watcher");
                         return Ok(None);
+                    }
+                    WorkerError::TemporaryTimeout {
+                        http_client_traces,
+                        version,
+                    } => {
+                        if let Some(duration) = can_be_retried {
+                            let backoff_expires_at = result_obtained_at + duration;
+                            info!("Temporary timeout after {duration:?} at {backoff_expires_at}");
+                            (
+                                ExecutionEventInner::TemporarilyTimedOut {
+                                    backoff_expires_at,
+                                    http_client_traces,
+                                },
+                                None,
+                                version,
+                            )
+                        } else {
+                            info!("Permanent timeout");
+                            let result = Err(FinishedExecutionError::PermanentTimeout);
+                            let child_finished =
+                                parent.map(|(parent_execution_id, parent_join_set)| {
+                                    ChildFinishedResponse {
+                                        parent_execution_id,
+                                        parent_join_set,
+                                        result: result.clone(),
+                                    }
+                                });
+                            (
+                                ExecutionEventInner::Finished {
+                                    result,
+                                    http_client_traces,
+                                },
+                                child_finished,
+                                version,
+                            )
+                        }
                     }
                     WorkerError::DbError(db_error) => {
                         return Err(db_error);
@@ -1124,8 +1159,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn child_execution_permanently_failed_should_notify_parent_timeout() {
-        let worker_error = WorkerError::TemporaryTimeout;
+    async fn child_execution_permanently_failed_handled_by_watcher_should_notify_parent_timeout() {
+        let worker_error = WorkerError::TemporaryTimeoutHandledByWatcher;
         let expected_child_err = FinishedExecutionError::PermanentTimeout;
         child_execution_permanently_failed_should_notify_parent(worker_error, expected_child_err)
             .await;
@@ -1283,7 +1318,10 @@ mod tests {
             sim_clock.now(),
         )
         .await;
-        if expected_child_err == FinishedExecutionError::PermanentTimeout {
+        if matches!(
+            expected_child_err,
+            FinishedExecutionError::PermanentTimeout { .. }
+        ) {
             // In case of timeout, let the timers watcher handle it
             sim_clock.move_time_forward(LOCK_EXPIRY).await;
             expired_timers_watcher::tick(&db_pool.connection(), sim_clock.now())
@@ -1453,7 +1491,7 @@ mod tests {
         assert_matches!(
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
-                event: ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at },
+                event: ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at, .. },
                 created_at: at,
             } if *at == now_after_first_lock_expiry && *backoff_expires_at == expected_first_timeout_expiry
         );

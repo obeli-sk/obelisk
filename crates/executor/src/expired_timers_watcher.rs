@@ -138,7 +138,10 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                         created_at: executed_at,
                         primary_event: AppendRequest {
                             created_at: executed_at,
-                            event: ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at },
+                            event: ExecutionEventInner::TemporarilyTimedOut {
+                                backoff_expires_at,
+                                http_client_traces: None,
+                            },
                         },
                         execution_id: execution_id.clone(),
                         version,

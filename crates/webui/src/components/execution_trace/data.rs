@@ -87,7 +87,9 @@ pub struct TraceDataRoot {
 }
 impl TraceDataRoot {
     pub fn total_duration(&self) -> Duration {
-        (self.last_event_at - self.scheduled_at).to_std().expect("scheduled_at must be <= last_event_at")
+        (self.last_event_at - self.scheduled_at)
+            .to_std()
+            .expect("scheduled_at must be <= last_event_at")
     }
 }
 
