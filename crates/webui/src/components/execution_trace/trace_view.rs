@@ -65,24 +65,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     let is_fetching_state: UseStateHandle<Arc<RwLock<HashMap<ExecutionId, bool>>>> =
         use_state(Default::default); // Track if we're currently fetching
 
-    // FIXME
-    // // Cleanup the state on execution_id change.
-    // use_effect_with(execution_id.clone(), {
-    //     let execution_ids_state = execution_ids_state.clone();
-    //     let events_state = events_state.clone();
-    //     let responses_state = responses_state.clone();
-    //     let is_fetching_state = is_fetching_state.clone();
-    //     move |execution_id| {
-    //         if *execution_id != *props_changed_state.deref() {
-    //             debug!("Execution ID changed");
-    //             execution_id_state.set(execution_id.clone());
-    //             events_state.set(Default::default());
-    //             responses_state.set(Default::default());
-    //             is_fetching_state.set(Default::default());
-    //         }
-    //     }
-    // });
-
     // Fetch ListExecutionEventsAndResponses
     use_effect_with(
         (
