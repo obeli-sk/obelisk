@@ -45,8 +45,10 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
         set.insert(execution_id.clone());
         set
     });
+    #[expect(clippy::type_complexity)]
     let events_state: UseStateHandle<Arc<RwLock<HashMap<ExecutionId, Vec<ExecutionEvent>>>>> =
         use_state(Default::default);
+    #[expect(clippy::type_complexity)]
     let responses_state: UseStateHandle<
         Arc<
             RwLock<
@@ -63,6 +65,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     let is_fetching_state: UseStateHandle<Arc<RwLock<HashMap<ExecutionId, bool>>>> =
         use_state(Default::default); // Track if we're currently fetching
 
+    // FIXME
     // // Cleanup the state on execution_id change.
     // use_effect_with(execution_id.clone(), {
     //     let execution_ids_state = execution_ids_state.clone();
@@ -366,9 +369,9 @@ fn compute_root_trace(
                         };
                         let children = if let Some(child_root) = compute_root_trace(
                             child_execution_id,
-                            &events_map,
-                            &responses_map,
-                            &execution_ids_state,
+                            events_map,
+                            responses_map,
+                            execution_ids_state,
                         ) {
                             vec![TraceData::Root(child_root)]
                         } else {
@@ -474,7 +477,7 @@ fn compute_child_execution_id_to_response_created_at(
 ) -> HashMap<ExecutionId, DateTime<Utc>> {
     responses
         .into_iter()
-        .map(|map| {
+        .flat_map(|map| {
             map.values().flatten().filter_map(|resp| {
                 if let JoinSetResponseEvent {
                     response:
@@ -496,7 +499,6 @@ fn compute_child_execution_id_to_response_created_at(
                 }
             })
         })
-        .flatten()
         .collect()
 }
 

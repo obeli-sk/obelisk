@@ -18,7 +18,7 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
     let intervals: Vec<_> = props
         .data
         .busy()
-        .into_iter()
+        .iter()
         .map(|interval| {
             let (start_percentage, busy_percentage) =
                 interval.as_percentage(props.root_scheduled_at, props.root_last_event_at);
