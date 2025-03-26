@@ -85,6 +85,11 @@ pub struct TraceDataRoot {
     pub busy: Vec<BusyInterval>,
     pub children: Vec<TraceData>,
 }
+impl TraceDataRoot {
+    pub fn total_duration(&self) -> Duration {
+        (self.last_event_at - self.scheduled_at).to_std().expect("scheduled_at must be <= last_event_at")
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraceDataChild {

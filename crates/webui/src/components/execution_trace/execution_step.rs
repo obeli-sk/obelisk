@@ -11,10 +11,6 @@ pub struct ExecutionStepProps {
 
 #[function_component(ExecutionStep)]
 pub fn execution_step(props: &ExecutionStepProps) -> Html {
-    let total_duration = (props.root_last_event_at - props.root_scheduled_at)
-        .to_std()
-        .expect("root_scheduled_at must be lower or equal to root_last_event");
-
     let intervals: Vec<_> = props
         .data
         .busy()
@@ -48,9 +44,10 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
     } else {
         Html::default()
     };
-    let tooltip = if let TraceData::Root(_) = props.data {
+    let tooltip = if let TraceData::Root(root) = &props.data {
         format!(
-            "Total: {total_duration:?}, busy: {:?}",
+            "Total: {:?}, busy: {:?}",
+            root.total_duration(),
             props.data.busy_duration(props.root_last_event_at)
         )
     } else {
