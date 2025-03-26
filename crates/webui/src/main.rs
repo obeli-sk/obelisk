@@ -67,7 +67,7 @@ fn init_logging() {
 
     // use debug level for debug builds, warn level for production builds.
     #[cfg(debug_assertions)]
-    let level = Level::Debug;
+    let level = Level::Trace;
     #[cfg(not(debug_assertions))]
     let level = Level::Warn;
 

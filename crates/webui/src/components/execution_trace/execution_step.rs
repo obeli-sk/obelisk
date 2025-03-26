@@ -33,22 +33,21 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
         })
         .collect();
 
-    let has_children = !props.data.children().is_empty();
-    let mut children_html = Html::default();
-
-    if has_children {
-        children_html = html! {
+    let children_html = if !props.data.children().is_empty() {
+        html! {
             <div class="indented-children"> // Wrap children in a container
                 { for props.data.children().iter().map(|child| html! {
                     <ExecutionStep
-                        data={TraceData::Child(child.clone())}
+                        data={child.clone()}
                         root_scheduled_at={props.root_scheduled_at}
                         root_last_event_at={props.root_last_event_at}
                          />
                 })}
             </div>
-        };
-    }
+        }
+    } else {
+        Html::default()
+    };
     let tooltip = if let TraceData::Root(_) = props.data {
         format!(
             "Total: {total_duration:?}, busy: {:?}",
