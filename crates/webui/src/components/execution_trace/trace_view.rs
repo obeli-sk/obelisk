@@ -212,7 +212,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                                         name,
                                         busy: vec![BusyInterval {
                                             started_at: DateTime::from(trace.sent_at.expect("sent_at is sent")),
-                                            finished_at: trace.finished_at.clone().map(DateTime::from),
+                                            finished_at: trace.finished_at.map(DateTime::from),
                                         }],
                                         children: vec![],
                                     }
@@ -361,7 +361,6 @@ fn compute_last_event_at(
             .chain(std::iter::once(candidate))
             .max()
             .expect("chained with last_event so cannot be empty")
-            .into()
     } else {
         candidate
     }
