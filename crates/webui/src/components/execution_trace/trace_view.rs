@@ -333,8 +333,8 @@ fn compute_root_trace(
                             child_execution_id.to_string()
                         };
 
-                        let load_child_callback = if !execution_ids_state.deref().contains(child_execution_id) {
-                            Some(
+                        let load_button = if !execution_ids_state.deref().contains(child_execution_id) {
+                                let onclick =
                                 Callback::from({
                                     let execution_ids_state = execution_ids_state.clone();
                                     let child_execution_id = child_execution_id.clone();
@@ -344,10 +344,13 @@ fn compute_root_trace(
                                         execution_ids.insert(child_execution_id.clone());
                                         execution_ids_state.set(execution_ids);
                                     }
-                                })
-                            )
+                                });
+                            html!{
+                                <button {onclick} >{"Load"} </button>
+                            }
+
                         } else {
-                            None // FIXME not hidden.
+                            Html::default()
                         };
                         let children = if let Some(child_root) = compute_root_trace(
                             child_execution_id,
@@ -366,7 +369,7 @@ fn compute_root_trace(
                                     <Link<Route> to={Route::ExecutionTrace { execution_id: child_execution_id.clone() }}>
                                         {name}
                                     </Link<Route>>
-                                    <button onclick={load_child_callback} >{"Load"} </button>
+                                    {load_button}
                                 </>},
                                 title: child_execution_id.to_string(),
                                 busy: vec![BusyInterval {
