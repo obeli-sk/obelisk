@@ -312,23 +312,12 @@ fn compute_root_trace(
                             .iter()
                             .map(|trace| {
                                 let name = format!(
-                                    "{result} {method} {uri}",
+                                    "{method} {uri}",
                                     method = trace.method,
                                     uri = trace.uri,
-                                    result = match &trace.result {
-                                        Some(
-                                            http_client_trace::Result::Status(
-                                                status,
-                                            ),
-                                        ) => format!("status {status}"),
-                                        Some(
-                                            http_client_trace::Result::Error(err),
-                                        ) => format!("error: {err}"),
-                                        None => "unfinished".to_string(),
-                                    }
                                 );
                                 let status = match trace.result {
-                                    Some(http_client_trace::Result::Status(_)) => BusyIntervalStatus::HttpTraceFinished,
+                                    Some(http_client_trace::Result::Status(status_code)) => BusyIntervalStatus::HttpTraceFinished(status_code),
                                     Some(http_client_trace::Result::Error(_)) => BusyIntervalStatus::HttpTraceError,
                                     None => BusyIntervalStatus::HttpTraceUnfinished,
                                 };
@@ -404,7 +393,6 @@ fn compute_root_trace(
                             Some(vec![
                                 TraceData::Child(TraceDataChild {
                                     name: html!{<>
-                                        {status}{" "}
                                         <Link<Route> to={Route::ExecutionTrace { execution_id: child_execution_id.clone() }}>
                                             {name}
                                         </Link<Route>>
@@ -539,11 +527,6 @@ fn compute_root_trace(
         .collect::<Vec<_>>();
 
     let name = html! {<>
-        {if let Some(status) = busy.iter().last().map(|i| i.status) {
-            status.to_string()
-        } else {
-            "unknown".to_string()
-        }}{" "}
         {execution_id_vec}
         {" "}{&ffqn}
     </>};

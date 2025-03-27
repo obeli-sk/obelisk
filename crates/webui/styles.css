@@ -166,6 +166,10 @@ ul li span {
     min-width: 0;
 }
 
+.step-status {
+    margin-right: 10px;
+}
+
 .relative-duration-container {
     width: 200px;
     /* Adjust as needed */

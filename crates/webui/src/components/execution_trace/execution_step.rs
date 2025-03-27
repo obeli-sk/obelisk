@@ -53,12 +53,16 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
     } else {
         format!("{:?}", props.data.busy_duration(props.root_last_event_at))
     };
+    let last_status = props.data.busy().last().map(|interval| interval.status);
 
     html! {
         <div class="execution-step">
             <div class="step-row">
                 <span class="step-icon">{"▶"}</span>
                 <span class="step-name" title={props.data.title().to_string()}>{props.data.name().clone()}</span>
+                if let Some(status) = last_status {
+                    <span class="step-status">{status.to_string()}</span>
+                }
                 <div class="relative-duration-container">
                     <div class="total-duration-line" style="width: 100%" title={tooltip}>
                         {intervals}

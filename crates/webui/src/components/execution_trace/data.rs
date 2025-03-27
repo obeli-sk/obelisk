@@ -47,8 +47,8 @@ impl TraceData {
 
 #[derive(Debug, Clone, Copy, PartialEq, derive_more::Display)]
 pub enum BusyIntervalStatus {
-    #[display("Finished")]
-    HttpTraceFinished,
+    #[display("Finished({_0})")]
+    HttpTraceFinished(u32),
     #[display("Unfinished")]
     HttpTraceUnfinished,
     #[display("Error")]
@@ -159,7 +159,7 @@ mod css {
     impl BusyIntervalStatus {
         pub fn get_css_class(&self) -> &'static str {
             match self {
-                BusyIntervalStatus::HttpTraceFinished => "busy-http-trace-finished",
+                BusyIntervalStatus::HttpTraceFinished(_) => "busy-http-trace-finished",
                 BusyIntervalStatus::HttpTraceUnfinished => "busy-http-trace-unfinished",
                 BusyIntervalStatus::HttpTraceError => "busy-http-trace-error",
                 BusyIntervalStatus::ExecutionTimeoutTemporary => "busy-execution-timeout-temporary",
