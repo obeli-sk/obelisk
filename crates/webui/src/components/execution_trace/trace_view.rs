@@ -7,6 +7,7 @@ use crate::{
     },
     grpc::{
         execution_id::EXECUTION_ID_INFIX,
+        ffqn::FunctionFqn,
         grpc_client::{
             self,
             execution_event::{
@@ -505,6 +506,17 @@ fn compute_root_trace(
         });
     }
 
+    let ffqn = {
+        let first = events
+            .first()
+            .expect("checked that events is not empty")
+            .event
+            .as_ref()
+            .expect("event.event is sent");
+        let fn_name = assert_matches!(first,
+            execution_event::Event::Created(execution_event::Created{function_name: Some(fn_name), ..}) => fn_name);
+        FunctionFqn::from(fn_name.clone())
+    };
     let name = html! {<>
         {if let Some(status) = busy.iter().last().map(|i| i.status) {
             status.to_string()
@@ -521,10 +533,11 @@ fn compute_root_trace(
                 &execution_id.id
             }}
         </Link<Route>>
+        {" "}{&ffqn}
     </>};
     Some(TraceDataRoot {
         name,
-        title: execution_id.to_string(),
+        title: format!("{execution_id} {ffqn}"),
         scheduled_at: execution_scheduled_at,
         last_event_at,
         busy,
