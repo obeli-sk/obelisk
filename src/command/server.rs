@@ -860,6 +860,7 @@ async fn verify_internal(
     config_holder: ConfigHolder,
     params: VerifyParams,
 ) -> Result<ServerVerified, anyhow::Error> {
+    info!("Verifying server configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
     let db_dir = config
         .sqlite
@@ -1207,7 +1208,7 @@ impl ServerInit {
     }
 
     async fn close(self) {
-        info!("Server is closing");
+        info!("Server is shutting down");
         self.timers_watcher.close().await;
         for exec_join_handle in self.exec_join_handles {
             exec_join_handle.close().await;
