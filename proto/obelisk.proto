@@ -394,6 +394,7 @@ message HttpClientTrace {
     string uri = 2;
     string method = 3;
     optional google.protobuf.Timestamp finished_at = 4;
+    // present iif finished_at is sent.
     oneof result {
         uint32 status = 5;
         string error = 6;

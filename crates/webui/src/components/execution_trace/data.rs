@@ -45,11 +45,38 @@ impl TraceData {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, derive_more::Display)]
+pub enum BusyIntervalStatus {
+    #[display("Finished")]
+    HttpTraceFinished,
+    #[display("Unfinished")]
+    HttpTraceUnfinished,
+    #[display("Error")]
+    HttpTraceError,
+    #[display("Temporary timeout")]
+    ExecutionTimeoutTemporary,
+    #[display("Permanent timeout")]
+    ExecutionTimeoutPermanent,
+    #[display("Temporary error")]
+    ExecutionErrorTemporary,
+    #[display("Permanent error")]
+    ExecutionErrorPermanent,
+    #[display("Locked & unlocked")]
+    ExecutionLockedAndUnlocked,
+    #[display("Finished")]
+    ExecutionFinished,
+    #[display("Finished with error")]
+    ExecutionReturnedErrorVariant,
+    #[display("Unfinished")]
+    ExecutionUnfinished,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BusyInterval {
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
     pub title: Option<String>,
+    pub status: BusyIntervalStatus,
 }
 impl BusyInterval {
     pub fn as_percentage(
@@ -99,4 +126,27 @@ pub struct TraceDataChild {
     pub title: String,
     pub busy: Vec<BusyInterval>,
     pub children: Vec<TraceData>,
+}
+
+mod grpc {
+    use super::BusyIntervalStatus;
+    use crate::grpc::grpc_client::result_detail;
+
+    impl From<&result_detail::Value> for BusyIntervalStatus {
+        fn from(result_detail_value: &result_detail::Value) -> Self {
+            match result_detail_value {
+                result_detail::Value::Ok(_) => BusyIntervalStatus::ExecutionFinished,
+                result_detail::Value::FallibleError(_) => {
+                    BusyIntervalStatus::ExecutionReturnedErrorVariant
+                }
+                result_detail::Value::Timeout(_) => BusyIntervalStatus::ExecutionTimeoutPermanent,
+                result_detail::Value::ExecutionFailure(_) => {
+                    BusyIntervalStatus::ExecutionErrorPermanent
+                }
+                result_detail::Value::UnhandledChildExecutionError(_) => {
+                    BusyIntervalStatus::ExecutionErrorPermanent
+                }
+            }
+        }
+    }
 }

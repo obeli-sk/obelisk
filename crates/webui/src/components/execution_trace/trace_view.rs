@@ -1,4 +1,4 @@
-use super::data::TraceData;
+use super::data::{BusyIntervalStatus, TraceData};
 use crate::{
     app::Route,
     components::execution_trace::{
@@ -14,7 +14,8 @@ use crate::{
                 history_event::{join_set_request, JoinSetRequest},
                 Finished, TemporarilyFailed, TemporarilyTimedOut,
             },
-            join_set_response_event, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent,
+            http_client_trace, join_set_response_event, result_detail, ExecutionEvent, ExecutionId,
+            JoinSetId, JoinSetResponseEvent, ResultDetail,
         },
     },
 };
@@ -280,8 +281,7 @@ fn compute_root_trace(
         )
     };
 
-    let child_ids_to_responses_creation =
-        compute_child_execution_id_to_response_created_at(responses);
+    let child_ids_to_results = compute_child_execution_id_to_child_execution_finished(responses);
 
     let children = events
             .iter()
@@ -310,16 +310,21 @@ fn compute_root_trace(
                                     uri = trace.uri,
                                     result = match &trace.result {
                                         Some(
-                                            grpc_client::http_client_trace::Result::Status(
+                                            http_client_trace::Result::Status(
                                                 status,
                                             ),
                                         ) => format!("status {status}"),
                                         Some(
-                                            grpc_client::http_client_trace::Result::Error(err),
+                                            http_client_trace::Result::Error(err),
                                         ) => format!("error: {err}"),
                                         None => "unfinished".to_string(),
                                     }
                                 );
+                                let status = match trace.result {
+                                    Some(http_client_trace::Result::Status(_)) => BusyIntervalStatus::HttpTraceFinished,
+                                    Some(http_client_trace::Result::Error(_)) => BusyIntervalStatus::HttpTraceError,
+                                    None => BusyIntervalStatus::HttpTraceUnfinished,
+                                };
                                 TraceData::Child(TraceDataChild {
                                     name: name.to_html(),
                                     title: name,
@@ -327,6 +332,7 @@ fn compute_root_trace(
                                         started_at: DateTime::from(trace.sent_at.expect("sent_at is sent")),
                                         finished_at: Some(trace.finished_at.map(DateTime::from).unwrap_or(event_created_at)),
                                         title: None,
+                                        status,
                                     }],
                                     children: vec![],
                                 })
@@ -380,6 +386,12 @@ fn compute_root_trace(
                         } else {
                             Vec::new()
                         };
+                        let (status, finished_at) = if let Some((result_detail_value, finished_at)) = child_ids_to_results.get(child_execution_id) {
+                            (BusyIntervalStatus::from(result_detail_value), Some(*finished_at))
+                        } else {
+                            (BusyIntervalStatus::ExecutionUnfinished, None)
+                        };
+
 
                         Some(vec![
                             TraceData::Child(TraceDataChild {
@@ -392,8 +404,9 @@ fn compute_root_trace(
                                 title: child_execution_id.to_string(),
                                 busy: vec![BusyInterval {
                                     started_at: DateTime::from(event.created_at.expect("event.created_at must be sent")),
-                                    finished_at: child_ids_to_responses_creation.get(child_execution_id).cloned(),
+                                    finished_at,
                                     title: None,
+                                    status
                                 }],
                                 children,
                             })
@@ -408,7 +421,8 @@ fn compute_root_trace(
     let mut current_locked_at: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
     let mut busy = vec![];
     for event in events {
-        match event.event.as_ref().unwrap() {
+        let event_inner = event.event.as_ref().unwrap();
+        match event_inner {
             execution_event::Event::Locked(locked) => {
                 if let Some((locked_at, lock_expires_at)) = current_locked_at.take() {
                     // if the created_at..expires_at includes the current lock's created_at, we are extending the lock
@@ -419,6 +433,7 @@ fn compute_root_trace(
                         started_at: locked_at,
                         finished_at: Some(lock_expires_at),
                         title: Some(format!("Locked for {duration:?}")),
+                        status: BusyIntervalStatus::ExecutionLockedAndUnlocked,
                     });
                 }
                 let locked_at =
@@ -442,25 +457,31 @@ fn compute_root_trace(
                 let duration = (finished_at - locked_at)
                     .to_std()
                     .expect("started_at must be <= finished_at");
-                let title = match event.event.as_ref().unwrap() {
+                let status = match event_inner {
                     execution_event::Event::TemporarilyFailed(..) => {
-                        Some(format!("Temporarily failed after {duration:?}"))
+                        BusyIntervalStatus::ExecutionErrorTemporary
                     }
                     execution_event::Event::Unlocked(..) => {
-                        Some(format!("Unlocked after {duration:?}"))
+                        BusyIntervalStatus::ExecutionLockedAndUnlocked
                     }
                     execution_event::Event::TemporarilyTimedOut(..) => {
-                        Some(format!("Temporarily timed out after {duration:?}"))
+                        BusyIntervalStatus::ExecutionTimeoutTemporary
                     }
-                    execution_event::Event::Finished(..) => {
-                        Some(format!("Finished in {duration:?}"))
-                    }
-                    _ => unreachable!(),
+                    execution_event::Event::Finished(Finished {
+                        result_detail:
+                            Some(ResultDetail {
+                                value: Some(result_detail_value),
+                            }),
+                        ..
+                    }) => BusyIntervalStatus::from(result_detail_value),
+                    _ => unreachable!("unexpected {event_inner:?}"),
                 };
+                let title = format!("{status} in {duration:?}");
                 busy.push(BusyInterval {
                     started_at: locked_at,
                     finished_at: Some(finished_at),
-                    title,
+                    title: Some(title),
+                    status,
                 });
             }
             _ => {}
@@ -472,7 +493,8 @@ fn compute_root_trace(
         busy.push(BusyInterval {
             started_at: locked_at,
             finished_at: None,
-            title: Some("pending".to_string()),
+            title: Some("unfinished".to_string()),
+            status: BusyIntervalStatus::ExecutionUnfinished,
         });
     }
 
@@ -490,9 +512,9 @@ fn compute_root_trace(
     })
 }
 
-fn compute_child_execution_id_to_response_created_at(
+fn compute_child_execution_id_to_child_execution_finished(
     responses: Option<&HashMap<JoinSetId, Vec<JoinSetResponseEvent>>>,
-) -> HashMap<ExecutionId, DateTime<Utc>> {
+) -> HashMap<ExecutionId, (result_detail::Value, DateTime<Utc>)> {
     responses
         .into_iter()
         .flat_map(|map| {
@@ -502,15 +524,20 @@ fn compute_child_execution_id_to_response_created_at(
                         Some(join_set_response_event::Response::ChildExecutionFinished(
                             join_set_response_event::ChildExecutionFinished {
                                 child_execution_id: Some(child_execution_id),
-                                ..
+                                result_detail:
+                                    Some(ResultDetail {
+                                        value: Some(result_detail_value),
+                                    }),
                             },
                         )),
                     ..
                 } = resp
                 {
+                    let created_at =
+                        DateTime::from(resp.created_at.expect("response.created_at is sent"));
                     Some((
                         child_execution_id.clone(),
-                        DateTime::from(resp.created_at.expect("response.created_at is sent")),
+                        (result_detail_value.clone(), created_at),
                     ))
                 } else {
                     None
