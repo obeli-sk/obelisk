@@ -45,7 +45,7 @@ impl TraceData {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, derive_more::Display)]
+#[derive(Debug, Clone, Copy, PartialEq, derive_more::Display)]
 pub enum BusyIntervalStatus {
     #[display("Finished")]
     HttpTraceFinished,
@@ -61,8 +61,10 @@ pub enum BusyIntervalStatus {
     ExecutionErrorTemporary,
     #[display("Permanent error")]
     ExecutionErrorPermanent,
-    #[display("Locked & unlocked")]
-    ExecutionLockedAndUnlocked,
+    #[display("Child error")]
+    ExecutionErrorUnhandledChild,
+    #[display("Locked")]
+    ExecutionLocked,
     #[display("Finished")]
     ExecutionFinished,
     #[display("Finished with error")]
@@ -144,8 +146,35 @@ mod grpc {
                     BusyIntervalStatus::ExecutionErrorPermanent
                 }
                 result_detail::Value::UnhandledChildExecutionError(_) => {
-                    BusyIntervalStatus::ExecutionErrorPermanent
+                    BusyIntervalStatus::ExecutionErrorUnhandledChild
                 }
+            }
+        }
+    }
+}
+
+mod css {
+    use super::BusyIntervalStatus;
+
+    impl BusyIntervalStatus {
+        pub fn get_css_class(&self) -> &'static str {
+            match self {
+                BusyIntervalStatus::HttpTraceFinished => "busy-http-trace-finished",
+                BusyIntervalStatus::HttpTraceUnfinished => "busy-http-trace-unfinished",
+                BusyIntervalStatus::HttpTraceError => "busy-http-trace-error",
+                BusyIntervalStatus::ExecutionTimeoutTemporary => "busy-execution-timeout-temporary",
+                BusyIntervalStatus::ExecutionTimeoutPermanent => "busy-execution-timeout-permanent",
+                BusyIntervalStatus::ExecutionErrorTemporary => "busy-execution-error-temporary",
+                BusyIntervalStatus::ExecutionErrorPermanent => "busy-execution-error-permanent",
+                BusyIntervalStatus::ExecutionErrorUnhandledChild => {
+                    "busy-execution-error-unhandled-child"
+                }
+                BusyIntervalStatus::ExecutionLocked => "busy-execution-locked",
+                BusyIntervalStatus::ExecutionFinished => "busy-execution-finished",
+                BusyIntervalStatus::ExecutionReturnedErrorVariant => {
+                    "busy-execution-returned-error-variant"
+                }
+                BusyIntervalStatus::ExecutionUnfinished => "busy-execution-unfinished",
             }
         }
     }

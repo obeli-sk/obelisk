@@ -138,6 +138,7 @@ ul li span {
     overflow-x: auto;
 }
 
+/* Tracing */
 .execution-step {
     margin-bottom: 5px;
 }
@@ -166,7 +167,7 @@ ul li span {
 }
 
 .relative-duration-container {
-    width: 300px;
+    width: 200px;
     /* Adjust as needed */
     height: 10px;
     /* Pushes the container to the right */
@@ -186,7 +187,43 @@ ul li span {
 .busy-duration-line {
     position: absolute;
     height: 100%;
-    background-color: steelblue;
+    /* background-color: steelblue; */
+}
+
+.busy-http-trace-finished,
+.busy-execution-finished {
+    background-color: #4CAF50;
+}
+
+.busy-http-trace-unfinished,
+.busy-execution-unfinished {
+    background-color: #fff307;
+}
+
+.busy-http-trace-error,
+.busy-execution-returned-error-variant {
+    background-color: #FF5722;
+}
+
+.busy-execution-timeout-temporary {
+    background-color: #FFC107;
+}
+
+.busy-execution-timeout-permanent {
+    background-color: #FF9800;
+}
+
+.busy-execution-error-temporary {
+    background-color: #FFEB3B;
+}
+
+.busy-execution-error-permanent,
+.busy-execution-error-unhandled-child {
+    background-color: #F44336;
+}
+
+.busy-execution-locked {
+    background-color: #27b0a7;
 }
 
 /* Indentation for children */

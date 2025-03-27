@@ -20,7 +20,7 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
                 interval.as_percentage(props.root_scheduled_at, props.root_last_event_at);
             html! {
                 <div
-                class="busy-duration-line"
+                class={classes!("busy-duration-line", interval.status.get_css_class())}
                 title={interval.title.clone()}
                 style={format!("width: {}%; margin-left: {}%", busy_percentage, start_percentage)}
             >

@@ -89,6 +89,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
             &events_map,
             &responses_map,
             &execution_ids_state,
+            None,
         )
     };
 
@@ -250,6 +251,7 @@ fn compute_root_trace(
     events_map: &HashMap<ExecutionId, Vec<ExecutionEvent>>,
     responses_map: &HashMap<ExecutionId, (HashMap<JoinSetId, Vec<JoinSetResponseEvent>>, u32)>,
     execution_ids_state: &UseStateHandle<HashSet<ExecutionId>>,
+    hide_parent: Option<&ExecutionId>,
 ) -> Option<TraceDataRoot> {
     let events = match events_map.get(execution_id) {
         Some(events) if !events.is_empty() => events,
@@ -379,21 +381,27 @@ fn compute_root_trace(
                             events_map,
                             responses_map,
                             execution_ids_state,
+                            Some(execution_id),
                         ) {
                             vec![TraceData::Root(child_root)]
                         } else {
                             Vec::new()
                         };
-                        let (status, finished_at) = if let Some((result_detail_value, finished_at)) = child_ids_to_results.get(child_execution_id) {
-                            (BusyIntervalStatus::from(result_detail_value), Some(*finished_at))
+                        let started_at = DateTime::from(event.created_at.expect("event.created_at must be sent"));
+                        let (status, finished_at, interval_title) = if let Some((result_detail_value, finished_at)) = child_ids_to_results.get(child_execution_id) {
+                            let status = BusyIntervalStatus::from(result_detail_value);
+                            let duration = (*finished_at - started_at).to_std().expect("started_at must be <= finished_at");
+                            (status, Some(*finished_at), format!("{status} in {duration:?}"))
                         } else {
-                            (BusyIntervalStatus::ExecutionUnfinished, None)
+                            let status = BusyIntervalStatus::ExecutionUnfinished;
+                            (status, None, status.to_string())
                         };
 
 
                         Some(vec![
                             TraceData::Child(TraceDataChild {
                                 name: html!{<>
+                                    {status}{" "}
                                     <Link<Route> to={Route::ExecutionTrace { execution_id: child_execution_id.clone() }}>
                                         {name}
                                     </Link<Route>>
@@ -401,9 +409,9 @@ fn compute_root_trace(
                                 </>},
                                 title: child_execution_id.to_string(),
                                 busy: vec![BusyInterval {
-                                    started_at: DateTime::from(event.created_at.expect("event.created_at must be sent")),
+                                    started_at,
                                     finished_at,
-                                    title: None,
+                                    title: Some(interval_title),
                                     status
                                 }],
                                 children,
@@ -431,7 +439,7 @@ fn compute_root_trace(
                         started_at: locked_at,
                         finished_at: Some(lock_expires_at),
                         title: Some(format!("Locked for {duration:?}")),
-                        status: BusyIntervalStatus::ExecutionLockedAndUnlocked,
+                        status: BusyIntervalStatus::ExecutionLocked,
                     });
                 }
                 let locked_at =
@@ -459,9 +467,7 @@ fn compute_root_trace(
                     execution_event::Event::TemporarilyFailed(..) => {
                         BusyIntervalStatus::ExecutionErrorTemporary
                     }
-                    execution_event::Event::Unlocked(..) => {
-                        BusyIntervalStatus::ExecutionLockedAndUnlocked
-                    }
+                    execution_event::Event::Unlocked(..) => BusyIntervalStatus::ExecutionLocked,
                     execution_event::Event::TemporarilyTimedOut(..) => {
                         BusyIntervalStatus::ExecutionTimeoutTemporary
                     }
@@ -497,12 +503,24 @@ fn compute_root_trace(
     }
 
     let name = format!(
-        "{execution_id} ({})",
-        if is_finished { "finished" } else { "pending" }
+        "{status} {id}",
+        id = if let Some(suffix) = hide_parent.and_then(|parent| execution_id
+            .id
+            .strip_prefix(&format!("{parent}{EXECUTION_ID_INFIX}")))
+        {
+            suffix
+        } else {
+            &execution_id.id
+        },
+        status = if let Some(status) = busy.iter().last().map(|i| i.status) {
+            status.to_string()
+        } else {
+            "unknown".to_string()
+        }
     );
     Some(TraceDataRoot {
         name: name.to_html(),
-        title: name,
+        title: execution_id.to_string(),
         scheduled_at: execution_scheduled_at,
         last_event_at,
         busy,
