@@ -57,10 +57,16 @@ type ResponsesStateType = UseStateHandle<
 
 #[function_component(TraceView)]
 pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
-    let execution_ids_state: ExecutionIdsStateType = use_state(|| {
-        let mut set = HashSet::new();
-        set.insert(execution_id.clone());
-        set
+    let execution_ids_state: ExecutionIdsStateType = use_state(HashSet::default);
+    use_effect_with(execution_id.clone(), {
+        let execution_ids_state = execution_ids_state.clone();
+        move |execution_id| {
+            let mut execution_ids = execution_ids_state.deref().clone();
+            if !execution_ids.contains(execution_id) {
+                execution_ids.insert(execution_id.clone());
+                execution_ids_state.set(execution_ids);
+            }
+        }
     });
     let events_state: EventsStateType = use_state(Default::default);
     let responses_state: ResponsesStateType = use_state(Default::default);
