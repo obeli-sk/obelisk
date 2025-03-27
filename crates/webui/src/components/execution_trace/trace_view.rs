@@ -6,7 +6,7 @@ use crate::{
         execution_step::ExecutionStep,
     },
     grpc::{
-        execution_id::EXECUTION_ID_INFIX,
+        execution_id::{ExecutionIdExt as _, EXECUTION_ID_INFIX},
         ffqn::FunctionFqn,
         grpc_client::{
             self,
@@ -96,7 +96,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
             &events_map,
             &responses_map,
             &execution_ids_state,
-            None,
+            false,
         )
     };
 
@@ -258,7 +258,7 @@ fn compute_root_trace(
     events_map: &HashMap<ExecutionId, Vec<ExecutionEvent>>,
     responses_map: &HashMap<ExecutionId, (HashMap<JoinSetId, Vec<JoinSetResponseEvent>>, u32)>,
     execution_ids_state: &UseStateHandle<HashSet<ExecutionId>>,
-    hide_parent: Option<&ExecutionId>,
+    hide_parents: bool,
 ) -> Option<TraceDataRoot> {
     let events = match events_map.get(execution_id) {
         Some(events) if !events.is_empty() => events,
@@ -388,7 +388,7 @@ fn compute_root_trace(
                             events_map,
                             responses_map,
                             execution_ids_state,
-                            Some(execution_id),
+                            true,
                         ) {
                             Some(vec![TraceData::Root(child_root)])
                         } else {
@@ -517,22 +517,34 @@ fn compute_root_trace(
             execution_event::Event::Created(execution_event::Created{function_name: Some(fn_name), ..}) => fn_name);
         FunctionFqn::from(fn_name.clone())
     };
+    let mut execution_id_vec = execution_id.as_hierarchy();
+
+    if hide_parents {
+        execution_id_vec.drain(..execution_id_vec.len() - 1);
+    }
+
+    let execution_id_vec = execution_id_vec
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (part, execution_id))| {
+            html! {<>
+                if idx > 0 {
+                    {EXECUTION_ID_INFIX}
+                }
+                <Link<Route> to={Route::ExecutionTrace { execution_id: execution_id.clone() }}>
+                    {part}
+                </Link<Route>>
+            </>}
+        })
+        .collect::<Vec<_>>();
+
     let name = html! {<>
         {if let Some(status) = busy.iter().last().map(|i| i.status) {
             status.to_string()
         } else {
             "unknown".to_string()
         }}{" "}
-        <Link<Route> to={Route::ExecutionTrace { execution_id: execution_id.clone() }}>
-            {if let Some(suffix) = hide_parent.and_then(|parent| execution_id
-                .id
-                .strip_prefix(&format!("{parent}{EXECUTION_ID_INFIX}")))
-            {
-                suffix
-            } else {
-                &execution_id.id
-            }}
-        </Link<Route>>
+        {execution_id_vec}
         {" "}{&ffqn}
     </>};
     Some(TraceDataRoot {
