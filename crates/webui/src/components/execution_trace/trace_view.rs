@@ -112,8 +112,8 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
 
 struct EffectHook {
     is_fetching_state: IsFetchingStateType, // triggered, read by the hook. Modified asynchronously.
-    events_state: EventsStateType, // Modified asynchronously.
-    responses_state: ResponsesStateType, // Modified asynchronously.
+    events_state: EventsStateType,          // Modified asynchronously.
+    responses_state: ResponsesStateType,    // Modified asynchronously.
 }
 impl EffectHook {
     // Fetch ListExecutionEventsAndResponses, populate events_state,responses_state based on execution_ids
@@ -286,7 +286,10 @@ fn compute_root_trace(
     let children = events
             .iter()
             .filter_map(|event| {
-                match event.event.as_ref().expect("event is sent by the server") {
+                let event_created_at = DateTime::from(event.created_at.expect("event.created_at is sent"));
+                let event_inner = event.event.as_ref().expect("event is sent by the server");
+                match event_inner {
+                    // Add HTTP Client traces
                     execution_event::Event::TemporarilyFailed(TemporarilyFailed {
                         http_client_traces,
                         ..
@@ -302,7 +305,7 @@ fn compute_root_trace(
                             .iter()
                             .map(|trace| {
                                 let name = format!(
-                                    "{method} {uri}{result}",
+                                    "{result} {method} {uri}",
                                     method = trace.method,
                                     uri = trace.uri,
                                     result = match &trace.result {
@@ -310,11 +313,11 @@ fn compute_root_trace(
                                             grpc_client::http_client_trace::Result::Status(
                                                 status,
                                             ),
-                                        ) => format!(" ({status})"),
+                                        ) => format!("status {status}"),
                                         Some(
                                             grpc_client::http_client_trace::Result::Error(err),
-                                        ) => format!(" (error: {err})"),
-                                        None => String::new(),
+                                        ) => format!("error: {err}"),
+                                        None => "unfinished".to_string(),
                                     }
                                 );
                                 TraceData::Child(TraceDataChild {
@@ -322,7 +325,7 @@ fn compute_root_trace(
                                     title: name,
                                     busy: vec![BusyInterval {
                                         started_at: DateTime::from(trace.sent_at.expect("sent_at is sent")),
-                                        finished_at: trace.finished_at.map(DateTime::from),
+                                        finished_at: Some(trace.finished_at.map(DateTime::from).unwrap_or(event_created_at)),
                                         title: None,
                                     }],
                                     children: vec![],
@@ -331,6 +334,7 @@ fn compute_root_trace(
                             .collect();
                         Some(children)
                     }
+                    // Add child executions
                     execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
                         event:
                             Some(execution_event::history_event::Event::JoinSetRequest(
