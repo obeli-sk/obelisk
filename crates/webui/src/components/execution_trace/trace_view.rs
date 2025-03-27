@@ -376,47 +376,44 @@ fn compute_root_trace(
                         } else {
                             Html::default()
                         };
-                        let children = if let Some(child_root) = compute_root_trace(
+                        if let Some(child_root) = compute_root_trace(
                             child_execution_id,
                             events_map,
                             responses_map,
                             execution_ids_state,
                             Some(execution_id),
                         ) {
-                            vec![TraceData::Root(child_root)]
+                            Some(vec![TraceData::Root(child_root)])
                         } else {
-                            Vec::new()
-                        };
-                        let started_at = DateTime::from(event.created_at.expect("event.created_at must be sent"));
-                        let (status, finished_at, interval_title) = if let Some((result_detail_value, finished_at)) = child_ids_to_results.get(child_execution_id) {
-                            let status = BusyIntervalStatus::from(result_detail_value);
-                            let duration = (*finished_at - started_at).to_std().expect("started_at must be <= finished_at");
-                            (status, Some(*finished_at), format!("{status} in {duration:?}"))
-                        } else {
-                            let status = BusyIntervalStatus::ExecutionUnfinished;
-                            (status, None, status.to_string())
-                        };
-
-
-                        Some(vec![
-                            TraceData::Child(TraceDataChild {
-                                name: html!{<>
-                                    {status}{" "}
-                                    <Link<Route> to={Route::ExecutionTrace { execution_id: child_execution_id.clone() }}>
-                                        {name}
-                                    </Link<Route>>
-                                    {load_button}
-                                </>},
-                                title: child_execution_id.to_string(),
-                                busy: vec![BusyInterval {
-                                    started_at,
-                                    finished_at,
-                                    title: Some(interval_title),
-                                    status
-                                }],
-                                children,
-                            })
-                        ])
+                            let started_at = DateTime::from(event.created_at.expect("event.created_at must be sent"));
+                            let (status, finished_at, interval_title) = if let Some((result_detail_value, finished_at)) = child_ids_to_results.get(child_execution_id) {
+                                let status = BusyIntervalStatus::from(result_detail_value);
+                                let duration = (*finished_at - started_at).to_std().expect("started_at must be <= finished_at");
+                                (status, Some(*finished_at), format!("{status} in {duration:?}"))
+                            } else {
+                                let status = BusyIntervalStatus::ExecutionUnfinished;
+                                (status, None, status.to_string())
+                            };
+                            Some(vec![
+                                TraceData::Child(TraceDataChild {
+                                    name: html!{<>
+                                        {status}{" "}
+                                        <Link<Route> to={Route::ExecutionTrace { execution_id: child_execution_id.clone() }}>
+                                            {name}
+                                        </Link<Route>>
+                                        {load_button}
+                                    </>},
+                                    title: child_execution_id.to_string(),
+                                    busy: vec![BusyInterval {
+                                        started_at,
+                                        finished_at,
+                                        title: Some(interval_title),
+                                        status
+                                    }],
+                                    children: Vec::new(),
+                                })
+                            ])
+                        }
                     },
                     _ => None,
                 }
@@ -502,24 +499,25 @@ fn compute_root_trace(
         });
     }
 
-    let name = format!(
-        "{status} {id}",
-        id = if let Some(suffix) = hide_parent.and_then(|parent| execution_id
-            .id
-            .strip_prefix(&format!("{parent}{EXECUTION_ID_INFIX}")))
-        {
-            suffix
-        } else {
-            &execution_id.id
-        },
-        status = if let Some(status) = busy.iter().last().map(|i| i.status) {
+    let name = html! {<>
+        {if let Some(status) = busy.iter().last().map(|i| i.status) {
             status.to_string()
         } else {
             "unknown".to_string()
-        }
-    );
+        }}{" "}
+        <Link<Route> to={Route::ExecutionTrace { execution_id: execution_id.clone() }}>
+            {if let Some(suffix) = hide_parent.and_then(|parent| execution_id
+                .id
+                .strip_prefix(&format!("{parent}{EXECUTION_ID_INFIX}")))
+            {
+                suffix
+            } else {
+                &execution_id.id
+            }}
+        </Link<Route>>
+    </>};
     Some(TraceDataRoot {
-        name: name.to_html(),
+        name,
         title: execution_id.to_string(),
         scheduled_at: execution_scheduled_at,
         last_event_at,
