@@ -437,7 +437,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 
     fn next_join_set_name_index(&mut self, kind: JoinSetKind) -> String {
         assert!(kind != JoinSetKind::Named);
-        self.event_history.join_set_count(kind).to_string()
+        (self.event_history.join_set_count(kind) + 1).to_string()
     }
 
     fn next_join_set_one_off(&mut self) -> JoinSetId {
