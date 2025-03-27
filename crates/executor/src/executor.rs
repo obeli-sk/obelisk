@@ -1158,6 +1158,8 @@ mod tests {
             .await;
     }
 
+    // TODO: Add test for WorkerError::TemporaryTimeout
+
     #[tokio::test]
     async fn child_execution_permanently_failed_handled_by_watcher_should_notify_parent_timeout() {
         let worker_error = WorkerError::TemporaryTimeoutHandledByWatcher;

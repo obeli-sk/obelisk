@@ -37,174 +37,48 @@ pub struct TraceViewProps {
 
 const PAGE: u32 = 100;
 
+type ExecutionIdsStateType = UseStateHandle<HashSet<ExecutionId>>;
+type IsFetchingStateType = UseStateHandle<Arc<RwLock<HashMap<ExecutionId, bool>>>>;
+type EventsStateType = UseStateHandle<Arc<RwLock<HashMap<ExecutionId, Vec<ExecutionEvent>>>>>;
+type ResponsesStateType = UseStateHandle<
+    Arc<
+        RwLock<
+            HashMap<
+                ExecutionId,
+                (
+                    HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
+                    u32, /* Cursor */
+                ),
+            >,
+        >,
+    >,
+>;
+
 #[function_component(TraceView)]
 pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
-    // let props_changed_state = use_state(|| execution_id.clone());
-    let execution_ids_state: UseStateHandle<HashSet<ExecutionId>> = use_state(|| {
+    let execution_ids_state: ExecutionIdsStateType = use_state(|| {
         let mut set = HashSet::new();
         set.insert(execution_id.clone());
         set
     });
     #[expect(clippy::type_complexity)]
-    let events_state: UseStateHandle<Arc<RwLock<HashMap<ExecutionId, Vec<ExecutionEvent>>>>> =
-        use_state(Default::default);
+    let events_state: EventsStateType = use_state(Default::default);
     #[expect(clippy::type_complexity)]
-    let responses_state: UseStateHandle<
-        Arc<
-            RwLock<
-                HashMap<
-                    ExecutionId,
-                    (
-                        HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
-                        u32, /* Cursor */
-                    ),
-                >,
-            >,
-        >,
-    > = use_state(Default::default);
-    let is_fetching_state: UseStateHandle<Arc<RwLock<HashMap<ExecutionId, bool>>>> =
-        use_state(Default::default); // Track if we're currently fetching
+    let responses_state: ResponsesStateType = use_state(Default::default);
+    let is_fetching_state: IsFetchingStateType = use_state(Default::default); // Track if we're currently fetching
+    let effect_hook = EffectHook {
+        is_fetching_state: is_fetching_state.clone(),
+        events_state: events_state.clone(),
+        responses_state: responses_state.clone(),
+    };
 
-    // Fetch ListExecutionEventsAndResponses
     use_effect_with(
         (
             execution_ids_state.deref().clone(), // Retrigger on adding child executions
             is_fetching_state.deref().read().unwrap().clone(), // Retrigger on change, used for fetching the next page.
         ),
-        {
-            let events_state = events_state.clone();
-            let responses_state = responses_state.clone();
-            let is_fetching_state = is_fetching_state.clone();
-            move |(execution_ids, current_is_fetching_map)| {
-                trace!("Triggered fetch callback: {execution_ids:?}");
-                for execution_id in execution_ids {
-                    if current_is_fetching_map
-                        .get(execution_id)
-                        .cloned()
-                        .unwrap_or_default()
-                    {
-                        trace!("Skipping {execution_id}");
-                        continue;
-                    }
-                    trace!("Setting is_fetching_state=true for {execution_id}");
-                    let is_fetching_rwlock = is_fetching_state.deref().clone();
-                    {
-                        let mut lock = is_fetching_rwlock.write().unwrap();
-                        lock.insert(execution_id.clone(), true);
-                    }
-                    is_fetching_state.set(is_fetching_rwlock); // this will trigger the outer `use_effect` but will be short-circuted.
-                    {
-                        let execution_id = execution_id.clone();
-                        let events_state = events_state.clone();
-                        let responses_state = responses_state.clone();
-                        let is_fetching_state = is_fetching_state.clone();
-                        wasm_bindgen_futures::spawn_local(async move {
-                            let events_rwlock = events_state.deref();
-                            let mut events = events_rwlock
-                                .read()
-                                .unwrap()
-                                .get(&execution_id)
-                                .cloned()
-                                .unwrap_or_default();
-                            let version_from =
-                                events.last().map(|e| e.version + 1).unwrap_or_default();
-                            let responses_rwlock = responses_state.deref();
-                            let (mut responses, responses_cursor_from) = responses_rwlock
-                                .read()
-                                .unwrap()
-                                .get(&execution_id)
-                                .cloned()
-                                .unwrap_or_default();
-                            trace!("list_execution_events {execution_id} {version_from}");
-                            let base_url = "/api";
-                            let mut execution_client =
-                        grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
-                            tonic_web_wasm_client::Client::new(base_url.to_string()),
-                        );
-                            let new_events_and_responses = execution_client
-                                .list_execution_events_and_responses(
-                                    grpc_client::ListExecutionEventsAndResponsesRequest {
-                                        execution_id: Some(execution_id.clone()),
-                                        version_from,
-                                        events_length: PAGE,
-                                        responses_cursor_from,
-                                        responses_length: PAGE,
-                                        responses_including_cursor: responses_cursor_from == 0,
-                                    },
-                                )
-                                .await
-                                .unwrap()
-                                .into_inner();
-                            debug!(
-                                "{execution_id} Got {} events, {} responses",
-                                new_events_and_responses.events.len(),
-                                new_events_and_responses.responses.len()
-                            );
-                            events.extend(new_events_and_responses.events);
-                            let last_event = events.last().expect("not found is sent as an error");
-                            let is_finished = matches!(
-                                last_event.event,
-                                Some(execution_event::Event::Finished(_))
-                            );
-
-                            {
-                                // Persist `events_state`
-                                let events_rwlock = events_state.deref().clone();
-                                {
-                                    let mut lock = events_rwlock.write().unwrap();
-                                    lock.insert(execution_id.clone(), events);
-                                }
-                                events_state.set(events_rwlock);
-                            }
-
-                            {
-                                // Persist `responses_state`
-                                let responses_cursor_from = new_events_and_responses
-                                    .responses
-                                    .last()
-                                    .map(|r| r.cursor)
-                                    .unwrap_or(responses_cursor_from);
-                                for response in new_events_and_responses.responses {
-                                    let response = response
-                                        .event
-                                        .expect("`event` is sent in `ResponseWithCursor`");
-                                    let join_set_id = response
-                                        .join_set_id
-                                        .clone()
-                                        .expect("`join_set_id` is sent in `JoinSetResponseEvent`");
-                                    let execution_responses =
-                                        responses.entry(join_set_id).or_default();
-                                    execution_responses.push(response);
-                                }
-                                let responses_rwlock = responses_state.deref().clone();
-                                {
-                                    let mut lock = responses_rwlock.write().unwrap();
-                                    lock.insert(
-                                        execution_id.clone(),
-                                        (responses, responses_cursor_from),
-                                    );
-                                }
-                                responses_state.set(responses_rwlock);
-                            }
-
-                            if is_finished {
-                                debug!("{execution_id} Execution Finished");
-                                // Keep is_fetching_state as true, the use_effect_with will not be triggered again.
-                            } else {
-                                trace!("{execution_id} Timeout: start");
-                                TimeoutFuture::new(1000).await;
-                                trace!("{execution_id} Timeout: Triggering refetch");
-                                let is_fetching_rwlock = is_fetching_state.deref().clone();
-                                {
-                                    let mut lock = is_fetching_rwlock.write().unwrap();
-                                    lock.insert(execution_id.clone(), false);
-                                }
-                                is_fetching_state.set(is_fetching_rwlock); // Trigger use_effect_with again.
-                            }
-                        });
-                    }
-                }
-            }
+        move |(execution_ids, current_is_fetching_map)| {
+            effect_hook.call(execution_ids, current_is_fetching_map)
         },
     );
 
@@ -232,6 +106,142 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     } else {
         html! {
             "Loading..."
+        }
+    }
+}
+
+struct EffectHook {
+    is_fetching_state: IsFetchingStateType, // triggered, read by the hook. Modified asynchronously.
+    events_state: EventsStateType, // Modified asynchronously.
+    responses_state: ResponsesStateType, // Modified asynchronously.
+}
+impl EffectHook {
+    // Fetch ListExecutionEventsAndResponses, populate events_state,responses_state based on execution_ids
+    fn call(
+        &self,
+        execution_ids: &HashSet<ExecutionId>,
+        current_is_fetching_map: &HashMap<ExecutionId, bool>,
+    ) {
+        trace!("Triggered fetch callback: {execution_ids:?}");
+        for execution_id in execution_ids {
+            if current_is_fetching_map
+                .get(execution_id)
+                .cloned()
+                .unwrap_or_default()
+            {
+                trace!("Skipping {execution_id}");
+                continue;
+            }
+            trace!("Setting is_fetching_state=true for {execution_id}");
+            let is_fetching_rwlock = self.is_fetching_state.deref().clone();
+            {
+                let mut lock = is_fetching_rwlock.write().unwrap();
+                lock.insert(execution_id.clone(), true);
+            }
+            self.is_fetching_state.set(is_fetching_rwlock); // this will trigger the outer `use_effect` but will be short-circuted.
+            {
+                let execution_id = execution_id.clone();
+                let events_state = self.events_state.clone();
+                let responses_state = self.responses_state.clone();
+                let is_fetching_state = self.is_fetching_state.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let events_rwlock = events_state.deref();
+                    let mut events = events_rwlock
+                        .read()
+                        .unwrap()
+                        .get(&execution_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    let version_from = events.last().map(|e| e.version + 1).unwrap_or_default();
+                    let responses_rwlock = responses_state.deref();
+                    let (mut responses, responses_cursor_from) = responses_rwlock
+                        .read()
+                        .unwrap()
+                        .get(&execution_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    trace!("list_execution_events {execution_id} {version_from}");
+                    let base_url = "/api";
+                    let mut execution_client =
+                        grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
+                            tonic_web_wasm_client::Client::new(base_url.to_string()),
+                        );
+                    let new_events_and_responses = execution_client
+                        .list_execution_events_and_responses(
+                            grpc_client::ListExecutionEventsAndResponsesRequest {
+                                execution_id: Some(execution_id.clone()),
+                                version_from,
+                                events_length: PAGE,
+                                responses_cursor_from,
+                                responses_length: PAGE,
+                                responses_including_cursor: responses_cursor_from == 0,
+                            },
+                        )
+                        .await
+                        .unwrap()
+                        .into_inner();
+                    debug!(
+                        "{execution_id} Got {} events, {} responses",
+                        new_events_and_responses.events.len(),
+                        new_events_and_responses.responses.len()
+                    );
+                    events.extend(new_events_and_responses.events);
+                    let last_event = events.last().expect("not found is sent as an error");
+                    let is_finished =
+                        matches!(last_event.event, Some(execution_event::Event::Finished(_)));
+
+                    {
+                        // Persist `events_state`
+                        let events_rwlock = events_state.deref().clone();
+                        {
+                            let mut lock = events_rwlock.write().unwrap();
+                            lock.insert(execution_id.clone(), events);
+                        }
+                        events_state.set(events_rwlock);
+                    }
+
+                    {
+                        // Persist `responses_state`
+                        let responses_cursor_from = new_events_and_responses
+                            .responses
+                            .last()
+                            .map(|r| r.cursor)
+                            .unwrap_or(responses_cursor_from);
+                        for response in new_events_and_responses.responses {
+                            let response = response
+                                .event
+                                .expect("`event` is sent in `ResponseWithCursor`");
+                            let join_set_id = response
+                                .join_set_id
+                                .clone()
+                                .expect("`join_set_id` is sent in `JoinSetResponseEvent`");
+                            let execution_responses = responses.entry(join_set_id).or_default();
+                            execution_responses.push(response);
+                        }
+                        let responses_rwlock = responses_state.deref().clone();
+                        {
+                            let mut lock = responses_rwlock.write().unwrap();
+                            lock.insert(execution_id.clone(), (responses, responses_cursor_from));
+                        }
+                        responses_state.set(responses_rwlock);
+                    }
+
+                    if is_finished {
+                        debug!("{execution_id} Execution Finished");
+                        // Keep is_fetching_state as true, the use_effect_with will not be triggered again.
+                    } else {
+                        trace!("{execution_id} Timeout: start");
+                        TimeoutFuture::new(1000).await;
+                        trace!("{execution_id} Timeout: Triggering refetch");
+                        let is_fetching_rwlock = is_fetching_state.deref().clone();
+                        {
+                            let mut lock = is_fetching_rwlock.write().unwrap();
+                            lock.insert(execution_id.clone(), false);
+                        }
+                        is_fetching_state.set(is_fetching_rwlock); // Trigger use_effect_with again.
+                    }
+                });
+            }
         }
     }
 }
