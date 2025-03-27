@@ -62,9 +62,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
         set.insert(execution_id.clone());
         set
     });
-    #[expect(clippy::type_complexity)]
     let events_state: EventsStateType = use_state(Default::default);
-    #[expect(clippy::type_complexity)]
     let responses_state: ResponsesStateType = use_state(Default::default);
     let is_fetching_state: IsFetchingStateType = use_state(Default::default); // Track if we're currently fetching
     let effect_hook = EffectHook {
