@@ -1298,7 +1298,7 @@ mod tests {
     fn join_set_deser_with_result_ok_option_none_should_work() {
         let json = json!({
             "type": "ChildExecutionFinished",
-            "child_execution_id": "E_01JGKY3WWV7Z24NP9BJF90JZHB.g:gg.0",
+            "child_execution_id": "E_01JGKY3WWV7Z24NP9BJF90JZHB.g:gg_1",
             "finished_version": 2,
             "result": {
                 "Ok": {
@@ -1328,7 +1328,7 @@ mod tests {
             } => (child_execution_id, finished_version, wast_val_with_type)
         );
         assert_eq!(
-            ExecutionId::from_str("E_01JGKY3WWV7Z24NP9BJF90JZHB.g:gg.0").unwrap(),
+            ExecutionId::from_str("E_01JGKY3WWV7Z24NP9BJF90JZHB.g:gg_1").unwrap(),
             ExecutionId::Derived(child_execution_id)
         );
         assert_eq!(Version(2), finished_version);

@@ -1049,12 +1049,12 @@ pub mod prefixed_ulid {
                 idx,
             } = self;
             let infix = Arc::from(format!(
-                "{infix}{EXECUTION_ID_INFIX}{idx}{EXECUTION_ID_INFIX}{join_set_id}"
+                "{infix}{EXECUTION_ID_JOIN_SET_INFIX}{idx}{EXECUTION_ID_INFIX}{join_set_id}"
             ));
             ExecutionIdDerived {
                 top_level: *top_level,
                 infix,
-                idx: 0,
+                idx: EXECUTION_ID_START_IDX,
             }
         }
         fn display_or_debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1065,7 +1065,7 @@ pub mod prefixed_ulid {
             } = self;
             write!(
                 f,
-                "{top_level}{EXECUTION_ID_INFIX}{infix}{EXECUTION_ID_INFIX}{idx}"
+                "{top_level}{EXECUTION_ID_INFIX}{infix}{EXECUTION_ID_JOIN_SET_INFIX}{idx}"
             )
         }
     }
@@ -1086,7 +1086,7 @@ pub mod prefixed_ulid {
             if let Some((prefix, suffix)) = input.split_once(EXECUTION_ID_INFIX) {
                 let top_level = PrefixedUlid::from_str(prefix)
                     .map_err(ExecutionIdDerivedParseError::PrefixedUlidParseError)?;
-                let Some((infix, idx)) = suffix.rsplit_once(EXECUTION_ID_INFIX) else {
+                let Some((infix, idx)) = suffix.rsplit_once(EXECUTION_ID_JOIN_SET_INFIX) else {
                     return Err(ExecutionIdDerivedParseError::SecondDelimiterNotFound);
                 };
                 let infix = Arc::from(infix);
@@ -1113,15 +1113,13 @@ pub mod prefixed_ulid {
     pub enum ExecutionIdDerivedParseError {
         #[error(transparent)]
         PrefixedUlidParseError(PrefixedUlidParseError),
-        #[error(
-            "cannot parse derived execution id - first delimiter `{EXECUTION_ID_INFIX}` not found"
-        )]
+        #[error("cannot parse derived execution id - delimiter `{EXECUTION_ID_INFIX}` not found")]
         FirstDelimiterNotFound,
         #[error(
-            "cannot parse derived execution id - second delimiter `{EXECUTION_ID_INFIX}` not found"
+            "cannot parse derived execution id - delimiter `{EXECUTION_ID_JOIN_SET_INFIX}` not found"
         )]
         SecondDelimiterNotFound,
-        #[error("cannot parse derived execution id - last suffix must be a number")]
+        #[error("cannot parse derived execution id - suffix after `{EXECUTION_ID_JOIN_SET_INFIX}` must be a number")]
         ParseIndexError(ParseIntError),
     }
 
@@ -1172,7 +1170,7 @@ pub mod prefixed_ulid {
                 ExecutionId::TopLevel(top_level) => ExecutionIdDerived {
                     top_level: *top_level,
                     infix: Arc::from(join_set_id.to_string()),
-                    idx: 0,
+                    idx: EXECUTION_ID_START_IDX,
                 },
                 ExecutionId::Derived(derived) => derived.next_level(join_set_id),
             }
@@ -1187,6 +1185,8 @@ pub mod prefixed_ulid {
     }
 
     const EXECUTION_ID_INFIX: char = '.';
+    const EXECUTION_ID_JOIN_SET_INFIX: char = '_';
+    const EXECUTION_ID_START_IDX: u64 = 1;
 
     #[derive(Debug, thiserror::Error)]
     pub enum ExecutionIdParseError {
@@ -1871,7 +1871,7 @@ mod tests {
         let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::Static("name")).unwrap();
         let first_child = ExecutionId::Derived(top_level.next_level(&join_set_id));
         let ser = first_child.to_string();
-        assert_eq!(format!("{top_level}.n:name.0"), ser);
+        assert_eq!(format!("{top_level}.n:name_1"), ser);
         let parsed = ExecutionId::from_str(&ser).unwrap();
         assert_eq!(first_child, parsed);
     }
@@ -1883,7 +1883,7 @@ mod tests {
         let first_child = top_level.next_level(&join_set_id);
         let second_child = ExecutionId::Derived(first_child.get_incremented());
         let ser = second_child.to_string();
-        assert_eq!(format!("{top_level}.n:name.1"), ser);
+        assert_eq!(format!("{top_level}.n:name_2"), ser);
         let parsed = ExecutionId::from_str(&ser).unwrap();
         assert_eq!(second_child, parsed);
     }
@@ -1903,7 +1903,7 @@ mod tests {
                 .get_incremented(),
         );
         let ser = execution_id.to_string();
-        assert_eq!(format!("{top_level}.g:gg.1.o:oo.1"), ser);
+        assert_eq!(format!("{top_level}.g:gg_2.o:oo_2"), ser);
         let parsed = ExecutionId::from_str(&ser).unwrap();
         assert_eq!(execution_id, parsed);
     }
