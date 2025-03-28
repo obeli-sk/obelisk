@@ -184,7 +184,7 @@ pub fn execution_detail_page(
 }
 
 pub fn compute_join_next_to_response<'a>(
-    events: &[ExecutionEvent],
+    events: impl IntoIterator<Item=&'a ExecutionEvent>,
     responses: &'a HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
 ) -> HashMap<u32 /* version of JoinNext */, &'a JoinSetResponseEvent> {
     let mut map = HashMap::new();

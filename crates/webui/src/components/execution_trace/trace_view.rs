@@ -119,6 +119,18 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
         let join_next_version_to_response = compute_join_next_to_response(events, responses);
         events
             .iter()
+            .filter(|event| {
+                let event_inner = event.event.as_ref().expect("event is sent by the server");
+                !matches!(event_inner,
+                    execution_event::Event::Locked(..)
+                    | execution_event::Event::Unlocked(..)
+                    | execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                        event:
+                            Some(execution_event::history_event::Event::JoinSetCreated(_))
+                        }
+                    )
+                )
+            })
             .map(|event| event_to_detail(event, &join_next_version_to_response))
             .collect::<Vec<_>>()
     };
@@ -539,7 +551,7 @@ fn compute_root_trace(
     let name = html! {
         <>
             {render_execution_parts(execution_id, hide_parents)}
-            {" "}{&ffqn}
+            {" "}{&ffqn.function_name}
         </>
     };
     Some(TraceDataRoot {

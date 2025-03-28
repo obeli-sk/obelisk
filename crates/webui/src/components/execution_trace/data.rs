@@ -47,7 +47,7 @@ impl TraceData {
 
 #[derive(Debug, Clone, Copy, PartialEq, derive_more::Display)]
 pub enum BusyIntervalStatus {
-    #[display("Finished({_0})")]
+    #[display("Finished")]
     HttpTraceFinished(u32),
     #[display("Unfinished")]
     HttpTraceUnfinished,
