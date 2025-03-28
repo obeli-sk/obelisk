@@ -1,5 +1,5 @@
 use crate::{
-    components::execution_trace::trace_view::TraceView,
+    components::trace::trace_view::TraceView,
     grpc::{
         ffqn::FunctionFqn,
         grpc_client::{self, ComponentId, ExecutionId},
