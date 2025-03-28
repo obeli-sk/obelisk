@@ -100,7 +100,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
         )
     };
 
-    if let Some(root_trace) = root_trace {
+    let trace = if let Some(root_trace) = root_trace {
         html! {
             <div class="trace-view">
                 <ExecutionStep
@@ -114,7 +114,13 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
         html! {
             "Loading..."
         }
-    }
+    };
+    let execution_id_header = render_execution_parts(&execution_id.as_hierarchy());
+    html! {<>
+        <h3>{execution_id_header}</h3>
+        <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
+        {trace}
+    </>}
 }
 
 struct EffectHook {
@@ -512,20 +518,7 @@ fn compute_root_trace(
         execution_id_vec.drain(..execution_id_vec.len() - 1);
     }
 
-    let execution_id_vec = execution_id_vec
-        .into_iter()
-        .enumerate()
-        .map(|(idx, (part, execution_id))| {
-            html! {<>
-                if idx > 0 {
-                    {EXECUTION_ID_INFIX}
-                }
-                <Link<Route> to={Route::ExecutionTrace { execution_id: execution_id.clone() }}>
-                    {part}
-                </Link<Route>>
-            </>}
-        })
-        .collect::<Vec<_>>();
+    let execution_id_vec = render_execution_parts(&execution_id_vec);
 
     let name = html! {<>
         {execution_id_vec}
@@ -539,6 +532,24 @@ fn compute_root_trace(
         busy,
         children,
     })
+}
+
+fn render_execution_parts(execution_id_vec: &[(String, ExecutionId)]) -> Html {
+    execution_id_vec
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (part, execution_id))| {
+            html! {<>
+                if idx > 0 {
+                    {EXECUTION_ID_INFIX}
+                }
+                <Link<Route> to={Route::ExecutionTrace { execution_id: execution_id.clone() }}>
+                    {part}
+                </Link<Route>>
+            </>}
+        })
+        .collect::<Vec<_>>()
+        .to_html()
 }
 
 fn compute_child_execution_id_to_child_execution_finished(

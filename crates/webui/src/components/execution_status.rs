@@ -1,5 +1,3 @@
-// FIXME: When monitoring 6 subscriptions the browser will run out of connections.
-
 use crate::{
     components::execution_detail::finished::FinishedEvent,
     grpc::grpc_client::{
