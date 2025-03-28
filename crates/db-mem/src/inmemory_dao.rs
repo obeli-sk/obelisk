@@ -299,11 +299,12 @@ impl DbConnection for InMemoryDbConnection {
         Ok(())
     }
 
-    async fn get_last_backtrace(
+    async fn get_backtrace(
         &self,
         _execution_id: &ExecutionId,
+        _version: Option<Version>,
     ) -> Result<BacktraceInfo, DbError> {
-        Err(DbError::Specific(SpecificError::NotFound))
+        unimplemented!("only needed for gRPC")
     }
 
     async fn list_executions(

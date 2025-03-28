@@ -2639,24 +2639,38 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
-    async fn get_last_backtrace(
+    async fn get_backtrace(
         &self,
         execution_id: &ExecutionId,
+        version: Option<Version>,
     ) -> Result<BacktraceInfo, DbError> {
         debug!("get_last_backtrace");
         let execution_id = execution_id.clone();
+
         self.transaction_read(
             move |tx| {
+                let select = "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_backtrace \
+                                WHERE execution_id = :execution_id";
+                let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![(":execution_id", Box::new(execution_id.to_string()))];
+                let select = if let Some(version) = version {
+                    params.push(("version", Box::new(version.0)));
+                    format!("{select} WHERE :version >= version_min_including AND :version < version_max_excluding")
+                } else {
+                    format!("{select} ORDER BY version_min_including DESC LIMIT 1")
+                };
+
                 let mut stmt = tx
                     .prepare(
-                        "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_backtrace \
-                        WHERE execution_id = :execution_id ORDER BY version_min_including DESC LIMIT 1",
+                         &select
                     )
                     .map_err(convert_err)?;
-                stmt.query_row(
-                    named_params! {
-                        ":execution_id": execution_id.to_string(),
-                    },
+
+                stmt.query_row::<_, &[(&'static str, &dyn ToSql)], _>(
+                        params
+                            .iter()
+                            .map(|(key, value)| (*key, value.as_ref()))
+                            .collect::<Vec<_>>()
+                            .as_ref(),
                     |row| {
                         Ok(BacktraceInfo {
                             execution_id: execution_id.clone(),

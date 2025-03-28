@@ -229,11 +229,12 @@ impl DbConnection for DbConnectionProxy {
         self.0.append_backtrace_batch(batch).await
     }
 
-    async fn get_last_backtrace(
+    async fn get_backtrace(
         &self,
         execution_id: &ExecutionId,
+        version: Option<Version>,
     ) -> Result<BacktraceInfo, DbError> {
-        self.0.get_last_backtrace(execution_id).await
+        self.0.get_backtrace(execution_id, version).await
     }
 
     async fn list_executions(
