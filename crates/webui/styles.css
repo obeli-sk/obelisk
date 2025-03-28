@@ -139,10 +139,6 @@ ul li span {
 }
 
 /* Tracing */
-.execution-step {
-    margin-bottom: 5px;
-}
-
 .step-row {
     display: flex;
     align-items: center;

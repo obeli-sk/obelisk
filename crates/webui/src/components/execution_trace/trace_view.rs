@@ -1,9 +1,12 @@
 use super::data::{BusyIntervalStatus, TraceData};
 use crate::{
     app::Route,
-    components::execution_trace::{
-        data::{BusyInterval, TraceDataChild, TraceDataRoot},
-        execution_step::ExecutionStep,
+    components::{
+        execution_status::ExecutionStatus,
+        execution_trace::{
+            data::{BusyInterval, TraceDataChild, TraceDataRoot},
+            execution_trace::ExecutionTrace,
+        },
     },
     grpc::{
         execution_id::{ExecutionIdExt as _, EXECUTION_ID_INFIX},
@@ -103,7 +106,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     let trace = if let Some(root_trace) = root_trace {
         html! {
             <div class="trace-view">
-                <ExecutionStep
+                <ExecutionTrace
                     root_scheduled_at={root_trace.scheduled_at}
                     root_last_event_at={root_trace.last_event_at}
                     data={TraceData::Root(root_trace)}

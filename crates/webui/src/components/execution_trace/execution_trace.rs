@@ -9,8 +9,8 @@ pub struct ExecutionStepProps {
     pub root_last_event_at: DateTime<Utc>,
 }
 
-#[function_component(ExecutionStep)]
-pub fn execution_step(props: &ExecutionStepProps) -> Html {
+#[function_component(ExecutionTrace)]
+pub fn execution_trace(props: &ExecutionStepProps) -> Html {
     let intervals: Vec<_> = props
         .data
         .busy()
@@ -33,7 +33,7 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
         html! {
             <div class="indented-children"> // Wrap children in a container
                 { for props.data.children().iter().map(|child| html! {
-                    <ExecutionStep
+                    <ExecutionTrace
                         data={child.clone()}
                         root_scheduled_at={props.root_scheduled_at}
                         root_last_event_at={props.root_last_event_at}
@@ -56,7 +56,7 @@ pub fn execution_step(props: &ExecutionStepProps) -> Html {
     let last_status = props.data.busy().last().map(|interval| interval.status);
 
     html! {
-        <div class="execution-step">
+        <div class="execution-trace">
             <div class="step-row">
                 <span class="step-icon">{"▶"}</span>
                 <span class="step-name" title={props.data.title().to_string()}>{props.data.name().clone()}</span>
