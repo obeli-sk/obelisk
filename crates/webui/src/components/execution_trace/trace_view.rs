@@ -268,7 +268,7 @@ fn compute_root_trace(
     let last_event = events.last().expect("not found is sent as an error");
     let is_finished = matches!(last_event.event, Some(execution_event::Event::Finished(_)));
     let responses = responses_map.get(execution_id).map(|m| &m.0);
-    let last_event_at = compute_last_event_at(last_event, is_finished, responses);
+    let mut last_event_at = compute_last_event_at(last_event, is_finished, responses);
 
     let execution_scheduled_at = {
         let create_event = events
@@ -379,6 +379,7 @@ fn compute_root_trace(
                             execution_ids_state,
                             true,
                         ) {
+                            last_event_at = last_event_at.max(child_root.last_event_at);
                             Some(vec![TraceData::Root(child_root)])
                         } else {
                             let started_at = DateTime::from(event.created_at.expect("event.created_at must be sent"));
