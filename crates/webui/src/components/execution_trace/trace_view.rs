@@ -21,7 +21,8 @@ use crate::{
             http_client_trace, join_set_response_event, result_detail, ExecutionEvent, ExecutionId,
             JoinSetId, JoinSetResponseEvent, ResultDetail,
         },
-    }, pages::execution_detail_page::{compute_join_next_to_response, event_to_detail},
+    },
+    pages::execution_detail_page::{compute_join_next_to_response, event_to_detail},
 };
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
@@ -111,9 +112,15 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
         let events = event_lock.get(execution_id).unwrap_or(&dummy_events);
         let dummy_response_map = HashMap::new();
         let responses_lock = responses_state.deref().read().unwrap();
-        let responses = responses_lock.get(execution_id).map(|(map, _)|map).unwrap_or(&dummy_response_map);
+        let responses = responses_lock
+            .get(execution_id)
+            .map(|(map, _)| map)
+            .unwrap_or(&dummy_response_map);
         let join_next_version_to_response = compute_join_next_to_response(events, responses);
-        events.iter().map(|event| event_to_detail(event, &join_next_version_to_response)).collect::<Vec<_>>()
+        events
+            .iter()
+            .map(|event| event_to_detail(event, &join_next_version_to_response))
+            .collect::<Vec<_>>()
     };
 
     html! {<>
@@ -130,7 +137,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                 }
             </div>
             <div class="trace-detail">
-            <h3>{render_execution_parts(&execution_id.as_hierarchy())}</h3>
+            <h3>{render_execution_parts(execution_id, false)}</h3>
             <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
                 {execution_log}
             </div>
@@ -528,18 +535,13 @@ fn compute_root_trace(
             execution_event::Event::Created(execution_event::Created{function_name: Some(fn_name), ..}) => fn_name);
         FunctionFqn::from(fn_name.clone())
     };
-    let mut execution_id_vec = execution_id.as_hierarchy();
 
-    if hide_parents {
-        execution_id_vec.drain(..execution_id_vec.len() - 1);
-    }
-
-    let execution_id_vec = render_execution_parts(&execution_id_vec);
-
-    let name = html! {<>
-        {execution_id_vec}
-        {" "}{&ffqn}
-    </>};
+    let name = html! {
+        <>
+            {render_execution_parts(execution_id, hide_parents)}
+            {" "}{&ffqn}
+        </>
+    };
     Some(TraceDataRoot {
         name,
         title: format!("{execution_id} {ffqn}"),
@@ -550,7 +552,11 @@ fn compute_root_trace(
     })
 }
 
-fn render_execution_parts(execution_id_vec: &[(String, ExecutionId)]) -> Html {
+fn render_execution_parts(execution_id: &ExecutionId, hide_parents: bool) -> Html {
+    let mut execution_id_vec = execution_id.as_hierarchy();
+    if hide_parents {
+        execution_id_vec.drain(..execution_id_vec.len() - 1);
+    }
     execution_id_vec
         .into_iter()
         .enumerate()
