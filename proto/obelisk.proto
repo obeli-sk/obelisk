@@ -387,6 +387,8 @@ message ExecutionEvent {
         Finished finished = 8;
         HistoryEvent history_variant = 9;
     }
+
+    optional uint32 backtrace_id = 10;
 }
 
 message HttpClientTrace {
@@ -405,6 +407,7 @@ message ListExecutionEventsRequest {
     ExecutionId execution_id = 1;
     uint32 version_from = 2; // 0 to request the first page
     uint32 length = 3;
+    bool include_backtrace_id = 4; // return version_min_including if a matching backtrace is found
 }
 message ListExecutionEventsResponse {
     repeated ExecutionEvent events = 2;
@@ -450,6 +453,7 @@ message ListExecutionEventsAndResponsesRequest {
     uint32 responses_cursor_from = 4; // 0 to request the first page of responses
     uint32 responses_length = 5;
     bool responses_including_cursor = 6; // true to request the first page of responses
+    bool include_backtrace_id = 7; // return version_min_including if a matching backtrace is found
 }
 message ListExecutionEventsAndResponsesResponse {
     repeated ExecutionEvent events = 1;

@@ -254,7 +254,7 @@ mod nomadsim {
 
         let (execution_id, version, expected_inner) = persist_finished_event(&db_connection).await;
         let found_inner = db_connection
-            .list_execution_events(&execution_id, &version, 1)
+            .list_execution_events(&execution_id, &version, 1, false)
             .await
             .unwrap();
         assert_eq!(1, found_inner.len());

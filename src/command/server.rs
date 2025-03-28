@@ -536,6 +536,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 &execution_id,
                 &Version(request.version_from),
                 request.length,
+                request.include_backtrace_id,
             )
             .await
             .to_status()?;
@@ -609,6 +610,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 &execution_id,
                 &Version(request.version_from),
                 request.events_length,
+                request.include_backtrace_id,
             )
             .await
             .to_status()?

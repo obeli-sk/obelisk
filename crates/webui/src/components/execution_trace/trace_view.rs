@@ -121,14 +121,13 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
             .iter()
             .filter(|event| {
                 let event_inner = event.event.as_ref().expect("event is sent by the server");
-                !matches!(event_inner,
+                !matches!(
+                    event_inner,
                     execution_event::Event::Locked(..)
-                    | execution_event::Event::Unlocked(..)
-                    | execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                        event:
-                            Some(execution_event::history_event::Event::JoinSetCreated(_))
-                        }
-                    )
+                        | execution_event::Event::Unlocked(..)
+                        | execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                            event: Some(execution_event::history_event::Event::JoinSetCreated(_))
+                        })
                 )
             })
             .map(|event| event_to_detail(event, &join_next_version_to_response))
@@ -223,6 +222,7 @@ impl EffectHook {
                                 responses_cursor_from,
                                 responses_length: PAGE,
                                 responses_including_cursor: responses_cursor_from == 0,
+                                include_backtrace_id: true,
                             },
                         )
                         .await

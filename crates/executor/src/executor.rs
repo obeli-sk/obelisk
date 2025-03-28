@@ -824,6 +824,7 @@ mod tests {
                     http_client_traces: None
                 },
                 created_at: _,
+                backtrace_id: None,
             }
         );
     }
@@ -883,6 +884,7 @@ mod tests {
                     http_client_traces: None
                 },
                 created_at: _,
+                backtrace_id: None,
             }
         );
     }
@@ -938,6 +940,7 @@ mod tests {
             ExecutionEvent {
                 event: ExecutionEventInner::Created { .. },
                 created_at: actually_created_at,
+                backtrace_id: None,
             }
             if config.created_at == *actually_created_at
         );
@@ -945,13 +948,15 @@ mod tests {
             execution_log.events.get(1).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
-                created_at: locked_at
+                created_at: locked_at,
+                backtrace_id: None,
             } if config.created_at <= *locked_at
             => *locked_at
         );
         assert_matches!(execution_log.events.get(2).unwrap(), ExecutionEvent {
             event: _,
             created_at: executed_at,
+            backtrace_id: None,
         } if *executed_at >= locked_at);
         execution_log
     }
@@ -1010,6 +1015,7 @@ mod tests {
                         http_client_traces: None,
                     },
                     created_at: at,
+                    backtrace_id: None,
                 }
                 => (reason_full, reason_inner, detail, *at, *backoff_expires_at)
             );
@@ -1064,7 +1070,8 @@ mod tests {
             execution_log.events.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
-                created_at: at
+                created_at: at,
+                backtrace_id: None,
             } if *at == sim_clock.now()
         );
         assert_matches!(
@@ -1075,6 +1082,7 @@ mod tests {
                     http_client_traces: None
                 },
                 created_at: finished_at,
+                backtrace_id: None,
             } if *finished_at == sim_clock.now()
         );
         db_pool.close().await.unwrap();
@@ -1129,6 +1137,7 @@ mod tests {
                     http_client_traces: None
                 },
                 created_at: at,
+                backtrace_id: None,
             } if *at == created_at
             => (reason_inner, kind, detail)
         );
@@ -1495,6 +1504,7 @@ mod tests {
             ExecutionEvent {
                 event: ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at, .. },
                 created_at: at,
+                backtrace_id: None,
             } if *at == now_after_first_lock_expiry && *backoff_expires_at == expected_first_timeout_expiry
         );
         assert_eq!(

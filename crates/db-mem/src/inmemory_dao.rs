@@ -320,6 +320,7 @@ impl DbConnection for InMemoryDbConnection {
         _execution_id: &ExecutionId,
         _since: &Version,
         _max_length: VersionType,
+        _include_backtrace_id: bool,
     ) -> Result<Vec<ExecutionEvent>, DbError> {
         unimplemented!("only needed for gRPC")
     }

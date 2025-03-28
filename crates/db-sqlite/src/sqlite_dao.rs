@@ -202,9 +202,9 @@ CREATE TABLE IF NOT EXISTS t_backtrace (
     PRIMARY KEY (execution_id, version_min_including, version_max_excluding)
 );
 ";
-// Index for searching backtraces by component_id and version
-const IDX_T_BACKTRACE_COMPONENT_ID_VERSION: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_backtrace_component_id_version ON t_backtrace (component_id, version_min_including, version_max_excluding);
+// Index for searching backtraces by execution_id and version
+const IDX_T_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_backtrace_execution_id_version ON t_backtrace (execution_id, version_min_including, version_max_excluding);
 ";
 
 #[expect(clippy::needless_pass_by_value)]
@@ -559,7 +559,7 @@ impl<S: Sleep> SqlitePool<S> {
         execute(&conn, CREATE_TABLE_T_DELAY, []);
         // t_backtrace
         execute(&conn, CREATE_TABLE_T_BACKTRACE, []);
-        execute(&conn, IDX_T_BACKTRACE_COMPONENT_ID_VERSION, []);
+        execute(&conn, IDX_T_BACKTRACE_EXECUTION_ID_VERSION, []);
         conn
     }
 
@@ -1866,6 +1866,7 @@ impl<S: Sleep> SqlitePool<S> {
                         .map(|event| ExecutionEvent {
                             created_at,
                             event: event.0,
+                            backtrace_id: None,
                         })
                         .map_err(|serde| {
                             error!("Cannot deserialize {row:?} - {serde:?}");
@@ -1901,37 +1902,66 @@ impl<S: Sleep> SqlitePool<S> {
         execution_id: &ExecutionId,
         version_min: VersionType,
         version_max_excluding: VersionType,
+        include_backtrace_id: bool,
     ) -> Result<Vec<ExecutionEvent>, DbError> {
-        tx
-        .prepare(
-            "SELECT created_at, json_value FROM t_execution_log WHERE \
-            execution_id = :execution_id AND version >= :version_min AND version < :version_max_excluding
-            ORDER BY version",
-        )
-        .map_err(convert_err)?
-        .query_map(
-            named_params! {
-                ":execution_id": execution_id.to_string(),
-                ":version_min": version_min,
-                ":version_max_excluding": version_max_excluding
-            },
-            |row| {
-                let created_at = row.get("created_at")?;
-                let event =
-                    row.get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
-                .map(|event| ExecutionEvent { created_at, event: event.0 })
-                .map_err(|serde| {
-                    error!("Cannot deserialize {row:?} - {serde:?}");
-                    parsing_err(serde)
-                });
-                Ok(event)
-            },
-        )
-        .map_err(convert_err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(convert_err)?
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
+        let select = if include_backtrace_id {
+            "SELECT
+                log.created_at,
+                log.json_value,
+                -- Select version_min_including from backtrace if a match is found, otherwise NULL
+                bt.version_min_including AS backtrace_id
+            FROM
+                t_execution_log AS log
+            LEFT OUTER JOIN -- Use LEFT JOIN to keep all logs even if no backtrace matches
+                t_backtrace AS bt ON log.execution_id = bt.execution_id
+                                -- Check if the log's version falls within the backtrace's range
+                                AND log.version >= bt.version_min_including
+                                AND log.version < bt.version_max_excluding
+            WHERE
+                log.execution_id = :execution_id
+                AND log.version >= :version_min
+                AND log.version < :version_max_excluding
+            ORDER BY
+                log.version;"
+        } else {
+            "SELECT
+                created_at, json_value, NULL as backtrace_id
+            FROM t_execution_log WHERE
+                execution_id = :execution_id AND version >= :version_min AND version < :version_max_excluding
+            ORDER BY version"
+        };
+        tx.prepare(select)
+            .map_err(convert_err)?
+            .query_map(
+                named_params! {
+                    ":execution_id": execution_id.to_string(),
+                    ":version_min": version_min,
+                    ":version_max_excluding": version_max_excluding
+                },
+                |row| {
+                    let created_at = row.get("created_at")?;
+                    let backtrace_id = row
+                        .get::<_, Option<VersionType>>("backtrace_id")?
+                        .map(Version::new);
+                    let event = row
+                        .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                        .map(|event| ExecutionEvent {
+                            created_at,
+                            event: event.0,
+                            backtrace_id,
+                        })
+                        .map_err(|serde| {
+                            error!("Cannot deserialize {row:?} - {serde:?}");
+                            parsing_err(serde)
+                        });
+                    Ok(event)
+                },
+            )
+            .map_err(convert_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(convert_err)?
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
     }
 
     fn get_execution_event(
@@ -1957,6 +1987,7 @@ impl<S: Sleep> SqlitePool<S> {
                     .map(|event| ExecutionEvent {
                         created_at,
                         event: event.0,
+                        backtrace_id: None,
                     })
                     .map_err(|serde| {
                         error!("Cannot deserialize {row:?} - {serde:?}");
@@ -2535,11 +2566,20 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
         execution_id: &ExecutionId,
         since: &Version,
         max_length: VersionType,
+        include_backtrace_id: bool,
     ) -> Result<Vec<ExecutionEvent>, DbError> {
         let execution_id = execution_id.clone();
         let since = since.0;
         self.transaction_read(
-            move |tx| Self::list_execution_events(tx, &execution_id, since, since + max_length),
+            move |tx| {
+                Self::list_execution_events(
+                    tx,
+                    &execution_id,
+                    since,
+                    since + max_length,
+                    include_backtrace_id,
+                )
+            },
             "get",
         )
         .await

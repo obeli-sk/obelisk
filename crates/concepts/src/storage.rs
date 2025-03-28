@@ -173,6 +173,7 @@ impl Version {
 pub struct ExecutionEvent {
     pub created_at: DateTime<Utc>,
     pub event: ExecutionEventInner,
+    pub backtrace_id: Option<Version>,
 }
 
 /// Moves the execution to [`PendingState::PendingNow`] if it is currently blocked on `JoinNextBlocking`.
@@ -765,8 +766,10 @@ pub trait DbConnection: Send + Sync {
         execution_id: &ExecutionId,
         since: &Version,
         max_length: VersionType,
+        include_backtrace_id: bool,
     ) -> Result<Vec<ExecutionEvent>, DbError>;
 
+    /// Get a single event without backtrace_id
     async fn get_execution_event(
         &self,
         execution_id: &ExecutionId,

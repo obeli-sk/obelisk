@@ -32,6 +32,7 @@ impl ExecutionJournal {
         let event = ExecutionEvent {
             event: ExecutionEventInner::from(req),
             created_at,
+            backtrace_id: None,
         };
         Self {
             execution_id,
@@ -114,8 +115,11 @@ impl ExecutionJournal {
             )?;
         }
 
-        self.execution_events
-            .push_back(ExecutionEvent { created_at, event });
+        self.execution_events.push_back(ExecutionEvent {
+            created_at,
+            event,
+            backtrace_id: None,
+        });
         // update the state
         self.update_pending_state();
         Ok(self.version())

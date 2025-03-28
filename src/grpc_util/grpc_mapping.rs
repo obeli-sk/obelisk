@@ -397,6 +397,7 @@ pub(crate) fn from_execution_event_to_grpc(
     grpc::ExecutionEvent {
             created_at: Some(prost_wkt_types::Timestamp::from(event.created_at)),
             version,
+            backtrace_id: event.backtrace_id.map(|v|v.0),
             event: Some(match event.event {
                 ExecutionEventInner::Created {
                     ffqn,

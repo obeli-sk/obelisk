@@ -100,6 +100,7 @@ pub fn execution_detail_page(
                                     responses_cursor_from,
                                     responses_length: PAGE,
                                     responses_including_cursor: responses_cursor_from == 0,
+                                    include_backtrace_id: false,
                                 },
                             )
                             .await
@@ -184,7 +185,7 @@ pub fn execution_detail_page(
 }
 
 pub fn compute_join_next_to_response<'a>(
-    events: impl IntoIterator<Item=&'a ExecutionEvent>,
+    events: impl IntoIterator<Item = &'a ExecutionEvent>,
     responses: &'a HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
 ) -> HashMap<u32 /* version of JoinNext */, &'a JoinSetResponseEvent> {
     let mut map = HashMap::new();

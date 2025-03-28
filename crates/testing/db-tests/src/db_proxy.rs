@@ -250,9 +250,10 @@ impl DbConnection for DbConnectionProxy {
         execution_id: &ExecutionId,
         since: &Version,
         max_length: VersionType,
+        include_backtrace_id: bool,
     ) -> Result<Vec<ExecutionEvent>, DbError> {
         self.0
-            .list_execution_events(execution_id, since, max_length)
+            .list_execution_events(execution_id, since, max_length, include_backtrace_id)
             .await
     }
 
