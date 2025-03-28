@@ -21,7 +21,7 @@ use crate::{
             http_client_trace, join_set_response_event, result_detail, ExecutionEvent, ExecutionId,
             JoinSetId, JoinSetResponseEvent, ResultDetail,
         },
-    },
+    }, pages::execution_detail_page::{compute_join_next_to_response, event_to_detail},
 };
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
@@ -92,8 +92,9 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     );
 
     let root_trace = {
-        let events_map = events_state.deref().read().unwrap(); // Keep the read lock, there is no blocking while rendering the traces.
-        let responses_map = responses_state.deref().read().unwrap(); // Keep the read lock, there is no blocking while rendering the traces.
+        // Keep the read lock, there is no blocking while rendering the traces.
+        let events_map = events_state.deref().read().unwrap();
+        let responses_map = responses_state.deref().read().unwrap();
         compute_root_trace(
             execution_id,
             &events_map,
@@ -103,26 +104,38 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
         )
     };
 
-    let trace = if let Some(root_trace) = root_trace {
-        html! {
-            <div class="trace-view">
-                <ExecutionTrace
-                    root_scheduled_at={root_trace.scheduled_at}
-                    root_last_event_at={root_trace.last_event_at}
-                    data={TraceData::Root(root_trace)}
-                />
-            </div>
-        }
-    } else {
-        html! {
-            "Loading..."
-        }
+    let execution_log = {
+        // Keep the read lock, there is no blocking while rendering the traces.
+        let event_lock = events_state.deref().read().unwrap();
+        let dummy_events = Vec::new();
+        let events = event_lock.get(execution_id).unwrap_or(&dummy_events);
+        let dummy_response_map = HashMap::new();
+        let responses_lock = responses_state.deref().read().unwrap();
+        let responses = responses_lock.get(execution_id).map(|(map, _)|map).unwrap_or(&dummy_response_map);
+        let join_next_version_to_response = compute_join_next_to_response(events, responses);
+        events.iter().map(|event| event_to_detail(event, &join_next_version_to_response)).collect::<Vec<_>>()
     };
-    let execution_id_header = render_execution_parts(&execution_id.as_hierarchy());
+
     html! {<>
-        <h3>{execution_id_header}</h3>
-        <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
-        {trace}
+        <div class="trace-layout-container">
+            <div class="trace-view">
+                if let Some(root_trace) = root_trace {
+                    <ExecutionTrace
+                        root_scheduled_at={root_trace.scheduled_at}
+                        root_last_event_at={root_trace.last_event_at}
+                        data={TraceData::Root(root_trace)}
+                    />
+                } else {
+                    {"Loading..."}
+                }
+            </div>
+            <div class="trace-detail">
+            <h3>{render_execution_parts(&execution_id.as_hierarchy())}</h3>
+            <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
+                {execution_log}
+            </div>
+        </div>
+
     </>}
 }
 

@@ -183,7 +183,7 @@ pub fn execution_detail_page(
     </>}
 }
 
-fn compute_join_next_to_response<'a>(
+pub fn compute_join_next_to_response<'a>(
     events: &[ExecutionEvent],
     responses: &'a HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
 ) -> HashMap<u32 /* version of JoinNext */, &'a JoinSetResponseEvent> {
@@ -209,6 +209,85 @@ fn compute_join_next_to_response<'a>(
         }
     }
     map
+}
+
+pub fn event_to_detail(
+    event: &ExecutionEvent,
+    join_next_version_to_response: &HashMap<u32, &JoinSetResponseEvent>,
+) -> Html {
+    match event.event.as_ref().expect("event is sent by the server") {
+        execution_event::Event::Created(created) => {
+            html! {
+                <CreatedEvent created={created.clone()} />
+            }
+        }
+        execution_event::Event::Locked(locked) => html! {
+            <LockedEvent locked={locked.clone()} />
+        },
+        execution_event::Event::Unlocked(event) => html! {
+            <UnlockedEvent event={event.clone()}/>
+        },
+        execution_event::Event::TemporarilyFailed(event) => {
+            html! {
+                <>
+                    <HttpTraceEvent http_client_traces={event.http_client_traces.clone()} />
+                    <TemporarilyFailedEvent event={event.clone()} />
+                </>
+            }
+        }
+        execution_event::Event::TemporarilyTimedOut(event) => html! {<>
+            <HttpTraceEvent http_client_traces={event.http_client_traces.clone()} />
+            <TemporarilyTimedOutEvent event={event.clone()} />
+        </>},
+        execution_event::Event::Finished(event) => {
+            let result_detail = event
+                .result_detail
+                .as_ref()
+                .expect("`result_detail` is sent in the `Finished` message")
+                .clone();
+            html! {<>
+                <HttpTraceEvent http_client_traces={event.http_client_traces.clone()} />
+                <FinishedEvent {result_detail} />
+                </>
+            }
+        }
+        execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+            event: Some(execution_event::history_event::Event::Schedule(event)),
+        }) => html! {
+            <HistoryScheduleEvent event={event.clone()} />
+        },
+        execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+            event: Some(execution_event::history_event::Event::JoinSetCreated(event)),
+        }) => html! {
+            <HistoryJoinSetCreatedEvent event={event.clone()} />
+        },
+        execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+            event: Some(execution_event::history_event::Event::JoinSetRequest(event)),
+        }) => html! {
+            <HistoryJoinSetRequestEvent event={event.clone()} />
+        },
+        execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+            event: Some(execution_event::history_event::Event::JoinNext(join_next)),
+        }) => {
+            let response = join_next_version_to_response
+                .get(&event.version)
+                .cloned()
+                .cloned();
+            html! {
+                <HistoryJoinNextEvent
+                    event={join_next.clone()}
+                    {response}
+                />
+            }
+        }
+        execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+            event: Some(execution_event::history_event::Event::Persist(event)),
+        }) => html! {
+            <HistoryPersistEvent event={event.clone()} />
+        },
+
+        other => html! { {format!("unknown variant {other:?}")}},
+    }
 }
 
 fn render_execution_details(
@@ -239,79 +318,7 @@ fn render_execution_details(
     let rows: Vec<_> = events
         .iter()
         .map(|event| {
-            let detail = match event.event.as_ref().expect("event is sent by the server") {
-                execution_event::Event::Created(created) => {
-                    html! {
-                        <CreatedEvent created={created.clone()} />
-                    }
-                }
-                execution_event::Event::Locked(locked) => html! {
-                    <LockedEvent locked={locked.clone()} />
-                },
-                execution_event::Event::Unlocked(event) => html! {
-                    <UnlockedEvent event={event.clone()}/>
-                },
-                execution_event::Event::TemporarilyFailed(event) => {
-                    html! {
-                        <>
-                            <HttpTraceEvent http_client_traces={event.http_client_traces.clone()} />
-                            <TemporarilyFailedEvent event={event.clone()} />
-                        </>
-                    }
-                }
-                execution_event::Event::TemporarilyTimedOut(event) => html! {<>
-                    <HttpTraceEvent http_client_traces={event.http_client_traces.clone()} />
-                    <TemporarilyTimedOutEvent event={event.clone()} />
-                </>},
-                execution_event::Event::Finished(event) => {
-                    let result_detail = event
-                        .result_detail
-                        .as_ref()
-                        .expect("`result_detail` is sent in the `Finished` message")
-                        .clone();
-                    html! {<>
-                        <HttpTraceEvent http_client_traces={event.http_client_traces.clone()} />
-                        <FinishedEvent {result_detail} />
-                        </>
-                    }
-                }
-                execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                    event: Some(execution_event::history_event::Event::Schedule(event)),
-                }) => html! {
-                    <HistoryScheduleEvent event={event.clone()} />
-                },
-                execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                    event: Some(execution_event::history_event::Event::JoinSetCreated(event)),
-                }) => html! {
-                    <HistoryJoinSetCreatedEvent event={event.clone()} />
-                },
-                execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                    event: Some(execution_event::history_event::Event::JoinSetRequest(event)),
-                }) => html! {
-                    <HistoryJoinSetRequestEvent event={event.clone()} />
-                },
-                execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                    event: Some(execution_event::history_event::Event::JoinNext(join_next)),
-                }) => {
-                    let response = join_next_version_to_response
-                        .get(&event.version)
-                        .cloned()
-                        .cloned();
-                    html! {
-                        <HistoryJoinNextEvent
-                            event={join_next.clone()}
-                            {response}
-                        />
-                    }
-                }
-                execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                    event: Some(execution_event::history_event::Event::Persist(event)),
-                }) => html! {
-                    <HistoryPersistEvent event={event.clone()} />
-                },
-
-                other => html! { {format!("unknown variant {other:?}")}},
-            };
+            let detail = event_to_detail(event, join_next_version_to_response);
             let created_at =
                 DateTime::from(event.created_at.expect("`created_at` sent by the server"));
             let since_scheduled = (created_at - execution_scheduled_at)

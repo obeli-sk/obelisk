@@ -139,6 +139,38 @@ ul li span {
 }
 
 /* Tracing */
+.trace-layout-container {
+    display: flex;
+    gap: 1rem;
+}
+
+.trace-view {
+    /* --- Flex Item Properties --- */
+    flex-shrink: 0;
+
+    /* --- Other Styling --- */
+    /* Optional: If trace-view content might exceed its height, add scrolling */
+    /* overflow-y: auto; */
+    min-width: 400px;
+
+    resize: horizontal;
+    /* Allow horizontal resizing by the user */
+    overflow: auto;
+}
+
+.trace-detail {
+    flex-grow: 1;
+    flex-shrink: 1;
+    flex-basis: 0;
+
+    min-width: 300px;
+    padding: 1rem;
+    border-left: 1px solid #ccc;
+    /* Optional: If trace-detail content might exceed its height, add scrolling */
+    /* overflow-y: auto; */
+
+}
+
 .step-row {
     display: flex;
     align-items: center;
@@ -168,7 +200,6 @@ ul li span {
 
 .relative-duration-container {
     width: 200px;
-    /* Adjust as needed */
     height: 10px;
     /* Pushes the container to the right */
     margin-left: auto;
@@ -187,7 +218,6 @@ ul li span {
 .busy-duration-line {
     position: absolute;
     height: 100%;
-    /* background-color: steelblue; */
 }
 
 .busy-http-trace-finished,
