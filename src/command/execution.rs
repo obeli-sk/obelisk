@@ -535,7 +535,6 @@ fn print_backtrace_with_content(
         }
     }
     stdout.flush()?;
-
     Ok(())
 }
 

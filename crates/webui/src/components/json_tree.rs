@@ -6,12 +6,7 @@ use yewprint::{
     Icon, NodeData,
 };
 
-#[derive(Properties, PartialEq, Clone)]
-pub struct JsonTreeViewerProps {
-    pub json_data: Vec<u8>,
-}
-
-pub fn render_json_value(
+fn render_json_value(
     tree: &mut id_tree::Tree<NodeData<u32>>,
     parent: &NodeId,
     key: Option<&str>,
@@ -78,9 +73,43 @@ pub fn render_json_value(
 
 pub fn insert_json_into_tree(
     tree: &mut id_tree::Tree<NodeData<u32>>,
-    root_id: NodeId,
+    parent_node: NodeId,
     json_data: &[u8],
 ) -> Result<(), serde_json::Error> {
+    let value_node = tree
+        .insert(
+            Node::new(NodeData {
+                icon: Icon::Database,
+                label: "Value".into_html(),
+                has_caret: true,
+                ..Default::default()
+            }),
+            InsertBehavior::UnderNode(&parent_node),
+        )
+        .unwrap();
+
+    let serialized_node = tree
+        .insert(
+            Node::new(NodeData {
+                icon: Icon::Database,
+                label: "Value: (serialized)".into_html(),
+                has_caret: true,
+                ..Default::default()
+            }),
+            InsertBehavior::UnderNode(&parent_node),
+        )
+        .unwrap();
+    let json_string = String::from_utf8_lossy(json_data).into_owned();
+    tree.insert(
+        Node::new(NodeData {
+            icon: Icon::Database,
+            label: html! { <input type="text" value={json_string} /> },
+            ..Default::default()
+        }),
+        InsertBehavior::UnderNode(&serialized_node),
+    )
+    .unwrap();
+
     // Try to parse the JSON
     let json_value = serde_json::from_slice::<Value>(json_data)?;
 
@@ -90,17 +119,17 @@ pub fn insert_json_into_tree(
             // Sort keys for consistent display
             let sorted_keys: BTreeMap<_, _> = obj.iter().collect();
             for (k, v) in sorted_keys {
-                render_json_value(tree, &root_id, Some(k), v);
+                render_json_value(tree, &value_node, Some(k), v);
             }
         }
         Value::Array(arr) => {
             for (idx, item) in arr.iter().enumerate() {
-                render_json_value(tree, &root_id, Some(&idx.to_string()), item);
+                render_json_value(tree, &value_node, Some(&idx.to_string()), item);
             }
         }
         _ => {
             // For primitive root values
-            render_json_value(tree, &root_id, None, &json_value);
+            render_json_value(tree, &value_node, None, &json_value);
         }
     }
     Ok(())

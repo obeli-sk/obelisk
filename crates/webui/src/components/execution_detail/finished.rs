@@ -41,40 +41,7 @@ pub fn attach_result_detail(
                 .unwrap();
 
             if let Some(any) = &ok.return_value {
-                let json_tree_parent = tree
-                    .insert(
-                        Node::new(NodeData {
-                            icon: Icon::Database,
-                            label: "Value".into_html(),
-                            has_caret: true,
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&ok_node),
-                    )
-                    .unwrap();
-
-                let _ = insert_json_into_tree(tree, json_tree_parent, &any.value);
-
-                let serialized = tree
-                    .insert(
-                        Node::new(NodeData {
-                            icon: Icon::Database,
-                            label: "Value: (serialized)".into_html(),
-                            has_caret: true,
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&ok_node),
-                    )
-                    .unwrap();
-                tree.insert(
-                    Node::new(NodeData {
-                        icon: Icon::Database,
-                        label: String::from_utf8_lossy(&any.value).into_html(),
-                        ..Default::default()
-                    }),
-                    InsertBehavior::UnderNode(&serialized),
-                )
-                .unwrap();
+                let _ = insert_json_into_tree(tree, ok_node, &any.value);
             }
         }
         grpc_client::result_detail::Value::FallibleError(fallible) => {
@@ -90,39 +57,7 @@ pub fn attach_result_detail(
                 )
                 .unwrap();
             if let Some(any) = &fallible.return_value {
-                let json_tree_parent = tree
-                    .insert(
-                        Node::new(NodeData {
-                            icon: Icon::Database,
-                            label: "Value".into_html(),
-                            has_caret: true,
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&error_node),
-                    )
-                    .unwrap();
-                let _ = insert_json_into_tree(tree, json_tree_parent, &any.value);
-
-                let serialized = tree
-                    .insert(
-                        Node::new(NodeData {
-                            icon: Icon::Database,
-                            label: "Value: (serialized)".into_html(),
-                            has_caret: true,
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&error_node),
-                    )
-                    .unwrap();
-                tree.insert(
-                    Node::new(NodeData {
-                        icon: Icon::Database,
-                        label: String::from_utf8_lossy(&any.value).into_html(),
-                        ..Default::default()
-                    }),
-                    InsertBehavior::UnderNode(&serialized),
-                )
-                .unwrap();
+                let _ = insert_json_into_tree(tree, error_node, &any.value);
             }
         }
         grpc_client::result_detail::Value::Timeout(_) => {

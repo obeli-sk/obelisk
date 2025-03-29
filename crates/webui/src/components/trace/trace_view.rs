@@ -413,7 +413,6 @@ fn compute_root_trace(
                             html!{
                                 <button {onclick} >{"Load"} </button>
                             }
-
                         } else {
                             Html::default()
                         };
