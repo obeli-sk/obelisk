@@ -17,6 +17,7 @@ use yewprint::{
 pub struct HistoryJoinNextEventProps {
     pub event: grpc_client::execution_event::history_event::JoinNext,
     pub response: Option<JoinSetResponseEvent>,
+    pub backtrace_id: Option<u32>,
 }
 
 impl HistoryJoinNextEventProps {
@@ -27,52 +28,57 @@ impl HistoryJoinNextEventProps {
             .unwrap();
 
         // Add node for JoinSet ID and details
-        if let Some(join_set_id) = &self.event.join_set_id {
-            let icon = match &self.response {
-                Some(JoinSetResponseEvent {
-                    response:
-                        Some(join_set_response_event::Response::ChildExecutionFinished(
-                            join_set_response_event::ChildExecutionFinished {
-                                result_detail: Some(ResultDetail { value: Some(value) }),
-                                ..
-                            },
-                        )),
-                    ..
-                }) if value.is_err() => Icon::Error,
-                Some(_) => Icon::Tick,
-                None => Icon::Search,
-            };
+        let join_set_id = self
+            .event
+            .join_set_id
+            .as_ref()
+            .expect("JoinSetRequest.join_set_id is sent");
 
-            let join_next_node = tree
-                .insert(
-                    Node::new(NodeData {
-                        icon,
-                        label: html! {
-                            <>
-                                {"Join Next: `"}
-                                {join_set_id}
-                                {"`"}
-                            </>
+        let icon = match &self.response {
+            Some(JoinSetResponseEvent {
+                response:
+                    Some(join_set_response_event::Response::ChildExecutionFinished(
+                        join_set_response_event::ChildExecutionFinished {
+                            result_detail: Some(ResultDetail { value: Some(value) }),
+                            ..
                         },
-                        has_caret: true,
-                        ..Default::default()
-                    }),
-                    InsertBehavior::UnderNode(&root_id),
-                )
-                .unwrap();
+                    )),
+                ..
+            }) if value.is_err() => Icon::Error,
+            Some(_) => Icon::Tick,
+            None => Icon::Search,
+        };
 
-            match &self.response {
-                Some(JoinSetResponseEvent {
-                    created_at: Some(finished_at),
-                    join_set_id: _,
-                    response:
-                        Some(join_set_response_event::Response::ChildExecutionFinished(child_finished)),
-                }) => {
-                    let child_execution_id = child_finished
-                        .child_execution_id
-                        .as_ref()
-                        .expect("`child_execution_id` of `ChildExecutionFinished` must be sent");
-                    let child_node = tree.insert(
+        let join_next_node = tree
+            .insert(
+                Node::new(NodeData {
+                    icon,
+                    label: html! {
+                        <>
+                            {"Join Next: `"}
+                            {join_set_id}
+                            {"`"}
+                        </>
+                    },
+                    has_caret: true,
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&root_id),
+            )
+            .unwrap();
+
+        match &self.response {
+            Some(JoinSetResponseEvent {
+                created_at: Some(finished_at),
+                join_set_id: _,
+                response:
+                    Some(join_set_response_event::Response::ChildExecutionFinished(child_finished)),
+            }) => {
+                let child_execution_id = child_finished
+                    .child_execution_id
+                    .as_ref()
+                    .expect("`child_execution_id` of `ChildExecutionFinished` must be sent");
+                let child_node = tree.insert(
                         Node::new(NodeData {
                             icon: Icon::Flows,
                             label: html! {
@@ -90,77 +96,91 @@ impl HistoryJoinNextEventProps {
                     )
                     .unwrap();
 
-                    let result_detail = child_finished
-                        .result_detail
-                        .as_ref()
-                        .expect("`child_execution_id` of `ChildExecutionFinished` must be sent");
-                    attach_result_detail(&mut tree, &child_node, result_detail);
+                let result_detail = child_finished
+                    .result_detail
+                    .as_ref()
+                    .expect("`child_execution_id` of `ChildExecutionFinished` must be sent");
+                attach_result_detail(&mut tree, &child_node, result_detail);
 
-                    let finished_at = DateTime::from(*finished_at);
-                    tree.insert(
-                        Node::new(NodeData {
-                            icon: Icon::Time,
-                            label: format!("Finished At: {finished_at}").into_html(),
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&child_node),
-                    )
-                    .unwrap();
-                }
-                Some(JoinSetResponseEvent {
-                    created_at: Some(finished_at),
-                    join_set_id: _,
-                    response: Some(join_set_response_event::Response::DelayFinished(delay_finished)),
-                }) => {
-                    let delay_id = delay_finished
-                        .delay_id
-                        .as_ref()
-                        .expect("`delay_id` of `DelayFinished` must be sent");
-                    let delay_node = tree
-                        .insert(
-                            Node::new(NodeData {
-                                icon: Icon::Time,
-                                label: html! {
-                                    <>
-                                        {"Matched Delay Finished: "}
-                                        {&delay_id.id}
-                                    </>
-                                },
-                                has_caret: true,
-                                ..Default::default()
-                            }),
-                            InsertBehavior::UnderNode(&join_next_node),
-                        )
-                        .unwrap();
-
-                    let finished_at = DateTime::from(*finished_at);
-                    tree.insert(
-                        Node::new(NodeData {
-                            icon: Icon::Time,
-                            label: format!("Finished At: {finished_at}").into_html(),
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&delay_node),
-                    )
-                    .unwrap();
-                }
-                other => {
-                    error!("Unknown format {other:?}");
-                }
+                let finished_at = DateTime::from(*finished_at);
+                tree.insert(
+                    Node::new(NodeData {
+                        icon: Icon::Time,
+                        label: format!("Finished At: {finished_at}").into_html(),
+                        ..Default::default()
+                    }),
+                    InsertBehavior::UnderNode(&child_node),
+                )
+                .unwrap();
             }
+            Some(JoinSetResponseEvent {
+                created_at: Some(finished_at),
+                join_set_id: _,
+                response: Some(join_set_response_event::Response::DelayFinished(delay_finished)),
+            }) => {
+                let delay_id = delay_finished
+                    .delay_id
+                    .as_ref()
+                    .expect("`delay_id` of `DelayFinished` must be sent");
+                let delay_node = tree
+                    .insert(
+                        Node::new(NodeData {
+                            icon: Icon::Time,
+                            label: html! {
+                                <>
+                                    {"Matched Delay Finished: "}
+                                    {&delay_id.id}
+                                </>
+                            },
+                            has_caret: true,
+                            ..Default::default()
+                        }),
+                        InsertBehavior::UnderNode(&join_next_node),
+                    )
+                    .unwrap();
 
-            // Add closing status
+                let finished_at = DateTime::from(*finished_at);
+                tree.insert(
+                    Node::new(NodeData {
+                        icon: Icon::Time,
+                        label: format!("Finished At: {finished_at}").into_html(),
+                        ..Default::default()
+                    }),
+                    InsertBehavior::UnderNode(&delay_node),
+                )
+                .unwrap();
+            }
+            other => {
+                error!("Unknown format {other:?}");
+            }
+        }
+
+        // Add closing status
+        tree.insert(
+            Node::new(NodeData {
+                icon: Icon::Lock,
+                label: format!("Closing: {}", self.event.closing).into_html(),
+                ..Default::default()
+            }),
+            InsertBehavior::UnderNode(&join_next_node),
+        )
+        .unwrap();
+        if let Some(backtrace_id) = self.backtrace_id {
             tree.insert(
                 Node::new(NodeData {
-                    icon: Icon::Lock,
-                    label: format!("Closing: {}", self.event.closing).into_html(),
+                    icon: Icon::Flows,
+                    label: html! {
+                        <>
+                            {"Backtrace: "}
+                            {backtrace_id}
+                        </>
+                    },
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&join_next_node),
             )
             .unwrap();
         }
-
         TreeData::from(tree)
     }
 }

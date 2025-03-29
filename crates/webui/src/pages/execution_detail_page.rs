@@ -263,9 +263,9 @@ pub fn event_to_detail(
             <HistoryJoinSetCreatedEvent event={event.clone()} />
         },
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-            event: Some(execution_event::history_event::Event::JoinSetRequest(event)),
+            event: Some(execution_event::history_event::Event::JoinSetRequest(join_set_request)),
         }) => html! {
-            <HistoryJoinSetRequestEvent event={event.clone()} />
+            <HistoryJoinSetRequestEvent event={join_set_request.clone()} backtrace_id={event.backtrace_id} />
         },
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
             event: Some(execution_event::history_event::Event::JoinNext(join_next)),
@@ -278,6 +278,7 @@ pub fn event_to_detail(
                 <HistoryJoinNextEvent
                     event={join_next.clone()}
                     {response}
+                    backtrace_id={event.backtrace_id}
                 />
             }
         }

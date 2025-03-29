@@ -14,6 +14,7 @@ use yewprint::{
 #[derive(Properties, PartialEq, Clone)]
 pub struct HistoryJoinSetRequestEventProps {
     pub event: grpc_client::execution_event::history_event::JoinSetRequest,
+    pub backtrace_id: Option<u32>,
 }
 
 impl HistoryJoinSetRequestEventProps {
@@ -24,74 +25,74 @@ impl HistoryJoinSetRequestEventProps {
             .unwrap();
 
         // Add node for JoinSet ID
-        if let Some(join_set_id) = &self.event.join_set_id {
-            let join_set_node = tree
-                .insert(
+        let join_set_id = self.event.join_set_id.as_ref().expect("JoinSetRequest.join_set_id is sent");
+        let join_set_node = tree
+            .insert(
+                Node::new(NodeData {
+                    icon: Icon::History,
+                    label: html! {
+                        <>
+                            {"Join Set Request: `"}
+                            {join_set_id}
+                            {"`"}
+                        </>
+                    },
+                    has_caret: true,
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&root_id),
+            )
+            .unwrap();
+
+        // Handle different types of join set requests
+        match self
+            .event
+            .join_set_request
+            .as_ref()
+            .expect("`join_set_request` is sent in `JoinSetRequest`")
+        {
+            join_set_request::JoinSetRequest::DelayRequest(delay_req) => {
+                let (Some(delay_id), Some(expires_at)) =
+                    (&delay_req.delay_id, &delay_req.expires_at)
+                else {
+                    panic!("`delay_id` and `expires_at` are sent in `DelayRequest` message");
+                };
+                let expires_at = DateTime::from(*expires_at);
+                tree.insert(
                     Node::new(NodeData {
-                        icon: Icon::History,
+                        icon: Icon::Time,
                         label: html! {
                             <>
-                                {"Join Set Request: `"}
-                                {join_set_id}
-                                {"`"}
+                                {"Delay Request: "}
+                                {&delay_id.id}
                             </>
                         },
-                        has_caret: true,
                         ..Default::default()
                     }),
-                    InsertBehavior::UnderNode(&root_id),
+                    InsertBehavior::UnderNode(&join_set_node),
                 )
                 .unwrap();
-
-            // Handle different types of join set requests
-            match self
-                .event
-                .join_set_request
-                .as_ref()
-                .expect("`join_set_request` is sent in `JoinSetRequest`")
-            {
-                join_set_request::JoinSetRequest::DelayRequest(delay_req) => {
-                    let (Some(delay_id), Some(expires_at)) =
-                        (&delay_req.delay_id, &delay_req.expires_at)
-                    else {
-                        panic!("`delay_id` and `expires_at` are sent in `DelayRequest` message");
-                    };
-                    let expires_at = DateTime::from(*expires_at);
-                    tree.insert(
-                        Node::new(NodeData {
-                            icon: Icon::Time,
-                            label: html! {
-                                <>
-                                    {"Delay Request: "}
-                                    {&delay_id.id}
-                                </>
-                            },
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&join_set_node),
-                    )
-                    .unwrap();
-                    tree.insert(
-                        Node::new(NodeData {
-                            icon: Icon::Time,
-                            label: html! {
-                                <>
-                                    {"Expires At: "}
-                                    {expires_at}
-                                </>
-                            },
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&join_set_node),
-                    )
-                    .unwrap();
-                }
-                join_set_request::JoinSetRequest::ChildExecutionRequest(child_req) => {
-                    let child_execution_id = child_req
-                        .child_execution_id
-                        .as_ref()
-                        .expect("`child_execution_id` is sent in `ChildExecutionRequest`");
-                    tree.insert(
+                tree.insert(
+                    Node::new(NodeData {
+                        icon: Icon::Time,
+                        label: html! {
+                            <>
+                                {"Expires At: "}
+                                {expires_at}
+                            </>
+                        },
+                        ..Default::default()
+                    }),
+                    InsertBehavior::UnderNode(&join_set_node),
+                )
+                .unwrap();
+            }
+            join_set_request::JoinSetRequest::ChildExecutionRequest(child_req) => {
+                let child_execution_id = child_req
+                    .child_execution_id
+                    .as_ref()
+                    .expect("`child_execution_id` is sent in `ChildExecutionRequest`");
+                tree.insert(
                         Node::new(NodeData {
                             icon: Icon::Flows,
                             label: html! {
@@ -107,10 +108,24 @@ impl HistoryJoinSetRequestEventProps {
                         InsertBehavior::UnderNode(&join_set_node),
                     )
                     .unwrap();
-                }
             }
         }
-
+        if let Some(backtrace_id) = self.backtrace_id {
+            tree.insert(
+                Node::new(NodeData {
+                    icon: Icon::Flows,
+                    label: html! {
+                        <>
+                            {"Backtrace: "}
+                            {backtrace_id}
+                        </>
+                    },
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&join_set_node),
+            )
+            .unwrap();
+        }
         TreeData::from(tree)
     }
 }

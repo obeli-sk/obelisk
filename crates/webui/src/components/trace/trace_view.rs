@@ -121,10 +121,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
             .iter()
             .filter(|event| {
                 let event_inner = event.event.as_ref().expect("event is sent by the server");
-                debug!(
-                    "version {} backtrace_id {:?}",
-                    event.version, event.backtrace_id
-                );
                 !matches!(
                     event_inner,
                     execution_event::Event::Locked(..)

@@ -107,25 +107,14 @@ pub fn insert_json_into_tree(
         )
         .unwrap();
 
-    let serialized_node = tree
-        .insert(
-            Node::new(NodeData {
-                icon: Icon::Database,
-                label: "Value: (serialized)".into_html(),
-                has_caret: true,
-                ..Default::default()
-            }),
-            InsertBehavior::UnderNode(&parent_node),
-        )
-        .unwrap();
     let json_string = json_data.to_string();
     tree.insert(
         Node::new(NodeData {
             icon: Icon::Database,
-            label: html! { <input type="text" value={json_string} /> },
+            label: html! {<> {"Serialized: "} <input type="text" value={json_string} /> </>},
             ..Default::default()
         }),
-        InsertBehavior::UnderNode(&serialized_node),
+        InsertBehavior::UnderNode(&parent_node),
     )
     .unwrap();
 
