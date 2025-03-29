@@ -139,6 +139,10 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     };
 
     html! {<>
+        <div class="execution-header">
+            <h3>{render_execution_parts(execution_id, false)}</h3>
+            <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
+        </div>
         <div class="trace-layout-container">
             <div class="trace-view">
                 if let Some(root_trace) = root_trace {
@@ -152,8 +156,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                 }
             </div>
             <div class="trace-detail">
-            <h3>{render_execution_parts(execution_id, false)}</h3>
-            <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
                 {execution_log}
             </div>
         </div>
@@ -553,7 +555,7 @@ fn compute_root_trace(
 
     let name = html! {
         <>
-            {render_execution_parts(execution_id, hide_parents)}
+            {render_execution_parts(execution_id, true)}
             {" "}{&ffqn.function_name}
         </>
     };

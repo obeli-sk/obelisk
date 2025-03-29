@@ -92,7 +92,7 @@ impl ProcessedProps {
             .insert(
                 Node::new(NodeData {
                     icon: Icon::NewObject,
-                    label: "Created".into(),
+                    label: format!("Created `{}`", self.ffqn.function_name).to_html(),
                     has_caret: true,
                     ..Default::default()
                 }),
