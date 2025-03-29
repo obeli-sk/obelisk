@@ -1,5 +1,5 @@
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap, ops::Deref};
 use yew::prelude::*;
 use yewprint::{
     id_tree::{self, InsertBehavior, Node, NodeId},
@@ -67,7 +67,6 @@ fn render_json_value(
         }
         _ => {} // Primitive types have no children
     }
-
     node_id
 }
 
@@ -75,17 +74,18 @@ pub enum JsonValue<'a> {
     Serialized(&'a [u8]),
     Parsed(&'a Value),
 }
-impl<'a> JsonValue<'a> {
+impl JsonValue<'_> {
+    #[expect(clippy::inherent_to_string)]
     fn to_string(&self) -> String {
         match self {
             JsonValue::Serialized(slice) => String::from_utf8_lossy(slice).into_owned(),
             JsonValue::Parsed(value) => value.to_string(),
         }
     }
-    fn to_value(&self) -> Result<Value, serde_json::Error> {
+    fn to_value(&self) -> Result<Cow<'_, Value>, serde_json::Error> {
         match self {
-            JsonValue::Serialized(slice) => serde_json::from_slice::<Value>(slice),
-            JsonValue::Parsed(value) => Ok((*value).clone()),
+            JsonValue::Serialized(slice) => serde_json::from_slice::<Value>(slice).map(Cow::Owned),
+            JsonValue::Parsed(value) => Ok(Cow::Borrowed(*value)),
         }
     }
 }
@@ -121,7 +121,7 @@ pub fn insert_json_into_tree(
     // Try to parse the JSON
     let json_value = json_data.to_value()?;
     // Render the entire JSON structure
-    match json_value {
+    match json_value.deref() {
         Value::Object(obj) => {
             // Sort keys for consistent display
             let sorted_keys: BTreeMap<_, _> = obj.iter().collect();

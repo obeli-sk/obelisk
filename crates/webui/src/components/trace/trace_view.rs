@@ -101,7 +101,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
             &events_map,
             &responses_map,
             &execution_ids_state,
-            false,
         )
     };
 
@@ -301,7 +300,6 @@ fn compute_root_trace(
     events_map: &HashMap<ExecutionId, Vec<ExecutionEvent>>,
     responses_map: &HashMap<ExecutionId, (HashMap<JoinSetId, Vec<JoinSetResponseEvent>>, u32)>,
     execution_ids_state: &UseStateHandle<HashSet<ExecutionId>>,
-    hide_parents: bool,
 ) -> Option<TraceDataRoot> {
     let events = match events_map.get(execution_id) {
         Some(events) if !events.is_empty() => events,
@@ -419,7 +417,6 @@ fn compute_root_trace(
                             events_map,
                             responses_map,
                             execution_ids_state,
-                            true,
                         ) {
                             last_event_at = last_event_at.max(child_root.last_event_at);
                             Some(vec![TraceData::Root(child_root)])

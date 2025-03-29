@@ -25,7 +25,11 @@ impl HistoryJoinSetRequestEventProps {
             .unwrap();
 
         // Add node for JoinSet ID
-        let join_set_id = self.event.join_set_id.as_ref().expect("JoinSetRequest.join_set_id is sent");
+        let join_set_id = self
+            .event
+            .join_set_id
+            .as_ref()
+            .expect("JoinSetRequest.join_set_id is sent");
         let join_set_node = tree
             .insert(
                 Node::new(NodeData {
