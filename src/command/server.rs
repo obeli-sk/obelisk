@@ -646,10 +646,10 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     }
 
     #[instrument(skip_all, fields(execution_id))]
-    async fn get_last_backtrace(
+    async fn get_backtrace(
         &self,
-        request: tonic::Request<grpc::GetLastBacktraceRequest>,
-    ) -> Result<tonic::Response<grpc::GetLastBacktraceResponse>, tonic::Status> {
+        request: tonic::Request<grpc::GetBacktraceRequest>,
+    ) -> Result<tonic::Response<grpc::GetBacktraceResponse>, tonic::Status> {
         let request = request.into_inner();
         let execution_id: ExecutionId = request
             .execution_id
@@ -659,9 +659,12 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
 
         let conn = self.db_pool.connection();
-        let backtrace_info = conn.get_backtrace(&execution_id, None).await.to_status()?;
+        let backtrace_info = conn
+            .get_backtrace(&execution_id, request.version.map(Version::new))
+            .await
+            .to_status()?;
 
-        Ok(tonic::Response::new(grpc::GetLastBacktraceResponse {
+        Ok(tonic::Response::new(grpc::GetBacktraceResponse {
             wasm_backtrace: Some(backtrace_info.wasm_backtrace.into()),
             component_id: Some(backtrace_info.component_id.into()),
             version_min_including: backtrace_info.version_min_including.into(),

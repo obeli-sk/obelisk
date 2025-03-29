@@ -1,6 +1,6 @@
 use super::grpc;
 use super::grpc::execution_status::BlockedByJoinSet;
-use super::grpc::GetLastBacktraceResponse;
+use super::grpc::GetBacktraceResponse;
 use crate::command::grpc::execution_status::Finished;
 use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use crate::ExecutionRepositoryClient;
@@ -542,10 +542,11 @@ fn print_backtrace_with_content(
 async fn fetch_backtrace(
     client: &mut ExecutionRepositoryClient,
     execution_id: &ExecutionId,
-) -> anyhow::Result<Option<GetLastBacktraceResponse>> {
+) -> anyhow::Result<Option<GetBacktraceResponse>> {
     let backtrace_response = client
-        .get_last_backtrace(tonic::Request::new(grpc::GetLastBacktraceRequest {
+        .get_backtrace(tonic::Request::new(grpc::GetBacktraceRequest {
             execution_id: Some(grpc::ExecutionId::from(execution_id)),
+            version: None,
         }))
         .await;
     let backtrace_response = match backtrace_response {

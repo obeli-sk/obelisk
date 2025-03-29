@@ -16,7 +16,7 @@ service ExecutionRepository {
     // List child execution responses
     rpc ListResponses(ListResponsesRequest) returns (ListResponsesResponse);
     rpc ListExecutionEventsAndResponses(ListExecutionEventsAndResponsesRequest) returns (ListExecutionEventsAndResponsesResponse);
-    rpc GetLastBacktrace(GetLastBacktraceRequest) returns (GetLastBacktraceResponse);
+    rpc GetBacktrace(GetBacktraceRequest) returns (GetBacktraceResponse);
     rpc GetBacktraceSource(GetBacktraceSourceRequest) returns (GetBacktraceSourceResponse);
 }
 
@@ -468,11 +468,13 @@ message GetWitResponse {
     string content = 1;
 }
 
-message GetLastBacktraceRequest {
+message GetBacktraceRequest {
     ExecutionId execution_id = 1;
+    // Get the latest version if not set.
+    optional uint32 version = 2;
 }
 
-message GetLastBacktraceResponse {
+message GetBacktraceResponse {
     ComponentId component_id = 1;
     WasmBacktrace wasm_backtrace = 2;
     uint32 version_min_including = 3;
