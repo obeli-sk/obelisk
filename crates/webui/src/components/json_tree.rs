@@ -71,10 +71,29 @@ fn render_json_value(
     node_id
 }
 
+pub enum JsonValue<'a> {
+    Serialized(&'a [u8]),
+    Parsed(&'a Value),
+}
+impl<'a> JsonValue<'a> {
+    fn to_string(&self) -> String {
+        match self {
+            JsonValue::Serialized(slice) => String::from_utf8_lossy(slice).into_owned(),
+            JsonValue::Parsed(value) => value.to_string(),
+        }
+    }
+    fn to_value(&self) -> Result<Value, serde_json::Error> {
+        match self {
+            JsonValue::Serialized(slice) => serde_json::from_slice::<Value>(slice),
+            JsonValue::Parsed(value) => Ok((*value).clone()),
+        }
+    }
+}
+
 pub fn insert_json_into_tree(
     tree: &mut id_tree::Tree<NodeData<u32>>,
     parent_node: NodeId,
-    json_data: &[u8],
+    json_data: JsonValue<'_>,
 ) -> Result<(), serde_json::Error> {
     let value_node = tree
         .insert(
@@ -99,7 +118,7 @@ pub fn insert_json_into_tree(
             InsertBehavior::UnderNode(&parent_node),
         )
         .unwrap();
-    let json_string = String::from_utf8_lossy(json_data).into_owned();
+    let json_string = json_data.to_string();
     tree.insert(
         Node::new(NodeData {
             icon: Icon::Database,
@@ -111,8 +130,7 @@ pub fn insert_json_into_tree(
     .unwrap();
 
     // Try to parse the JSON
-    let json_value = serde_json::from_slice::<Value>(json_data)?;
-
+    let json_value = json_data.to_value()?;
     // Render the entire JSON structure
     match json_value {
         Value::Object(obj) => {

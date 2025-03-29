@@ -2,6 +2,8 @@ use crate::app::AppState;
 use crate::app::Route;
 use crate::components::execution_detail::tree_component::TreeComponent;
 use crate::components::ffqn_with_links::FfqnWithLinks;
+use crate::components::json_tree::insert_json_into_tree;
+use crate::components::json_tree::JsonValue;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::grpc_client;
 use crate::grpc::grpc_client::ComponentId;
@@ -133,16 +135,19 @@ impl ProcessedProps {
             )
             .unwrap();
         for (param_name, param_value) in self.params {
-            tree.insert(
-                Node::new(NodeData {
-                    icon: Icon::Function,
-                    label: format!("{param_name}: {param_value}").into_html(),
-                    has_caret: false,
-                    ..Default::default()
-                }),
-                InsertBehavior::UnderNode(&params_node_id),
-            )
-            .unwrap();
+            let param_name_node = tree
+                .insert(
+                    Node::new(NodeData {
+                        icon: Icon::Function,
+                        label: format!("{param_name}: {param_value}").into_html(),
+                        has_caret: true,
+                        ..Default::default()
+                    }),
+                    InsertBehavior::UnderNode(&params_node_id),
+                )
+                .unwrap();
+            let _ =
+                insert_json_into_tree(&mut tree, param_name_node, JsonValue::Parsed(&param_value));
         }
         // component id
         tree.insert(

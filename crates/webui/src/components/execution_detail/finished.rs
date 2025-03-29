@@ -1,7 +1,8 @@
 use crate::{
     app::Route,
     components::{
-        execution_detail::tree_component::TreeComponent, json_tree::insert_json_into_tree,
+        execution_detail::tree_component::TreeComponent,
+        json_tree::{insert_json_into_tree, JsonValue},
     },
     grpc::grpc_client,
 };
@@ -41,7 +42,7 @@ pub fn attach_result_detail(
                 .unwrap();
 
             if let Some(any) = &ok.return_value {
-                let _ = insert_json_into_tree(tree, ok_node, &any.value);
+                let _ = insert_json_into_tree(tree, ok_node, JsonValue::Serialized(&any.value));
             }
         }
         grpc_client::result_detail::Value::FallibleError(fallible) => {
@@ -57,7 +58,7 @@ pub fn attach_result_detail(
                 )
                 .unwrap();
             if let Some(any) = &fallible.return_value {
-                let _ = insert_json_into_tree(tree, error_node, &any.value);
+                let _ = insert_json_into_tree(tree, error_node, JsonValue::Serialized(&any.value));
             }
         }
         grpc_client::result_detail::Value::Timeout(_) => {
