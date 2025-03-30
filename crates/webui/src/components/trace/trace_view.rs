@@ -90,8 +90,8 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
         let responses_map = responses_state.deref();
         compute_root_trace(
             execution_id,
-            &events_map,
-            &responses_map,
+            events_map,
+            responses_map,
             &execution_ids_state,
         )
     };

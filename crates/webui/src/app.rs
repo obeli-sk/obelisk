@@ -132,7 +132,10 @@ impl Route {
             Route::ExecutionDebugger { execution_id } => {
                 html! { <DebuggerView {execution_id} version={None} /> }
             }
-            Route::ExecutionDebuggerWithVersion { execution_id, version } => {
+            Route::ExecutionDebuggerWithVersion {
+                execution_id,
+                version,
+            } => {
                 html! { <DebuggerView {execution_id} version={Some(version)} /> }
             }
             Route::NotFound => html! { <NotFound /> },

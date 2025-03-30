@@ -63,12 +63,12 @@ pub fn debugger_view(
     let sources_state: UseStateHandle<HashMap<(ComponentId, String), Option<String>>> =
         use_state(Default::default);
 
-    use_effect_with((execution_id.clone(), version.clone()), {
+    use_effect_with((execution_id.clone(), *version), {
         let backtraces_state = backtraces_state.clone();
         let sources_state = sources_state.clone(); // Write a request to obtain the sources.
         move |(execution_id, version)| {
             let execution_id = execution_id.clone();
-            let version = version.clone();
+            let version = *version;
             if backtraces_state.contains_key(&(execution_id.clone(), version)) {
                 trace!("Prevented GetBacktrace fetch");
                 return;
@@ -83,7 +83,7 @@ pub fn debugger_view(
                 let backtrace_response = execution_client
                     .get_backtrace(tonic::Request::new(grpc_client::GetBacktraceRequest {
                         execution_id: Some(execution_id.clone()),
-                        version: version.clone(),
+                        version,
                     }))
                     .await;
                 let backtrace_response = match backtrace_response {
@@ -179,7 +179,7 @@ pub fn debugger_view(
 
     let backtrace = if let Some(backtrace_response) = backtraces_state
         .deref()
-        .get(&(execution_id.clone(), version.clone()))
+        .get(&(execution_id.clone(), *version))
     {
         let mut htmls = Vec::new();
         let mut seen_positions = hashbrown::HashSet::new();
@@ -329,10 +329,7 @@ impl EventsAndResponsesState {
                 let last_event = events.last().expect("not found is sent as an error");
                 let is_finished =
                     matches!(last_event.event, Some(execution_event::Event::Finished(_)));
-                debug!(
-                    "Setting events of {execution_id} to {:?}",
-                    events.iter().next()
-                );
+                debug!("Setting events of {execution_id} to {:?}", events.first());
                 events_state.set(events);
                 {
                     let responses_cursor_from = new_events_and_responses
