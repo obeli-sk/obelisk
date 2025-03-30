@@ -2693,12 +2693,11 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                                 WHERE execution_id = :execution_id";
                 let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![(":execution_id", Box::new(execution_id.to_string()))];
                 let select = if let Some(version) = version {
-                    params.push(("version", Box::new(version.0)));
-                    format!("{select} WHERE :version >= version_min_including AND :version < version_max_excluding")
+                    params.push((":version", Box::new(version.0)));
+                    format!("{select} AND version_min_including <= :version AND version_max_excluding > :version")
                 } else {
                     format!("{select} ORDER BY version_min_including DESC LIMIT 1")
                 };
-
                 let mut stmt = tx
                     .prepare(
                          &select
