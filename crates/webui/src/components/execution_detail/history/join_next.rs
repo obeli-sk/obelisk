@@ -1,3 +1,5 @@
+use crate::grpc::grpc_client::ExecutionId;
+use crate::grpc::version::VersionType;
 use crate::grpc::ResultValueExt;
 use crate::{
     app::Route,
@@ -17,7 +19,8 @@ use yewprint::{
 pub struct HistoryJoinNextEventProps {
     pub event: grpc_client::execution_event::history_event::JoinNext,
     pub response: Option<JoinSetResponseEvent>,
-    pub backtrace_id: Option<u32>,
+    pub execution_id: ExecutionId,
+    pub backtrace_id: Option<VersionType>,
 }
 
 impl HistoryJoinNextEventProps {
@@ -170,10 +173,9 @@ impl HistoryJoinNextEventProps {
                 Node::new(NodeData {
                     icon: Icon::Flows,
                     label: html! {
-                        <>
-                            {"Backtrace: "}
-                            {backtrace_id}
-                        </>
+                        <Link<Route> to={Route::ExecutionDebuggerWithVersion { execution_id: self.execution_id.clone(), version: backtrace_id } }>
+                            {"Backtrace"}
+                        </Link<Route>>
                     },
                     ..Default::default()
                 }),

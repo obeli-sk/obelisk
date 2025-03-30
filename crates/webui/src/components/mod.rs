@@ -1,5 +1,6 @@
 pub mod code_block;
 pub mod component_tree;
+pub mod debugger;
 pub mod execution_detail;
 pub mod execution_status;
 pub mod execution_submit;

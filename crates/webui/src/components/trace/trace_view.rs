@@ -129,13 +129,13 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                         })
                 )
             })
-            .map(|event| event_to_detail(event, &join_next_version_to_response))
+            .map(|event| event_to_detail(execution_id, event, &join_next_version_to_response))
             .collect::<Vec<_>>()
     };
 
     html! {<>
         <div class="execution-header">
-            <h3>{render_execution_parts(execution_id, false)}</h3>
+            <h3>{{execution_id.render_execution_parts(false, |execution_id| Route::ExecutionTrace { execution_id })}}</h3>
             <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
         </div>
         <div class="trace-layout-container">
@@ -548,7 +548,7 @@ fn compute_root_trace(
 
     let name = html! {
         <>
-            {render_execution_parts(execution_id, true)}
+            {execution_id.render_execution_parts(true, |execution_id | Route::ExecutionTrace { execution_id })}
             {" "}{&ffqn.function_name}
         </>
     };
@@ -560,28 +560,6 @@ fn compute_root_trace(
         busy,
         children,
     })
-}
-
-fn render_execution_parts(execution_id: &ExecutionId, hide_parents: bool) -> Html {
-    let mut execution_id_vec = execution_id.as_hierarchy();
-    if hide_parents {
-        execution_id_vec.drain(..execution_id_vec.len() - 1);
-    }
-    execution_id_vec
-        .into_iter()
-        .enumerate()
-        .map(|(idx, (part, execution_id))| {
-            html! {<>
-                if idx > 0 {
-                    {EXECUTION_ID_INFIX}
-                }
-                <Link<Route> to={Route::ExecutionTrace { execution_id: execution_id.clone() }}>
-                    {part}
-                </Link<Route>>
-            </>}
-        })
-        .collect::<Vec<_>>()
-        .to_html()
 }
 
 fn compute_child_execution_id_to_child_execution_finished(

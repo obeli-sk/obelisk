@@ -1,9 +1,10 @@
 use crate::{
-    components::trace::trace_view::TraceView,
+    components::{debugger::debugger_view::DebuggerView, trace::trace_view::TraceView},
     grpc::{
         ffqn::FunctionFqn,
         grpc_client::{self, ComponentId, ExecutionId},
         ifc_fqn::IfcFqn,
+        version::VersionType,
     },
     pages::{
         component_list_page::ComponentListPage,
@@ -83,6 +84,15 @@ pub enum Route {
     ExecutionTrace {
         execution_id: grpc_client::ExecutionId,
     },
+    #[at("/execution/:execution_id/debug")]
+    ExecutionDebugger {
+        execution_id: grpc_client::ExecutionId,
+    },
+    #[at("/execution/:execution_id/debug/:version")]
+    ExecutionDebuggerWithVersion {
+        execution_id: grpc_client::ExecutionId,
+        version: VersionType,
+    },
     #[not_found]
     #[at("/404")]
     NotFound,
@@ -118,6 +128,12 @@ impl Route {
             }
             Route::ExecutionTrace { execution_id } => {
                 html! { <TraceView {execution_id} /> }
+            }
+            Route::ExecutionDebugger { execution_id } => {
+                html! { <DebuggerView {execution_id} version={None} /> }
+            }
+            Route::ExecutionDebuggerWithVersion { execution_id, version } => {
+                html! { <DebuggerView {execution_id} version={Some(version)} /> }
             }
             Route::NotFound => html! { <NotFound /> },
         }

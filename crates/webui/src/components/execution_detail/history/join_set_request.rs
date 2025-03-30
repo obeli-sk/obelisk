@@ -1,7 +1,10 @@
 use crate::{
     app::Route,
     components::execution_detail::tree_component::TreeComponent,
-    grpc::grpc_client::{self, execution_event::history_event::join_set_request},
+    grpc::{
+        grpc_client::{self, execution_event::history_event::join_set_request, ExecutionId},
+        version::VersionType,
+    },
 };
 use chrono::DateTime;
 use yew::prelude::*;
@@ -14,7 +17,8 @@ use yewprint::{
 #[derive(Properties, PartialEq, Clone)]
 pub struct HistoryJoinSetRequestEventProps {
     pub event: grpc_client::execution_event::history_event::JoinSetRequest,
-    pub backtrace_id: Option<u32>,
+    pub execution_id: ExecutionId,
+    pub backtrace_id: Option<VersionType>,
 }
 
 impl HistoryJoinSetRequestEventProps {
@@ -119,10 +123,9 @@ impl HistoryJoinSetRequestEventProps {
                 Node::new(NodeData {
                     icon: Icon::Flows,
                     label: html! {
-                        <>
-                            {"Backtrace: "}
-                            {backtrace_id}
-                        </>
+                        <Link<Route> to={Route::ExecutionDebuggerWithVersion { execution_id: self.execution_id.clone(), version: backtrace_id } }>
+                            {"Backtrace"}
+                        </Link<Route>>
                     },
                     ..Default::default()
                 }),

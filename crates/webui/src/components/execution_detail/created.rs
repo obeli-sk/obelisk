@@ -10,7 +10,6 @@ use crate::grpc::grpc_client::ComponentId;
 use crate::grpc::grpc_client::ExecutionId;
 use chrono::{DateTime, Utc};
 use grpc_client::execution_event::Created;
-use log::debug;
 use serde_json::Value;
 use yew::prelude::*;
 use yew::Html;
@@ -77,7 +76,6 @@ struct ProcessedProps {
 }
 impl ProcessedProps {
     fn construct_tree(self) -> TreeData<u32> {
-        debug!("<CreatedEvent /> construct_tree");
         let mut tree = TreeBuilder::new().build();
         let root_id = tree
             .insert(
