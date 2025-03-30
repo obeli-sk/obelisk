@@ -29,10 +29,7 @@ use chrono::{DateTime, Utc};
 use gloo::timers::future::TimeoutFuture;
 use hashbrown::{HashMap, HashSet};
 use log::{debug, trace};
-use std::{
-    ops::Deref as _,
-    sync::{Arc, RwLock},
-};
+use std::ops::Deref as _;
 use yew::prelude::*;
 use yew_router::prelude::Link;
 
@@ -44,19 +41,15 @@ pub struct TraceViewProps {
 const PAGE: u32 = 100;
 
 type ExecutionIdsStateType = UseStateHandle<HashSet<ExecutionId>>;
-type IsFetchingStateType = UseStateHandle<Arc<RwLock<HashMap<ExecutionId, bool>>>>;
-type EventsStateType = UseStateHandle<Arc<RwLock<HashMap<ExecutionId, Vec<ExecutionEvent>>>>>;
+type IsFetchingStateType = UseStateHandle<HashMap<ExecutionId, bool>>;
+type EventsStateType = UseStateHandle<HashMap<ExecutionId, Vec<ExecutionEvent>>>;
 type ResponsesStateType = UseStateHandle<
-    Arc<
-        RwLock<
-            HashMap<
-                ExecutionId,
-                (
-                    HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
-                    u32, /* Cursor */
-                ),
-            >,
-        >,
+    HashMap<
+        ExecutionId,
+        (
+            HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
+            u32, /* Cursor */
+        ),
     >,
 >;
 
@@ -85,7 +78,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     use_effect_with(
         (
             execution_ids_state.deref().clone(), // Retrigger on adding child executions
-            is_fetching_state.deref().read().unwrap().clone(), // Retrigger on change, used for fetching the next page.
+            is_fetching_state.deref().clone(), // Retrigger on change, used for fetching the next page.
         ),
         move |(execution_ids, current_is_fetching_map)| {
             effect_hook.call(execution_ids, current_is_fetching_map)
@@ -93,9 +86,8 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     );
 
     let root_trace = {
-        // Keep the read lock, there is no blocking while rendering the traces.
-        let events_map = events_state.deref().read().unwrap();
-        let responses_map = responses_state.deref().read().unwrap();
+        let events_map = events_state.deref();
+        let responses_map = responses_state.deref();
         compute_root_trace(
             execution_id,
             &events_map,
@@ -105,12 +97,11 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     };
 
     let execution_log = {
-        // Keep the read lock, there is no blocking while rendering the traces.
-        let event_lock = events_state.deref().read().unwrap();
+        let event_lock = events_state.deref();
         let dummy_events = Vec::new();
         let events = event_lock.get(execution_id).unwrap_or(&dummy_events);
         let dummy_response_map = HashMap::new();
-        let responses_lock = responses_state.deref().read().unwrap();
+        let responses_lock = responses_state.deref();
         let responses = responses_lock
             .get(execution_id)
             .map(|(map, _)| map)
@@ -181,12 +172,9 @@ impl EffectHook {
                 continue;
             }
             trace!("Setting is_fetching_state=true for {execution_id}");
-            let is_fetching_rwlock = self.is_fetching_state.deref().clone();
-            {
-                let mut lock = is_fetching_rwlock.write().unwrap();
-                lock.insert(execution_id.clone(), true);
-            }
-            self.is_fetching_state.set(is_fetching_rwlock); // this will trigger the outer `use_effect` but will be short-circuted.
+            let mut is_fetching_map = self.is_fetching_state.deref().clone();
+            is_fetching_map.insert(execution_id.clone(), true);
+            self.is_fetching_state.set(is_fetching_map); // this will trigger the outer `use_effect` but will be short-circuted.
             {
                 let execution_id = execution_id.clone();
                 let events_state = self.events_state.clone();
@@ -195,16 +183,12 @@ impl EffectHook {
                 wasm_bindgen_futures::spawn_local(async move {
                     let events_rwlock = events_state.deref();
                     let mut events = events_rwlock
-                        .read()
-                        .unwrap()
                         .get(&execution_id)
                         .cloned()
                         .unwrap_or_default();
                     let version_from = events.last().map(|e| e.version + 1).unwrap_or_default();
                     let responses_rwlock = responses_state.deref();
                     let (mut responses, responses_cursor_from) = responses_rwlock
-                        .read()
-                        .unwrap()
                         .get(&execution_id)
                         .cloned()
                         .unwrap_or_default();
@@ -241,12 +225,9 @@ impl EffectHook {
 
                     {
                         // Persist `events_state`
-                        let events_rwlock = events_state.deref().clone();
-                        {
-                            let mut lock = events_rwlock.write().unwrap();
-                            lock.insert(execution_id.clone(), events);
-                        }
-                        events_state.set(events_rwlock);
+                        let mut events_map = events_state.deref().clone();
+                        events_map.insert(execution_id.clone(), events);
+                        events_state.set(events_map);
                     }
 
                     {
@@ -267,12 +248,10 @@ impl EffectHook {
                             let execution_responses = responses.entry(join_set_id).or_default();
                             execution_responses.push(response);
                         }
-                        let responses_rwlock = responses_state.deref().clone();
-                        {
-                            let mut lock = responses_rwlock.write().unwrap();
-                            lock.insert(execution_id.clone(), (responses, responses_cursor_from));
-                        }
-                        responses_state.set(responses_rwlock);
+                        let mut responses_outer_map = responses_state.deref().clone();
+                        responses_outer_map
+                            .insert(execution_id.clone(), (responses, responses_cursor_from));
+                        responses_state.set(responses_outer_map);
                     }
 
                     if is_finished {
@@ -282,12 +261,9 @@ impl EffectHook {
                         trace!("{execution_id} Timeout: start");
                         TimeoutFuture::new(1000).await;
                         trace!("{execution_id} Timeout: Triggering refetch");
-                        let is_fetching_rwlock = is_fetching_state.deref().clone();
-                        {
-                            let mut lock = is_fetching_rwlock.write().unwrap();
-                            lock.insert(execution_id.clone(), false);
-                        }
-                        is_fetching_state.set(is_fetching_rwlock); // Trigger use_effect_with again.
+                        let mut is_fetching_map = is_fetching_state.deref().clone();
+                        is_fetching_map.insert(execution_id.clone(), false);
+                        is_fetching_state.set(is_fetching_map); // Trigger use_effect_with again.
                     }
                 });
             }
