@@ -1,16 +1,9 @@
 # Immediate goals
 
-## fix: Close join sets on drop
-
-## feat: Add CLosing strategy to join set creation
-
-## fix: Get rid of streaming in WebUI
-Listening to multiple streams will exhaust all the available connections in a browser.
-Use timer instead, Add `stream` parameter.
-
 ## feat: Turn `execution-id` into a resource
 Make it symetrical with `join-set-id`, disallow users from `-await`ing on a string,
 can track the join set created.
+
 ## feat: `execution-id.get()`, can be called multiple times
 
 ## fix: Deadlock when calling `-await-next` while nothing is in queue
@@ -31,6 +24,9 @@ Convert delays into Duration
 ## feat: deps.toml tool
 obelisk wit update-deps
 
+## feat: obelisk.lock
+Save the digest of each downloaded OCI image into a lockfile, then remove the optional digest from toml,
+
 ## feat: Support WIT-only WASM files
 Allow pushing and declaring WASM resources only containing the WIT.
 Needed for external activities.
@@ -46,8 +42,6 @@ Could be used to monitor MQTT, UDP etc.
 Enable allow/deny lists of remote hosts.
 
 ## feat: Keepalives for activities, extending the lock until completion
-
-## feat: Request stack trace at any point of the workflow log
 
 ## fix: Track all unhandled execution errors when closing join sets
 Currently only the first unhandled error is tracked, as well as only one root cause.
