@@ -163,7 +163,7 @@ wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers"
 webui-builder = { path = "crates/webui/builder" }
 
 anyhow = { version = "1.0", features = ["backtrace"] }
-axum = { version = "0.8.1", features = ["http2"] }
+axum = { version = "0.8.3", features = ["http2"] }
 directories = "6.0"
 arbitrary = { version = "1.4.1", features = ["derive"] }
 assert_matches = "1.5.0"
@@ -173,7 +173,7 @@ bytes = "1.10"
 cargo_metadata = "0.19"
 cfg-if = "1.0.0"
 chrono = { version = "0.4.40", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.32", features = ["derive"] }
+clap = { version = "4.5.34", features = ["derive"] }
 config = { version = "0.15.11", default-features = false, features = [
     "toml",
     "preserve_order",
@@ -269,7 +269,7 @@ wiremock = "0.6"
 gloo = "0.11.0"
 id-arena = "2.2.1"
 implicit-clone = "0.5.1"
-log = "0.4.26"
+log = "0.4.27"
 semver = "1.0.26"
 tonic-web-wasm-client = "0.6.2"
 wasm-bindgen = "=0.2.100"                                                     # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml.
