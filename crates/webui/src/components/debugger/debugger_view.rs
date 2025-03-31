@@ -6,8 +6,8 @@ use crate::{
         grpc_client::{
             self,
             execution_event::{self, history_event},
-            get_backtrace_request, ComponentId, ExecutionEvent, ExecutionId, GetBacktraceResponse,
-            GetBacktraceSourceRequest, JoinSetResponseEvent,
+            get_backtrace_request, join_set_response_event, ComponentId, ExecutionEvent,
+            ExecutionId, GetBacktraceResponse, GetBacktraceSourceRequest, JoinSetResponseEvent,
         },
         version::VersionType,
     },
@@ -16,8 +16,9 @@ use crate::{
 use gloo::timers::future::TimeoutFuture;
 use hashbrown::HashMap;
 use log::{debug, trace};
-use std::{ops::Deref as _, path::PathBuf};
+use std::{collections::BTreeSet, ops::Deref as _, path::PathBuf};
 use yew::prelude::*;
+use yew_router::prelude::Link;
 
 #[derive(Properties, PartialEq)]
 pub struct DebuggerViewProps {
@@ -161,36 +162,34 @@ pub fn debugger_view(
         }
     });
 
-    let (execution_log, is_finished) = {
-        let events = events_and_responses_state.events_state.deref();
-        let responses = &events_and_responses_state.responses_state.0;
-        let join_next_version_to_response = compute_join_next_to_response(events, responses);
-        let execution_log = events
-            .iter()
-            .filter(|event| {
-                let event_inner = event.event.as_ref().expect("event is sent by the server");
-                matches!(
+    let events = events_and_responses_state.events_state.deref();
+    let responses = &events_and_responses_state.responses_state.0;
+    let join_next_version_to_response = compute_join_next_to_response(events, responses);
+    let execution_log = events
+        .iter()
+        .filter(|event| {
+            let event_inner = event.event.as_ref().expect("event is sent by the server");
+            matches!(
+                event_inner,
+                execution_event::Event::Created(_) | execution_event::Event::Finished(_)
+            ) || (event.backtrace_id.is_some()
+                && !matches!(
                     event_inner,
-                    execution_event::Event::Created(_) | execution_event::Event::Finished(_)
-                ) || (event.backtrace_id.is_some()
-                    && !matches!(
-                        event_inner,
-                        execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                            event: Some(history_event::Event::JoinSetCreated(_))
-                        })
-                    ))
-            })
-            .map(|event| event_to_detail(execution_id, event, &join_next_version_to_response))
-            .collect::<Vec<_>>();
-        let is_finished = matches!(
-            events.last(),
-            Some(ExecutionEvent {
-                event: Some(execution_event::Event::Finished(_)),
-                ..
-            })
-        );
-        (execution_log, is_finished)
-    };
+                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                        event: Some(history_event::Event::JoinSetCreated(_))
+                    })
+                ))
+        })
+        .map(|event| event_to_detail(execution_id, event, &join_next_version_to_response))
+        .collect::<Vec<_>>();
+
+    let is_finished = matches!(
+        events.last(),
+        Some(ExecutionEvent {
+            event: Some(execution_event::Event::Finished(_)),
+            ..
+        })
+    );
 
     let backtrace = if let Some(backtrace_response) = backtraces_state
         .deref()
@@ -206,6 +205,84 @@ pub fn debugger_view(
             .component_id
             .as_ref()
             .expect("`GetBacktraceResponse.component_id` is sent");
+
+        // Add Step Prev, Next, Into
+        let backtrace_versions: BTreeSet<VersionType> = events
+            .iter()
+            .filter_map(|event| event.backtrace_id)
+            .collect();
+        if let Some(backtrace_prev) = backtrace_versions
+            .range(..wasm_backtrace.version_min_including)
+            .next_back()
+            .copied()
+        {
+            htmls.push(html! {
+                <Link<Route> to={Route::ExecutionDebuggerWithVersion { execution_id: execution_id.clone(), version: backtrace_prev } }>
+                    {"Step Prev"}
+                </Link<Route>>
+            })
+        }
+        if let Some(backtrace_next) = backtrace_versions
+            .range(wasm_backtrace.version_max_excluding..)
+            .next()
+            .copied()
+        {
+            htmls.push(html! {
+                <Link<Route> to={Route::ExecutionDebuggerWithVersion { execution_id: execution_id.clone(), version: backtrace_next } }>
+                    {"Step Next"}
+                </Link<Route>>
+            })
+        }
+
+        let version_child_request =
+            if wasm_backtrace.version_max_excluding - wasm_backtrace.version_min_including == 3 {
+                // only happens on one-off join sets where 3 events share the same backtrace.
+                wasm_backtrace.version_min_including + 1
+            } else {
+                wasm_backtrace.version_min_including
+            };
+        htmls.push(match events.get(usize::try_from(version_child_request).expect("u32 must be convertible to usize")) {
+                Some(ExecutionEvent {
+                    event:
+                        Some(execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                            event: Some(
+                                history_event::Event::JoinSetRequest(history_event::JoinSetRequest{join_set_request: Some(history_event::join_set_request::JoinSetRequest::ChildExecutionRequest(
+                                    history_event::join_set_request::ChildExecutionRequest{child_execution_id: Some(child_execution_id)}
+                                )
+                            ), ..
+                            })),
+                        })),
+                    ..
+                }) => html!{
+                    <Link<Route> to={Route::ExecutionDebugger { execution_id: child_execution_id.clone() } }>
+                        {"Step Into"}
+                    </Link<Route>>
+                },
+
+                Some(event@ExecutionEvent {
+                    event:
+                        Some(execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                            event: Some(
+                                history_event::Event::JoinNext(..)),
+                        })),
+                    ..
+                }) => {
+                    if let Some(JoinSetResponseEvent { response: Some(join_set_response_event::Response::ChildExecutionFinished(join_set_response_event::ChildExecutionFinished{
+                        child_execution_id: Some(child_execution_id), ..
+                    })), .. }) = join_next_version_to_response.get(&event.version) {
+                        html!{
+                            <Link<Route> to={Route::ExecutionDebugger { execution_id: child_execution_id.clone() } }>
+                               {"Step Into"}
+                            </Link<Route>>
+                        }
+                    } else {
+                        Html::default()
+                    }
+                }
+
+                _ => Html::default()
+            });
+
         for (i, frame) in wasm_backtrace.frames.iter().enumerate() {
             htmls.push(html! {
                 <p>
