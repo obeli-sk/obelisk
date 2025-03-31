@@ -6,7 +6,7 @@ use crate::{
         grpc_client::{
             self,
             execution_event::{self, history_event},
-            ComponentId, ExecutionEvent, ExecutionId, GetBacktraceResponse,
+            get_backtrace_request, ComponentId, ExecutionEvent, ExecutionId, GetBacktraceResponse,
             GetBacktraceSourceRequest, JoinSetResponseEvent,
         },
         version::VersionType,
@@ -83,7 +83,14 @@ pub fn debugger_view(
                 let backtrace_response = execution_client
                     .get_backtrace(tonic::Request::new(grpc_client::GetBacktraceRequest {
                         execution_id: Some(execution_id.clone()),
-                        version,
+                        filter: Some(match version {
+                            Some(version) => get_backtrace_request::Filter::Specific(
+                                get_backtrace_request::Specific { version },
+                            ),
+                            None => get_backtrace_request::Filter::First(
+                                get_backtrace_request::First {},
+                            ),
+                        }),
                     }))
                     .await;
                 let backtrace_response = match backtrace_response {

@@ -583,14 +583,6 @@ pub mod response {
 mod backtrace {
     use crate::command::grpc;
 
-    impl From<concepts::storage::WasmBacktrace> for grpc::WasmBacktrace {
-        fn from(backtrace: concepts::storage::WasmBacktrace) -> Self {
-            Self {
-                frames: backtrace.frames.into_iter().map(Into::into).collect(),
-            }
-        }
-    }
-
     impl From<concepts::storage::FrameInfo> for grpc::FrameInfo {
         fn from(frame: concepts::storage::FrameInfo) -> Self {
             Self {

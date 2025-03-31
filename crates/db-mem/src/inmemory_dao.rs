@@ -9,9 +9,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, BacktraceInfo, ClientError, CreateRequest,
-    DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
-    ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
+    AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
+    ClientError, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
+    ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
     JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
     ResponseWithCursor, SpecificError, Version, VersionType,
 };
@@ -302,7 +302,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn get_backtrace(
         &self,
         _execution_id: &ExecutionId,
-        _version: Option<Version>,
+        _filter: BacktraceFilter,
     ) -> Result<BacktraceInfo, DbError> {
         unimplemented!("only needed for gRPC")
     }

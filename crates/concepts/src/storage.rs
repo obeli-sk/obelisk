@@ -874,7 +874,7 @@ pub trait DbConnection: Send + Sync {
     async fn get_backtrace(
         &self,
         execution_id: &ExecutionId,
-        version: Option<Version>,
+        filter: BacktraceFilter,
     ) -> Result<BacktraceInfo, DbError>;
 
     /// Returns executions sorted in descending order.
@@ -893,6 +893,13 @@ pub trait DbConnection: Send + Sync {
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
     ) -> Result<Vec<ResponseWithCursor>, DbError>;
+}
+
+#[derive(Clone)]
+pub enum BacktraceFilter {
+    First,
+    Last,
+    Specific(Version),
 }
 
 pub struct BacktraceInfo {

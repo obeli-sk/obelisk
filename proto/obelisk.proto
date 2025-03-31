@@ -469,20 +469,29 @@ message GetWitResponse {
 }
 
 message GetBacktraceRequest {
+    message First {}
+    message Last {}
+    message Specific {
+        uint32 version = 1;
+    }
+
     ExecutionId execution_id = 1;
-    // Get the latest version if not set.
-    optional uint32 version = 2;
+    oneof filter {
+        First first = 2;
+        Last last = 3;
+        Specific specific = 4;
+    }
 }
 
 message GetBacktraceResponse {
     ComponentId component_id = 1;
     WasmBacktrace wasm_backtrace = 2;
-    uint32 version_min_including = 3;
-    uint32 version_max_excluding = 4;
 }
 
 message WasmBacktrace {
-  repeated FrameInfo frames = 1;
+    repeated FrameInfo frames = 1;
+    uint32 version_min_including = 2;
+    uint32 version_max_excluding = 3;
 }
 
 message FrameInfo {

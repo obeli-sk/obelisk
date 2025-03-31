@@ -381,13 +381,13 @@ async fn poll_stream(
         }
         if let Some(backtrace_response) = fetch_backtrace(client, execution_id).await? {
             let mut seen_positions = hashbrown::HashSet::new();
-            println!(
-                "\nBacktrace (version {}):",
-                backtrace_response.version_min_including
-            );
             let wasm_backtrace = backtrace_response
                 .wasm_backtrace
                 .expect("`wasm_backtrace` is sent");
+            println!(
+                "\nBacktrace (version {}):",
+                wasm_backtrace.version_min_including
+            );
             for (i, frame) in wasm_backtrace.frames.into_iter().enumerate() {
                 println!("{i}: {}, function: {}", frame.module, frame.func_name);
 
@@ -545,7 +545,9 @@ async fn fetch_backtrace(
     let backtrace_response = client
         .get_backtrace(tonic::Request::new(grpc::GetBacktraceRequest {
             execution_id: Some(grpc::ExecutionId::from(execution_id)),
-            version: None,
+            filter: Some(grpc::get_backtrace_request::Filter::Last(
+                grpc::get_backtrace_request::Last {},
+            )),
         }))
         .await;
     let backtrace_response = match backtrace_response {

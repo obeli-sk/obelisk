@@ -4,10 +4,10 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, PrefixedUlid, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, BacktraceInfo, ClientError,
-        CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
-        ExecutionEventInner, ExecutionListPagination, ExecutionWithState, ExpiredTimer,
-        HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+        AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
+        ClientError, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool,
+        ExecutionEvent, ExecutionEventInner, ExecutionListPagination, ExecutionWithState,
+        ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
         PendingState, PendingStateFinished, PendingStateFinishedResultKind, ResponseWithCursor,
         SpecificError, Version, VersionType, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
@@ -2682,7 +2682,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
     async fn get_backtrace(
         &self,
         execution_id: &ExecutionId,
-        version: Option<Version>,
+        filter: BacktraceFilter,
     ) -> Result<BacktraceInfo, DbError> {
         debug!("get_last_backtrace");
         let execution_id = execution_id.clone();
@@ -2692,12 +2692,14 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                 let select = "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_backtrace \
                                 WHERE execution_id = :execution_id";
                 let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![(":execution_id", Box::new(execution_id.to_string()))];
-                let select = if let Some(version) = version {
-                    params.push((":version", Box::new(version.0)));
-                    format!("{select} AND version_min_including <= :version AND version_max_excluding > :version")
-                } else {
-                    format!("{select} ORDER BY version_min_including DESC LIMIT 1")
-                };
+                let select = match filter {
+                    BacktraceFilter::Specific(version) =>{
+                        params.push((":version", Box::new(version.0)));
+                        format!("{select} AND version_min_including <= :version AND version_max_excluding > :version")
+                    },
+                    BacktraceFilter::First => format!("{select} ORDER BY version_min_including LIMIT 1"),
+                    BacktraceFilter::Last => format!("{select} ORDER BY version_min_including DESC LIMIT 1")
+               };
                 let mut stmt = tx
                     .prepare(
                          &select

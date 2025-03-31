@@ -5,11 +5,11 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, BacktraceInfo, ClientError,
-        CreateRequest, DbConnection, DbError, DbPool, ExecutionEvent, ExecutionListPagination,
-        ExecutionLog, ExecutionWithState, ExpiredTimer, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Pagination, PendingState,
-        ResponseWithCursor, Version, VersionType,
+        AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
+        ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEvent,
+        ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockResponse,
+        Pagination, PendingState, ResponseWithCursor, Version, VersionType,
     },
     time::TokioSleep,
     ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn,
@@ -232,9 +232,9 @@ impl DbConnection for DbConnectionProxy {
     async fn get_backtrace(
         &self,
         execution_id: &ExecutionId,
-        version: Option<Version>,
+        filter: BacktraceFilter,
     ) -> Result<BacktraceInfo, DbError> {
-        self.0.get_backtrace(execution_id, version).await
+        self.0.get_backtrace(execution_id, filter).await
     }
 
     async fn list_executions(

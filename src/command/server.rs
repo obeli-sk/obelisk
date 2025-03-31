@@ -36,6 +36,7 @@ use assert_matches::assert_matches;
 use chrono::DateTime;
 use chrono::Utc;
 use concepts::prefixed_ulid::ExecutorId;
+use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
@@ -659,16 +660,35 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
 
         let conn = self.db_pool.connection();
+        let filter = match request.filter {
+            Some(grpc::get_backtrace_request::Filter::Specific(
+                grpc::get_backtrace_request::Specific { version },
+            )) => BacktraceFilter::Specific(Version::new(version)),
+            Some(grpc::get_backtrace_request::Filter::Last(
+                grpc::get_backtrace_request::Last {},
+            )) => BacktraceFilter::Last,
+            Some(grpc::get_backtrace_request::Filter::First(
+                grpc::get_backtrace_request::First {},
+            ))
+            | None => BacktraceFilter::First,
+        };
         let backtrace_info = conn
-            .get_backtrace(&execution_id, request.version.map(Version::new))
+            .get_backtrace(&execution_id, filter)
             .await
             .to_status()?;
 
         Ok(tonic::Response::new(grpc::GetBacktraceResponse {
-            wasm_backtrace: Some(backtrace_info.wasm_backtrace.into()),
+            wasm_backtrace: Some(grpc::WasmBacktrace {
+                version_min_including: backtrace_info.version_min_including.into(),
+                version_max_excluding: backtrace_info.version_max_excluding.into(),
+                frames: backtrace_info
+                    .wasm_backtrace
+                    .frames
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+            }),
             component_id: Some(backtrace_info.component_id.into()),
-            version_min_including: backtrace_info.version_min_including.into(),
-            version_max_excluding: backtrace_info.version_max_excluding.into(),
         }))
     }
 
