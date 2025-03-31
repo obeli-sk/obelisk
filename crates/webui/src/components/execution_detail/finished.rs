@@ -4,7 +4,7 @@ use crate::{
         execution_detail::tree_component::TreeComponent,
         json_tree::{insert_json_into_tree, JsonValue},
     },
-    grpc::grpc_client,
+    grpc::{grpc_client, version::VersionType},
 };
 use yew::prelude::*;
 use yew_router::prelude::Link;
@@ -16,12 +16,22 @@ use yewprint::{
 #[derive(Properties, PartialEq, Clone)]
 pub struct FinishedEventProps {
     pub result_detail: grpc_client::ResultDetail,
+    pub version: Option<VersionType>,
+}
+
+fn with_version(version: Option<VersionType>, label: &'static str) -> Html {
+    if let Some(version) = version {
+        format!("{version}. {label}").to_html()
+    } else {
+        label.to_html()
+    }
 }
 
 pub fn attach_result_detail(
     tree: &mut Tree<NodeData<u32>>,
     root_id: &NodeId,
     result_detail: &grpc_client::ResultDetail,
+    version: Option<VersionType>,
 ) {
     match &result_detail
         .value
@@ -33,7 +43,7 @@ pub fn attach_result_detail(
                 .insert(
                     Node::new(NodeData {
                         icon: Icon::Tick,
-                        label: "Execution Successful".into_html(),
+                        label: with_version(version, "Execution Successful"),
                         has_caret: ok.return_value.is_some(),
                         ..Default::default()
                     }),
@@ -50,7 +60,7 @@ pub fn attach_result_detail(
                 .insert(
                     Node::new(NodeData {
                         icon: Icon::Error,
-                        label: "Fallible Error".into_html(),
+                        label: with_version(version, "Fallible Error"),
                         has_caret: fallible.return_value.is_some(),
                         ..Default::default()
                     }),
@@ -65,7 +75,7 @@ pub fn attach_result_detail(
             tree.insert(
                 Node::new(NodeData {
                     icon: Icon::Time,
-                    label: "Execution Timed Out".into_html(),
+                    label: with_version(version, "Execution Timed Out"),
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(root_id),
@@ -88,7 +98,7 @@ pub fn attach_result_detail(
                 .insert(
                     Node::new(NodeData {
                         icon: Icon::Error,
-                        label: "Unhandled child execution error".into_html(),
+                        label: with_version(version, "Unhandled child execution error"),
                         has_caret: true,
                         ..Default::default()
                     }),
@@ -133,7 +143,7 @@ pub fn attach_result_detail(
                 .insert(
                     Node::new(NodeData {
                         icon: Icon::Error,
-                        label: "Execution Failure".into_html(),
+                        label: with_version(version, "Execution Failure"),
                         has_caret: true,
                         ..Default::default()
                     }),
@@ -171,7 +181,7 @@ impl FinishedEventProps {
         let root_id = tree
             .insert(Node::new(NodeData::default()), InsertBehavior::AsRoot)
             .unwrap();
-        attach_result_detail(&mut tree, &root_id, &self.result_detail);
+        attach_result_detail(&mut tree, &root_id, &self.result_detail, self.version);
         TreeData::from(tree)
     }
 }

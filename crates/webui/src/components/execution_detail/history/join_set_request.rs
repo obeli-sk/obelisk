@@ -19,6 +19,7 @@ pub struct HistoryJoinSetRequestEventProps {
     pub event: grpc_client::execution_event::history_event::JoinSetRequest,
     pub execution_id: ExecutionId,
     pub backtrace_id: Option<VersionType>,
+    pub version: VersionType,
 }
 
 impl HistoryJoinSetRequestEventProps {
@@ -40,7 +41,8 @@ impl HistoryJoinSetRequestEventProps {
                     icon: Icon::History,
                     label: html! {
                         <>
-                            {"Join Set Request: `"}
+                            {self.version}
+                            {". Join Set Request: `"}
                             {join_set_id}
                             {"`"}
                         </>

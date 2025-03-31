@@ -1,5 +1,5 @@
 use crate::{
-    app::Route, components::execution_detail::tree_component::TreeComponent, grpc::grpc_client,
+    app::Route, components::execution_detail::tree_component::TreeComponent, grpc::{grpc_client, version::VersionType},
 };
 use yew::prelude::*;
 use yew_router::prelude::Link;
@@ -11,6 +11,7 @@ use yewprint::{
 #[derive(Properties, PartialEq, Clone)]
 pub struct HistoryScheduleEventProps {
     pub event: grpc_client::execution_event::history_event::Schedule,
+    pub version: VersionType,
 }
 
 impl HistoryScheduleEventProps {
@@ -29,7 +30,8 @@ impl HistoryScheduleEventProps {
                 Node::new(NodeData {
                     icon: Icon::History,
                     label: html!{<>
-                        {"Scheduled execution "}
+                        { self.version }
+                        {". Scheduled execution "}
                         <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_execution_id.clone() } }>
                             {scheduled_execution_id}
                         </Link<Route>>

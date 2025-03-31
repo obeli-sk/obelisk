@@ -159,7 +159,7 @@ pub fn execution_status(
                 .expect("must be non-negative");
             html! {<>
 
-                <FinishedEvent result_detail={result_detail.clone()} />
+                <FinishedEvent result_detail={result_detail.clone()} version={None} />
                 <p>{format!("Execution completed in {since_scheduled:?}.")}</p>
             </>}
         }

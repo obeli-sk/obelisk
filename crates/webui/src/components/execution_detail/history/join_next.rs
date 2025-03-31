@@ -21,6 +21,7 @@ pub struct HistoryJoinNextEventProps {
     pub response: Option<JoinSetResponseEvent>,
     pub execution_id: ExecutionId,
     pub backtrace_id: Option<VersionType>,
+    pub version: VersionType,
 }
 
 impl HistoryJoinNextEventProps {
@@ -58,7 +59,8 @@ impl HistoryJoinNextEventProps {
                     icon,
                     label: html! {
                         <>
-                            {"Join Next: `"}
+                            {self.version}
+                            {". Join Next: `"}
                             {join_set_id}
                             {"`"}
                         </>
@@ -103,7 +105,7 @@ impl HistoryJoinNextEventProps {
                     .result_detail
                     .as_ref()
                     .expect("`child_execution_id` of `ChildExecutionFinished` must be sent");
-                attach_result_detail(&mut tree, &child_node, result_detail);
+                attach_result_detail(&mut tree, &child_node, result_detail, None);
 
                 let finished_at = DateTime::from(*finished_at);
                 tree.insert(

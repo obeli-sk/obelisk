@@ -8,6 +8,7 @@ use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::grpc_client;
 use crate::grpc::grpc_client::ComponentId;
 use crate::grpc::grpc_client::ExecutionId;
+use crate::grpc::version::VersionType;
 use chrono::{DateTime, Utc};
 use grpc_client::execution_event::Created;
 use serde_json::Value;
@@ -20,6 +21,7 @@ use yewprint::{Icon, NodeData, TreeData};
 #[derive(Properties, PartialEq, Clone)]
 pub struct CreatedEventProps {
     pub created: Created,
+    pub version: VersionType,
 }
 impl CreatedEventProps {
     fn process(&self, app_state: &AppState) -> TreeData<u32> {
@@ -61,6 +63,7 @@ impl CreatedEventProps {
             scheduled_by,
             component_id: component_id.clone(),
             component_exists: app_state.components_by_id.contains_key(component_id),
+            version: self.version,
         };
         props.construct_tree()
     }
@@ -73,6 +76,7 @@ struct ProcessedProps {
     scheduled_by: Option<ExecutionId>,
     component_id: ComponentId,
     component_exists: bool,
+    version: VersionType,
 }
 impl ProcessedProps {
     fn construct_tree(self) -> TreeData<u32> {
@@ -90,7 +94,8 @@ impl ProcessedProps {
             .insert(
                 Node::new(NodeData {
                     icon: Icon::NewObject,
-                    label: format!("Created `{}`", self.ffqn.function_name).to_html(),
+                    label: format!("{}. Created `{}`", self.version, self.ffqn.function_name)
+                        .to_html(),
                     has_caret: true,
                     ..Default::default()
                 }),

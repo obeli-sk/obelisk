@@ -1,4 +1,7 @@
-use crate::{components::execution_detail::tree_component::TreeComponent, grpc::grpc_client};
+use crate::{
+    components::execution_detail::tree_component::TreeComponent,
+    grpc::{grpc_client, version::VersionType},
+};
 use chrono::DateTime;
 use yew::prelude::*;
 use yewprint::{
@@ -9,6 +12,7 @@ use yewprint::{
 #[derive(Properties, PartialEq, Clone)]
 pub struct TemporarilyTimedOutEventProps {
     pub event: grpc_client::execution_event::TemporarilyTimedOut,
+    pub version: VersionType,
 }
 
 impl TemporarilyTimedOutEventProps {
@@ -28,7 +32,7 @@ impl TemporarilyTimedOutEventProps {
             .insert(
                 Node::new(NodeData {
                     icon: Icon::Time,
-                    label: "Temporarily Timed Out".into_html(),
+                    label: format!("{}. Temporarily Timed Out", self.version).into_html(),
                     has_caret: self.event.backoff_expires_at.is_some(),
                     ..Default::default()
                 }),

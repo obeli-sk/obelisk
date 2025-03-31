@@ -1,4 +1,4 @@
-use crate::{components::execution_detail::tree_component::TreeComponent, grpc::grpc_client};
+use crate::{components::execution_detail::tree_component::TreeComponent, grpc::{grpc_client, version::VersionType}};
 use yew::prelude::*;
 use yewprint::{
     id_tree::{InsertBehavior, Node, TreeBuilder},
@@ -8,6 +8,7 @@ use yewprint::{
 #[derive(Properties, PartialEq, Clone)]
 pub struct HistoryJoinSetCreatedEventProps {
     pub event: grpc_client::execution_event::history_event::JoinSetCreated,
+    pub version: VersionType,
 }
 
 impl HistoryJoinSetCreatedEventProps {
@@ -24,7 +25,8 @@ impl HistoryJoinSetCreatedEventProps {
                     icon: Icon::History,
                     label: html! {
                         <>
-                            {"Join Set Created: `"}
+                            {self.version}
+                            {". Join Set Created: `"}
                             {join_set_id}
                             {"`"}
                         </>

@@ -1,4 +1,4 @@
-use crate::{components::execution_detail::tree_component::TreeComponent, grpc::grpc_client};
+use crate::{components::execution_detail::tree_component::TreeComponent, grpc::{grpc_client, version::VersionType}};
 use yew::prelude::*;
 use yewprint::{
     id_tree::{InsertBehavior, Node, TreeBuilder},
@@ -8,6 +8,7 @@ use yewprint::{
 #[derive(Properties, PartialEq, Clone)]
 pub struct HistoryPersistEventProps {
     pub event: grpc_client::execution_event::history_event::Persist,
+    pub version: VersionType,
 }
 
 impl HistoryPersistEventProps {
@@ -21,7 +22,7 @@ impl HistoryPersistEventProps {
         tree.insert(
             Node::new(NodeData {
                 icon: Icon::History,
-                label: "Persist Event".into_html(),
+                label: format!("{}. Persist Event", self.version).into_html(),
                 ..Default::default()
             }),
             InsertBehavior::UnderNode(&root_id),

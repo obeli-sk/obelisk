@@ -1,4 +1,7 @@
-use crate::{components::execution_detail::tree_component::TreeComponent, grpc::grpc_client};
+use crate::{
+    components::execution_detail::tree_component::TreeComponent,
+    grpc::{grpc_client, version::VersionType},
+};
 use chrono::DateTime;
 use yew::prelude::*;
 use yewprint::{
@@ -9,6 +12,7 @@ use yewprint::{
 #[derive(Properties, PartialEq, Clone)]
 pub struct LockedEventProps {
     pub locked: grpc_client::execution_event::Locked,
+    pub version: VersionType,
 }
 
 impl LockedEventProps {
@@ -22,7 +26,7 @@ impl LockedEventProps {
             .insert(
                 Node::new(NodeData {
                     icon: Icon::Lock,
-                    label: "Locked".into(),
+                    label: format!("{}. Locked", self.version).to_html(),
                     has_caret: true,
                     ..Default::default()
                 }),

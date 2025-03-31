@@ -1,4 +1,4 @@
-use crate::{components::execution_detail::tree_component::TreeComponent, grpc::grpc_client};
+use crate::{components::execution_detail::tree_component::TreeComponent, grpc::{grpc_client, version::VersionType}};
 use chrono::DateTime;
 use yew::prelude::*;
 use yewprint::{
@@ -9,6 +9,7 @@ use yewprint::{
 #[derive(Properties, PartialEq, Clone)]
 pub struct TemporarilyFailedEventProps {
     pub event: grpc_client::execution_event::TemporarilyFailed,
+    pub version: VersionType,
 }
 
 impl TemporarilyFailedEventProps {
@@ -22,7 +23,7 @@ impl TemporarilyFailedEventProps {
             .insert(
                 Node::new(NodeData {
                     icon: Icon::Error,
-                    label: "Temporarily Failed".into_html(),
+                    label: format!("{}. Temporarily Failed", self.version).into_html(),
                     has_caret: true,
                     ..Default::default()
                 }),
