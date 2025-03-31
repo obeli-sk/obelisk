@@ -49,8 +49,8 @@ impl TraceData {
 pub enum BusyIntervalStatus {
     #[display("Finished")]
     HttpTraceFinished(u32),
-    #[display("Unfinished")]
-    HttpTraceUnfinished,
+    #[display("Timeout")]
+    HttpTraceNotResponded,
     #[display("Error")]
     HttpTraceError,
     #[display("Temporary timeout")]
@@ -160,7 +160,7 @@ mod css {
         pub fn get_css_class(&self) -> &'static str {
             match self {
                 BusyIntervalStatus::HttpTraceFinished(_) => "busy-http-trace-finished",
-                BusyIntervalStatus::HttpTraceUnfinished => "busy-http-trace-unfinished",
+                BusyIntervalStatus::HttpTraceNotResponded => "busy-http-trace-unfinished",
                 BusyIntervalStatus::HttpTraceError => "busy-http-trace-error",
                 BusyIntervalStatus::ExecutionTimeoutTemporary => "busy-execution-timeout-temporary",
                 BusyIntervalStatus::ExecutionTimeoutPermanent => "busy-execution-timeout-permanent",

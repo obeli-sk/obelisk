@@ -336,7 +336,7 @@ fn compute_root_trace(
                                 let status = match trace.result {
                                     Some(http_client_trace::Result::Status(status_code)) => BusyIntervalStatus::HttpTraceFinished(status_code),
                                     Some(http_client_trace::Result::Error(_)) => BusyIntervalStatus::HttpTraceError,
-                                    None => BusyIntervalStatus::HttpTraceUnfinished,
+                                    None => BusyIntervalStatus::HttpTraceNotResponded,
                                 };
                                 TraceData::Child(TraceDataChild {
                                     name: name.to_html(),
