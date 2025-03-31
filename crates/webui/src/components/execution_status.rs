@@ -160,7 +160,7 @@ pub fn execution_status(
             html! {<>
 
                 <FinishedEvent result_detail={result_detail.clone()} />
-                <p>{format!("Execution completed {since_scheduled:?} after being scheduled.")}</p>
+                <p>{format!("Execution completed in {since_scheduled:?}.")}</p>
             </>}
         }
         Some(unknown) => unreachable!("unexpected {unknown:?}"),

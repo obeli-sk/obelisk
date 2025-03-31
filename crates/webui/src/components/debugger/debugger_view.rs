@@ -1,6 +1,6 @@
 use crate::{
     app::Route,
-    components::{code_block::CodeBlock, execution_status::ExecutionStatus},
+    components::{code::syntect_code_block::SyntectCodeBlock, execution_status::ExecutionStatus},
     grpc::{
         execution_id::ExecutionIdExt as _,
         grpc_client::{
@@ -16,7 +16,7 @@ use crate::{
 use gloo::timers::future::TimeoutFuture;
 use hashbrown::HashMap;
 use log::{debug, trace};
-use std::ops::Deref as _;
+use std::{ops::Deref as _, path::PathBuf};
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
@@ -154,11 +154,11 @@ pub fn debugger_view(
         }
     });
 
-    let execution_log = {
+    let (execution_log, is_finished) = {
         let events = events_and_responses_state.events_state.deref();
         let responses = &events_and_responses_state.responses_state.0;
         let join_next_version_to_response = compute_join_next_to_response(events, responses);
-        events
+        let execution_log = events
             .iter()
             .filter(|event| {
                 let event_inner = event.event.as_ref().expect("event is sent by the server");
@@ -174,7 +174,15 @@ pub fn debugger_view(
                     ))
             })
             .map(|event| event_to_detail(execution_id, event, &join_next_version_to_response))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        let is_finished = matches!(
+            events.last(),
+            Some(ExecutionEvent {
+                event: Some(execution_event::Event::Finished(_)),
+                ..
+            })
+        );
+        (execution_log, is_finished)
     };
 
     let backtrace = if let Some(backtrace_response) = backtraces_state
@@ -228,18 +236,24 @@ pub fn debugger_view(
                         if let Some(source) = sources_state
                             .deref()
                             .get(&(component_id.clone(), file.clone()))
+                            .and_then(|s| s.clone())
                         {
+                            let language = PathBuf::from(file)
+                                .extension()
+                                .map(|e| e.to_string_lossy().to_string());
                             htmls.push(html! {
-                                <CodeBlock {source} />
+                                <SyntectCodeBlock {source} {language} focus_line={Some(line as usize)}/>
                             });
                         }
                     }
                 }
             }
         }
-        Some(htmls)
+        htmls.to_html()
+    } else if is_finished {
+        "No backtrace found for this execution".to_html()
     } else {
-        None
+        "Loading...".to_html()
     };
 
     html! {<>
@@ -249,11 +263,7 @@ pub fn debugger_view(
         </div>
         <div class="trace-layout-container">
             <div class="trace-view">
-                if let Some(backtrace) = backtrace {
-                    {backtrace}
-                } else {
-                    {"Loading backtrace"}
-                }
+                {backtrace}
             </div>
             <div class="trace-detail">
                 {execution_log}

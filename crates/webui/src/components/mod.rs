@@ -1,3 +1,4 @@
+pub mod code;
 pub mod code_block;
 pub mod component_tree;
 pub mod debugger;

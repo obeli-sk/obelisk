@@ -152,6 +152,7 @@ ul li span {
     /* Optional: If trace-view content might exceed its height, add scrolling */
     /* overflow-y: auto; */
     min-width: 400px;
+    max-width: 900px;
 
     resize: horizontal;
     /* Allow horizontal resizing by the user */
@@ -261,4 +262,116 @@ ul li span {
 .indented-children {
     margin-left: 20px;
     /* Adjust the indentation as needed */
+}
+
+/* --- Syntect Code Block --- */
+
+.code-block-container {
+    /* Example theme setup - syntect might provide its own background */
+    /* background-color: #2d2d2d; */
+    /* color: #cccccc; */
+    border: 1px solid #444;
+    border-radius: 4px;
+    margin: 1em 0;
+    font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+    font-size: 0.9em;
+    /* Adjust as needed */
+    overflow: hidden;
+    /* Contain floats/flex items */
+}
+
+.code-block {
+    display: flex;
+    /* Use flexbox for side-by-side layout */
+    overflow-x: auto;
+    /* Allow horizontal scrolling for long code lines */
+    /* Apply theme background/color here or rely on syntect's inline styles */
+}
+
+.line-numbers {
+    flex-shrink: 0;
+    /* Prevent line numbers from shrinking */
+    padding: 0.8em 0.8em 0.8em 1em;
+    text-align: right;
+    color: #666;
+    /* Dim color for line numbers */
+    user-select: none;
+    /* Prevent selecting line numbers */
+    -webkit-user-select: none;
+    /* Safari */
+    -moz-user-select: none;
+    /* Firefox */
+    -ms-user-select: none;
+    /* IE/Edge */
+    border-right: 1px solid #444;
+    /* Separator */
+    /* Match background if syntect doesn't style the container */
+    /* background-color: #2d2d2d; */
+}
+
+.line-numbers .line-number {
+    display: block;
+    /* Each number on its own line */
+    line-height: 1.5;
+    /* Match code line height */
+}
+
+
+.code-content {
+    flex-grow: 1;
+    /* Allow code content to take remaining space */
+    margin: 0;
+    /* Reset default pre margins */
+    padding: 0.8em;
+    overflow-x: visible;
+    /* Let inner content determine width for scrolling */
+    white-space: pre;
+    /* Keep whitespace, crucial for code */
+    line-height: 1.5;
+    /* Consistent line height */
+}
+
+/* Syntect usually wraps code in its own spans */
+.code-content code>span {
+    display: block;
+    /* Treat each highlighted line as a block */
+    min-height: 1.5em;
+    /* Ensure empty lines take up space */
+}
+
+
+/* Focused Line Highlighting */
+.code-content code .line-focused {
+    background-color: rgba(255, 255, 0, 0.15);
+    /* Example highlight color */
+    display: block;
+    /* Ensure background covers the whole line */
+    /* outline: 1px solid rgba(255, 255, 0, 0.3); */
+    /* Optional outline */
+}
+
+
+/* --- Expand Buttons --- */
+.expand-button {
+    display: block;
+    width: 100%;
+    padding: 0.5em;
+    border: none;
+    border-top: 1px solid #444;
+    /* Separator for below button */
+    background-color: #3a3a3a;
+    color: #ccc;
+    text-align: center;
+    cursor: pointer;
+    font-size: 0.85em;
+}
+
+.expand-button.expand-above {
+    border-top: none;
+    border-bottom: 1px solid #444;
+    /* Separator for above button */
+}
+
+.expand-button:hover {
+    background-color: #454545;
 }
