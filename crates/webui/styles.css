@@ -353,8 +353,6 @@ ul li span {
 
 /* --- Expand Buttons --- */
 .expand-button {
-    display: block;
-    width: 100%;
     padding: 0.5em;
     border: none;
     border-top: 1px solid #444;
