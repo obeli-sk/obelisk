@@ -1,5 +1,5 @@
 use crate::{
-    app::Route,
+    app::{BacktraceVersions, Route},
     components::{code::syntect_code_block::SyntectCodeBlock, execution_status::ExecutionStatus},
     grpc::{
         execution_id::ExecutionIdExt as _,
@@ -23,14 +23,14 @@ use yew_router::prelude::Link;
 #[derive(Properties, PartialEq)]
 pub struct DebuggerViewProps {
     pub execution_id: grpc_client::ExecutionId,
-    pub version: Option<VersionType>,
+    pub versions: BacktraceVersions,
 }
 
 #[function_component(DebuggerView)]
 pub fn debugger_view(
     DebuggerViewProps {
         execution_id,
-        version,
+        versions,
     }: &DebuggerViewProps,
 ) -> Html {
     let events_state: UseStateHandle<Vec<ExecutionEvent>> = use_state(Vec::new);
@@ -59,12 +59,12 @@ pub fn debugger_view(
     );
 
     let backtraces_state: UseStateHandle<
-        HashMap<(ExecutionId, Option<VersionType>), GetBacktraceResponse>,
+        HashMap<(ExecutionId, VersionType), GetBacktraceResponse>,
     > = use_state(Default::default);
     let sources_state: UseStateHandle<HashMap<(ComponentId, String), Option<String>>> =
         use_state(Default::default);
-
-    use_effect_with((execution_id.clone(), *version), {
+    let version = versions.last();
+    use_effect_with((execution_id.clone(), version), {
         let backtraces_state = backtraces_state.clone();
         let sources_state = sources_state.clone(); // Write a request to obtain the sources.
         move |(execution_id, version)| {
@@ -84,13 +84,12 @@ pub fn debugger_view(
                 let backtrace_response = execution_client
                     .get_backtrace(tonic::Request::new(grpc_client::GetBacktraceRequest {
                         execution_id: Some(execution_id.clone()),
-                        filter: Some(match version {
-                            Some(version) => get_backtrace_request::Filter::Specific(
+                        filter: Some(if version > 0 {
+                            get_backtrace_request::Filter::Specific(
                                 get_backtrace_request::Specific { version },
-                            ),
-                            None => get_backtrace_request::Filter::First(
-                                get_backtrace_request::First {},
-                            ),
+                            )
+                        } else {
+                            get_backtrace_request::Filter::First(get_backtrace_request::First {})
                         }),
                     }))
                     .await;
@@ -191,9 +190,20 @@ pub fn debugger_view(
         })
     );
 
+    // Step Out
+    let step_out = if let Some(parent_id) = execution_id.parent_id() {
+        let versions = versions.step_out().unwrap_or_default();
+        html!{
+            <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: parent_id, versions } }>
+            {"Step Out"}
+            </Link<Route>>
+        }
+    } else {
+        Html::default()
+    };
     let backtrace = if let Some(backtrace_response) = backtraces_state
-        .deref()
-        .get(&(execution_id.clone(), *version))
+    .deref()
+    .get(&(execution_id.clone(), version))
     {
         let mut htmls = Vec::new();
         let mut seen_positions = hashbrown::HashSet::new();
@@ -206,7 +216,7 @@ pub fn debugger_view(
             .as_ref()
             .expect("`GetBacktraceResponse.component_id` is sent");
 
-        // Add Step Prev, Next, Into
+        // Add Step Prev, Next, Into, Out
         let backtrace_versions: BTreeSet<VersionType> = events
             .iter()
             .filter_map(|event| event.backtrace_id)
@@ -216,8 +226,9 @@ pub fn debugger_view(
             .next_back()
             .copied()
         {
+            let versions = versions.change(backtrace_prev);
             htmls.push(html! {
-                <Link<Route> to={Route::ExecutionDebuggerWithVersion { execution_id: execution_id.clone(), version: backtrace_prev } }>
+                <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: execution_id.clone(), versions } }>
                     {"Step Prev"}
                 </Link<Route>>
             })
@@ -227,13 +238,15 @@ pub fn debugger_view(
             .next()
             .copied()
         {
+            let versions = versions.change(backtrace_next);
             htmls.push(html! {
-                <Link<Route> to={Route::ExecutionDebuggerWithVersion { execution_id: execution_id.clone(), version: backtrace_next } }>
+                <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: execution_id.clone(), versions } }>
                     {"Step Next"}
                 </Link<Route>>
             })
         }
 
+        // Step Into
         let version_child_request =
             if wasm_backtrace.version_max_excluding - wasm_backtrace.version_min_including == 3 {
                 // only happens on one-off join sets where 3 events share the same backtrace.
@@ -253,10 +266,13 @@ pub fn debugger_view(
                             })),
                         })),
                     ..
-                }) => html!{
-                    <Link<Route> to={Route::ExecutionDebugger { execution_id: child_execution_id.clone() } }>
-                        {"Step Into"}
-                    </Link<Route>>
+                }) => {
+                    let versions = versions.step_into();
+                    html!{
+                        <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: child_execution_id.clone(), versions } }>
+                            {"Step Into"}
+                        </Link<Route>>
+                    }
                 },
 
                 Some(event@ExecutionEvent {
@@ -270,8 +286,9 @@ pub fn debugger_view(
                     if let Some(JoinSetResponseEvent { response: Some(join_set_response_event::Response::ChildExecutionFinished(join_set_response_event::ChildExecutionFinished{
                         child_execution_id: Some(child_execution_id), ..
                     })), .. }) = join_next_version_to_response.get(&event.version) {
+                        let versions = versions.step_into();
                         html!{
-                            <Link<Route> to={Route::ExecutionDebugger { execution_id: child_execution_id.clone() } }>
+                            <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: child_execution_id.clone(), versions } }>
                                {"Step Into"}
                             </Link<Route>>
                         }
@@ -347,6 +364,7 @@ pub fn debugger_view(
         </div>
         <div class="trace-layout-container">
             <div class="trace-view">
+                {step_out}
                 {backtrace}
             </div>
             <div class="trace-detail">

@@ -16,7 +16,7 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use hashbrown::HashMap;
-use std::{ops::Deref, rc::Rc, str::FromStr};
+use std::{fmt::Display, ops::Deref, rc::Rc, str::FromStr};
 use yew::prelude::*;
 use yew_router::prelude::*;
 
@@ -49,6 +49,69 @@ impl FromStr for ExecutionsCursor {
                 .map_err(|_| ()),
             _ => Err(()),
         }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct BacktraceVersions(Vec<VersionType>);
+const BACKTRACE_VERSIONS_SEPARATOR: char = '_';
+impl Display for BacktraceVersions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (idx, version) in self.0.iter().enumerate() {
+            if idx == 0 {
+                write!(f, "{version}")?;
+            } else {
+                write!(f, "{BACKTRACE_VERSIONS_SEPARATOR}{version}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl FromStr for BacktraceVersions {
+    type Err = ();
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let mut versions = Vec::new();
+        for split in input.split(BACKTRACE_VERSIONS_SEPARATOR) {
+            let version: VersionType = split.parse().map_err(|_| ())?;
+            versions.push(version);
+        }
+        Ok(BacktraceVersions(versions))
+    }
+}
+impl From<VersionType> for BacktraceVersions {
+    fn from(value: VersionType) -> Self {
+        BacktraceVersions(vec![value])
+    }
+}
+impl BacktraceVersions {
+    pub fn last(&self) -> VersionType {
+        *self.0.last().expect("must contain at least one element")
+    }
+    pub fn step_into(&self) -> BacktraceVersions {
+        let mut ret = self.clone();
+        ret.0.push(0);
+        ret
+    }
+    pub fn change(&self, version: VersionType) -> BacktraceVersions {
+        let mut ret = self.clone();
+        *ret.0.last_mut().expect("must contain at least one element") = version;
+        ret
+    }
+    pub fn step_out(&self) -> Option<BacktraceVersions> {
+        let mut ret = self.clone();
+        ret.0.pop();
+        if ret.0.is_empty() {
+            None
+        } else {
+            Some(ret)
+        }
+    }
+}
+impl Default for BacktraceVersions {
+    fn default() -> Self {
+        BacktraceVersions(vec![0])
     }
 }
 
@@ -88,10 +151,10 @@ pub enum Route {
     ExecutionDebugger {
         execution_id: grpc_client::ExecutionId,
     },
-    #[at("/execution/:execution_id/debug/:version")]
-    ExecutionDebuggerWithVersion {
+    #[at("/execution/:execution_id/debug/:versions")]
+    ExecutionDebuggerWithVersions {
         execution_id: grpc_client::ExecutionId,
-        version: VersionType,
+        versions: BacktraceVersions,
     },
     #[not_found]
     #[at("/404")]
@@ -130,13 +193,13 @@ impl Route {
                 html! { <TraceView {execution_id} /> }
             }
             Route::ExecutionDebugger { execution_id } => {
-                html! { <DebuggerView {execution_id} version={None} /> }
+                html! { <DebuggerView {execution_id} versions={BacktraceVersions::from(0)} /> }
             }
-            Route::ExecutionDebuggerWithVersion {
+            Route::ExecutionDebuggerWithVersions {
                 execution_id,
-                version,
+                versions,
             } => {
-                html! { <DebuggerView {execution_id} version={Some(version)} /> }
+                html! { <DebuggerView {execution_id} versions={versions} /> }
             }
             Route::NotFound => html! { <NotFound /> },
         }

@@ -1,3 +1,4 @@
+use crate::app::BacktraceVersions;
 use crate::grpc::grpc_client::ExecutionId;
 use crate::grpc::version::VersionType;
 use crate::grpc::ResultValueExt;
@@ -175,7 +176,7 @@ impl HistoryJoinNextEventProps {
                 Node::new(NodeData {
                     icon: Icon::Flows,
                     label: html! {
-                        <Link<Route> to={Route::ExecutionDebuggerWithVersion { execution_id: self.execution_id.clone(), version: backtrace_id } }>
+                        <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: self.execution_id.clone(), versions: BacktraceVersions::from(backtrace_id) } }>
                             {"Backtrace"}
                         </Link<Route>>
                     },

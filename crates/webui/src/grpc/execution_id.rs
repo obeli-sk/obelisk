@@ -22,8 +22,8 @@ pub trait ExecutionIdExt {
     }
     // For the top-level ExecutionId return [(execution_id.to_string(), execution_id)].
     // For a derived ExecutionId, return [(grandparent_id.to_string(), grandparent_id), (parent_index, parent_id), .. (child_index, child_id)].
-    fn as_hierarchy(&self) -> Vec<(String, grpc_client::ExecutionId)>;
-
+    fn as_hierarchy(&self) -> Vec<(String, ExecutionId)>;
+    fn parent_id(&self) -> Option<ExecutionId>;
     fn render_execution_parts(
         &self,
         hide_parents: bool,
@@ -33,8 +33,8 @@ pub trait ExecutionIdExt {
 
 pub const EXECUTION_ID_INFIX: &str = ".";
 
-impl ExecutionIdExt for grpc_client::ExecutionId {
-    fn as_hierarchy(&self) -> Vec<(String, grpc_client::ExecutionId)> {
+impl ExecutionIdExt for ExecutionId {
+    fn as_hierarchy(&self) -> Vec<(String, ExecutionId)> {
         let mut execution_id = String::new();
         let mut vec = Vec::new();
         for part in self.id.split(EXECUTION_ID_INFIX) {
@@ -45,12 +45,22 @@ impl ExecutionIdExt for grpc_client::ExecutionId {
             };
             vec.push((
                 part.to_string(),
-                grpc_client::ExecutionId {
+                ExecutionId {
                     id: execution_id.clone(),
                 },
             ));
         }
         vec
+    }
+
+    fn parent_id(&self) -> Option<ExecutionId> {
+        if let Some((left, _)) = self.id.rsplit_once(EXECUTION_ID_INFIX) {
+            Some(ExecutionId {
+                id: left.to_string(),
+            })
+        } else {
+            None
+        }
     }
 
     fn render_execution_parts(

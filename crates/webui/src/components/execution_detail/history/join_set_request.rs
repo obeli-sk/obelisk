@@ -1,5 +1,5 @@
 use crate::{
-    app::Route,
+    app::{BacktraceVersions, Route},
     components::execution_detail::tree_component::TreeComponent,
     grpc::{
         grpc_client::{self, execution_event::history_event::join_set_request, ExecutionId},
@@ -125,7 +125,7 @@ impl HistoryJoinSetRequestEventProps {
                 Node::new(NodeData {
                     icon: Icon::Flows,
                     label: html! {
-                        <Link<Route> to={Route::ExecutionDebuggerWithVersion { execution_id: self.execution_id.clone(), version: backtrace_id } }>
+                        <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: self.execution_id.clone(), versions: BacktraceVersions::from(backtrace_id) } }>
                             {"Backtrace"}
                         </Link<Route>>
                     },
