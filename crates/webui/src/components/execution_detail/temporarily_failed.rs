@@ -1,4 +1,7 @@
-use crate::{components::execution_detail::tree_component::TreeComponent, grpc::{grpc_client, version::VersionType}};
+use crate::{
+    components::execution_detail::tree_component::TreeComponent,
+    grpc::{grpc_client, version::VersionType},
+};
 use chrono::DateTime;
 use yew::prelude::*;
 use yewprint::{

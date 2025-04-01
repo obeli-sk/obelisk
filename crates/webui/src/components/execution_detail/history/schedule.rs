@@ -1,5 +1,7 @@
 use crate::{
-    app::Route, components::execution_detail::tree_component::TreeComponent, grpc::{grpc_client, version::VersionType},
+    app::Route,
+    components::execution_detail::tree_component::TreeComponent,
+    grpc::{grpc_client, version::VersionType},
 };
 use yew::prelude::*;
 use yew_router::prelude::Link;
