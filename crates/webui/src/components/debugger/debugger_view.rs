@@ -201,7 +201,14 @@ pub fn debugger_view(
                     })
                 ))
         })
-        .map(|event| event_to_detail(execution_id, event, &join_next_version_to_response, ExecutionLink::Debug))
+        .map(|event| {
+            event_to_detail(
+                execution_id,
+                event,
+                &join_next_version_to_response,
+                ExecutionLink::Debug,
+            )
+        })
         .collect::<Vec<_>>();
 
     let is_finished = matches!(

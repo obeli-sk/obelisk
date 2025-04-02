@@ -1,6 +1,8 @@
 use crate::{
     app::{BacktraceVersions, Route},
-    components::{execution_detail::tree_component::TreeComponent, execution_header::ExecutionLink},
+    components::{
+        execution_detail::tree_component::TreeComponent, execution_header::ExecutionLink,
+    },
     grpc::{
         grpc_client::{self, execution_event::history_event::join_set_request, ExecutionId},
         version::VersionType,

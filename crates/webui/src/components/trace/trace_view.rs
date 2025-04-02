@@ -120,7 +120,14 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                         })
                 )
             })
-            .map(|event| event_to_detail(execution_id, event, &join_next_version_to_response, ExecutionLink::Trace))
+            .map(|event| {
+                event_to_detail(
+                    execution_id,
+                    event,
+                    &join_next_version_to_response,
+                    ExecutionLink::Trace,
+                )
+            })
             .collect::<Vec<_>>()
     };
 

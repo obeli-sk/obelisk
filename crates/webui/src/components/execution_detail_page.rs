@@ -88,7 +88,12 @@ fn render_execution_details(
     let rows: Vec<_> = events
         .iter()
         .map(|event| {
-            let detail = event_to_detail(execution_id, event, join_next_version_to_response, ExecutionLink::Log);
+            let detail = event_to_detail(
+                execution_id,
+                event,
+                join_next_version_to_response,
+                ExecutionLink::Log,
+            );
             let created_at =
                 DateTime::from(event.created_at.expect("`created_at` sent by the server"));
             let since_scheduled = (created_at - execution_scheduled_at)
