@@ -1,5 +1,6 @@
 use once_cell::sync::Lazy;
 use std::cmp::min;
+use std::rc::Rc;
 use syntect::html::{ClassStyle, ClassedHTMLGenerator};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
@@ -42,7 +43,7 @@ pub fn highlight_code_line_by_line(source: &str, language_ext: Option<&str>) -> 
 
 #[derive(Properties, PartialEq)]
 pub struct CodeBlockProps {
-    pub source: Vec<(Html, usize)>,
+    pub source: Rc<[(Html, usize)]>,
     pub focus_line: Option<usize>,
 }
 

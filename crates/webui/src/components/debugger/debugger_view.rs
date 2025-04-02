@@ -19,7 +19,7 @@ use crate::{
 use gloo::timers::future::TimeoutFuture;
 use hashbrown::HashMap;
 use log::{debug, trace};
-use std::{collections::BTreeSet, ops::Deref as _, path::PathBuf};
+use std::{collections::BTreeSet, ops::Deref as _, path::PathBuf, rc::Rc};
 use yew::prelude::*;
 use yew_router::prelude::Link;
 
@@ -32,7 +32,7 @@ pub struct DebuggerViewProps {
 #[derive(Clone, PartialEq)]
 enum SourceCodeState {
     Requested,
-    Found(Vec<(Html, usize)>), // FIXME: Arc[]
+    Found(Rc<[(Html, usize)]>),
     NotFoundOrErr,
 }
 
@@ -169,10 +169,10 @@ pub fn debugger_view(
                             let language = PathBuf::from(&file)
                                 .extension()
                                 .map(|e| e.to_string_lossy().to_string());
-                            SourceCodeState::Found(highlight_code_line_by_line(
+                            SourceCodeState::Found(Rc::from(highlight_code_line_by_line(
                                 &ok.into_inner().content,
                                 language.as_deref(),
-                            ))
+                            )))
                         }
                     };
                     let mut sources = sources_state.deref().clone();
