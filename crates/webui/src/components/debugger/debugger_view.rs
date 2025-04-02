@@ -193,17 +193,21 @@ pub fn debugger_view(
     // Step Out
     let step_out = if let Some(parent_id) = execution_id.parent_id() {
         let versions = versions.step_out().unwrap_or_default();
-        html!{
-            <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: parent_id, versions } }>
+        html! {
+            <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: parent_id, versions }}>
             {"Step Out"}
             </Link<Route>>
         }
     } else {
-        Html::default()
+        html! {
+            <div class="disabled">
+                {"Step Out"}
+            </div>
+        }
     };
     let backtrace = if let Some(backtrace_response) = backtraces_state
-    .deref()
-    .get(&(execution_id.clone(), version))
+        .deref()
+        .get(&(execution_id.clone(), version))
     {
         let mut htmls = Vec::new();
         let mut seen_positions = hashbrown::HashSet::new();
@@ -221,30 +225,42 @@ pub fn debugger_view(
             .iter()
             .filter_map(|event| event.backtrace_id)
             .collect();
-        if let Some(backtrace_prev) = backtrace_versions
+        htmls.push(if let Some(backtrace_prev) = backtrace_versions
             .range(..wasm_backtrace.version_min_including)
             .next_back()
             .copied()
         {
             let versions = versions.change(backtrace_prev);
-            htmls.push(html! {
+            html! {
                 <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: execution_id.clone(), versions } }>
                     {"Step Prev"}
                 </Link<Route>>
-            })
-        }
-        if let Some(backtrace_next) = backtrace_versions
+            }
+        } else {
+            html! {
+                <div class="disabled">
+                 {"Step Prev"}
+                </div>
+            }
+        });
+        htmls.push(if let Some(backtrace_next) = backtrace_versions
             .range(wasm_backtrace.version_max_excluding..)
             .next()
             .copied()
         {
             let versions = versions.change(backtrace_next);
-            htmls.push(html! {
+            html! {
                 <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: execution_id.clone(), versions } }>
                     {"Step Next"}
                 </Link<Route>>
-            })
-        }
+            }
+        } else {
+            html! {
+                <div class="disabled">
+                    {"Step Next"}
+                </div>
+            }
+        });
 
         // Step Into
         let version_child_request =

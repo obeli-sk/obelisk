@@ -1,9 +1,19 @@
 body {
     font-family: "Arial", sans-serif;
     background-color: #1e1e2e;
+    /* Base background */
     color: #e4e4e7;
+    /* Base text color */
     margin: 0;
     padding: 0;
+    line-height: 1.5;
+}
+
+/* Apply box-sizing globally */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
 }
 
 .container {
@@ -12,7 +22,31 @@ body {
     padding: 20px;
     background-color: #282a36;
     border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }
+
+/* --- Navigation --- */
+nav {
+    /* Targets the nav element */
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #44475a;
+}
+
+nav a {
+    color: #8be9fd;
+    text-decoration: none;
+    margin-right: 1.5rem;
+    font-weight: bold;
+    transition: color 0.2s ease;
+}
+
+nav a:hover {
+    color: #f1fa8c;
+    text-decoration: underline;
+}
+
+/* --- End Navigation Section --- */
 
 header h1 {
     font-size: 24px;
@@ -33,6 +67,52 @@ header .hash {
     color: #8a8d93;
 }
 
+/* --- End Original Header Rules --- */
+
+/* --- Execution Header Specific Styles - Added Section --- */
+.execution-header {
+    /* Targets the specific header div */
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #44475a;
+    /* Separator */
+}
+
+.execution-header h3 {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+    font-size: 1.4rem;
+    color: #f8f8f2;
+}
+
+.execution-header h3 a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.execution-header h3 a:hover {
+    text-decoration: underline;
+    color: #8be9fd;
+}
+
+/* Align status tree and time paragraph */
+.execution-header>.bp3-tree {
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 1rem;
+}
+
+.execution-header>p {
+    display: inline-block;
+    vertical-align: middle;
+    margin: 0;
+    color: #bd93f9;
+    font-size: 0.9em;
+}
+
+/* --- End Execution Header Section --- */
+
+
 .world-definition,
 .types-interface {
     margin-top: 20px;
@@ -44,11 +124,34 @@ h3 .highlight {
 
 table.execution_list {
     width: 100%;
+    border-collapse: collapse;
+}
+
+table.execution_list th,
+table.execution_list td {
+    border: 1px solid #44475a;
+    padding: 8px;
+    text-align: left;
+}
+
+table.execution_list th {
+    background-color: #44475a;
 }
 
 div.pagination a {
     padding: 10px;
+    margin: 0 5px;
+    text-decoration: none;
+    color: #8be9fd;
+    border: 1px solid #44475a;
+    border-radius: 4px;
 }
+
+div.pagination a:hover {
+    background-color: #44475a;
+    color: #f1fa8c;
+}
+
 
 .label {
     background-color: #6272a4;
@@ -59,56 +162,53 @@ div.pagination a {
     margin: 10px;
 }
 
+/* --- Code Block Section (Original interpretation potentially modified) --- */
 .code-block {
-    background-color: #1e1e2e;
-    padding: 15px;
-    border: 1px solid #44475a;
-    border-radius: 8px;
-    font-family: monospace;
-    font-size: 14px;
+    display: flex;
+    overflow-x: auto;
 }
 
+/* These might not target correctly if P is not inside .code-block */
 .code-block p {
     margin: 0 0 10px;
     font-weight: bold;
 }
 
+/* This might be overridden by .code-content rules */
 .code-block pre {
     white-space: pre-wrap;
     word-wrap: break-word;
     word-break: break-word;
 }
 
+/* These syntax highlighting rules might not be used if syntect provides inline styles */
 .code-block pre .keyword {
     color: #0077b6;
-    /* Blue */
     font-weight: bold;
 }
 
 .code-block pre .type {
     color: #9b59b6;
-    /* Purple */
 }
 
 .code-block pre .func {
     color: #ac9a40;
-    /* Yellow */
 }
 
 .code-block pre .version {
     color: #6fa5c9;
-    /* Light Blue */
 }
 
 .code-block pre .param {
     color: #7f8c8d;
-    /* Subtle Gray */
 }
 
 .code-block pre .case {
     color: #2980b9;
-    /* Darker Blue */
 }
+
+/* --- End Code Block Section --- */
+
 
 ul {
     list-style-type: none;
@@ -138,38 +238,95 @@ ul li span {
     overflow-x: auto;
 }
 
-/* Tracing */
+/* --- Tracing --- */
 .trace-layout-container {
     display: flex;
-    gap: 1rem;
+    gap: 1.5rem;
+    margin-top: 1.5rem;
 }
 
 .trace-view {
     /* --- Flex Item Properties --- */
     flex-shrink: 0;
-
     /* --- Other Styling --- */
-    /* Optional: If trace-view content might exceed its height, add scrolling */
-    /* overflow-y: auto; */
     min-width: 400px;
     max-width: 900px;
-
     resize: horizontal;
-    /* Allow horizontal resizing by the user */
     overflow: auto;
+    padding: 1rem;
+    border: 1px solid #44475a;
+    border-radius: 4px;
+    background-color: #21222c;
 }
+
+/* action links  */
+.trace-view>a {
+    display: inline-block;
+    padding: 0.4em 0.8em;
+    margin-right: 0.75rem;
+    margin-bottom: 1.5rem;
+    /* Space below buttons */
+    background-color: #44475a;
+    color: #e4e4e7;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.9em;
+    transition: background-color 0.2s ease;
+}
+.trace-view>a:hover {
+    background-color: #6272a4;
+}
+.trace-view > div.disabled {
+    display: inline-block;
+    padding: 0.4em 0.8em;
+    margin-right: 0.75rem;
+    margin-bottom: 1.5rem;
+    background-color: #3a3f4c;
+    color: #8a8d93;
+    border-radius: 4px;
+    font-size: 0.9em;
+    opacity: 0.7;
+    cursor: not-allowed;
+
+}
+.trace-view>p {
+    margin: 0 0 0.75rem 0;
+    padding-top: 0.75rem;
+    border-top: 1px dashed #44475a;
+    font-size: 0.95em;
+    line-height: 1.4;
+}
+
+.trace-view>p:first-of-type {
+    border-top: none;
+    padding-top: 0;
+}
+
+.trace-view>p:has(+ .code-block-container) {
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.25rem;
+    border-bottom: none;
+}
+
 
 .trace-detail {
     flex-grow: 1;
     flex-shrink: 1;
     flex-basis: 0;
-
     min-width: 300px;
     padding: 1rem;
-    border-left: 1px solid #ccc;
-    /* Optional: If trace-detail content might exceed its height, add scrolling */
-    /* overflow-y: auto; */
+    border: 1px solid #44475a;
+    border-radius: 4px;
+    background-color: #21222c;
+    overflow-y: auto;
+}
 
+.trace-detail>.bp3-tree {
+    margin-bottom: 1.25rem;
+}
+
+.trace-detail>.bp3-tree:last-child {
+    margin-bottom: 0;
 }
 
 .step-row {
@@ -184,14 +341,10 @@ ul li span {
 }
 
 .step-name {
-    /* Allows the name to take up available space */
     flex-grow: 1;
-    /* Prevent text wrapping */
     white-space: nowrap;
     overflow: hidden;
-    /* Add an ellipsis (...) */
     text-overflow: ellipsis;
-    /* allow text-overflow */
     min-width: 0;
 }
 
@@ -203,17 +356,13 @@ ul li span {
 .relative-duration-container {
     width: 200px;
     height: 10px;
-    /* Pushes the container to the right */
     margin-left: auto;
-    /*  Prevent shrinking */
     flex-shrink: 0;
 }
 
 .total-duration-line {
     height: 100%;
-    /* Grey line */
     background-color: #ddd;
-    /* Required for absolute positioning of the busy line */
     position: relative;
 }
 
@@ -258,118 +407,87 @@ ul li span {
     background-color: #27b0a7;
 }
 
-/* Indentation for children */
 .indented-children {
     margin-left: 20px;
-    /* Adjust the indentation as needed */
 }
 
-/* --- Syntect Code Block --- */
+/* --- End Original Step/Duration Styles --- */
 
+
+/* --- Syntect Code Block Container --- */
 .code-block-container {
-    /* Example theme setup - syntect might provide its own background */
-    /* background-color: #2d2d2d; */
-    /* color: #cccccc; */
-    border: 1px solid #444;
+    border: 1px solid #44475a;
     border-radius: 4px;
-    margin: 1em 0;
+    margin-top: 0.5rem;
+    margin-bottom: 1.5rem;
     font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
     font-size: 0.9em;
-    /* Adjust as needed */
     overflow: hidden;
-    /* Contain floats/flex items */
 }
 
-.code-block {
-    display: flex;
-    /* Use flexbox for side-by-side layout */
-    overflow-x: auto;
-    /* Allow horizontal scrolling for long code lines */
-    /* Apply theme background/color here or rely on syntect's inline styles */
-}
+/* --- Syntect Inner .code-block --- */
 
+/* --- Syntect Line Numbers --- */
 .line-numbers {
     flex-shrink: 0;
-    /* Prevent line numbers from shrinking */
     padding: 0.8em 0.8em 0.8em 1em;
     text-align: right;
-    color: #666;
-    /* Dim color for line numbers */
+    color: #65737e;
     user-select: none;
-    /* Prevent selecting line numbers */
     -webkit-user-select: none;
-    /* Safari */
     -moz-user-select: none;
-    /* Firefox */
     -ms-user-select: none;
-    /* IE/Edge */
-    border-right: 1px solid #444;
-    /* Separator */
-    /* Match background if syntect doesn't style the container */
-    /* background-color: #2d2d2d; */
+    border-right: 1px solid #44475a;
+    background-color: inherit;
 }
 
 .line-numbers .line-number {
     display: block;
-    /* Each number on its own line */
     line-height: 1.5;
-    /* Match code line height */
 }
 
-
+/* --- Syntect Code Content --- */
 .code-content {
     flex-grow: 1;
-    /* Allow code content to take remaining space */
     margin: 0;
-    /* Reset default pre margins */
     padding: 0.8em;
     overflow-x: visible;
-    /* Let inner content determine width for scrolling */
     white-space: pre;
-    /* Keep whitespace, crucial for code */
     line-height: 1.5;
-    /* Consistent line height */
 }
 
-/* Syntect usually wraps code in its own spans */
 .code-content code>span {
     display: block;
-    /* Treat each highlighted line as a block */
     min-height: 1.5em;
-    /* Ensure empty lines take up space */
 }
-
 
 /* Focused Line Highlighting */
 .code-content code .line-focused {
-    background-color: rgba(255, 255, 0, 0.15);
-    /* Example highlight color */
+    background-color: rgba(255, 255, 0, 0.1);
     display: block;
-    /* Ensure background covers the whole line */
-    /* outline: 1px solid rgba(255, 255, 0, 0.3); */
-    /* Optional outline */
+    outline: 1px solid rgba(255, 255, 0, 0.2);
 }
-
 
 /* --- Expand Buttons --- */
 .expand-button {
+    display: block;
+    width: 100%;
     padding: 0.5em;
     border: none;
-    border-top: 1px solid #444;
-    /* Separator for below button */
+    border-top: 1px solid #44475a;
     background-color: #3a3a3a;
     color: #ccc;
     text-align: center;
     cursor: pointer;
     font-size: 0.85em;
+    transition: background-color 0.2s ease;
 }
 
 .expand-button.expand-above {
     border-top: none;
-    border-bottom: 1px solid #444;
-    /* Separator for above button */
+    border-bottom: 1px solid #44475a;
 }
 
 .expand-button:hover {
-    background-color: #454545;
+    background-color: #4f4f4f;
 }
