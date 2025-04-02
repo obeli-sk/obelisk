@@ -1,7 +1,7 @@
 use crate::{
     app::{AppState, Route},
     components::{
-        code_block::CodeBlock,
+        code::code_block::CodeBlock,
         component_tree::{ComponentTree, ComponentTreeConfig},
         ffqn_with_links::FfqnWithLinks,
         function_signature::FunctionSignature,

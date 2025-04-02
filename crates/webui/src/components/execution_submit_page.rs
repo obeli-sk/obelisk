@@ -1,7 +1,7 @@
 use crate::{
     app::{AppState, Route},
     components::{
-        code_block::CodeBlock, execution_submit::ExecutionSubmitForm,
+        code::code_block::CodeBlock, execution_submit::ExecutionSubmitForm,
         ffqn_with_links::FfqnWithLinks,
     },
     grpc::{ffqn::FunctionFqn, grpc_client},
