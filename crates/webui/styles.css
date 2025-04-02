@@ -69,13 +69,23 @@ header .hash {
 
 /* --- End Original Header Rules --- */
 
-/* --- Execution Header Specific Styles - Added Section --- */
+/* --- Execution Header Specific Styles  --- */
 .execution-header {
-    /* Targets the specific header div */
     margin-bottom: 1.5rem;
     padding-bottom: 1rem;
     border-bottom: 1px solid #44475a;
-    /* Separator */
+}
+
+.execution-header > .header-and-links {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.execution-header > .header-and-links > .execution-links {
+    display: flex;
+    padding: 10px;
+    gap: 15px;
 }
 
 .execution-header h3 {
