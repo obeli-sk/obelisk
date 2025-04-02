@@ -43,6 +43,13 @@ impl TraceData {
             TraceData::Child(child) => &child.title,
         }
     }
+
+    pub fn load_button(&self) -> Option<Html> {
+        match self {
+            TraceData::Root(_) => None,
+            TraceData::Child(child) => child.load_button.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, derive_more::Display)]
@@ -128,6 +135,7 @@ pub struct TraceDataChild {
     pub title: String,
     pub busy: Vec<BusyInterval>,
     pub children: Vec<TraceData>,
+    pub load_button: Option<Html>,
 }
 
 mod grpc {

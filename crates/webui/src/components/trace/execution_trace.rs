@@ -61,7 +61,10 @@ pub fn execution_trace(props: &ExecutionStepProps) -> Html {
                 <span class="step-icon">{"▶"}</span>
                 <span class="step-name" title={props.data.title().to_string()}>{props.data.name().clone()}</span>
                 if let Some(status) = last_status {
-                    <span class="step-status">{status.to_string()}</span>
+                    <span class="step-status">
+                        {props.data.load_button()}
+                        {status.to_string()}
+                    </span>
                 }
                 <div class="relative-duration-container">
                     <div class="total-duration-line" style="width: 100%" title={tooltip}>

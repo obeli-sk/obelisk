@@ -348,6 +348,7 @@ fn compute_root_trace(
                                         status,
                                     }],
                                     children: vec![],
+                                    load_button: None,
                                 })
                             })
                             .collect();
@@ -412,7 +413,6 @@ fn compute_root_trace(
                                         <Link<Route> to={Route::ExecutionTrace { execution_id: child_execution_id.clone() }}>
                                             {name}
                                         </Link<Route>>
-                                        {load_button}
                                     </>},
                                     title: child_execution_id.to_string(),
                                     busy: vec![BusyInterval {
@@ -422,6 +422,7 @@ fn compute_root_trace(
                                         status
                                     }],
                                     children: Vec::new(),
+                                    load_button: Some(load_button),
                                 })
                             ])
                         }
