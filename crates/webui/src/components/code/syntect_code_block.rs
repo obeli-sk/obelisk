@@ -54,7 +54,6 @@ enum ExpandDirection {
 
 #[function_component(SyntectCodeBlock)]
 pub fn code_block(props: &CodeBlockProps) -> Html {
-
     let total_lines = props.source.len();
 
     // State for the visible range [start_line_idx, end_line_idx) (0-based index)
@@ -131,7 +130,8 @@ pub fn code_block(props: &CodeBlockProps) -> Html {
     let show_expand_below = *visible_end_idx < total_lines;
 
     // Slice the highlighted lines based on the visible range state
-    let lines_to_render = props.source
+    let lines_to_render = props
+        .source
         .get(*visible_start_idx..*visible_end_idx)
         .unwrap_or_default();
 
