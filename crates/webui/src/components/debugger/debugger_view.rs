@@ -1,6 +1,9 @@
 use crate::{
     app::{BacktraceVersions, Route},
-    components::{code::syntect_code_block::SyntectCodeBlock, execution_status::ExecutionStatus},
+    components::{
+        code::syntect_code_block::{highlight_code_line_by_line, SyntectCodeBlock},
+        execution_status::ExecutionStatus,
+    },
     grpc::{
         execution_id::ExecutionIdExt as _,
         grpc_client::{
@@ -24,6 +27,13 @@ use yew_router::prelude::Link;
 pub struct DebuggerViewProps {
     pub execution_id: grpc_client::ExecutionId,
     pub versions: BacktraceVersions,
+}
+
+#[derive(Clone, PartialEq)]
+enum SourceCodeState {
+    Requested,
+    Found(Vec<(Html, usize)>), // FIXME: Arc[]
+    NotFoundOrErr,
 }
 
 #[function_component(DebuggerView)]
@@ -61,7 +71,7 @@ pub fn debugger_view(
     let backtraces_state: UseStateHandle<
         HashMap<(ExecutionId, VersionType), GetBacktraceResponse>,
     > = use_state(Default::default);
-    let sources_state: UseStateHandle<HashMap<(ComponentId, String), Option<String>>> =
+    let sources_state: UseStateHandle<HashMap<(ComponentId, String), SourceCodeState>> =
         use_state(Default::default);
     let version = versions.last();
     use_effect_with((execution_id.clone(), version), {
@@ -115,7 +125,7 @@ pub fn debugger_view(
                 {
                     let key = (component_id.clone(), file.clone());
                     if !sources.contains_key(&key) {
-                        sources.insert(key, None);
+                        sources.insert(key, SourceCodeState::Requested);
                     }
                 }
                 sources_state.set(sources);
@@ -130,7 +140,10 @@ pub fn debugger_view(
     use_effect_with(sources_state.deref().clone(), {
         let sources_state = sources_state.clone();
         move |sources| {
-            for ((component_id, file), _) in sources.iter().filter(|(_key, val)| val.is_none()) {
+            for ((component_id, file), _) in sources
+                .iter()
+                .filter(|(_key, val)| **val == SourceCodeState::Requested)
+            {
                 let component_id = component_id.clone();
                 let file = file.clone();
                 let sources_state = sources_state.clone();
@@ -147,14 +160,23 @@ pub fn debugger_view(
                             file: file.clone(),
                         }))
                         .await;
-                    let backtrace_src_response = match backtrace_src_response {
-                        Err(status) if status.code() == tonic::Code::NotFound => None,
-                        Ok(ok) => Some(ok.into_inner().content),
-                        err @ Err(_) => panic!("{err:?}"),
+                    let source_code_state = match backtrace_src_response {
+                        Err(err) => {
+                            log::warn!("Cannot obtain source `{file}` - {err:?}");
+                            SourceCodeState::NotFoundOrErr
+                        }
+                        Ok(ok) => {
+                            let language = PathBuf::from(&file)
+                                .extension()
+                                .map(|e| e.to_string_lossy().to_string());
+                            SourceCodeState::Found(highlight_code_line_by_line(
+                                &ok.into_inner().content,
+                                language.as_deref(),
+                            ))
+                        }
                     };
-                    debug!("Got backtrace_src_response {backtrace_src_response:?}");
                     let mut sources = sources_state.deref().clone();
-                    sources.insert((component_id, file), backtrace_src_response);
+                    sources.insert((component_id, file), source_code_state);
                     sources_state.set(sources);
                 });
             }
@@ -350,16 +372,12 @@ pub fn debugger_view(
                 if let (Some(file), Some(line)) = (&symbol.file, symbol.line) {
                     let new_position = seen_positions.insert((file.clone(), line));
                     if new_position {
-                        if let Some(source) = sources_state
+                        if let Some(SourceCodeState::Found(source)) = sources_state
                             .deref()
                             .get(&(component_id.clone(), file.clone()))
-                            .and_then(|s| s.clone())
                         {
-                            let language = PathBuf::from(file)
-                                .extension()
-                                .map(|e| e.to_string_lossy().to_string());
                             htmls.push(html! {
-                                <SyntectCodeBlock {source} {language} focus_line={Some(line as usize)}/>
+                                <SyntectCodeBlock source={source.clone()} focus_line={Some(line as usize)}/>
                             });
                         }
                     }

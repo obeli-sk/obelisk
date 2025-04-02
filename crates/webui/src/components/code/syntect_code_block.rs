@@ -7,40 +7,42 @@ use yew::{prelude::*, virtual_dom::VNode};
 
 const DEFAULT_CONTEXT_LINES: usize = 3;
 const DEFAULT_THEME: &str = "base16-ocean.dark"; // NB: Sync with build.rs
-const DEFAULT_LANGUAGE: &str = "txt";
 
 pub static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
 
-// Helper function to highlight code
-// Returns Vec<(String, Option<usize>)> where String is the HTML line and Option<usize> is the original line number
-pub fn highlight_code_line_by_line(
-    source: &str,
-    language_ext: &str,
-) -> Result<Vec<(String, usize)>, String> {
+pub fn highlight_code_line_by_line(source: &str, language_ext: Option<&str>) -> Vec<(Html, usize)> {
+    const DEFAULT_LANGUAGE: &str = "txt";
+    let language_ext = language_ext.unwrap_or(DEFAULT_LANGUAGE);
+    let start = web_sys::window().unwrap().performance().unwrap().now();
     let syntax = SYNTAX_SET
         .find_syntax_by_extension(language_ext)
         .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
 
     let mut output_lines = Vec::new();
     for (line_num, line) in LinesWithEndings::from(source).enumerate() {
+        let line_num = line_num + 1; // Store with 1-based line number
         let mut highlighter =
             ClassedHTMLGenerator::new_with_class_style(syntax, &SYNTAX_SET, ClassStyle::Spaced);
-        highlighter
-            .parse_html_for_line_which_includes_newline(line)
-            .map_err(|err| format!("Highlighting error {err:?}"))?;
-        // Note: The generated HTML usually doesn't include the outer <span> or <pre> tags per line.
-        // We wrap each line in a span or div later in the component.
-        output_lines.push((highlighter.finalize(), line_num + 1)); // Store with 1-based line number
+        if let Err(_err) = highlighter.parse_html_for_line_which_includes_newline(line) {
+            // Display as plain text
+            let line = line.to_html();
+            output_lines.push((line, line_num));
+        } else {
+            // Note: The generated HTML usually doesn't include the outer <span> or <pre> tags per line.
+            // We wrap each line in a span or div later in the component.
+            let line = highlighter.finalize();
+            let line = VNode::from_html_unchecked(line.into());
+            output_lines.push((line, line_num));
+        }
     }
-
-    Ok(output_lines)
+    let end = web_sys::window().unwrap().performance().unwrap().now();
+    log::trace!("Highlighted in {}ms", end - start);
+    output_lines
 }
 
 #[derive(Properties, PartialEq)]
 pub struct CodeBlockProps {
-    pub source: String,
-    pub language: Option<String>,
-    /// Optional line number (1-based) to focus and initially center.
+    pub source: Vec<(Html, usize)>,
     pub focus_line: Option<usize>,
 }
 
@@ -52,26 +54,8 @@ enum ExpandDirection {
 
 #[function_component(SyntectCodeBlock)]
 pub fn code_block(props: &CodeBlockProps) -> Html {
-    // Memoize the highlighted lines to avoid recalculating on every render unless source/language/theme changes.
 
-    let highlighted_lines = use_memo(
-        (props.source.clone(), props.language.clone()),
-        |(source, language)| {
-            let language = language.as_deref().unwrap_or(DEFAULT_LANGUAGE);
-            highlight_code_line_by_line(source, language).unwrap_or_else(|err| {
-                log::error!("Highlighting failed: {err:?}");
-                // Fallback to plain text
-                props
-                    .source
-                    .lines()
-                    .enumerate()
-                    .map(|(i, line)| (line.to_string(), i + 1))
-                    .collect()
-            })
-        },
-    );
-
-    let total_lines = highlighted_lines.len();
+    let total_lines = props.source.len();
 
     // State for the visible range [start_line_idx, end_line_idx) (0-based index)
     let visible_start_idx = use_state(|| {
@@ -147,7 +131,7 @@ pub fn code_block(props: &CodeBlockProps) -> Html {
     let show_expand_below = *visible_end_idx < total_lines;
 
     // Slice the highlighted lines based on the visible range state
-    let lines_to_render = highlighted_lines
+    let lines_to_render = props.source
         .get(*visible_start_idx..*visible_end_idx)
         .unwrap_or_default();
 
@@ -159,7 +143,9 @@ pub fn code_block(props: &CodeBlockProps) -> Html {
                         { format!("Expand {} lines above", min(*visible_start_idx, DEFAULT_CONTEXT_LINES*2)) }
                     </button>
                 }
-            } else { html!{} }}
+            } else {
+                html!{}
+            } }
 
             { if show_expand_above || show_expand_below {
                  html!{
@@ -167,8 +153,9 @@ pub fn code_block(props: &CodeBlockProps) -> Html {
                         { "Expand All" }
                     </button>
                  }
-            } else { html!{} }}
-
+            } else {
+                html!{}
+            } }
 
             <div class="code-block">
                 <div class="line-numbers">
@@ -181,18 +168,20 @@ pub fn code_block(props: &CodeBlockProps) -> Html {
                         let is_focused = props.focus_line == Some(*line_num);
                         let line_class = classes!(is_focused.then_some("line-focused"));
                         // Wrap each line in a div or span to apply line-specific classes like focus highlight
-                        html! { <span class={line_class}>{ VNode::from_html_unchecked(line_html.clone().into()) }</span> }
+                        html! { <span class={line_class}>{ line_html.clone() }</span> }
                     }) }
                 </code></pre>
             </div>
 
-             { if show_expand_below {
+            { if show_expand_below {
                 html!{
                     <button class="expand-button expand-below" onclick={handle_expand.reform(move |_| ExpandDirection::Below)}>
                          { format!("Expand {} lines below", min(total_lines - *visible_end_idx, DEFAULT_CONTEXT_LINES*2)) }
                     </button>
                 }
-            } else { html!{} }}
+            } else {
+                 html!{}
+            } }
         </div>
     }
 }
