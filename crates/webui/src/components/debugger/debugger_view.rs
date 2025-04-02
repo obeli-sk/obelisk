@@ -1,8 +1,7 @@
 use crate::{
     app::{BacktraceVersions, Route},
     components::{
-        code::syntect_code_block::{highlight_code_line_by_line, SyntectCodeBlock},
-        execution_status::ExecutionStatus,
+        code::syntect_code_block::{highlight_code_line_by_line, SyntectCodeBlock}, execution_detail::utils::{compute_join_next_to_response, event_to_detail}, execution_status::ExecutionStatus
     },
     grpc::{
         execution_id::ExecutionIdExt as _,
@@ -14,7 +13,6 @@ use crate::{
         },
         version::VersionType,
     },
-    pages::execution_detail_page::{compute_join_next_to_response, event_to_detail},
 };
 use gloo::timers::future::TimeoutFuture;
 use hashbrown::HashMap;

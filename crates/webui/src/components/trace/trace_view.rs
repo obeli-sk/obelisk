@@ -2,11 +2,10 @@ use super::data::{BusyIntervalStatus, TraceData};
 use crate::{
     app::Route,
     components::{
-        execution_status::ExecutionStatus,
-        trace::{
+        execution_detail::utils::{compute_join_next_to_response, event_to_detail}, execution_status::ExecutionStatus, trace::{
             data::{BusyInterval, TraceDataChild, TraceDataRoot},
             execution_trace::ExecutionTrace,
-        },
+        }
     },
     grpc::{
         execution_id::{ExecutionIdExt as _, EXECUTION_ID_INFIX},
@@ -22,7 +21,6 @@ use crate::{
             JoinSetId, JoinSetResponseEvent, ResultDetail,
         },
     },
-    pages::execution_detail_page::{compute_join_next_to_response, event_to_detail},
 };
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
