@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use std::time::Duration;
 use yew::Html;
 
@@ -93,22 +93,32 @@ impl BusyInterval {
         root_scheduled_at: DateTime<Utc>,
         root_last_event_at: DateTime<Utc>,
     ) -> (f64, f64) {
-        let total_duration = root_last_event_at - root_scheduled_at;
+        let total_duration_micros =
+            root_last_event_at.timestamp_micros() - root_scheduled_at.timestamp_micros();
         let start_percentage = 100.0
-            * (self.started_at - root_scheduled_at).num_milliseconds() as f64
-            / total_duration.num_milliseconds() as f64;
+            * (self.started_at.timestamp_micros() - root_scheduled_at.timestamp_micros()) as f64
+            / total_duration_micros as f64;
 
         let end_percentage = 100.0
-            * (self.finished_at.unwrap_or(root_last_event_at) - self.started_at).num_milliseconds()
-                as f64
-            / total_duration.num_milliseconds() as f64;
+            * (self
+                .finished_at
+                .unwrap_or(root_last_event_at)
+                .timestamp_micros()
+                - self.started_at.timestamp_micros()) as f64
+            / total_duration_micros as f64;
+
         (start_percentage, end_percentage)
     }
 
     fn duration(&self, root_last_event_at: DateTime<Utc>) -> Duration {
-        (self.finished_at.unwrap_or(root_last_event_at) - self.started_at)
-            .to_std()
-            .expect("started_at must be <= finished_at")
+        TimeDelta::microseconds(
+            self.finished_at
+                .unwrap_or(root_last_event_at)
+                .timestamp_micros()
+                - self.started_at.timestamp_micros(),
+        )
+        .to_std()
+        .expect("started_at must be <= finished_at")
     }
 }
 
@@ -123,7 +133,7 @@ pub struct TraceDataRoot {
 }
 impl TraceDataRoot {
     pub fn total_duration(&self) -> Duration {
-        (self.last_event_at - self.scheduled_at)
+        TimeDelta::microseconds(self.last_event_at.timestamp_micros() - self.scheduled_at.timestamp_micros())
             .to_std()
             .expect("scheduled_at must be <= last_event_at")
     }

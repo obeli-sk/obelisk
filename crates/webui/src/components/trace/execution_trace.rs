@@ -22,7 +22,7 @@ pub fn execution_trace(props: &ExecutionStepProps) -> Html {
                 <div
                 class={classes!("busy-duration-line", interval.status.get_css_class())}
                 title={interval.title.clone()}
-                style={format!("width: {}%; margin-left: {}%", busy_percentage, start_percentage)}
+                style={format!("margin-left: {start_percentage}%; width: {busy_percentage}%;")}
             >
             </div>
             }
