@@ -162,7 +162,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                 html! {
                     <tr>
                     <td>
-                        <Link<Route> to={Route::ExecutionDetail { execution_id: execution_id.clone() }}>{&execution_id}</Link<Route>>
+                        <Link<Route> to={Route::ExecutionTrace { execution_id: execution_id.clone() }}>{&execution_id}</Link<Route>>
                     </td>
                         <td><Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() }}>{ffqn.to_string()}</Link<Route>></td>
                     <td><ExecutionStatus {status} {execution_id} /></td>

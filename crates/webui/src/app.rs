@@ -1,7 +1,7 @@
 use crate::{
     components::{
         component_list_page::ComponentListPage,
-        execution_detail_page::ExecutionDetailPage,
+        execution_detail_page::ExecutionLogPage,
         execution_list_page::{ExecutionFilter, ExecutionListPage},
         execution_submit_page::ExecutionSubmitPage,
         not_found::NotFound,
@@ -139,11 +139,11 @@ pub enum Route {
     ExecutionListNewerIncluding { cursor: ExecutionsCursor },
     #[at("/execution/list/ffqn/:ffqn")]
     ExecutionListByFfqn { ffqn: FunctionFqn },
-    #[at("/execution/:execution_id")]
-    ExecutionDetail {
+    #[at("/execution/:execution_id/log")]
+    ExecutionLog {
         execution_id: grpc_client::ExecutionId,
     },
-    #[at("/execution/:execution_id/trace")]
+    #[at("/execution/:execution_id")]
     ExecutionTrace {
         execution_id: grpc_client::ExecutionId,
     },
@@ -170,8 +170,8 @@ impl Route {
                 html! { <ComponentListPage maybe_component_id={Some(component_id)}/> }
             }
             Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
-            Route::ExecutionDetail { execution_id } => {
-                html! { <ExecutionDetailPage {execution_id} /> }
+            Route::ExecutionLog { execution_id } => {
+                html! { <ExecutionLogPage {execution_id} /> }
             }
             Route::ExecutionListOlder { cursor } => {
                 html! { <ExecutionListPage filter={ExecutionFilter::Older { cursor, including_cursor: false }} /> }

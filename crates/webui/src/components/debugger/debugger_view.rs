@@ -3,7 +3,7 @@ use crate::{
     components::{
         code::syntect_code_block::{highlight_code_line_by_line, SyntectCodeBlock},
         execution_detail::utils::{compute_join_next_to_response, event_to_detail},
-        execution_header::ExecutionHeader,
+        execution_header::{ExecutionHeader, ExecutionLink},
     },
     grpc::{
         execution_id::ExecutionIdExt as _,
@@ -201,7 +201,7 @@ pub fn debugger_view(
                     })
                 ))
         })
-        .map(|event| event_to_detail(execution_id, event, &join_next_version_to_response))
+        .map(|event| event_to_detail(execution_id, event, &join_next_version_to_response, ExecutionLink::Debug))
         .collect::<Vec<_>>();
 
     let is_finished = matches!(
@@ -392,7 +392,7 @@ pub fn debugger_view(
     };
 
     html! {<>
-        <ExecutionHeader execution_id={execution_id.clone()} route_fn={Callback::from(|execution_id| Route::ExecutionDebugger { execution_id })} />
+        <ExecutionHeader execution_id={execution_id.clone()} link={ExecutionLink::Debug} />
 
         <div class="trace-layout-container">
             <div class="trace-view">

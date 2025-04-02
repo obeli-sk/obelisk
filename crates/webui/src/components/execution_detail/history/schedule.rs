@@ -1,10 +1,10 @@
 use crate::{
-    app::Route,
-    components::execution_detail::tree_component::TreeComponent,
+    components::{
+        execution_detail::tree_component::TreeComponent, execution_header::ExecutionLink,
+    },
     grpc::{grpc_client, version::VersionType},
 };
 use yew::prelude::*;
-use yew_router::prelude::Link;
 use yewprint::{
     id_tree::{InsertBehavior, Node, TreeBuilder},
     Icon, NodeData, TreeData,
@@ -14,6 +14,7 @@ use yewprint::{
 pub struct HistoryScheduleEventProps {
     pub event: grpc_client::execution_event::history_event::Schedule,
     pub version: VersionType,
+    pub link: ExecutionLink,
 }
 
 impl HistoryScheduleEventProps {
@@ -34,9 +35,7 @@ impl HistoryScheduleEventProps {
                     label: html!{<>
                         { self.version }
                         {". Scheduled execution "}
-                        <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_execution_id.clone() } }>
-                            {scheduled_execution_id}
-                        </Link<Route>>
+                        { self.link.link(scheduled_execution_id.clone(), &scheduled_execution_id.id) }
                     </>},
                     has_caret: true,
                     ..Default::default()

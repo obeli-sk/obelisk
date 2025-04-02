@@ -1,4 +1,5 @@
 use crate::app::BacktraceVersions;
+use crate::components::execution_header::ExecutionLink;
 use crate::grpc::grpc_client::ExecutionId;
 use crate::grpc::version::VersionType;
 use crate::grpc::ResultValueExt;
@@ -23,6 +24,7 @@ pub struct HistoryJoinNextEventProps {
     pub execution_id: ExecutionId,
     pub backtrace_id: Option<VersionType>,
     pub version: VersionType,
+    pub link: ExecutionLink,
 }
 
 impl HistoryJoinNextEventProps {
@@ -90,9 +92,7 @@ impl HistoryJoinNextEventProps {
                             label: html! {
                                 <>
                                     {"Matched Child Execution Finished: "}
-                                    <Link<Route> to={Route::ExecutionDetail { execution_id: child_execution_id.clone() } }>
-                                        {child_execution_id}
-                                    </Link<Route>>
+                                    { self.link.link(child_execution_id.clone(), &child_execution_id.id) }
                                 </>
                             },
                             has_caret: true,
@@ -106,7 +106,7 @@ impl HistoryJoinNextEventProps {
                     .result_detail
                     .as_ref()
                     .expect("`child_execution_id` of `ChildExecutionFinished` must be sent");
-                attach_result_detail(&mut tree, &child_node, result_detail, None);
+                attach_result_detail(&mut tree, &child_node, result_detail, None, self.link);
 
                 let finished_at = DateTime::from(*finished_at);
                 tree.insert(

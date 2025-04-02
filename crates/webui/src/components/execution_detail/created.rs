@@ -1,6 +1,7 @@
 use crate::app::AppState;
 use crate::app::Route;
 use crate::components::execution_detail::tree_component::TreeComponent;
+use crate::components::execution_header::ExecutionLink;
 use crate::components::ffqn_with_links::FfqnWithLinks;
 use crate::components::json_tree::insert_json_into_tree;
 use crate::components::json_tree::JsonValue;
@@ -22,6 +23,7 @@ use yewprint::{Icon, NodeData, TreeData};
 pub struct CreatedEventProps {
     pub created: Created,
     pub version: VersionType,
+    pub link: ExecutionLink,
 }
 impl CreatedEventProps {
     fn process(&self, app_state: &AppState) -> TreeData<u32> {
@@ -64,6 +66,7 @@ impl CreatedEventProps {
             component_id: component_id.clone(),
             component_exists: app_state.components_by_id.contains_key(component_id),
             version: self.version,
+            link: self.link,
         };
         props.construct_tree()
     }
@@ -77,6 +80,7 @@ struct ProcessedProps {
     component_id: ComponentId,
     component_exists: bool,
     version: VersionType,
+    link: ExecutionLink,
 }
 impl ProcessedProps {
     fn construct_tree(self) -> TreeData<u32> {
@@ -173,13 +177,12 @@ impl ProcessedProps {
         .unwrap();
         // scheduled by
         if let Some(scheduled_by) = self.scheduled_by {
-            tree
-            .insert(
+            tree.insert(
                 Node::new(NodeData {
                     icon: Icon::Time,
-                    label: html!{ <>
+                    label: html! { <>
                         {"Scheduled by "}
-                        <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_by.clone() } }>{scheduled_by}</Link<Route>>
+                        { self.link.link(scheduled_by.clone(), "Scheduled by") }
                     </>},
                     has_caret: false,
                     ..Default::default()

@@ -10,6 +10,7 @@ use crate::components::execution_detail::locked::LockedEvent;
 use crate::components::execution_detail::temporarily_failed::TemporarilyFailedEvent;
 use crate::components::execution_detail::timed_out::TemporarilyTimedOutEvent;
 use crate::components::execution_detail::unlocked::UnlockedEvent;
+use crate::components::execution_header::ExecutionLink;
 use crate::grpc::grpc_client::{
     execution_event, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent,
 };
@@ -48,11 +49,12 @@ pub fn event_to_detail(
     execution_id: &ExecutionId,
     event: &ExecutionEvent,
     join_next_version_to_response: &HashMap<u32, &JoinSetResponseEvent>,
+    link: ExecutionLink,
 ) -> Html {
     match event.event.as_ref().expect("event is sent by the server") {
         execution_event::Event::Created(created) => {
             html! {
-                <CreatedEvent created={created.clone()} version={event.version} />
+                <CreatedEvent created={created.clone()} version={event.version} {link}/>
             }
         }
         execution_event::Event::Locked(locked) => html! {
@@ -81,14 +83,14 @@ pub fn event_to_detail(
                 .clone();
             html! {<>
                 <HttpTraceEvent http_client_traces={inner_event.http_client_traces.clone()} />
-                <FinishedEvent {result_detail} version={event.version}/>
+                <FinishedEvent {result_detail} version={event.version} {link} />
                 </>
             }
         }
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
             event: Some(execution_event::history_event::Event::Schedule(inner_event)),
         }) => html! {
-            <HistoryScheduleEvent event={inner_event.clone()} version={event.version}/>
+            <HistoryScheduleEvent event={inner_event.clone()} version={event.version} {link} />
         },
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
             event: Some(execution_event::history_event::Event::JoinSetCreated(inner_event)),
@@ -103,6 +105,7 @@ pub fn event_to_detail(
                 execution_id={execution_id.clone()}
                 backtrace_id={event.backtrace_id}
                 version={event.version}
+                {link}
                 />
         },
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
@@ -119,6 +122,7 @@ pub fn event_to_detail(
                     execution_id={execution_id.clone()}
                     backtrace_id={event.backtrace_id}
                     version={event.version}
+                    {link}
                 />
             }
         }

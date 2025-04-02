@@ -1,6 +1,6 @@
 use crate::{
     app::{BacktraceVersions, Route},
-    components::execution_detail::tree_component::TreeComponent,
+    components::{execution_detail::tree_component::TreeComponent, execution_header::ExecutionLink},
     grpc::{
         grpc_client::{self, execution_event::history_event::join_set_request, ExecutionId},
         version::VersionType,
@@ -20,6 +20,7 @@ pub struct HistoryJoinSetRequestEventProps {
     pub execution_id: ExecutionId,
     pub backtrace_id: Option<VersionType>,
     pub version: VersionType,
+    pub link: ExecutionLink,
 }
 
 impl HistoryJoinSetRequestEventProps {
@@ -108,9 +109,7 @@ impl HistoryJoinSetRequestEventProps {
                             label: html! {
                                 <>
                                     {"Child Execution Request: "}
-                                    <Link<Route> to={Route::ExecutionDetail { execution_id: child_execution_id.clone() } }>
-                                        {child_execution_id}
-                                    </Link<Route>>
+                                    { self.link.link(child_execution_id.clone(), &child_execution_id.id) }
                                 </>
                             },
                             ..Default::default()

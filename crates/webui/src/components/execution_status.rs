@@ -1,5 +1,5 @@
 use crate::{
-    components::execution_detail::finished::FinishedEvent,
+    components::{execution_detail::finished::FinishedEvent, execution_header::ExecutionLink},
     grpc::grpc_client::{
         self,
         execution_status::{Finished, Locked, PendingAt},
@@ -159,7 +159,7 @@ pub fn execution_status(
                 .expect("must be non-negative");
             html! {<>
 
-                <FinishedEvent result_detail={result_detail.clone()} version={None} />
+                <FinishedEvent result_detail={result_detail.clone()} version={None} link={ExecutionLink::Trace}/>
                 <p>{format!("Execution completed in {since_scheduled:?}.")}</p>
             </>}
         }

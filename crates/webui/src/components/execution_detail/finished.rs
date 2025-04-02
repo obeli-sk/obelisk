@@ -1,13 +1,12 @@
 use crate::{
-    app::Route,
     components::{
         execution_detail::tree_component::TreeComponent,
+        execution_header::ExecutionLink,
         json_tree::{insert_json_into_tree, JsonValue},
     },
     grpc::{grpc_client, version::VersionType},
 };
 use yew::prelude::*;
-use yew_router::prelude::Link;
 use yewprint::{
     id_tree::{InsertBehavior, Node, NodeId, Tree, TreeBuilder},
     Icon, NodeData, TreeData,
@@ -17,6 +16,7 @@ use yewprint::{
 pub struct FinishedEventProps {
     pub result_detail: grpc_client::ResultDetail,
     pub version: Option<VersionType>,
+    pub link: ExecutionLink,
 }
 
 fn with_version(version: Option<VersionType>, label: &'static str) -> Html {
@@ -32,6 +32,7 @@ pub fn attach_result_detail(
     root_id: &NodeId,
     result_detail: &grpc_client::ResultDetail,
     version: Option<VersionType>,
+    link: ExecutionLink,
 ) {
     match &result_detail
         .value
@@ -111,9 +112,8 @@ pub fn attach_result_detail(
                     label: html! {
                         <>
                             {"Child Execution: "}
-                            <Link<Route> to={Route::ExecutionDetail { execution_id: child_execution_id.clone() } }>
-                                {child_execution_id}
-                            </Link<Route>>
+
+                            { link.link(child_execution_id.clone(), &child_execution_id.id) }
                         </>
                     },
                     ..Default::default()
@@ -127,9 +127,7 @@ pub fn attach_result_detail(
                     label: html! {
                         <>
                             {"Root cause: "}
-                            <Link<Route> to={Route::ExecutionDetail { execution_id: root_cause_id.clone() } }>
-                                {root_cause_id}
-                            </Link<Route>>
+                            { link.link(root_cause_id.clone(), &root_cause_id.id) }
                         </>
                     },
                     ..Default::default()
@@ -181,7 +179,13 @@ impl FinishedEventProps {
         let root_id = tree
             .insert(Node::new(NodeData::default()), InsertBehavior::AsRoot)
             .unwrap();
-        attach_result_detail(&mut tree, &root_id, &self.result_detail, self.version);
+        attach_result_detail(
+            &mut tree,
+            &root_id,
+            &self.result_detail,
+            self.version,
+            self.link,
+        );
         TreeData::from(tree)
     }
 }

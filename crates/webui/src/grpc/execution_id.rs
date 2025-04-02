@@ -1,9 +1,7 @@
-use crate::app::Route;
-
 use super::grpc_client::{self, ExecutionId};
+use crate::components::execution_header::ExecutionLink;
 use std::{fmt::Display, hash::Hash, str::FromStr};
-use yew::{html, Callback, Html, ToHtml};
-use yew_router::prelude::Link;
+use yew::{html, Html, ToHtml};
 
 impl Eq for grpc_client::ExecutionId {}
 
@@ -24,11 +22,7 @@ pub trait ExecutionIdExt {
     // For a derived ExecutionId, return [(grandparent_id.to_string(), grandparent_id), (parent_index, parent_id), .. (child_index, child_id)].
     fn as_hierarchy(&self) -> Vec<(String, ExecutionId)>;
     fn parent_id(&self) -> Option<ExecutionId>;
-    fn render_execution_parts(
-        &self,
-        hide_parents: bool,
-        route_fn: Callback<ExecutionId, Route>,
-    ) -> Html;
+    fn render_execution_parts(&self, hide_parents: bool, link: ExecutionLink) -> Html;
 }
 
 pub const EXECUTION_ID_INFIX: &str = ".";
@@ -63,11 +57,7 @@ impl ExecutionIdExt for ExecutionId {
         }
     }
 
-    fn render_execution_parts(
-        &self,
-        hide_parents: bool,
-        route_fn: Callback<ExecutionId, Route>,
-    ) -> Html {
+    fn render_execution_parts(&self, hide_parents: bool, link: ExecutionLink) -> Html {
         let mut execution_id_vec = self.as_hierarchy();
         if hide_parents {
             execution_id_vec.drain(..execution_id_vec.len() - 1);
@@ -80,9 +70,8 @@ impl ExecutionIdExt for ExecutionId {
                     if idx > 0 {
                         {EXECUTION_ID_INFIX}
                     }
-                    <Link<Route> to={route_fn.emit(execution_id)}>
-                        {part}
-                    </Link<Route>>
+                    {link.link(execution_id, &part)}
+
                 </>}
             })
             .collect::<Vec<_>>()
