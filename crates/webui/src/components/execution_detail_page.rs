@@ -1,8 +1,7 @@
 use crate::app::Route;
 use crate::components::debugger::debugger_view::EventsAndResponsesState;
 use crate::components::execution_detail::utils::{compute_join_next_to_response, event_to_detail};
-use crate::components::execution_status::ExecutionStatus;
-use crate::grpc::execution_id::ExecutionIdExt;
+use crate::components::execution_header::ExecutionHeader;
 use crate::grpc::grpc_client::{self, ExecutionEvent, ExecutionId, JoinSetResponseEvent};
 use assert_matches::assert_matches;
 use chrono::DateTime;
@@ -53,8 +52,8 @@ pub fn execution_detail_page(
 
     html! {
         <>
-        <h3>{ execution_id.render_execution_parts(false, |execution_id| Route::ExecutionDetail { execution_id }) }</h3>
-        <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
+        <ExecutionHeader execution_id={execution_id.clone()} route_fn={Callback::from(|execution_id| Route::ExecutionDetail { execution_id })} />
+
         if !events.is_empty() {
             {details_html}
         } else {

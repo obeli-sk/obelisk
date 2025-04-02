@@ -2,7 +2,7 @@ use crate::app::Route;
 
 use super::grpc_client::{self, ExecutionId};
 use std::{fmt::Display, hash::Hash, str::FromStr};
-use yew::{html, Html, ToHtml};
+use yew::{html, Callback, Html, ToHtml};
 use yew_router::prelude::Link;
 
 impl Eq for grpc_client::ExecutionId {}
@@ -27,7 +27,7 @@ pub trait ExecutionIdExt {
     fn render_execution_parts(
         &self,
         hide_parents: bool,
-        route_fn: fn(ExecutionId) -> Route,
+        route_fn: Callback<ExecutionId, Route>,
     ) -> Html;
 }
 
@@ -66,7 +66,7 @@ impl ExecutionIdExt for ExecutionId {
     fn render_execution_parts(
         &self,
         hide_parents: bool,
-        route_fn: fn(ExecutionId) -> Route,
+        route_fn: Callback<ExecutionId, Route>,
     ) -> Html {
         let mut execution_id_vec = self.as_hierarchy();
         if hide_parents {
@@ -80,7 +80,7 @@ impl ExecutionIdExt for ExecutionId {
                     if idx > 0 {
                         {EXECUTION_ID_INFIX}
                     }
-                    <Link<Route> to={route_fn(execution_id)}>
+                    <Link<Route> to={route_fn.emit(execution_id)}>
                         {part}
                     </Link<Route>>
                 </>}

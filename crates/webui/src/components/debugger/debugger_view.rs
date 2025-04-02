@@ -1,7 +1,9 @@
 use crate::{
     app::{BacktraceVersions, Route},
     components::{
-        code::syntect_code_block::{highlight_code_line_by_line, SyntectCodeBlock}, execution_detail::utils::{compute_join_next_to_response, event_to_detail}, execution_status::ExecutionStatus
+        code::syntect_code_block::{highlight_code_line_by_line, SyntectCodeBlock},
+        execution_detail::utils::{compute_join_next_to_response, event_to_detail},
+        execution_header::ExecutionHeader,
     },
     grpc::{
         execution_id::ExecutionIdExt as _,
@@ -390,10 +392,8 @@ pub fn debugger_view(
     };
 
     html! {<>
-        <div class="execution-header">
-            <h3>{{execution_id.render_execution_parts(false, |execution_id| Route::ExecutionDebugger { execution_id })}}</h3>
-            <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
-        </div>
+        <ExecutionHeader execution_id={execution_id.clone()} route_fn={Callback::from(|execution_id| Route::ExecutionDebugger { execution_id })} />
+
         <div class="trace-layout-container">
             <div class="trace-view">
                 {step_out}

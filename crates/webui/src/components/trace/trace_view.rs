@@ -2,10 +2,12 @@ use super::data::{BusyIntervalStatus, TraceData};
 use crate::{
     app::Route,
     components::{
-        execution_detail::utils::{compute_join_next_to_response, event_to_detail}, execution_status::ExecutionStatus, trace::{
+        execution_detail::utils::{compute_join_next_to_response, event_to_detail},
+        execution_header::ExecutionHeader,
+        trace::{
             data::{BusyInterval, TraceDataChild, TraceDataRoot},
             execution_trace::ExecutionTrace,
-        }
+        },
     },
     grpc::{
         execution_id::{ExecutionIdExt as _, EXECUTION_ID_INFIX},
@@ -123,10 +125,8 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     };
 
     html! {<>
-        <div class="execution-header">
-            <h3>{{execution_id.render_execution_parts(false, |execution_id| Route::ExecutionTrace { execution_id })}}</h3>
-            <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
-        </div>
+        <ExecutionHeader execution_id={execution_id.clone()} route_fn={Callback::from(|execution_id| Route::ExecutionTrace { execution_id })} />
+
         <div class="trace-layout-container">
             <div class="trace-view">
                 if let Some(root_trace) = root_trace {
@@ -523,7 +523,7 @@ fn compute_root_trace(
 
     let name = html! {
         <>
-            {execution_id.render_execution_parts(true, |execution_id | Route::ExecutionTrace { execution_id })}
+            {execution_id.render_execution_parts(true, Callback::from(|execution_id | Route::ExecutionTrace { execution_id }))}
             {" "}{&ffqn.function_name}
         </>
     };
