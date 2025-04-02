@@ -1,17 +1,17 @@
 use crate::{
+    components::{
+        component_list_page::ComponentListPage,
+        execution_detail_page::ExecutionDetailPage,
+        execution_list_page::{ExecutionFilter, ExecutionListPage},
+        execution_submit_page::ExecutionSubmitPage,
+        not_found::NotFound,
+    },
     components::{debugger::debugger_view::DebuggerView, trace::trace_view::TraceView},
     grpc::{
         ffqn::FunctionFqn,
         grpc_client::{self, ComponentId, ExecutionId},
         ifc_fqn::IfcFqn,
         version::VersionType,
-    },
-    pages::{
-        component_list_page::ComponentListPage,
-        execution_detail_page::ExecutionDetailPage,
-        execution_list_page::{ExecutionFilter, ExecutionListPage},
-        execution_submit_page::ExecutionSubmitPage,
-        not_found::NotFound,
     },
 };
 use chrono::{DateTime, Utc};
