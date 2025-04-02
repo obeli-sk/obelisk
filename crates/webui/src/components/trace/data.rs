@@ -133,9 +133,11 @@ pub struct TraceDataRoot {
 }
 impl TraceDataRoot {
     pub fn total_duration(&self) -> Duration {
-        TimeDelta::microseconds(self.last_event_at.timestamp_micros() - self.scheduled_at.timestamp_micros())
-            .to_std()
-            .expect("scheduled_at must be <= last_event_at")
+        TimeDelta::microseconds(
+            self.last_event_at.timestamp_micros() - self.scheduled_at.timestamp_micros(),
+        )
+        .to_std()
+        .expect("scheduled_at must be <= last_event_at")
     }
 }
 
