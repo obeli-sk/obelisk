@@ -102,14 +102,6 @@ header .hash {
     margin-right: 1rem;
 }
 
-.execution-header>p {
-    display: inline-block;
-    vertical-align: middle;
-    margin: 0;
-    color: #bd93f9;
-    font-size: 0.9em;
-}
-
 /* --- End Execution Header Section --- */
 
 
@@ -238,6 +230,10 @@ ul li span {
     overflow-x: auto;
 }
 
+.table-wrapper>table {
+    width: 100%;
+}
+
 /* --- Tracing --- */
 .trace-layout-container {
     display: flex;
@@ -273,10 +269,12 @@ ul li span {
     font-size: 0.9em;
     transition: background-color 0.2s ease;
 }
+
 .trace-view>a:hover {
     background-color: #6272a4;
 }
-.trace-view > div.disabled {
+
+.trace-view>div.disabled {
     display: inline-block;
     padding: 0.4em 0.8em;
     margin-right: 0.75rem;
@@ -289,6 +287,7 @@ ul li span {
     cursor: not-allowed;
 
 }
+
 .trace-view>p {
     margin: 0 0 0.75rem 0;
     padding-top: 0.75rem;

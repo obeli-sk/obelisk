@@ -229,8 +229,7 @@ fn render_execution_details(
                 .ok()
                 .unwrap_or_default();
             html! { <tr>
-                <td>{event.version}</td>
-                    <td>{created_at.to_string()}</td>
+                <td>{created_at.to_string()}</td>
                 <td>
                     if !since_scheduled.is_zero() {
                         {format!("{since_scheduled:?}")}
@@ -245,7 +244,6 @@ fn render_execution_details(
         <table>
         <thead>
         <tr>
-            <th>{"Version"}</th>
             <th>{"Timestamp"}</th>
             <th>{"Since scheduled"}</th>
             <th>{"Detail"}</th>
