@@ -140,7 +140,11 @@ table.execution_list th {
     background-color: #44475a;
 }
 
-div.pagination a {
+.container > .pagination {
+    margin-top: 20px;
+}
+
+.container > div.pagination a {
     padding: 10px;
     margin: 0 5px;
     text-decoration: none;
@@ -149,7 +153,7 @@ div.pagination a {
     border-radius: 4px;
 }
 
-div.pagination a:hover {
+.container > div.pagination a:hover {
     background-color: #44475a;
     color: #f1fa8c;
 }
