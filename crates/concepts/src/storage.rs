@@ -882,6 +882,7 @@ pub trait DbConnection: Send + Sync {
     async fn list_executions(
         &self,
         ffqn: Option<FunctionFqn>,
+        top_level_only: bool,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError>;
 

@@ -135,6 +135,7 @@ CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_id ON t_join_set
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
+    is_top_level INTEGER NOT NULL,
     next_version INTEGER NOT NULL,
     pending_expires_finished TEXT NOT NULL,
     ffqn TEXT NOT NULL,
@@ -169,8 +170,8 @@ CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (state, pending_e
 const IDX_T_STATE_EXPIRED_TIMERS: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_expired_timers ON t_state (pending_expires_finished) WHERE executor_id IS NOT NULL;
 ";
-const IDX_T_STATE_EXECUTION_ID: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_execution_id ON t_state (execution_id);
+const IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_state_execution_id_is_root ON t_state (execution_id, is_top_level);
 ";
 // For `list_executions` by ffqn
 const IDX_T_STATE_FFQN: &str = r"
@@ -552,7 +553,7 @@ impl<S: Sleep> SqlitePool<S> {
         execute(&conn, CREATE_TABLE_T_STATE, []);
         execute(&conn, IDX_T_STATE_LOCK_PENDING, []);
         execute(&conn, IDX_T_STATE_EXPIRED_TIMERS, []);
-        execute(&conn, IDX_T_STATE_EXECUTION_ID, []);
+        execute(&conn, IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL, []);
         execute(&conn, IDX_T_STATE_FFQN, []);
         execute(&conn, IDX_T_STATE_CREATED_AT, []);
         // t_delay
@@ -942,8 +943,8 @@ impl<S: Sleep> SqlitePool<S> {
             let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
             debug!("Creating with `Pending(`{scheduled_at:?}`)");
             tx.prepare(
-                "INSERT INTO t_state (created_at, scheduled_at, state, execution_id, next_version, pending_expires_finished, ffqn) \
-                VALUES (:created_at, :scheduled_at, :state, :execution_id, :next_version, :pending_expires_finished, :ffqn)",
+                "INSERT INTO t_state (created_at, scheduled_at, state, execution_id, is_top_level, next_version, pending_expires_finished, ffqn) \
+                VALUES (:created_at, :scheduled_at, :state, :execution_id, :is_top_level, :next_version, :pending_expires_finished, :ffqn)",
             )
             .map_err(convert_err)?
             .execute(named_params! {
@@ -951,6 +952,7 @@ impl<S: Sleep> SqlitePool<S> {
                 ":scheduled_at": scheduled_at,
                 ":state": STATE_PENDING_AT,
                 ":execution_id": execution_id.to_string(),
+                ":is_top_level": execution_id.is_top_level(),
                 ":next_version": next_version.0,
                 ":pending_expires_finished": scheduled_at,
                 ":ffqn": ffqn.to_string(),
@@ -1241,6 +1243,7 @@ impl<S: Sleep> SqlitePool<S> {
     fn list_executions(
         read_tx: &Transaction,
         ffqn: Option<FunctionFqn>,
+        top_level_only: bool,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
         struct StatementModifier {
@@ -1252,6 +1255,7 @@ impl<S: Sleep> SqlitePool<S> {
         fn paginate<T: rusqlite::ToSql + 'static>(
             pagination: Pagination<Option<T>>,
             column: &str,
+            top_level_only: bool,
         ) -> StatementModifier {
             let mut where_vec: Vec<String> = vec![];
             let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
@@ -1272,6 +1276,9 @@ impl<S: Sleep> SqlitePool<S> {
                 }
                 _ => {}
             }
+            if top_level_only {
+                where_vec.push("is_top_level=true".to_string());
+            }
             StatementModifier {
                 where_vec,
                 params,
@@ -1280,9 +1287,11 @@ impl<S: Sleep> SqlitePool<S> {
             }
         }
         let mut statement_mod = match pagination {
-            ExecutionListPagination::CreatedBy(pagination) => paginate(pagination, "created_at"),
+            ExecutionListPagination::CreatedBy(pagination) => {
+                paginate(pagination, "created_at", top_level_only)
+            }
             ExecutionListPagination::ExecutionId(pagination) => {
-                paginate(pagination, "execution_id")
+                paginate(pagination, "execution_id", top_level_only)
             }
         };
 
@@ -2908,11 +2917,12 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
     async fn list_executions(
         &self,
         ffqn: Option<FunctionFqn>,
+        top_level_only: bool,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
         Ok(self
             .transaction_read(
-                move |tx| Self::list_executions(tx, ffqn, pagination),
+                move |tx| Self::list_executions(tx, ffqn, top_level_only, pagination),
                 "list_executions",
             )
             .await?)

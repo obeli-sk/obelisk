@@ -127,6 +127,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                 let response = execution_client
                     .list_executions(grpc_client::ListExecutionsRequest {
                         function_name: ffqn.map(grpc_client::FunctionName::from),
+                        top_level_only: true,
                         pagination,
                     })
                     .await

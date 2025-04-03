@@ -310,6 +310,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn list_executions(
         &self,
         _ffqn: Option<FunctionFqn>,
+        _top_level_only: bool,
         _pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
         unimplemented!("only needed for gRPC")

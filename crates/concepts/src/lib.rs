@@ -1137,6 +1137,10 @@ pub mod prefixed_ulid {
             }
         }
 
+        pub fn is_top_level(&self) -> bool {
+            matches!(self, ExecutionId::TopLevel(_))
+        }
+
         #[must_use]
         pub fn timestamp_part(&self) -> u64 {
             self.get_top_level().timestamp_part()

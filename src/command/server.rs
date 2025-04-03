@@ -495,7 +495,11 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 ));
         let conn = self.db_pool.connection();
         let executions: Vec<_> = conn
-            .list_executions(ffqn, ExecutionListPagination::try_from(pagination)?)
+            .list_executions(
+                ffqn,
+                request.top_level_only,
+                ExecutionListPagination::try_from(pagination)?,
+            )
             .await
             .to_status()?
             .into_iter()

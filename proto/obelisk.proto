@@ -51,6 +51,8 @@ message ListExecutionsRequest {
     }
 
     optional FunctionName function_name = 1;
+    // Do not return child executions
+    bool top_level_only = 2;
     oneof pagination { // latest by `created_at` if not set
         NewerThan newer_than = 3;
         OlderThan older_than = 4;
