@@ -243,7 +243,9 @@ impl DbConnection for DbConnectionProxy {
         top_level_only: bool,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
-        self.0.list_executions(ffqn,  top_level_only, pagination).await
+        self.0
+            .list_executions(ffqn, top_level_only, pagination)
+            .await
     }
 
     async fn list_execution_events(

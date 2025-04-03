@@ -1137,6 +1137,7 @@ pub mod prefixed_ulid {
             }
         }
 
+        #[must_use]
         pub fn is_top_level(&self) -> bool {
             matches!(self, ExecutionId::TopLevel(_))
         }

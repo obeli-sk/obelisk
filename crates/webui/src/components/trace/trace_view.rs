@@ -441,14 +441,12 @@ fn compute_root_trace(
     let last_event_at = last_event_at; // drop mut
 
     let mut current_locked_at: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
-    let mut busy = vec![
-        BusyInterval {
-            started_at: execution_scheduled_at,
-            finished_at: Some(last_event_at),
-            title: None,
-            status: BusyIntervalStatus::ExecutionSinceScheduled,
-        },
-    ];
+    let mut busy = vec![BusyInterval {
+        started_at: execution_scheduled_at,
+        finished_at: Some(last_event_at),
+        title: None,
+        status: BusyIntervalStatus::ExecutionSinceScheduled,
+    }];
     for event in events {
         let event_inner = event.event.as_ref().unwrap();
         match event_inner {
