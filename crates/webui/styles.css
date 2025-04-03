@@ -420,6 +420,10 @@ ul li span {
     background-color: #27b0a7;
 }
 
+.busy-execution-since-scheduled {
+    background-color: #999998;
+}
+
 .indented-children {
     margin-left: 20px;
 }

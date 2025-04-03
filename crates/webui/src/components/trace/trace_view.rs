@@ -126,7 +126,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                     event,
                     &join_next_version_to_response,
                     ExecutionLink::Trace,
-                    false
+                    false,
                 )
             })
             .collect::<Vec<_>>()
@@ -438,9 +438,17 @@ fn compute_root_trace(
             })
             .flatten()
             .collect();
+    let last_event_at = last_event_at; // drop mut
 
     let mut current_locked_at: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
-    let mut busy = vec![];
+    let mut busy = vec![
+        BusyInterval {
+            started_at: execution_scheduled_at,
+            finished_at: Some(last_event_at),
+            title: None,
+            status: BusyIntervalStatus::ExecutionSinceScheduled,
+        },
+    ];
     for event in events {
         let event_inner = event.event.as_ref().unwrap();
         match event_inner {

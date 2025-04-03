@@ -25,6 +25,7 @@ impl TraceData {
     pub fn busy_duration(&self, root_last_event_at: DateTime<Utc>) -> Duration {
         self.busy()
             .iter()
+            .filter(|interval| interval.status != BusyIntervalStatus::ExecutionSinceScheduled)
             .map(|interval| interval.duration(root_last_event_at))
             .reduce(|acc, current| acc + current)
             .unwrap_or_default()
@@ -78,6 +79,8 @@ pub enum BusyIntervalStatus {
     ExecutionReturnedErrorVariant,
     #[display("Unfinished")]
     ExecutionUnfinished,
+    #[display("Since scheduled")]
+    ExecutionSinceScheduled,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -195,6 +198,7 @@ mod css {
                     "busy-execution-returned-error-variant"
                 }
                 BusyIntervalStatus::ExecutionUnfinished => "busy-execution-unfinished",
+                BusyIntervalStatus::ExecutionSinceScheduled => "busy-execution-since-scheduled",
             }
         }
     }
