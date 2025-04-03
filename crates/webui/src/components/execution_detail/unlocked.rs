@@ -12,6 +12,7 @@ use yewprint::{
 pub struct UnlockedEventProps {
     pub event: grpc_client::execution_event::Unlocked,
     pub version: VersionType,
+    pub is_selected: bool,
 }
 
 impl UnlockedEventProps {
@@ -26,6 +27,7 @@ impl UnlockedEventProps {
                 Node::new(NodeData {
                     icon: Icon::Unlock,
                     label: format!("{}. Execution Unlocked", self.version).into_html(),
+                    is_selected: self.is_selected,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&root_id),

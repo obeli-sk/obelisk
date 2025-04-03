@@ -93,6 +93,7 @@ fn render_execution_details(
                 event,
                 join_next_version_to_response,
                 ExecutionLink::Log,
+                false,
             );
             let created_at =
                 DateTime::from(event.created_at.expect("`created_at` sent by the server"));

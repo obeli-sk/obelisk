@@ -17,6 +17,7 @@ pub struct FinishedEventProps {
     pub result_detail: grpc_client::ResultDetail,
     pub version: Option<VersionType>,
     pub link: ExecutionLink,
+    pub is_selected: bool,
 }
 
 fn with_version(version: Option<VersionType>, label: &'static str) -> Html {
@@ -33,6 +34,7 @@ pub fn attach_result_detail(
     result_detail: &grpc_client::ResultDetail,
     version: Option<VersionType>,
     link: ExecutionLink,
+    is_selected: bool,
 ) {
     match &result_detail
         .value
@@ -46,6 +48,7 @@ pub fn attach_result_detail(
                         icon: Icon::Tick,
                         label: with_version(version, "Execution Successful"),
                         has_caret: ok.return_value.is_some(),
+                        is_selected,
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(root_id),
@@ -63,6 +66,7 @@ pub fn attach_result_detail(
                         icon: Icon::Error,
                         label: with_version(version, "Fallible Error"),
                         has_caret: fallible.return_value.is_some(),
+                        is_selected,
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(root_id),
@@ -77,6 +81,7 @@ pub fn attach_result_detail(
                 Node::new(NodeData {
                     icon: Icon::Time,
                     label: with_version(version, "Execution Timed Out"),
+                    is_selected,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(root_id),
@@ -101,6 +106,7 @@ pub fn attach_result_detail(
                         icon: Icon::Error,
                         label: with_version(version, "Unhandled child execution error"),
                         has_caret: true,
+                        is_selected,
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(root_id),
@@ -143,6 +149,7 @@ pub fn attach_result_detail(
                         icon: Icon::Error,
                         label: with_version(version, "Execution Failure"),
                         has_caret: true,
+                        is_selected,
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(root_id),
@@ -185,6 +192,7 @@ impl FinishedEventProps {
             &self.result_detail,
             self.version,
             self.link,
+            self.is_selected,
         );
         TreeData::from(tree)
     }

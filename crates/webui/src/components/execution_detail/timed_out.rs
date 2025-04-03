@@ -13,6 +13,7 @@ use yewprint::{
 pub struct TemporarilyTimedOutEventProps {
     pub event: grpc_client::execution_event::TemporarilyTimedOut,
     pub version: VersionType,
+    pub is_selected: bool,
 }
 
 impl TemporarilyTimedOutEventProps {
@@ -34,6 +35,7 @@ impl TemporarilyTimedOutEventProps {
                     icon: Icon::Time,
                     label: format!("{}. Temporarily Timed Out", self.version).into_html(),
                     has_caret: self.event.backoff_expires_at.is_some(),
+                    is_selected: self.is_selected,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&root_id),

@@ -186,6 +186,9 @@ pub fn debugger_view(
     let events = events_and_responses_state.events_state.deref();
     let responses = &events_and_responses_state.responses_state.0;
     let join_next_version_to_response = compute_join_next_to_response(events, responses);
+    let backtrace_response = backtraces_state
+        .deref()
+        .get(&(execution_id.clone(), version));
     let execution_log = events
         .iter()
         .filter(|event| {
@@ -207,6 +210,14 @@ pub fn debugger_view(
                 event,
                 &join_next_version_to_response,
                 ExecutionLink::Debug,
+                // is_selected
+                backtrace_response
+                    .and_then(|br| br.wasm_backtrace.as_ref())
+                    .map(|b| {
+                        b.version_min_including <= event.version
+                            && b.version_max_excluding > event.version
+                    })
+                    .unwrap_or_default(),
             )
         })
         .collect::<Vec<_>>();
@@ -234,10 +245,7 @@ pub fn debugger_view(
             </div>
         }
     };
-    let backtrace = if let Some(backtrace_response) = backtraces_state
-        .deref()
-        .get(&(execution_id.clone(), version))
-    {
+    let backtrace = if let Some(backtrace_response) = backtrace_response {
         let mut htmls = Vec::new();
         let mut seen_positions = hashbrown::HashSet::new();
         let wasm_backtrace = backtrace_response
@@ -343,7 +351,19 @@ pub fn debugger_view(
                 }
 
                 _ => Html::default()
-            });
+            }
+        );
+
+        htmls.push(html!{
+            <p>
+                {"Backtrace version: "}
+                if wasm_backtrace.version_min_including == wasm_backtrace.version_max_excluding - 1 {
+                    {wasm_backtrace.version_min_including}
+                } else {
+                    {wasm_backtrace.version_min_including}{"-"}{wasm_backtrace.version_max_excluding - 1}
+                }
+            </p>
+        });
 
         for (i, frame) in wasm_backtrace.frames.iter().enumerate() {
             htmls.push(html! {

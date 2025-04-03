@@ -24,6 +24,7 @@ pub struct CreatedEventProps {
     pub created: Created,
     pub version: VersionType,
     pub link: ExecutionLink,
+    pub is_selected: bool,
 }
 impl CreatedEventProps {
     fn process(&self, app_state: &AppState) -> TreeData<u32> {
@@ -67,6 +68,7 @@ impl CreatedEventProps {
             component_exists: app_state.components_by_id.contains_key(component_id),
             version: self.version,
             link: self.link,
+            is_selected: self.is_selected,
         };
         props.construct_tree()
     }
@@ -81,6 +83,7 @@ struct ProcessedProps {
     component_exists: bool,
     version: VersionType,
     link: ExecutionLink,
+    is_selected: bool,
 }
 impl ProcessedProps {
     fn construct_tree(self) -> TreeData<u32> {
@@ -101,6 +104,7 @@ impl ProcessedProps {
                     label: format!("{}. Created `{}`", self.version, self.ffqn.function_name)
                         .to_html(),
                     has_caret: true,
+
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&root_id),
@@ -112,6 +116,7 @@ impl ProcessedProps {
                 icon: Icon::Time,
                 label: html! { {format!("Scheduled at {}", self.scheduled_at)} },
                 has_caret: false,
+                is_selected: self.is_selected,
                 ..Default::default()
             }),
             InsertBehavior::UnderNode(&event_type),

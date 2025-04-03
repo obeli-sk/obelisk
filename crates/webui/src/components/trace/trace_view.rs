@@ -126,6 +126,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                     event,
                     &join_next_version_to_response,
                     ExecutionLink::Trace,
+                    false
                 )
             })
             .collect::<Vec<_>>()

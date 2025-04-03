@@ -12,6 +12,7 @@ use yewprint::{
 pub struct HistoryJoinSetCreatedEventProps {
     pub event: grpc_client::execution_event::history_event::JoinSetCreated,
     pub version: VersionType,
+    pub is_selected: bool,
 }
 
 impl HistoryJoinSetCreatedEventProps {
@@ -34,6 +35,7 @@ impl HistoryJoinSetCreatedEventProps {
                             {"`"}
                         </>
                     },
+                    is_selected: self.is_selected,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&root_id),

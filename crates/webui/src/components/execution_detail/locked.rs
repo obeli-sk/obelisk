@@ -13,6 +13,7 @@ use yewprint::{
 pub struct LockedEventProps {
     pub locked: grpc_client::execution_event::Locked,
     pub version: VersionType,
+    pub is_selected: bool,
 }
 
 impl LockedEventProps {
@@ -28,6 +29,7 @@ impl LockedEventProps {
                     icon: Icon::Lock,
                     label: format!("{}. Locked", self.version).to_html(),
                     has_caret: true,
+                    is_selected: self.is_selected,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&root_id),

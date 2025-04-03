@@ -50,30 +50,31 @@ pub fn event_to_detail(
     event: &ExecutionEvent,
     join_next_version_to_response: &HashMap<u32, &JoinSetResponseEvent>,
     link: ExecutionLink,
+    is_selected: bool,
 ) -> Html {
     match event.event.as_ref().expect("event is sent by the server") {
         execution_event::Event::Created(created) => {
             html! {
-                <CreatedEvent created={created.clone()} version={event.version} {link}/>
+                <CreatedEvent created={created.clone()} version={event.version} {link} {is_selected} />
             }
         }
         execution_event::Event::Locked(locked) => html! {
-            <LockedEvent locked={locked.clone()} version={event.version} />
+            <LockedEvent locked={locked.clone()} version={event.version} {is_selected} />
         },
         execution_event::Event::Unlocked(inner_event) => html! {
-            <UnlockedEvent event={inner_event.clone()} version={event.version}/>
+            <UnlockedEvent event={inner_event.clone()} version={event.version} {is_selected} />
         },
         execution_event::Event::TemporarilyFailed(inner_event) => {
             html! {
                 <>
                     <HttpTraceEvent http_client_traces={inner_event.http_client_traces.clone()} />
-                    <TemporarilyFailedEvent event={inner_event.clone()} version={event.version} />
+                    <TemporarilyFailedEvent event={inner_event.clone()} version={event.version} {is_selected} />
                 </>
             }
         }
         execution_event::Event::TemporarilyTimedOut(inner_event) => html! {<>
             <HttpTraceEvent http_client_traces={inner_event.http_client_traces.clone()} />
-            <TemporarilyTimedOutEvent event={inner_event.clone()} version={event.version} />
+            <TemporarilyTimedOutEvent event={inner_event.clone()} version={event.version} {is_selected} />
         </>},
         execution_event::Event::Finished(inner_event) => {
             let result_detail = inner_event
@@ -83,19 +84,19 @@ pub fn event_to_detail(
                 .clone();
             html! {<>
                 <HttpTraceEvent http_client_traces={inner_event.http_client_traces.clone()} />
-                <FinishedEvent {result_detail} version={event.version} {link} />
+                <FinishedEvent {result_detail} version={event.version} {link} {is_selected} />
                 </>
             }
         }
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
             event: Some(execution_event::history_event::Event::Schedule(inner_event)),
         }) => html! {
-            <HistoryScheduleEvent event={inner_event.clone()} version={event.version} {link} />
+            <HistoryScheduleEvent event={inner_event.clone()} version={event.version} {link} {is_selected} />
         },
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
             event: Some(execution_event::history_event::Event::JoinSetCreated(inner_event)),
         }) => html! {
-            <HistoryJoinSetCreatedEvent event={inner_event.clone()} version={event.version}/>
+            <HistoryJoinSetCreatedEvent event={inner_event.clone()} version={event.version} {is_selected}/>
         },
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
             event: Some(execution_event::history_event::Event::JoinSetRequest(join_set_request)),
@@ -106,6 +107,7 @@ pub fn event_to_detail(
                 backtrace_id={event.backtrace_id}
                 version={event.version}
                 {link}
+                {is_selected}
                 />
         },
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
@@ -123,13 +125,14 @@ pub fn event_to_detail(
                     backtrace_id={event.backtrace_id}
                     version={event.version}
                     {link}
+                    {is_selected}
                 />
             }
         }
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
             event: Some(execution_event::history_event::Event::Persist(inner_event)),
         }) => html! {
-            <HistoryPersistEvent event={inner_event.clone()} version={event.version}/>
+            <HistoryPersistEvent event={inner_event.clone()} version={event.version} {is_selected}/>
         },
 
         other => html! { {format!("unknown variant {other:?}")}},

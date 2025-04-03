@@ -23,6 +23,7 @@ pub struct HistoryJoinSetRequestEventProps {
     pub backtrace_id: Option<VersionType>,
     pub version: VersionType,
     pub link: ExecutionLink,
+    pub is_selected: bool,
 }
 
 impl HistoryJoinSetRequestEventProps {
@@ -51,6 +52,7 @@ impl HistoryJoinSetRequestEventProps {
                         </>
                     },
                     has_caret: true,
+                    is_selected: self.is_selected,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&root_id),

@@ -158,8 +158,7 @@ pub fn execution_status(
                 .to_std()
                 .expect("must be non-negative");
             html! {<>
-
-                <FinishedEvent result_detail={result_detail.clone()} version={None} link={ExecutionLink::Trace}/>
+                <FinishedEvent result_detail={result_detail.clone()} version={None} link={ExecutionLink::Trace} is_selected={false}/>
                 <p>{format!("Execution completed in {since_scheduled:?}.")}</p>
             </>}
         }

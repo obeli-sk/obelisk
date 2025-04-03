@@ -12,6 +12,7 @@ use yewprint::{
 pub struct HistoryPersistEventProps {
     pub event: grpc_client::execution_event::history_event::Persist,
     pub version: VersionType,
+    pub is_selected: bool,
 }
 
 impl HistoryPersistEventProps {
@@ -26,6 +27,7 @@ impl HistoryPersistEventProps {
             Node::new(NodeData {
                 icon: Icon::History,
                 label: format!("{}. Persist Event", self.version).into_html(),
+                is_selected: self.is_selected,
                 ..Default::default()
             }),
             InsertBehavior::UnderNode(&root_id),

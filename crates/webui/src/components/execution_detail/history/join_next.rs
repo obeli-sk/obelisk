@@ -25,6 +25,7 @@ pub struct HistoryJoinNextEventProps {
     pub backtrace_id: Option<VersionType>,
     pub version: VersionType,
     pub link: ExecutionLink,
+    pub is_selected: bool,
 }
 
 impl HistoryJoinNextEventProps {
@@ -69,6 +70,7 @@ impl HistoryJoinNextEventProps {
                         </>
                     },
                     has_caret: true,
+                    is_selected: self.is_selected,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&root_id),
@@ -106,7 +108,7 @@ impl HistoryJoinNextEventProps {
                     .result_detail
                     .as_ref()
                     .expect("`child_execution_id` of `ChildExecutionFinished` must be sent");
-                attach_result_detail(&mut tree, &child_node, result_detail, None, self.link);
+                attach_result_detail(&mut tree, &child_node, result_detail, None, self.link, false);
 
                 let finished_at = DateTime::from(*finished_at);
                 tree.insert(

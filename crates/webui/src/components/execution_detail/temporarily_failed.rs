@@ -13,6 +13,7 @@ use yewprint::{
 pub struct TemporarilyFailedEventProps {
     pub event: grpc_client::execution_event::TemporarilyFailed,
     pub version: VersionType,
+    pub is_selected: bool,
 }
 
 impl TemporarilyFailedEventProps {
@@ -28,6 +29,7 @@ impl TemporarilyFailedEventProps {
                     icon: Icon::Error,
                     label: format!("{}. Temporarily Failed", self.version).into_html(),
                     has_caret: true,
+                    is_selected: self.is_selected,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&root_id),

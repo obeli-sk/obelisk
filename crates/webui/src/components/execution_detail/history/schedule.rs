@@ -15,6 +15,7 @@ pub struct HistoryScheduleEventProps {
     pub event: grpc_client::execution_event::history_event::Schedule,
     pub version: VersionType,
     pub link: ExecutionLink,
+    pub is_selected: bool,
 }
 
 impl HistoryScheduleEventProps {
@@ -38,6 +39,7 @@ impl HistoryScheduleEventProps {
                         { self.link.link(scheduled_execution_id.clone(), &scheduled_execution_id.id) }
                     </>},
                     has_caret: true,
+                    is_selected: self.is_selected,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&root_id),
