@@ -94,11 +94,13 @@ use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
 use tonic_web::GrpcWebLayer;
+use tower_http::trace::DefaultOnFailure;
 use tracing::error;
 use tracing::info_span;
 use tracing::instrument;
 use tracing::warn;
 use tracing::Instrument;
+use tracing::Level;
 use tracing::Span;
 use tracing::{debug, info, trace};
 use utils::wasm_tools::WasmComponent;
@@ -993,12 +995,16 @@ async fn run_internal(
         component_registry_ro,
         workflow_source_map,
     ));
-
     tonic::transport::Server::builder()
         .accept_http1(true)
         .layer(
             tower::ServiceBuilder::new()
-                .layer(tower_http::trace::TraceLayer::new_for_grpc().make_span_with(make_span))
+                .layer(
+                    // Enable logging with `tower_http::trace=debug`
+                    tower_http::trace::TraceLayer::new_for_grpc()
+                        .on_failure(DefaultOnFailure::new().level(Level::DEBUG))
+                        .make_span_with(make_span),
+                )
                 .layer(GrpcWebLayer::new())
                 .map_request(accept_trace),
         )
