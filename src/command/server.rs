@@ -9,6 +9,7 @@ use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::config::toml::ActivityComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
+use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
@@ -119,13 +120,13 @@ const EPOCH_MILLIS: u64 = 10;
 const WEBUI_OCI_REFERENCE: &str = include_str!("../../assets/webui-version.txt");
 const GET_STATUS_POLLING_SLEEP: Duration = Duration::from_secs(1);
 
-type WorkflowSourceMap = hashbrown::HashMap<ComponentId, hashbrown::HashMap<String, PathBuf>>;
+type ComponentSourceMap = hashbrown::HashMap<ComponentId, hashbrown::HashMap<String, PathBuf>>;
 
 #[derive(Debug)]
 struct GrpcServer<DB: DbConnection, P: DbPool<DB>> {
     db_pool: P,
     component_registry_ro: ComponentConfigRegistryRO,
-    workflow_source_map: WorkflowSourceMap,
+    component_source_map: ComponentSourceMap,
     phantom_data: PhantomData<DB>,
 }
 
@@ -133,12 +134,12 @@ impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
     fn new(
         db_pool: P,
         component_registry_ro: ComponentConfigRegistryRO,
-        workflow_source_map: WorkflowSourceMap,
+        component_source_map: ComponentSourceMap,
     ) -> Self {
         Self {
             db_pool,
             component_registry_ro,
-            workflow_source_map,
+            component_source_map,
             phantom_data: PhantomData,
         }
     }
@@ -706,7 +707,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let request = request.into_inner();
         let component_id =
             ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
-        if let Some(inner_map) = self.workflow_source_map.get(&component_id) {
+        if let Some(inner_map) = self.component_source_map.get(&component_id) {
             if let Some(actual_path) = inner_map.get(&request.file) {
                 match tokio::fs::read_to_string(actual_path).await {
                     Ok(content) => Ok(tonic::Response::new(grpc::GetBacktraceSourceResponse {
@@ -990,14 +991,14 @@ async fn run_internal(
     ))
     .instrument(span.clone())
     .await?;
-    let workflow_source_map = std::mem::take(&mut verified.workflow_source_map);
+    let component_source_map = std::mem::take(&mut verified.component_source_map);
     let (init, component_registry_ro) = ServerInit::spawn_executors_and_webhooks(verified)
         .instrument(span)
         .await?;
     let grpc_server = Arc::new(GrpcServer::new(
         init.db_pool.clone(),
         component_registry_ro,
-        workflow_source_map,
+        component_source_map,
     ));
     tonic::transport::Server::builder()
         .accept_http1(true)
@@ -1055,7 +1056,7 @@ struct ServerVerified {
     engines: Engines,
     sqlite_config: SqliteConfig,
     db_file: PathBuf,
-    workflow_source_map: WorkflowSourceMap,
+    component_source_map: ComponentSourceMap,
 }
 
 impl ServerVerified {
@@ -1119,6 +1120,7 @@ impl ServerVerified {
                     key: "TARGET_URL".to_string(),
                     val: Some(format!("http://{}", config.api.listening_addr)),
                 }],
+                backtrace: ComponentBacktraceConfig::default(),
             });
         }
         let mut config = fetch_and_verify_all(
@@ -1133,11 +1135,15 @@ impl ServerVerified {
         )
         .await?;
         debug!("Verified config: {config:#?}");
-        let workflow_source_map = {
+        let component_source_map = {
             let mut map = hashbrown::HashMap::new();
             for workflow in &mut config.workflows {
                 let inner_map = std::mem::take(&mut workflow.frame_files_to_sources);
                 map.insert(workflow.component_id().clone(), inner_map);
+            }
+            for webhook in &mut config.webhooks_by_names.values_mut() {
+                let inner_map = std::mem::take(&mut webhook.frame_files_to_sources);
+                map.insert(webhook.component_id.clone(), inner_map);
             }
             map
         };
@@ -1155,7 +1161,7 @@ impl ServerVerified {
             engines,
             sqlite_config,
             db_file: db_dir.join(SQLITE_FILE_NAME),
-            workflow_source_map,
+            component_source_map,
         })
     }
 }
@@ -1424,6 +1430,7 @@ async fn fetch_and_verify_all(
             tokio::spawn({
                 let wasm_cache_dir = wasm_cache_dir.clone();
                 let metadata_dir = metadata_dir.clone();
+                let path_prefixes = path_prefixes.clone();
                 async move {
                     let name = webhook.common.name.clone();
                     let webhook = webhook
@@ -1431,6 +1438,7 @@ async fn fetch_and_verify_all(
                             wasm_cache_dir.clone(),
                             metadata_dir.clone(),
                             ignore_missing_env_vars,
+                            path_prefixes,
                         )
                         .await?;
                     Ok::<_, anyhow::Error>((name, webhook))

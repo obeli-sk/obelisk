@@ -389,7 +389,7 @@ pub(crate) struct WorkflowComponentConfigToml {
     #[serde(default = "default_forward_unhandled_child_errors_in_completing_join_set_close")]
     pub(crate) forward_unhandled_child_errors_in_completing_join_set_close: bool,
     #[serde(default)]
-    pub(crate) backtrace: WorkflowComponentBacktraceConfig,
+    pub(crate) backtrace: ComponentBacktraceConfig,
 }
 
 type BacktraceFrameFilesToSourcesUnverified = hashbrown::HashMap<String, String>;
@@ -397,7 +397,7 @@ type BacktraceFrameFilesToSourcesVerified = hashbrown::HashMap<String, PathBuf>;
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkflowComponentBacktraceConfig {
+pub(crate) struct ComponentBacktraceConfig {
     #[serde(rename = "sources")]
     pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesUnverified,
 }
@@ -410,6 +410,27 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) retry_config: ComponentRetryConfig,
     pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesVerified,
+}
+
+fn verify_frame_files_to_sources(
+    frame_files_to_sources: BacktraceFrameFilesToSourcesUnverified,
+    path_prefixes: &PathPrefixes,
+) -> BacktraceFrameFilesToSourcesVerified {
+    frame_files_to_sources
+        .into_iter()
+        .filter_map(|(key, value)| {
+            // Remove all entries where destination file is not found.
+            match replace_file_prefix_verify_exists(&value, path_prefixes)
+                .map(|value| (replace_file_prefix_no_verify(&key, path_prefixes), value))
+            {
+                Ok((k, v)) => Some((k, v)),
+                Err(err) => {
+                    warn!("Ignoring missing backtrace source - {err:?}");
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 impl WorkflowConfigVerified {
@@ -459,28 +480,10 @@ impl WorkflowComponentConfigToml {
             forward_unhandled_child_errors_in_join_set_close: self
                 .forward_unhandled_child_errors_in_completing_join_set_close,
         };
-        let frame_files_to_sources = self
-            .backtrace
-            .frame_files_to_sources
-            .into_iter()
-            .filter_map(|(key, value)| {
-                // Remove all entries where destination file is not found.
-                match replace_file_prefix_verify_exists(&value, path_prefixes.as_ref()).map(
-                    |value| {
-                        (
-                            replace_file_prefix_no_verify(&key, path_prefixes.as_ref()),
-                            value,
-                        )
-                    },
-                ) {
-                    Ok((k, v)) => Some((k, v)),
-                    Err(err) => {
-                        warn!("Ignoring missing backtrace source - {err:?}");
-                        None
-                    }
-                }
-            })
-            .collect();
+        let frame_files_to_sources = verify_frame_files_to_sources(
+            self.backtrace.frame_files_to_sources,
+            path_prefixes.as_ref(),
+        );
         Ok(WorkflowConfigVerified {
             content_digest: common.content_digest,
             wasm_path,
@@ -760,9 +763,11 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 }
 
 pub(crate) mod webhook {
-    use crate::config::env_var::EnvVarConfig;
-
-    use super::{resolve_env_vars, ComponentCommon, ConfigName, InflightSemaphore, StdOutput};
+    use super::{
+        resolve_env_vars, verify_frame_files_to_sources, BacktraceFrameFilesToSourcesVerified,
+        ComponentBacktraceConfig, ComponentCommon, ConfigName, InflightSemaphore, StdOutput,
+    };
+    use crate::config::{config_holder::PathPrefixes, env_var::EnvVarConfig};
     use anyhow::Context;
     use concepts::{ComponentId, ComponentType, ContentDigest, StrVariant};
     use serde::Deserialize;
@@ -797,6 +802,8 @@ pub(crate) mod webhook {
         pub(crate) forward_stderr: StdOutput,
         #[serde(default)]
         pub(crate) env_vars: Vec<EnvVarConfig>,
+        #[serde(default)]
+        pub(crate) backtrace: ComponentBacktraceConfig,
     }
 
     impl WebhookComponentConfigToml {
@@ -806,6 +813,7 @@ pub(crate) mod webhook {
             wasm_cache_dir: Arc<Path>,
             metadata_dir: Arc<Path>,
             ignore_missing_env_vars: bool,
+            path_prefixes: impl AsRef<PathPrefixes>,
         ) -> Result<WebhookComponentVerified, anyhow::Error> {
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
@@ -817,6 +825,10 @@ pub(crate) mod webhook {
                 .common
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
                 .await?;
+            let frame_files_to_sources = verify_frame_files_to_sources(
+                self.backtrace.frame_files_to_sources,
+                path_prefixes.as_ref(),
+            );
 
             Ok(WebhookComponentVerified {
                 component_id,
@@ -830,6 +842,7 @@ pub(crate) mod webhook {
                 forward_stderr: self.forward_stderr.into(),
                 env_vars: resolve_env_vars(self.env_vars, ignore_missing_env_vars)?,
                 content_digest: common.content_digest,
+                frame_files_to_sources,
             })
         }
     }
@@ -866,6 +879,7 @@ pub(crate) mod webhook {
         pub(crate) forward_stderr: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) env_vars: Arc<[EnvVar]>,
         pub(crate) content_digest: ContentDigest,
+        pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesVerified,
     }
 
     #[derive(Debug)]
