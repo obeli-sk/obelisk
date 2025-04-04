@@ -10,15 +10,17 @@ on:
         description: "The ref (branch or SHA) to process"
         required: false
         type: string
+        default: "latest"
       update-main:
         description: "Should the branch `main` be updated?"
         required: false
         type: boolean
         default: true
       extra-args:
-        description: "Extra args to be used with cargo publish, e.g. --no-verify"
+        description: "Extra args to be used with cargo publish"
         type: string
         required: false
+        default: "--no-verify"
 
 defaults:
   run:
