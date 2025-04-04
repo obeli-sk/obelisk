@@ -196,13 +196,7 @@ pub fn debugger_view(
             matches!(
                 event_inner,
                 execution_event::Event::Created(_) | execution_event::Event::Finished(_)
-            ) || (event.backtrace_id.is_some()
-                && !matches!(
-                    event_inner,
-                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
-                        event: Some(history_event::Event::JoinSetCreated(_))
-                    })
-                ))
+            ) || event.backtrace_id.is_some()
         })
         .map(|event| {
             event_to_detail(
