@@ -3,6 +3,50 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.0](https://github.com/obeli-sk/obelisk/compare/v0.18.2...v0.19.0)
+
+### ⛰️ Features
+
+- *(db)* Allow querying backtrace by version - ([13910c1](https://github.com/obeli-sk/obelisk/commit/13910c1c9a8cb86d3d7d1269a5657a4a7bd58266))
+- *(db)* [**breaking**] Track and persist `HttpClientTrace` - ([6d6fa62](https://github.com/obeli-sk/obelisk/commit/6d6fa62f545e52667f693d6d2c586f05dcdb0c94))
+- *(db,grpc)* [**breaking**] Allow listing top level executions only - ([6c72057](https://github.com/obeli-sk/obelisk/commit/6c720576875371c51190950825f155eafa16a758))
+- *(grpc)* [**breaking**] Rename `GetLastBacktrace` to `GetBacktrace` - ([1a25e4e](https://github.com/obeli-sk/obelisk/commit/1a25e4eaeda1f40cfb851db954fcd4b46c780650))
+- *(grpc)* Allow requesting `backtrace_id` for events - ([1a0bb9b](https://github.com/obeli-sk/obelisk/commit/1a0bb9bc7faa56ac91d6fcbc396d456e71b971dc))
+- *(grpc)* Add RPC `ListExecutionEventsAndResponses` - ([9b04d94](https://github.com/obeli-sk/obelisk/commit/9b04d9460c0a621a9ba21f3ff2a3010e2d25bd40))
+- *(grpc)* Send the http client traces in rpc `ListExecutionEvents` - ([8931b89](https://github.com/obeli-sk/obelisk/commit/8931b897033db306fd52b84aa5623ce7961774db))
+- *(grpc,db)* Add http client traces to `TemporarilyTimedOut` - ([4526ada](https://github.com/obeli-sk/obelisk/commit/4526ada66b6ee8d21892eac16c98f45ac7a6ccd5))
+- *(tracing)* Instrument `send_request` - ([72454c0](https://github.com/obeli-sk/obelisk/commit/72454c03962f1c313ae823877469af8cacc90a5c))
+- *(webui)* Add backtrace browser - ([6bdca4b](https://github.com/obeli-sk/obelisk/commit/6bdca4b9144952bec9a3b385283a7ebc4ba1aabe))
+- *(webui)* Fetch the whole log in trace view - ([0be53fe](https://github.com/obeli-sk/obelisk/commit/0be53fece75045052db08aedd300c0cd4d04303a))
+- Start one-off and generated joinsets with index 1 - ([ef63277](https://github.com/obeli-sk/obelisk/commit/ef632772d56ce54293efe8bc5fba33b03fddc819))
+
+### 🐛 Bug Fixes
+
+- *(sqlite)* Fix statement and parameter name in `get_backtrace` - ([9661dcf](https://github.com/obeli-sk/obelisk/commit/9661dcf9cae054c5be5d0ac8e9f372a42b50a3e8))
+- Persist `http_client_trace` on activity trap - ([4e1e72a](https://github.com/obeli-sk/obelisk/commit/4e1e72a2b56e7ed51606687966ec8b17f4577157))
+
+### 📚 Documentation
+
+- Update roadmap - ([5bebda2](https://github.com/obeli-sk/obelisk/commit/5bebda2d9e128732058dc646aa220c67931b7804))
+- Remove mention of `drop` in `closing-strategy` - ([4b643bc](https://github.com/obeli-sk/obelisk/commit/4b643bcd1176153e1ce41649f6e2abbd32dfd09e))
+
+### ⚡ Performance
+
+- *(webui)* Move syntax highlighting to `source_code_state` - ([b1f3a45](https://github.com/obeli-sk/obelisk/commit/b1f3a45fc7812b977cd1f2908e25c2ee6c90c8ec))
+
+### 🚜 Refactor
+
+- *(cli)* Increase the indent when printing the backtrace - ([ad50a49](https://github.com/obeli-sk/obelisk/commit/ad50a498a9738486b658b175abd4e4867b82c115))
+- *(concepts)* [**breaking**] Change derive execution id format - ([83e4b37](https://github.com/obeli-sk/obelisk/commit/83e4b3736ab954c50f883e75039242da3ab397fe))
+- *(grpc)* Allow getting first backtrace - ([a9519b7](https://github.com/obeli-sk/obelisk/commit/a9519b735fbcb6619b14b7608fff22f1313ab9ed))
+- *(grpc)* [**breaking**] Add `temporarily_` to `failed` and `timed_out` - ([ac2ba90](https://github.com/obeli-sk/obelisk/commit/ac2ba90f28a639422b96659f776f1699f5775ea1))
+- *(grpc,db)* Rename `http_client_trace` to `http_client_traces` - ([48f2a1e](https://github.com/obeli-sk/obelisk/commit/48f2a1ee6fad3c67a16b33fce369e9fba24c2efc))
+- *(logging)* Change grpc failure logging level to debug - ([798105b](https://github.com/obeli-sk/obelisk/commit/798105b4240358ac86c98fc0b72108ba9853379e))
+- *(webui)* Move serialized JSON tree to `json_tree` - ([c3b020e](https://github.com/obeli-sk/obelisk/commit/c3b020e97dbb650fe831395cf9441bae0ce34d33))
+- *(webui)* Add `BusyIntervalStatus` - ([d95ecf2](https://github.com/obeli-sk/obelisk/commit/d95ecf2d0bae7431f797913ed7a5f0705f7cb348))
+- *(webui)* Extract the effect hook in tracing - ([35c7849](https://github.com/obeli-sk/obelisk/commit/35c784908ec27f2752ce8b95ebbfbfcb764fad28))
+
+
 ## [0.18.2](https://github.com/obeli-sk/obelisk/compare/v0.18.1...v0.18.2)
 
 ### ⛰️ Features
