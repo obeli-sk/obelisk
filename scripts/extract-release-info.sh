@@ -14,29 +14,10 @@ fi
 
 VERSION="$1"
 
-# 1. Find the START line number.
-START_LINE=$(grep -n "^## \[$VERSION\]" CHANGELOG.md | head -n 1 | cut -d ':' -f 1) || true
+START_LINE=$(awk -v version="$VERSION" '$0 ~ "^## \\[" version "\\]" {print NR}' CHANGELOG.md)
 
-# Check if the version was found.
-if [ -z "$START_LINE" ]; then
-  # Version not found in CHANGELOG.md
-  exit
-fi
-START_LINE=$((START_LINE + 2))
+# END_LINE=$(tail -n +$((START_LINE + 1)) CHANGELOG.md | awk '/^## /{print NR; exit}')
+END_LINE=$(awk -v start="$((START_LINE + 1))" 'NR >= start && /^## / {print NR; exit}' CHANGELOG.md)
 
-# 2. Find the END line number (the *next* line starting with "## ").
-#    Use sed to print from START_LINE + 2 to the end, then grep to find the next "## ".
-END_LINE=$(sed -n "$((START_LINE + 2)),\$p" CHANGELOG.md | grep -n -m 1 "^## " | cut -d ':' -f 1)
-
-# 3. Extract the section using sed.
-if [ -z "$END_LINE" ]; then
-  # If END_LINE is empty, it's the last section.
-  sed -n "${START_LINE},\$p" CHANGELOG.md
-else
-    #Adjust end line to be relative.
-
-  ADJUSTED_END_LINE=$((END_LINE + START_LINE))
-
-  # Print from START_LINE to ADJUSTED_END_LINE-1 (exclusive of the next header).
-  sed -n "${START_LINE},${ADJUSTED_END_LINE}p" CHANGELOG.md
-fi
+# tail -n +$((START_LINE + 2)) CHANGELOG.md | head -n $((END_LINE - 2))
+sed -n "$((START_LINE + 1)),$((END_LINE - 1))p" CHANGELOG.md
