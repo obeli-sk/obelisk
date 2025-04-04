@@ -297,15 +297,15 @@ wit-component = "0.228.0"
 wit-bindgen = "0.41.0"
 
 # otlp
-opentelemetry = "0.28.0"
-opentelemetry_sdk = { version = "0.28.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.28.0", features = [
+opentelemetry = "0.29.1"
+opentelemetry_sdk = { version = "0.29.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.29.0", features = [
     "tls",
     "tls-roots",
     "grpc-tonic",
 ] }
-opentelemetry-semantic-conventions = "0.28.0"
-tracing-opentelemetry = "0.29"
+opentelemetry-semantic-conventions = "0.29.0"
+tracing-opentelemetry = "0.30"
 
 [patch.crates-io]
 getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" } # madsim
