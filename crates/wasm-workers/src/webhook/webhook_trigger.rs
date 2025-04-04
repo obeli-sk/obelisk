@@ -7,8 +7,8 @@ use crate::std_output_stream::{LogStream, StdOutput};
 use crate::WasmFileError;
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
-    AppendRequest, ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
-    HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
+    AppendRequest, BacktraceInfo, ClientError, CreateRequest, DbConnection, DbError, DbPool,
+    ExecutionEventInner, HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
 };
 use concepts::time::ClockFn;
 use concepts::{
@@ -147,10 +147,16 @@ impl WebhookEndpointCompiled {
                               params: &[Val],
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
+                            let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
+                            let wasm_backtrace = if wasm_backtrace.frames().is_empty() {
+                                None
+                            } else {
+                                Some(concepts::storage::WasmBacktrace::from(wasm_backtrace))
+                            };
                             Box::new(async move {
                                 Ok(store_ctx
                                     .data_mut()
-                                    .call_imported_fn(ffqn, params, results)
+                                    .call_imported_fn(ffqn, params, results, wasm_backtrace)
                                     .await?)
                             })
                         }
@@ -405,9 +411,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
         ffqn: FunctionFqn,
         params: &[Val],
         results: &mut [Val],
+        wasm_backtrace: Option<concepts::storage::WasmBacktrace>,
     ) -> Result<(), WebhookEndpointFunctionError> {
         debug!(?params, "call_imported_fn start");
-        if let Some(package_name) = ffqn.ifc_fqn.package_strip_extension_suffix() {
+        let (db_connection, version_min_including, version_max_excluding) = if let Some(
+            package_name,
+        ) =
+            ffqn.ifc_fqn.package_strip_extension_suffix()
+        {
             let ifc_fqn = IfcFqnName::from_parts(
                 ffqn.ifc_fqn.namespace(),
                 package_name,
@@ -499,6 +510,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                     scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
                 };
                 let db_connection = self.db_pool.connection();
+                let version_min_including = version.0;
                 let version = db_connection
                     .append_batch_create_new_execution(
                         created_at,
@@ -508,9 +520,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                         vec![create_child_req],
                     )
                     .await?;
-                self.version = Some(version);
+                self.version = Some(version.clone());
                 results[0] = execution_id_into_val(&new_execution_id);
-                Ok(())
+                (db_connection, version_min_including, version.0)
             } else {
                 error!("unrecognized extension function {ffqn}");
                 return Err(WebhookEndpointFunctionError::UncategorizedError(
@@ -582,12 +594,15 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 scheduled_by: None,
             };
             let db_connection = self.db_pool.connection();
+            let version_min_including = version.0;
+            let appended = vec![req_join_set_created, req_child_exec, req_join_next];
+            let version_max_excluding = version_min_including + 3; // obvious from line above
             let version = db_connection
                 .append_batch_create_new_execution(
                     created_at,
-                    vec![req_join_set_created, req_child_exec, req_join_next],
+                    appended,
                     ExecutionId::TopLevel(self.execution_id),
-                    version.clone(),
+                    version,
                     vec![req_create_child],
                 )
                 .await?;
@@ -618,8 +633,24 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 results[idx] = item.as_val();
             }
             trace!(?params, ?results, "call_imported_fn finish");
-            Ok(())
+            (db_connection, version_min_including, version_max_excluding)
+        };
+
+        if let Some(wasm_backtrace) = wasm_backtrace {
+            if let Err(err) = db_connection
+                .append_backtrace(BacktraceInfo {
+                    execution_id: ExecutionId::TopLevel(self.execution_id.clone()),
+                    component_id: self.component_id.clone(),
+                    version_min_including: Version::new(version_min_including),
+                    version_max_excluding: Version::new(version_max_excluding),
+                    wasm_backtrace,
+                })
+                .await
+            {
+                debug!("Ignoring error while appending backtrace: {err:?}");
+            }
         }
+        Ok(())
     }
 
     fn add_to_linker(
