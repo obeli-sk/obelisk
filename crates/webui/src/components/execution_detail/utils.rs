@@ -96,7 +96,13 @@ pub fn event_to_detail(
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
             event: Some(execution_event::history_event::Event::JoinSetCreated(inner_event)),
         }) => html! {
-            <HistoryJoinSetCreatedEvent event={inner_event.clone()} version={event.version} {is_selected}/>
+            <HistoryJoinSetCreatedEvent
+                event={inner_event.clone()}
+                version={event.version}
+                {is_selected}
+                execution_id={execution_id.clone()}
+                backtrace_id={event.backtrace_id}
+                />
         },
         execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
             event: Some(execution_event::history_event::Event::JoinSetRequest(join_set_request)),

@@ -1,8 +1,13 @@
 use crate::{
+    app::{BacktraceVersions, Route},
     components::execution_detail::tree_component::TreeComponent,
-    grpc::{grpc_client, version::VersionType},
+    grpc::{
+        grpc_client::{self, ExecutionId},
+        version::VersionType,
+    },
 };
 use yew::prelude::*;
+use yew_router::prelude::Link;
 use yewprint::{
     id_tree::{InsertBehavior, Node, TreeBuilder},
     Icon, NodeData, TreeData,
@@ -13,6 +18,8 @@ pub struct HistoryJoinSetCreatedEventProps {
     pub event: grpc_client::execution_event::history_event::JoinSetCreated,
     pub version: VersionType,
     pub is_selected: bool,
+    pub execution_id: ExecutionId,
+    pub backtrace_id: Option<VersionType>,
 }
 
 impl HistoryJoinSetCreatedEventProps {
@@ -23,8 +30,13 @@ impl HistoryJoinSetCreatedEventProps {
             .unwrap();
 
         // Add node for JoinSet ID
-        if let Some(join_set_id) = &self.event.join_set_id {
-            tree.insert(
+        let join_set_id = &self
+            .event
+            .join_set_id
+            .as_ref()
+            .expect("join_set_id must be sent");
+        let join_set_created_node_id = tree
+            .insert(
                 Node::new(NodeData {
                     icon: Icon::History,
                     label: html! {
@@ -35,13 +47,29 @@ impl HistoryJoinSetCreatedEventProps {
                             {"`"}
                         </>
                     },
+                    has_caret: self.backtrace_id.is_some(),
                     is_selected: self.is_selected,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&root_id),
             )
             .unwrap();
-            // TODO: Add closing strategy when cancellation is supported.
+        // TODO: Add closing strategy when cancellation is supported.
+
+        if let Some(backtrace_id) = self.backtrace_id {
+            tree.insert(
+                Node::new(NodeData {
+                    icon: Icon::Flows,
+                    label: html! {
+                        <Link<Route> to={Route::ExecutionDebuggerWithVersions { execution_id: self.execution_id.clone(), versions: BacktraceVersions::from(backtrace_id) } }>
+                            {"Backtrace"}
+                        </Link<Route>>
+                    },
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&join_set_created_node_id),
+            )
+            .unwrap();
         }
 
         TreeData::from(tree)
