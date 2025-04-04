@@ -1192,6 +1192,7 @@ pub mod prefixed_ulid {
     const EXECUTION_ID_INFIX: char = '.';
     const EXECUTION_ID_JOIN_SET_INFIX: char = '_';
     const EXECUTION_ID_START_IDX: u64 = 1;
+    pub const JOIN_SET_START_IDX: u64 = 1;
 
     #[derive(Debug, thiserror::Error)]
     pub enum ExecutionIdParseError {

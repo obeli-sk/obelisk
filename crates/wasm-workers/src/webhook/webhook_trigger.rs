@@ -5,7 +5,7 @@ use crate::host_exports::{
 };
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::WasmFileError;
-use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel};
+use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
     AppendRequest, ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
     HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
@@ -353,8 +353,7 @@ struct WebhookEndpointCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
     execution_id: ExecutionIdTopLevel,
-    next_child_execution_id: ExecutionIdDerived,
-    join_set_id_direct: JoinSetId,
+    next_join_set_idx: u64,
     version: Option<Version>,
     component_logger: ComponentLogger,
     phantom_data: PhantomData<DB>,
@@ -373,12 +372,6 @@ enum WebhookEndpointFunctionError {
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
-    fn next_child_id(&mut self) -> ExecutionIdDerived {
-        let mut incremented = self.next_child_execution_id.get_incremented();
-        std::mem::swap(&mut self.next_child_execution_id, &mut incremented);
-        incremented // return the old value
-    }
-
     // Create new execution if this is the first call of the request/response cycle
     async fn get_version(&mut self) -> Result<Version, DbError> {
         if let Some(found) = &self.version {
@@ -529,7 +522,15 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             let version = self.get_version().await?;
             let span = Span::current();
             span.record("version", tracing::field::display(&version));
-            let child_execution_id = self.next_child_id();
+            let join_set_id_direct = JoinSetId::new(
+                JoinSetKind::OneOff,
+                StrVariant::from(self.next_join_set_idx.to_string()),
+            )
+            .expect("numeric names must be allowed");
+            self.next_join_set_idx += 1;
+            // Create oneoff execution id: next_join_set_idx_1
+            let child_execution_id =
+                ExecutionId::TopLevel(self.execution_id.clone()).next_level(&join_set_id_direct);
             let created_at = self.clock_fn.now();
             let Some((_function_metadata, component_id, import_retry_config)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
@@ -541,7 +542,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
-                        join_set_id: self.join_set_id_direct.clone(),
+                        join_set_id: join_set_id_direct.clone(),
                         closing_strategy: ClosingStrategy::Complete,
                     },
                 },
@@ -550,7 +551,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
-                        join_set_id: self.join_set_id_direct.clone(),
+                        join_set_id: join_set_id_direct.clone(),
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
                         },
@@ -561,7 +562,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinNext {
-                        join_set_id: self.join_set_id_direct.clone(),
+                        join_set_id: join_set_id_direct.clone(),
                         run_expires_at: created_at, // does not matter what the pending state is.
                         closing: false,
                     },
@@ -572,10 +573,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
                 execution_id: ExecutionId::Derived(child_execution_id.clone()),
                 ffqn,
                 params: Params::from_wasmtime(Arc::from(params)),
-                parent: Some((
-                    ExecutionId::TopLevel(self.execution_id),
-                    self.join_set_id_direct.clone(),
-                )),
+                parent: Some((ExecutionId::TopLevel(self.execution_id), join_set_id_direct)),
                 metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
                 scheduled_at: created_at,
                 max_retries: import_retry_config.max_retries,
@@ -597,7 +595,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
 
             let res = db_connection
                 .wait_for_finished_result(
-                    &ExecutionId::Derived(child_execution_id.clone()),
+                    &ExecutionId::Derived(child_execution_id),
                     None, /* TODO timeouts */
                 )
                 .await;
@@ -667,7 +665,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
         }
         let wasi_ctx = wasi_ctx.build();
         // All child executions are part of the same join set.
-        let join_set_id_direct = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         let ctx = WebhookEndpointCtx {
             clock_fn,
             db_pool,
@@ -677,9 +674,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             http_ctx: WasiHttpCtx::new(),
             version: None,
             component_id,
-            next_child_execution_id: ExecutionId::TopLevel(execution_id)
-                .next_level(&join_set_id_direct),
-            join_set_id_direct,
+            next_join_set_idx: JOIN_SET_START_IDX,
             execution_id,
             component_logger: ComponentLogger { span: request_span },
             phantom_data: PhantomData,
