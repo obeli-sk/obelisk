@@ -59,7 +59,7 @@ impl ComponentLocation {
             ComponentLocation::Path(wasm_path) => {
                 let wasm_path = wasm_path
                     .canonicalize()
-                    .with_context(|| format!("cannot canonicalize file `{wasm_path:?}`"))?;
+                    .with_context(|| format!("cannot find or canonicalize file `{wasm_path:?}`"))?;
                 // Future optimization: If the sha256 is in the config file and wasm is already in the cache dir, do not recalculate it.
                 let content_digest = calculate_sha256_file(&wasm_path)
                     .await
