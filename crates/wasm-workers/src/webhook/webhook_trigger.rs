@@ -639,7 +639,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
         if let Some(wasm_backtrace) = wasm_backtrace {
             if let Err(err) = db_connection
                 .append_backtrace(BacktraceInfo {
-                    execution_id: ExecutionId::TopLevel(self.execution_id.clone()),
+                    execution_id: ExecutionId::TopLevel(self.execution_id),
                     component_id: self.component_id.clone(),
                     version_min_including: Version::new(version_min_including),
                     version_max_excluding: Version::new(version_max_excluding),
