@@ -1,4 +1,8 @@
-# Obelisk
+<h1>
+  <a href="https://obeli.sk">
+    <img src="assets/images/logo-small.png" alt="Logo" style="vertical-align: middle; height: 40px;"> Obelisk
+  </a>
+</h1>
 A deterministic workflow engine built on the WASM Component Model.
 
 > [!WARNING]
@@ -12,20 +16,18 @@ and webhook endpoints, persisting steps in execution log using SQLite.
   - **gRPC API**: Programmatic interaction.
   - **Web UI**: View executions and submit function executions.
 
-## How It Works
+## Core Principles
+- **Replayable Workflows**: Deterministic execution ensures reliable recovery, debugging, and auditing.
+- **Resilient Activities**: Automatic retries on errors and timeouts, with persistent input and results.
 - **Schema-first design with end-to-end type safety**:
 Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 [WIT IDL](https://component-model.bytecodealliance.org/design/wit.html) for generating API bindings.
-- **Resilient Activities**: Automatic retries on errors and timeouts, with persistent input and results.
-- **Replayable Workflows**: Deterministic execution ensures reliable recovery, debugging, and auditing.
 
 ## Use Cases
-- **Periodic Tasks**: Automate checks, send emails, or suspend projects.
+- **Periodic Tasks**: Automate periodic checks with complex logic using regular code.
 - **Background Jobs**: Offload tasks with built-in error handling and retries.
-- **Batch jobs**: Manage large-scale tasks like deployments.
-- **End-to-End Testing**: Automate tests with detailed logs.
-- **Webhook Integrations**: Trigger workflows from external events (e.g., GitHub).
-- **Running AI Generated Code**: Code is sandboxed and every step can be audited.
+- **Batch jobs**: Manage large-scale tasks like faas deployments.
+- **End-to-End Testing**: Automate tests with detailed logs of each step.
 
 ## Key Features
 ### **Activities**
@@ -40,7 +42,7 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 - Fully replayable with persistent execution log.
 - Executed in a WASM sandbox.
 - Automatic retries on failures.
-- Support for spawning child executions in join sets and structured concurrency.
+- Support for spawning child executions with structured concurrency.
 - Distributed sagas (planned).
 
 ### **Webhook Endpoints**
@@ -56,7 +58,7 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 
 The [Stargazers](https://github.com/obeli-sk/demo-stargazers) app features:
 - A webhook listening to GitHub star events.
-- Activities for interacting with Turso DB, ChatGPT, and GitHub.
+- Activities for interacting with Turso DB, OpenAI, and GitHub.
 - A workflow orchestrating the activities.
 
 
@@ -92,16 +94,7 @@ nix run github:obeli-sk/obelisk/latest
 
 ## Getting Started
 
-### Create Components from a Template
-See [obelisk-templates](https://github.com/obeli-sk/obelisk-templates/).
-
-### Configuration
-Check [obelisk.toml](obelisk.toml) for configuration details.
-
-### Generate a Sample Config
-```sh
-obelisk server generate-config
-```
+Check out the [Getting Started Guide](https://obeli.sk/docs/latest/getting-started/) for details.
 
 ### Start the Server
 ```sh

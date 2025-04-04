@@ -5,7 +5,7 @@ use crate::host_exports::{
 };
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::WasmFileError;
-use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_START_IDX};
+use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
     AppendRequest, ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
     HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
@@ -530,7 +530,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             self.next_join_set_idx += 1;
             // Create oneoff execution id: next_join_set_idx_1
             let child_execution_id =
-                ExecutionId::TopLevel(self.execution_id.clone()).next_level(&join_set_id_direct);
+                ExecutionId::TopLevel(self.execution_id).next_level(&join_set_id_direct);
             let created_at = self.clock_fn.now();
             let Some((_function_metadata, component_id, import_retry_config)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
