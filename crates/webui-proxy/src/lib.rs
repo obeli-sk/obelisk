@@ -27,6 +27,11 @@ async fn main(mut server_req: Request<IncomingBody>, responder: Responder) -> Fi
             let content_type = "text/css";
             write_static_response(content, content_type, responder).await
         }
+        "/syntect.css" => {
+            let content = get_syntect_css();
+            let content_type = "text/css";
+            write_static_response(content, content_type, responder).await
+        }
         api_prefixed_path if api_prefixed_path.starts_with("/api") => {
             // Remove /api prefix
             let target_url =
@@ -148,6 +153,11 @@ fn get_styles_css() -> &'static [u8] {
     include_bytes!("../../webui/dist/styles.css")
 }
 
+#[cfg(not(debug_assertions))]
+fn get_syntect_css() -> &'static [u8] {
+    include_bytes!("../../webui/dist/syntect.css")
+}
+
 // debug: Include dummy file content
 #[cfg(debug_assertions)]
 fn get_index() -> &'static [u8] {
@@ -171,5 +181,10 @@ fn get_blueprint_css() -> &'static [u8] {
 
 #[cfg(debug_assertions)]
 fn get_styles_css() -> &'static [u8] {
+    unreachable!("embedding is skipped in debug mode")
+}
+
+#[cfg(debug_assertions)]
+fn get_syntect_css() -> &'static [u8] {
     unreachable!("embedding is skipped in debug mode")
 }
