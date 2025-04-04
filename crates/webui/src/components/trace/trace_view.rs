@@ -476,12 +476,13 @@ fn compute_root_trace(
             | execution_event::Event::Unlocked(..)
             | execution_event::Event::TemporarilyTimedOut(..)
             | execution_event::Event::Finished(..) => {
-                let (locked_at, _) = current_locked_at
+                let started_at = current_locked_at
                     .take()
-                    .expect("must have been locked at this point");
+                    .map(|(locked_at, _)| locked_at)
+                    .unwrap_or(execution_scheduled_at); // webhooks have no locks
                 let finished_at =
                     DateTime::from(event.created_at.expect("event.created_at is always sent"));
-                let duration = (finished_at - locked_at)
+                let duration = (finished_at - started_at)
                     .to_std()
                     .expect("started_at must be <= finished_at");
                 let status = match event_inner {
@@ -503,7 +504,7 @@ fn compute_root_trace(
                 };
                 let title = format!("{status} in {duration:?}");
                 busy.push(BusyInterval {
-                    started_at: locked_at,
+                    started_at,
                     finished_at: Some(finished_at),
                     title: Some(title),
                     status,
