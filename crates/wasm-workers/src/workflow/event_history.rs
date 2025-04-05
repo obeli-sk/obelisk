@@ -922,7 +922,9 @@ impl<C: ClockFn> EventHistory<C> {
             EventCall::CreateJoinSet {
                 join_set_id,
                 closing_strategy,
+                wasm_backtrace,
             } => {
+                // a non-cacheable event: Flush the cache, write the event and persist_backtrace_blocking
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
                 let event = HistoryEvent::JoinSetCreate {
                     join_set_id,
@@ -935,13 +937,29 @@ impl<C: ClockFn> EventHistory<C> {
                 };
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
-                *version = db_connection
-                    .append(self.execution_id.clone(), version.clone(), join_set)
-                    .await?;
+                *version = {
+                    let next_version = db_connection
+                        .append(self.execution_id.clone(), version.clone(), join_set)
+                        .await?;
+
+                    self.persist_backtrace_blocking(
+                        db_connection,
+                        version,
+                        &next_version,
+                        wasm_backtrace,
+                    )
+                    .await;
+                    next_version
+                };
                 Ok(history_events)
             }
 
-            EventCall::Persist { value, kind } => {
+            EventCall::Persist {
+                value,
+                kind,
+                wasm_backtrace,
+            } => {
+                // Non-cacheable event.
                 let event = HistoryEvent::Persist { value, kind };
                 let history_events = vec![event.clone()];
                 let join_set = AppendRequest {
@@ -950,9 +968,19 @@ impl<C: ClockFn> EventHistory<C> {
                 };
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
-                *version = db_connection
-                    .append(self.execution_id.clone(), version.clone(), join_set)
-                    .await?;
+                *version = {
+                    let next_version = db_connection
+                        .append(self.execution_id.clone(), version.clone(), join_set)
+                        .await?;
+                    self.persist_backtrace_blocking(
+                        db_connection,
+                        version,
+                        &next_version,
+                        wasm_backtrace,
+                    )
+                    .await;
+                    next_version
+                };
                 Ok(history_events)
             }
 
@@ -963,6 +991,7 @@ impl<C: ClockFn> EventHistory<C> {
                 params,
                 wasm_backtrace,
             } => {
+                // Cacheable event.
                 debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id: join_set_id.clone(),
@@ -1058,6 +1087,7 @@ impl<C: ClockFn> EventHistory<C> {
                 params,
                 wasm_backtrace,
             } => {
+                // Cacheable event.
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
                     scheduled_at,
@@ -1150,6 +1180,7 @@ impl<C: ClockFn> EventHistory<C> {
                 closing,
                 wasm_backtrace,
             } => {
+                // Non-cacheable event.
                 debug!(%join_set_id, "BlockingChildJoinNext: Flushing and appending JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
@@ -1163,24 +1194,19 @@ impl<C: ClockFn> EventHistory<C> {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                let version_min_including = version.clone();
-                *version = db_connection
-                    .append(self.execution_id.clone(), version.clone(), join_next)
-                    .await?;
-                if let Some(wasm_backtrace) = wasm_backtrace {
-                    if let Err(err) = db_connection
-                        .append_backtrace(BacktraceInfo {
-                            execution_id: self.execution_id.clone(),
-                            component_id: self.component_id.clone(),
-                            version_min_including,
-                            version_max_excluding: version.clone(),
-                            wasm_backtrace,
-                        })
-                        .await
-                    {
-                        debug!("Ignoring error while appending backtrace: {err:?}");
-                    }
-                }
+                *version = {
+                    let next_version = db_connection
+                        .append(self.execution_id.clone(), version.clone(), join_next)
+                        .await?;
+                    self.persist_backtrace_blocking(
+                        db_connection,
+                        version,
+                        &next_version,
+                        wasm_backtrace,
+                    )
+                    .await;
+                    next_version
+                };
                 Ok(history_events)
             }
 
@@ -1191,6 +1217,7 @@ impl<C: ClockFn> EventHistory<C> {
                 params,
                 wasm_backtrace,
             } => {
+                // Non-cacheable event.
                 debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Flushing and appending JoinSet,ChildExecutionRequest,JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
@@ -1251,31 +1278,25 @@ impl<C: ClockFn> EventHistory<C> {
                     component_id,
                     scheduled_by: None,
                 };
-                let version_min_including = version.clone();
-                *version = db_connection
-                    .append_batch_create_new_execution(
-                        called_at,
-                        vec![join_set, child_exec_req, join_next],
-                        self.execution_id.clone(),
-                        version.clone(),
-                        vec![child],
+                *version = {
+                    let next_version = db_connection
+                        .append_batch_create_new_execution(
+                            called_at,
+                            vec![join_set, child_exec_req, join_next],
+                            self.execution_id.clone(),
+                            version.clone(),
+                            vec![child],
+                        )
+                        .await?;
+                    self.persist_backtrace_blocking(
+                        db_connection,
+                        version,
+                        &next_version,
+                        wasm_backtrace,
                     )
-                    .await?;
-
-                if let Some(wasm_backtrace) = wasm_backtrace {
-                    if let Err(err) = db_connection
-                        .append_backtrace(BacktraceInfo {
-                            execution_id: self.execution_id.clone(),
-                            component_id: self.component_id.clone(),
-                            version_min_including,
-                            version_max_excluding: version.clone(),
-                            wasm_backtrace,
-                        })
-                        .await
-                    {
-                        debug!("Ignoring error while appending backtrace: {err:?}");
-                    }
-                }
+                    .await;
+                    next_version
+                };
 
                 Ok(history_events)
             }
@@ -1284,7 +1305,9 @@ impl<C: ClockFn> EventHistory<C> {
                 join_set_id,
                 delay_id,
                 expires_at_if_new,
+                wasm_backtrace,
             } => {
+                // Non-cacheable event.
                 debug!(%delay_id, %join_set_id, "BlockingDelayRequest: Flushing and appending JoinSet,DelayRequest,JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
@@ -1321,15 +1344,57 @@ impl<C: ClockFn> EventHistory<C> {
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
 
-                *version = db_connection
-                    .append_batch(
-                        called_at,
-                        vec![join_set, delay_req, join_next],
-                        self.execution_id.clone(),
-                        version.clone(),
+                *version = {
+                    let next_version = db_connection
+                        .append_batch(
+                            called_at,
+                            vec![join_set, delay_req, join_next],
+                            self.execution_id.clone(),
+                            version.clone(),
+                        )
+                        .await?;
+                    self.persist_backtrace_blocking(
+                        db_connection,
+                        version,
+                        &next_version,
+                        wasm_backtrace,
                     )
-                    .await?;
+                    .await;
+                    next_version
+                };
                 Ok(history_events)
+            }
+        }
+    }
+
+    async fn persist_backtrace_blocking<DB: DbConnection>(
+        &mut self,
+        db_connection: &DB,
+        version: &Version,
+        next_version: &Version,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+    ) {
+        if let Some(wasm_backtrace) = wasm_backtrace {
+            assert_eq!(
+                self.non_blocking_event_batch
+                    .as_ref()
+                    .map(std::vec::Vec::len)
+                    .unwrap_or_default(),
+                0,
+                "persist_backtrace_blocking must be called only after flushing `non_blocking_event_batch`"
+            );
+
+            if let Err(err) = db_connection
+                .append_backtrace(BacktraceInfo {
+                    execution_id: self.execution_id.clone(),
+                    component_id: self.component_id.clone(),
+                    version_min_including: version.clone(),
+                    version_max_excluding: next_version.clone(),
+                    wasm_backtrace,
+                })
+                .await
+            {
+                debug!("Ignoring error while appending backtrace: {err:?}");
             }
         }
     }
@@ -1368,6 +1433,8 @@ pub(crate) enum EventCall {
     CreateJoinSet {
         join_set_id: JoinSetId,
         closing_strategy: ClosingStrategy,
+        #[debug(skip)]
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     StartAsync {
         ffqn: FunctionFqn,
@@ -1405,11 +1472,15 @@ pub(crate) enum EventCall {
         join_set_id: JoinSetId,
         delay_id: DelayId,
         expires_at_if_new: DateTime<Utc>,
+        #[debug(skip)]
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     Persist {
         #[debug(skip)]
         value: Vec<u8>,
         kind: PersistKind,
+        #[debug(skip)]
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     },
 }
 
@@ -1492,7 +1563,7 @@ impl EventCall {
                     join_set_id: join_set_id.clone(),
                 }]
             }
-            EventCall::Persist { value, kind } => {
+            EventCall::Persist { value, kind, .. } => {
                 vec![EventHistoryKey::Persist {
                     value: value.clone(),
                     kind: *kind,
@@ -1671,6 +1742,7 @@ mod tests {
                         EventCall::CreateJoinSet {
                             join_set_id: join_set_id.clone(),
                             closing_strategy: ClosingStrategy::Complete,
+                            wasm_backtrace: None,
                         },
                         &db_pool.connection(),
                         &mut version,
@@ -1781,6 +1853,7 @@ mod tests {
                     EventCall::CreateJoinSet {
                         join_set_id: join_set_id.clone(),
                         closing_strategy: ClosingStrategy::Complete,
+                        wasm_backtrace: None,
                     },
                     &db_pool.connection(),
                     version,
@@ -1950,6 +2023,7 @@ mod tests {
                     EventCall::CreateJoinSet {
                         join_set_id: join_set_id.clone(),
                         closing_strategy: ClosingStrategy::Complete,
+                        wasm_backtrace: None,
                     },
                     &db_pool.connection(),
                     version,

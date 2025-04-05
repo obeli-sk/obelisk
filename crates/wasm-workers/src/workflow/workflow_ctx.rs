@@ -2,13 +2,15 @@ use super::event_history::{ApplyError, ChildReturnValue, EventCall, EventHistory
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::component_logger::{log_activities, ComponentLogger};
 use crate::host_exports::{
-    val_to_join_set_id, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
+    val_to_join_set_id, DurationEnum, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
 };
 use crate::{host_exports, WasmFileError};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
-use concepts::storage::{self, DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
+use concepts::storage::{
+    self, DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version, WasmBacktrace,
+};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
@@ -131,6 +133,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     fn_registry: Arc<dyn FunctionRegistry>,
     component_logger: ComponentLogger,
     pub(crate) resource_table: wasmtime::component::ResourceTable,
+    backtrace: Option<wasmtime::WasmBacktrace>,
     phantom_data: PhantomData<DB>,
 }
 
@@ -365,6 +368,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             fn_registry,
             component_logger: ComponentLogger { span: worker_span },
             resource_table: wasmtime::component::ResourceTable::default(),
+            backtrace: None,
             phantom_data: PhantomData,
         }
     }
@@ -421,6 +425,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     join_set_id,
                     delay_id,
                     expires_at_if_new: self.clock_fn.now() + duration, // FIXME: this can overflow when Duration is converted into TimeDelta
+                    wasm_backtrace: self.backtrace.take().map(WasmBacktrace::from),
                 },
                 &self.db_pool.connection(),
                 &mut self.version,
@@ -462,6 +467,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     EventCall::CreateJoinSet {
                         join_set_id,
                         closing_strategy,
+                        wasm_backtrace: self.backtrace.take().map(WasmBacktrace::from),
                     },
                     &self.db_pool.connection(),
                     &mut self.version,
@@ -480,25 +486,157 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         }
     }
 
+    fn backtrace_from_caller(
+        caller: &wasmtime::StoreContextMut<'_, Self>,
+    ) -> Option<wasmtime::WasmBacktrace> {
+        let backtrace = wasmtime::WasmBacktrace::capture(caller);
+        if backtrace.frames().is_empty() {
+            None
+        } else {
+            Some(backtrace)
+        }
+    }
+
+    #[expect(clippy::too_many_lines)]
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
-        host_exports::obelisk::workflow::workflow_support::add_to_linker(
-            linker,
-            |state: &mut Self| state,
-        )
-        .map_err(|err| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking host activities"),
-            err: err.into(),
-        })?;
+        use host_exports::obelisk::workflow::workflow_support::Host;
         log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
             .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking log activities"),
+                context: StrVariant::Static("linking obelisk::log::log"),
                 err: err.into(),
             })?;
         host_exports::obelisk::types::execution::add_to_linker(linker, |state: &mut Self| state)
             .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking join set resource"),
+                context: StrVariant::Static("linking obelisk::types::execution"),
                 err: err.into(),
             })?;
+
+        let mut inst = linker
+            .instance("obelisk:workflow/workflow-support@1.0.0")
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking obelisk:workflow/workflow-support"),
+                err: err.into(),
+            })?;
+        inst.func_wrap_async(
+            "random-u64",
+            move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                  (arg0, arg1): (u64, u64)| {
+                wasmtime::component::__internal::Box::new(async move {
+                    let backtrace = Self::backtrace_from_caller(&caller);
+                    let host = caller.data_mut();
+                    host.backtrace = backtrace;
+                    let r = Host::random_u64(host, arg0, arg1).await;
+                    host.backtrace = None;
+                    Ok((r?,))
+                })
+            },
+        )
+        .map_err(|err| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking function random-u64"),
+            err: err.into(),
+        })?;
+
+        inst.func_wrap_async(
+            "random-u64-inclusive",
+            move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                  (arg0, arg1): (u64, u64)| {
+                wasmtime::component::__internal::Box::new(async move {
+                    let backtrace = Self::backtrace_from_caller(&caller);
+                    let host = caller.data_mut();
+                    host.backtrace = backtrace;
+                    let r = Host::random_u64_inclusive(host, arg0, arg1).await;
+                    host.backtrace = None;
+                    Ok((r?,))
+                })
+            },
+        )
+        .map_err(|err| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking function random-u64-inclusive"),
+            err: err.into(),
+        })?;
+
+        inst.func_wrap_async(
+            "random-string",
+            move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                  (arg0, arg1): (u16, u16)| {
+                wasmtime::component::__internal::Box::new(async move {
+                    let backtrace = Self::backtrace_from_caller(&caller);
+                    let host = caller.data_mut();
+                    host.backtrace = backtrace;
+                    let r = Host::random_string(host, arg0, arg1).await;
+                    host.backtrace = None;
+                    Ok((r?,))
+                })
+            },
+        )
+        .map_err(|err| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking function random-string"),
+            err: err.into(),
+        })?;
+
+        inst.func_wrap_async(
+            "sleep",
+            move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                  (arg0,): (DurationEnum,)| {
+                wasmtime::component::__internal::Box::new(async move {
+                    let backtrace = Self::backtrace_from_caller(&caller);
+                    let host = caller.data_mut();
+                    host.backtrace = backtrace;
+                    let r = Host::sleep(host, arg0).await;
+                    host.backtrace = None;
+                    r
+                })
+            },
+        )
+        .map_err(|err| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking function sleep"),
+            err: err.into(),
+        })?;
+
+        inst.func_wrap_async(
+            "new-join-set-named",
+            move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                  (arg0, arg1): (
+                String,
+                host_exports::obelisk::workflow::workflow_support::ClosingStrategy,
+            )| {
+                wasmtime::component::__internal::Box::new(async move {
+                    let backtrace = Self::backtrace_from_caller(&caller);
+                    let host = caller.data_mut();
+                    host.backtrace = backtrace;
+                    let r = Host::new_join_set_named(host, arg0, arg1).await;
+                    host.backtrace = None;
+                    Ok((r?,))
+                })
+            },
+        )
+        .map_err(|err| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking function new-join-set-named"),
+            err: err.into(),
+        })?;
+
+        inst
+            .func_wrap_async(
+                "new-join-set-generated",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                      (arg0,): (
+                    host_exports::obelisk::workflow::workflow_support::ClosingStrategy,
+                )| {
+                    wasmtime::component::__internal::Box::new(async move {
+                        let backtrace = Self::backtrace_from_caller(&caller);
+                        let host = caller.data_mut();
+                        host.backtrace = backtrace;
+                        let r = Host::new_join_set_generated(host, arg0).await;
+                        host.backtrace = None;
+                        Ok((r?,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking function new-join-set-generated"),
+                err: err.into(),
+            })?;
+
         Ok(())
     }
 
@@ -639,6 +777,7 @@ mod workflow_support {
                     EventCall::Persist {
                         value,
                         kind: PersistKind::RandomU64 { min, max_inclusive },
+                        wasm_backtrace: self.backtrace.take().map(storage::WasmBacktrace::from),
                     },
                     &self.db_pool.connection(),
                     &mut self.version,
@@ -673,6 +812,7 @@ mod workflow_support {
                             min_length: u64::from(min_length),
                             max_length_exclusive: u64::from(max_length_exclusive),
                         },
+                        wasm_backtrace: self.backtrace.take().map(storage::WasmBacktrace::from),
                     },
                     &self.db_pool.connection(),
                     &mut self.version,
