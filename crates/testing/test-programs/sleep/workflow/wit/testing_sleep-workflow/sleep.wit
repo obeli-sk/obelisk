@@ -8,4 +8,5 @@ interface workflow {
     sleep-activity: func(duration: duration);
     sleep-activity-submit: func(duration: duration) -> execution-id;
     reschedule: func(duration: duration, iterations: u8);
+    sleep-random: func(min-millis: u64, max-millis-inclusive: u64);
 }

@@ -32,4 +32,11 @@ impl Guest for Component {
             workflow_ext::reschedule_schedule(ScheduleAt::In(duration), duration, iterations - 1);
         }
     }
+
+    fn sleep_random(min_millis: u64, max_millis_inclusive: u64) {
+        let random_millis =
+            workflow_support::random_u64_inclusive(min_millis, max_millis_inclusive);
+        let random_duration = DurationEnum::Milliseconds(random_millis);
+        workflow_support::sleep(random_duration);
+    }
 }
