@@ -3,6 +3,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.1](https://github.com/obeli-sk/obelisk/compare/v0.19.0...v0.19.1)
+
+### ⛰️ Features
+
+- *(toml)* Allow specifying backtrace sources for webhooks - ([d0563fa](https://github.com/obeli-sk/obelisk/commit/d0563fa318303c215ea55d905fed54d8e336de60))
+- *(webhook)* Capture and persist backtrace for direct and scheduled child executions - ([29dac20](https://github.com/obeli-sk/obelisk/commit/29dac20d5ade05f3f599332296dbf5a824540273))
+- *(workflow)* Persist backtrace for all `workflow-support` functions - ([30849a6](https://github.com/obeli-sk/obelisk/commit/30849a62c61cb336266ef8d7d29c5b48cd008f70))
+
+### 🐛 Bug Fixes
+
+- *(workflow)* Replace panics with errors in host functions - ([923ace7](https://github.com/obeli-sk/obelisk/commit/923ace71749b3cd2abba9783095daf1c663c6dfc))
+- Stop sharing the same one-off join set in webhook - ([7c85d13](https://github.com/obeli-sk/obelisk/commit/7c85d13b64e900307b170a63122e3e08b0e959ad))
+
+### 📚 Documentation
+
+- Update readme, add logo - ([8d302b1](https://github.com/obeli-sk/obelisk/commit/8d302b1687e25304ccffd08b8f585ce1b07eabb7))
+
+
 ## [0.19.0](https://github.com/obeli-sk/obelisk/compare/v0.18.2...v0.19.0)
 
 ### ⛰️ Features
