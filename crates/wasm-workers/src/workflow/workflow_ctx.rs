@@ -734,7 +734,6 @@ mod workflow_support {
         workflow::event_history::ChildReturnValue,
     };
     use concepts::{
-        random_string,
         storage::{self, PersistKind},
         JoinSetId, JoinSetKind, CHARSET_ALPHANUMERIC,
     };
@@ -761,7 +760,11 @@ mod workflow_support {
         host_exports::obelisk::workflow::workflow_support::Host for WorkflowCtx<C, DB, P>
     {
         async fn random_u64(&mut self, min: u64, max_exclusive: u64) -> wasmtime::Result<u64> {
-            self.random_u64_inclusive(min, max_exclusive + 1).await
+            let Some(max_inclusive) = max_exclusive.checked_add(1) else {
+                // Panic in host function would kill the worker task.
+                return Err(wasmtime::Error::msg("integer overflow"));
+            };
+            self.random_u64_inclusive(min, max_inclusive).await
         }
 
         async fn random_u64_inclusive(
@@ -769,7 +772,12 @@ mod workflow_support {
             min: u64,
             max_inclusive: u64,
         ) -> wasmtime::Result<u64> {
-            let value = rand::Rng::gen_range(&mut self.rng, min..=max_inclusive);
+            let range = min..=max_inclusive;
+            if range.is_empty() {
+                // Panic in host function would kill the worker task.
+                return Err(wasmtime::Error::msg("range must not be empty"));
+            }
+            let value = rand::Rng::gen_range(&mut self.rng, range);
             let value = Vec::from(storage::from_u64_to_bytes(value));
             let value = self
                 .event_history
@@ -795,12 +803,24 @@ mod workflow_support {
             min_length: u16,
             max_length_exclusive: u16,
         ) -> wasmtime::Result<String> {
-            let value = random_string(
-                &mut self.rng,
-                min_length,
-                max_length_exclusive,
-                CHARSET_ALPHANUMERIC,
-            );
+            let value: String = {
+                let range = min_length..max_length_exclusive;
+                if range.is_empty() {
+                    // Panic in host function would kill the worker task.
+                    return Err(wasmtime::Error::msg("range must not be empty"));
+                }
+                let length_inclusive = rand::Rng::gen_range(&mut self.rng, range);
+                (0..=length_inclusive)
+                    .map(|_| {
+                        let idx =
+                            rand::Rng::gen_range(&mut self.rng, 0..CHARSET_ALPHANUMERIC.len());
+                        CHARSET_ALPHANUMERIC
+                            .chars()
+                            .nth(idx)
+                            .expect("idx is < charset.len()")
+                    })
+                    .collect()
+            };
             // Persist
             let value = Vec::from_iter(value.bytes());
             let value = self

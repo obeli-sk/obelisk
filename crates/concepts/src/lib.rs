@@ -1302,20 +1302,6 @@ const CHARSET_JOIN_SET_NAME: &str =
 
 pub const CHARSET_ALPHANUMERIC: &str =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-pub fn random_string(
-    rng: &mut rand::rngs::StdRng,
-    min_length: u16,
-    max_length_exclusive: u16,
-    charset: &'static str,
-) -> String {
-    let length_inclusive = rand::Rng::gen_range(rng, min_length..max_length_exclusive);
-    (0..=length_inclusive)
-        .map(|_| {
-            let idx = rand::Rng::gen_range(rng, 0..charset.len());
-            charset.chars().nth(idx).expect("idx is < charset.len()")
-        })
-        .collect()
-}
 
 #[derive(
     Debug,
