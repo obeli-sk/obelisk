@@ -8,6 +8,14 @@ A deterministic workflow engine built on the WASM Component Model.
 > [!WARNING]
 > **Pre-release**: Expect changes in CLI, gRPC, WIT, and database schema.
 
+## Obelisk in Action
+[![Watch the Demo Video](assets/images/screencast.gif)](https://obeli.sk/screencast.webm)
+
+The [Stargazers](https://github.com/obeli-sk/demo-stargazers) app features:
+- A webhook listening to GitHub star events.
+- Activities for interacting with Turso DB, OpenAI, and GitHub.
+- A workflow orchestrating the activities.
+
 ## What's Included
 - **Obelisk Runtime**: A single binary executing deterministic workflows, activities,
 and webhook endpoints, persisting steps in execution log using SQLite.
@@ -52,15 +60,6 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 
 ### **Work Stealing Executor**
 - Concurrency limits and customizable retry handling.
-
-## Obelisk in Action
-![webui animation](assets/images/stargazers-webui.gif "Web UI")
-
-The [Stargazers](https://github.com/obeli-sk/demo-stargazers) app features:
-- A webhook listening to GitHub star events.
-- Activities for interacting with Turso DB, OpenAI, and GitHub.
-- A workflow orchestrating the activities.
-
 
 ## Installation
 ### Supported Platforms
