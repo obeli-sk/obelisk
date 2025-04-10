@@ -177,6 +177,10 @@ impl Engines {
         let mut wasmtime_config = wasmtime::Config::new();
         wasmtime_config.wasm_backtrace_details(backtrace_capture);
         wasmtime_config.epoch_interruption(true);
+        // Make sure the runtime is deterministic when using `simd` or `relaxed_simd`.
+        // https://bytecodealliance.zulipchat.com/#narrow/channel/206238-general/topic/Determinism.20of.20Wasm.20SIMD.20in.20Wasmtime
+        wasmtime_config.cranelift_nan_canonicalization(true);
+        wasmtime_config.relaxed_simd_deterministic(true);
         Self::configure_common(wasmtime_config, config)
     }
 
