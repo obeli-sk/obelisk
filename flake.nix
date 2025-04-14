@@ -124,6 +124,7 @@
               [
                 (pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                 binaryen # wasm-opt
+                protobuf
                 trunk
                 wasm-bindgen-cli
               ];
