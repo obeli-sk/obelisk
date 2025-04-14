@@ -123,6 +123,7 @@
             nativeBuildInputs = with pkgs;
               [
                 (pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+                binaryen # wasm-opt
                 trunk
                 wasm-bindgen-cli
               ];

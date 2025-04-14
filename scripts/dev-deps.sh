@@ -19,12 +19,15 @@ echo "pkg-config $(pkg-config --version)" >> dev-deps.txt
 # protobuf
 protoc --version >> dev-deps.txt
 rustc --version >> dev-deps.txt
-tokio-console --version >> dev-deps.txt
 wasm-tools --version >> dev-deps.txt
 wasmtime --version >> dev-deps.txt
-# webui
-wasm-opt --version >> dev-deps.txt # binarien
-trunk --version >> dev-deps.txt
-wasm-bindgen --version >> dev-deps.txt
+
+# web
+nix develop .#web --command wasm-opt --version >> dev-deps.txt # binaryen
+nix develop .#web --command trunk --version >> dev-deps.txt
+nix develop .#web --command wasm-bindgen --version >> dev-deps.txt
+
 # libc
 ldd --version | head -n 1 >> dev-deps.txt
+
+
