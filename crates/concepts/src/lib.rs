@@ -62,7 +62,7 @@ impl FinishedExecutionError {
     #[must_use]
     pub fn as_pending_state_finished_error(&self) -> PendingStateFinishedError {
         match self {
-            FinishedExecutionError::PermanentTimeout { .. } => PendingStateFinishedError::Timeout,
+            FinishedExecutionError::PermanentTimeout => PendingStateFinishedError::Timeout,
             FinishedExecutionError::UnhandledChildExecutionError { .. } => {
                 PendingStateFinishedError::UnhandledChildExecutionError
             }

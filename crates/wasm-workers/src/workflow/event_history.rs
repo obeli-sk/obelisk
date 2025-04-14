@@ -704,7 +704,7 @@ impl<C: ClockFn> EventHistory<C> {
                                         )))
                                     }
                                     // Transform timeout to WastVal
-                                    Err(FinishedExecutionError::PermanentTimeout { .. }) => {
+                                    Err(FinishedExecutionError::PermanentTimeout) => {
                                         let variant =
                                             WastVal::Variant("permanent-timeout".to_string(), None);
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(

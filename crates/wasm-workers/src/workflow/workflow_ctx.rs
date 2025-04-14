@@ -243,7 +243,7 @@ impl<'a> ImportedFnCall<'a> {
                         )),
                         ffqn: called_ffqn,
                     });
-                };
+                }
                 Ok(ImportedFnCall::AwaitNext {
                     target_ffqn,
                     join_set_id,

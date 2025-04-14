@@ -21,6 +21,7 @@ use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Params, ToSql, Transaction, named_params,
     types::{FromSql, FromSqlError},
 };
+use std::fmt::Write as _;
 use std::{
     cmp::max,
     collections::VecDeque,
@@ -2031,7 +2032,7 @@ impl<S: Sleep> SqlitePool<S> {
                 | Pagination::OlderThan { cursor, .. }),
             ) => {
                 params.push((":cursor", Box::new(cursor)));
-                sql.push_str(&format!(" AND r.id {rel} :cursor", rel = pagination.rel(),));
+                write!(sql, " AND r.id {rel} :cursor", rel = pagination.rel()).unwrap();
                 Some(pagination.length())
             }
             None => None,
@@ -2041,7 +2042,7 @@ impl<S: Sleep> SqlitePool<S> {
             sql.push_str(" DESC");
         }
         if let Some(limit) = limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
+            write!(sql, " LIMIT {limit}").unwrap();
         }
         params.push((":execution_id", Box::new(execution_id.to_string())));
         tx.prepare(&sql)

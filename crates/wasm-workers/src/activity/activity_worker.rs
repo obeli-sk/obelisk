@@ -180,7 +180,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         version,
                         http_client_traces: Some(http_client_traces),
                     });
-                };
+                }
                 let result = match SupportedFunctionReturnValue::new(
                     results.into_iter().zip(result_types.iter().cloned()),
                 ) {

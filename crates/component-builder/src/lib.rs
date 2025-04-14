@@ -129,6 +129,7 @@ impl From<ComponentType> for utils::wasm_tools::ComponentExportsType {
 fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType) {
     use concepts::FunctionMetadata;
     use indexmap::IndexMap;
+    use std::fmt::Write as _;
 
     enum Value {
         Map(IndexMap<String, Value>),
@@ -145,7 +146,7 @@ fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType
                     }
                 }
                 Value::Map(map) => {
-                    *output += &format!("#[allow(clippy::all)]\npub mod r#{k} {{\n");
+                    write!(output, "#[allow(clippy::all)]\npub mod r#{k} {{\n").unwrap();
                     ser_map(map, output);
                     *output += "}\n";
                 }
@@ -160,10 +161,12 @@ fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType
         wasmtime::Engine::new(&wasmtime_config).unwrap()
     };
     let mut generated_code = String::new();
-    generated_code += &format!(
-        "pub const {name_upper}: &str = {wasm_path:?};\n",
+    writeln!(
+        generated_code,
+        "pub const {name_upper}: &str = {wasm_path:?};",
         name_upper = to_snake_case(pkg_name).to_uppercase()
-    );
+    )
+    .unwrap();
 
     let component =
         utils::wasm_tools::WasmComponent::new(wasm_path, &engine, Some(component_type.into()))

@@ -1331,10 +1331,7 @@ mod tests {
             sim_clock.now(),
         )
         .await;
-        if matches!(
-            expected_child_err,
-            FinishedExecutionError::PermanentTimeout { .. }
-        ) {
+        if matches!(expected_child_err, FinishedExecutionError::PermanentTimeout) {
             // In case of timeout, let the timers watcher handle it
             sim_clock.move_time_forward(LOCK_EXPIRY).await;
             expired_timers_watcher::tick(&db_pool.connection(), sim_clock.now())

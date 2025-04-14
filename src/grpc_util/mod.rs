@@ -91,7 +91,7 @@ pub mod extractor {
                 let s = v.to_str();
                 if let Err(ref error) = s {
                     warn!(%error, ?v, "cannot convert header value to ASCII");
-                };
+                }
                 s.ok()
             })
         }
