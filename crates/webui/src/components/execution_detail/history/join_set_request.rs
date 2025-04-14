@@ -4,7 +4,7 @@ use crate::{
         execution_detail::tree_component::TreeComponent, execution_header::ExecutionLink,
     },
     grpc::{
-        grpc_client::{self, execution_event::history_event::join_set_request, ExecutionId},
+        grpc_client::{self, ExecutionId, execution_event::history_event::join_set_request},
         version::VersionType,
     },
 };
@@ -12,8 +12,8 @@ use chrono::DateTime;
 use yew::prelude::*;
 use yew_router::prelude::Link;
 use yewprint::{
-    id_tree::{InsertBehavior, Node, TreeBuilder},
     Icon, NodeData, TreeData,
+    id_tree::{InsertBehavior, Node, TreeBuilder},
 };
 
 #[derive(Properties, PartialEq, Clone)]

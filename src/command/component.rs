@@ -1,6 +1,6 @@
 use super::grpc;
 use crate::FunctionMetadataVerbosity;
-use crate::{grpc_util::grpc_mapping::TonicClientResultExt, FunctionRepositoryClient};
+use crate::{FunctionRepositoryClient, grpc_util::grpc_mapping::TonicClientResultExt};
 use anyhow::Context;
 use concepts::{FunctionFqn, FunctionMetadata};
 use std::path::PathBuf;

@@ -12,7 +12,7 @@ use crate::components::execution_detail::timed_out::TemporarilyTimedOutEvent;
 use crate::components::execution_detail::unlocked::UnlockedEvent;
 use crate::components::execution_header::ExecutionLink;
 use crate::grpc::grpc_client::{
-    execution_event, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent,
+    ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent, execution_event,
 };
 use hashbrown::HashMap;
 use yew::prelude::*;

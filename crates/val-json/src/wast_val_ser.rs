@@ -4,8 +4,8 @@ use crate::{
 };
 use indexmap::IndexMap;
 use serde::{
-    de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor},
     Deserialize, Serialize, Serializer,
+    de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor},
 };
 
 impl Serialize for WastVal {
@@ -561,8 +561,8 @@ pub mod params {
     use core::fmt;
     use itertools::{Itertools as _, Position};
     use serde::{
-        de::{Expected, SeqAccess, Visitor},
         Deserializer,
+        de::{Expected, SeqAccess, Visitor},
     };
     use serde_json::Value;
 
@@ -670,7 +670,7 @@ mod tests {
         wast_val_ser::WastValDeserialize,
     };
     use assert_matches::assert_matches;
-    use indexmap::{indexmap, indexset, IndexMap};
+    use indexmap::{IndexMap, indexmap, indexset};
     use itertools::Itertools;
     use serde::de::DeserializeSeed;
 

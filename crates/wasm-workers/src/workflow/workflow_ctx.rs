@@ -1,10 +1,10 @@
 use super::event_history::{ApplyError, ChildReturnValue, EventCall, EventHistory, HostResource};
 use super::workflow_worker::JoinNextBlockingStrategy;
-use crate::component_logger::{log_activities, ComponentLogger};
+use crate::component_logger::{ComponentLogger, log_activities};
 use crate::host_exports::{
-    val_to_join_set_id, DurationEnum, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
+    DurationEnum, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, val_to_join_set_id,
 };
-use crate::{host_exports, WasmFileError};
+use crate::{WasmFileError, host_exports};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
@@ -19,13 +19,13 @@ use concepts::{
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
 use executor::worker::FatalError;
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, instrument, trace, Span};
+use tracing::{Span, error, instrument, trace};
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, Val};
 
@@ -723,19 +723,19 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 
 mod workflow_support {
     use super::{
-        assert_matches, ClockFn, DbConnection, DbPool, Duration, EventCall, WorkflowCtx,
-        WorkflowFunctionError,
+        ClockFn, DbConnection, DbPool, Duration, EventCall, WorkflowCtx, WorkflowFunctionError,
+        assert_matches,
     };
     use crate::{
         host_exports::{
-            self, obelisk::workflow::workflow_support::ClosingStrategy as WitClosingStrategy,
-            DurationEnum,
+            self, DurationEnum,
+            obelisk::workflow::workflow_support::ClosingStrategy as WitClosingStrategy,
         },
         workflow::event_history::ChildReturnValue,
     };
     use concepts::{
+        CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind,
         storage::{self, PersistKind},
-        JoinSetId, JoinSetKind, CHARSET_ALPHANUMERIC,
     };
     use tracing::{trace, warn};
     use val_json::wast_val::WastVal;
@@ -858,7 +858,9 @@ mod workflow_support {
             match closing_strategy {
                 WitClosingStrategy::Complete => {}
                 WitClosingStrategy::Cancel => {
-                    warn!("ClosingStrategy::Cancel is not supported yet, using ClosingStrategy::Complete");
+                    warn!(
+                        "ClosingStrategy::Cancel is not supported yet, using ClosingStrategy::Complete"
+                    );
                 }
             }
             self.persist_join_set_with_kind(
@@ -876,7 +878,9 @@ mod workflow_support {
             match closing_strategy {
                 WitClosingStrategy::Complete => {}
                 WitClosingStrategy::Cancel => {
-                    warn!("ClosingStrategy::Cancel is not supported yet, using ClosingStrategy::Complete");
+                    warn!(
+                        "ClosingStrategy::Cancel is not supported yet, using ClosingStrategy::Complete"
+                    );
                 }
             }
             let name = self.next_join_set_name_index(JoinSetKind::Generated);
@@ -918,8 +922,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::
 #[cfg(madsim)]
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::host_exports::obelisk::workflow::workflow_support::Host as _;
     use crate::host_exports::SUFFIX_FN_SUBMIT;
+    use crate::host_exports::obelisk::workflow::workflow_support::Host as _;
     use crate::workflow::workflow_ctx::ApplyError;
     use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
     use crate::{
@@ -930,9 +934,9 @@ pub(crate) mod tests {
     use async_trait::async_trait;
     use concepts::prefixed_ulid::{ExecutionIdDerived, RunId};
     use concepts::storage::{
-        wait_for_pending_state_fn, AppendRequest, CreateRequest, DbConnection, DbPool,
-        HistoryEvent, JoinSetRequest, JoinSetResponse, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind,
+        AppendRequest, CreateRequest, DbConnection, DbPool, HistoryEvent, JoinSetRequest,
+        JoinSetResponse, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
+        wait_for_pending_state_fn,
     };
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
     use concepts::time::{ClockFn, Now};

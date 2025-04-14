@@ -10,17 +10,15 @@ use crate::{
         },
     },
     grpc::{
-        execution_id::{ExecutionIdExt as _, EXECUTION_ID_INFIX},
+        execution_id::{EXECUTION_ID_INFIX, ExecutionIdExt as _},
         ffqn::FunctionFqn,
         grpc_client::{
-            self,
+            self, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent, ResultDetail,
             execution_event::{
-                self,
-                history_event::{join_set_request, JoinSetRequest},
-                Finished, TemporarilyFailed, TemporarilyTimedOut,
+                self, Finished, TemporarilyFailed, TemporarilyTimedOut,
+                history_event::{JoinSetRequest, join_set_request},
             },
-            http_client_trace, join_set_response_event, result_detail, ExecutionEvent, ExecutionId,
-            JoinSetId, JoinSetResponseEvent, ResultDetail,
+            http_client_trace, join_set_response_event, result_detail,
         },
     },
 };

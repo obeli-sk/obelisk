@@ -1,17 +1,17 @@
 use crate::{
     app::{BacktraceVersions, Route},
     components::{
-        code::syntect_code_block::{highlight_code_line_by_line, SyntectCodeBlock},
+        code::syntect_code_block::{SyntectCodeBlock, highlight_code_line_by_line},
         execution_detail::utils::{compute_join_next_to_response, event_to_detail},
         execution_header::{ExecutionHeader, ExecutionLink},
     },
     grpc::{
         execution_id::ExecutionIdExt as _,
         grpc_client::{
-            self,
+            self, ComponentId, ExecutionEvent, ExecutionId, GetBacktraceResponse,
+            GetBacktraceSourceRequest, JoinSetResponseEvent,
             execution_event::{self, history_event},
-            get_backtrace_request, join_set_response_event, ComponentId, ExecutionEvent,
-            ExecutionId, GetBacktraceResponse, GetBacktraceSourceRequest, JoinSetResponseEvent,
+            get_backtrace_request, join_set_response_event,
         },
         version::VersionType,
     },

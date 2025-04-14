@@ -2,7 +2,7 @@ use futures_concurrency::prelude::*;
 use wstd::http::body::{BodyForthcoming, IncomingBody};
 use wstd::http::server::{Finished, Responder};
 use wstd::http::{Client, HeaderValue, Request, Response, Uri};
-use wstd::io::{copy, AsyncWrite};
+use wstd::io::{AsyncWrite, copy};
 
 #[wstd::http_server]
 async fn main(mut server_req: Request<IncomingBody>, responder: Responder) -> Finished {

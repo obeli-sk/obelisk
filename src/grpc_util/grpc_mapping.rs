@@ -1,15 +1,15 @@
 use crate::command::grpc::{self};
 use anyhow::anyhow;
 use concepts::{
-    prefixed_ulid::{DelayId, RunId},
-    storage::{
-        http_client_trace::HttpClientTrace, DbError, ExecutionEvent, ExecutionEventInner,
-        ExecutionListPagination, HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Pagination,
-        PendingState, PendingStateFinished, PendingStateFinishedError,
-        PendingStateFinishedResultKind, SpecificError, VersionType,
-    },
     ClosingStrategy, ComponentId, ComponentType, ExecutionId, FinishedExecutionError,
     FinishedExecutionResult, FunctionFqn, SupportedFunctionReturnValue,
+    prefixed_ulid::{DelayId, RunId},
+    storage::{
+        DbError, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, HistoryEvent,
+        HistoryEventScheduledAt, JoinSetRequest, Pagination, PendingState, PendingStateFinished,
+        PendingStateFinishedError, PendingStateFinishedResultKind, SpecificError, VersionType,
+        http_client_trace::HttpClientTrace,
+    },
 };
 use concepts::{JoinSetId, JoinSetKind};
 use std::borrow::Borrow;
@@ -264,7 +264,7 @@ impl TryFrom<grpc::list_executions_request::Pagination> for ExecutionListPaginat
     ) -> Result<Self, Self::Error> {
         use grpc::list_executions_request::Pagination as GPagination;
         use grpc::list_executions_request::{
-            cursor::Cursor as InnerCursor, Cursor as OuterCursor, NewerThan, OlderThan,
+            Cursor as OuterCursor, NewerThan, OlderThan, cursor::Cursor as InnerCursor,
         };
         Ok(match pagination {
             GPagination::NewerThan(NewerThan {
@@ -535,8 +535,8 @@ pub(crate) fn from_execution_event_to_grpc(
 pub mod response {
     use crate::command::grpc;
     use concepts::{
-        storage::{JoinSetResponse, JoinSetResponseEventOuter, ResponseWithCursor},
         ExecutionId,
+        storage::{JoinSetResponse, JoinSetResponseEventOuter, ResponseWithCursor},
     };
     use prost_wkt_types::Timestamp;
 

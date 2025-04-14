@@ -102,11 +102,7 @@ impl BacktraceVersions {
     pub fn step_out(&self) -> Option<BacktraceVersions> {
         let mut ret = self.clone();
         ret.0.pop();
-        if ret.0.is_empty() {
-            None
-        } else {
-            Some(ret)
-        }
+        if ret.0.is_empty() { None } else { Some(ret) }
     }
 }
 impl Default for BacktraceVersions {

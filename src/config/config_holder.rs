@@ -1,6 +1,6 @@
 use super::toml::ConfigToml;
-use anyhow::{bail, Context as _};
-use config::{builder::AsyncState, ConfigBuilder, Environment, File, FileFormat};
+use anyhow::{Context as _, bail};
+use config::{ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
 use directories::{BaseDirs, ProjectDirs};
 use std::path::{Path, PathBuf};
 use tracing::debug;

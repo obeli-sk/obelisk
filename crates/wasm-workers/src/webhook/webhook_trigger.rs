@@ -1,10 +1,10 @@
-use crate::component_logger::{log_activities, ComponentLogger};
+use crate::WasmFileError;
+use crate::component_logger::{ComponentLogger, log_activities};
 use crate::envvar::EnvVar;
 use crate::host_exports::{
-    execution_id_into_val, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
+    SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, execution_id_into_val,
 };
 use crate::std_output_stream::{LogStream, StdOutput};
-use crate::WasmFileError;
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, ClientError, CreateRequest, DbConnection, DbError, DbPool,
@@ -29,15 +29,15 @@ use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Level, Span};
-use utils::wasm_tools::{ExIm, WasmComponent, HTTP_HANDLER_FFQN};
+use tracing::{Instrument, Level, Span, debug, error, info, info_span, instrument, trace, warn};
+use utils::wasm_tools::{ExIm, HTTP_HANDLER_FFQN, WasmComponent};
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};
 use wasmtime_wasi::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
-use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::bindings::ProxyPre;
+use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
@@ -959,22 +959,22 @@ pub(crate) mod tests {
     #[cfg(not(madsim))] // Due to TCP server/client
     pub(crate) mod nosim {
         use super::*;
-        use crate::activity::activity_worker::tests::{compile_activity, FIBO_10_OUTPUT};
+        use crate::activity::activity_worker::tests::{FIBO_10_OUTPUT, compile_activity};
         use crate::engines::{EngineConfig, Engines};
         use crate::tests::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{self, WebhookEndpointCompiled};
         use crate::workflow::workflow_worker::tests::compile_workflow;
         use crate::{
             activity::activity_worker::tests::spawn_activity_fibo,
-            workflow::workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
+            workflow::workflow_worker::{JoinNextBlockingStrategy, tests::spawn_workflow_fibo},
         };
         use assert_matches::assert_matches;
         use concepts::time::TokioSleep;
-        use concepts::{
-            storage::{DbConnection, DbPool},
-            ExecutionId,
-        };
         use concepts::{ComponentId, ComponentType, StrVariant, SupportedFunctionReturnValue};
+        use concepts::{
+            ExecutionId,
+            storage::{DbConnection, DbPool},
+        };
         use db_tests::{Database, DbGuard, DbPoolEnum};
         use executor::executor::ExecutorTaskHandle;
         use std::net::SocketAddr;

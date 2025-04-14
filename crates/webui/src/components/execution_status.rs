@@ -1,10 +1,9 @@
 use crate::{
     components::{execution_detail::finished::FinishedEvent, execution_header::ExecutionLink},
     grpc::grpc_client::{
-        self,
+        self, ExecutionStatus as GExecutionStatus, ExecutionSummary, FinishedStatus, ResultKind,
         execution_status::{Finished, Locked, PendingAt},
-        get_status_response, ExecutionStatus as GExecutionStatus, ExecutionSummary, FinishedStatus,
-        ResultKind,
+        get_status_response,
     },
 };
 use chrono::DateTime;

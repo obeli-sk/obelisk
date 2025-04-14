@@ -2,8 +2,8 @@ use crate::{components::execution_detail::tree_component::TreeComponent, grpc::g
 use chrono::DateTime;
 use yew::prelude::*;
 use yewprint::{
-    id_tree::{InsertBehavior, Node, NodeId, Tree, TreeBuilder},
     Icon, NodeData, TreeData,
+    id_tree::{InsertBehavior, Node, NodeId, Tree, TreeBuilder},
 };
 
 #[derive(Properties, PartialEq, Clone)]

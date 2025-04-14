@@ -1,4 +1,4 @@
-use tracing::{debug, error, info, trace, warn, Span};
+use tracing::{Span, debug, error, info, trace, warn};
 
 pub(crate) struct ComponentLogger {
     pub(crate) span: Span,

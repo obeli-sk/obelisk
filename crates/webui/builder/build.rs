@@ -31,16 +31,18 @@ fn main() {
 fn run_trunk_build(current_dir: &Path) {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     // Trunk sometimes does not call `cargo build`, therefore we need to run it manually. This is mostly for saving generated CSS files in its `build.rs`.
-    assert!(Command::new("cargo")
-        .current_dir(current_dir)
-        .arg("build")
-        .arg("--target=wasm32-unknown-unknown")
-        .env("CARGO_TARGET_DIR", &out_dir) // Avoid deadlock when outer cargo holds the lock to the target folder.
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .env_remove("CLIPPY_ARGS") // do not pass clippy parameters
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new("cargo")
+            .current_dir(current_dir)
+            .arg("build")
+            .arg("--target=wasm32-unknown-unknown")
+            .env("CARGO_TARGET_DIR", &out_dir) // Avoid deadlock when outer cargo holds the lock to the target folder.
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .env_remove("CLIPPY_ARGS") // do not pass clippy parameters
+            .status()
+            .unwrap()
+            .success()
+    );
 
     let mut cmd = Command::new("trunk");
     cmd.current_dir(current_dir)

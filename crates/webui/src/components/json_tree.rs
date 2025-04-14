@@ -2,8 +2,8 @@ use serde_json::Value;
 use std::{borrow::Cow, collections::BTreeMap, ops::Deref};
 use yew::prelude::*;
 use yewprint::{
-    id_tree::{self, InsertBehavior, Node, NodeId},
     Icon, NodeData,
+    id_tree::{self, InsertBehavior, Node, NodeId},
 };
 
 fn render_json_value(

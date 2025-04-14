@@ -181,8 +181,8 @@ impl AsRef<str> for StrVariant {
 mod serde_strvariant {
     use crate::StrVariant;
     use serde::{
-        de::{self, Visitor},
         Deserialize, Deserializer, Serialize, Serializer,
+        de::{self, Visitor},
     };
     use std::{ops::Deref, sync::Arc};
 
@@ -1119,7 +1119,9 @@ pub mod prefixed_ulid {
             "cannot parse derived execution id - delimiter `{EXECUTION_ID_JOIN_SET_INFIX}` not found"
         )]
         SecondDelimiterNotFound,
-        #[error("cannot parse derived execution id - suffix after `{EXECUTION_ID_JOIN_SET_INFIX}` must be a number")]
+        #[error(
+            "cannot parse derived execution id - suffix after `{EXECUTION_ID_JOIN_SET_INFIX}` must be a number"
+        )]
         ParseIndexError(ParseIntError),
     }
 
@@ -1590,9 +1592,7 @@ pub enum DigestParseErrror {
     TypeParseError { hash_type: String },
     #[error("cannot parse ContentDigest - invalid suffix length, expected 64 hex digits, got {0}")]
     SuffixLength(usize),
-    #[error(
-        "cannot parse ContentDigest - suffix must be hex-encoded, got invalid character `{0}`"
-    )]
+    #[error("cannot parse ContentDigest - suffix must be hex-encoded, got invalid character `{0}`")]
     SuffixInvalid(char),
 }
 
@@ -1817,7 +1817,7 @@ impl opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'_
 mod tests {
 
     use crate::{
-        prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, JoinSetId, JoinSetKind, StrVariant,
+        ExecutionId, FunctionFqn, JoinSetId, JoinSetKind, StrVariant, prefixed_ulid::ExecutorId,
     };
     use std::{
         hash::{DefaultHasher, Hash, Hasher},

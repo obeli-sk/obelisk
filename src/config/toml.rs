@@ -1,10 +1,10 @@
 use super::{
-    config_holder::PathPrefixes, env_var::EnvVarConfig, ComponentLocation, ConfigStoreCommon,
+    ComponentLocation, ConfigStoreCommon, config_holder::PathPrefixes, env_var::EnvVarConfig,
 };
 use anyhow::{anyhow, bail};
 use concepts::{
-    check_name, ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, InvalidNameError,
-    StrVariant,
+    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, InvalidNameError, StrVariant,
+    check_name,
 };
 use db_sqlite::sqlite_dao::SqliteConfig;
 use log::{LoggingConfig, LoggingStyle};
@@ -574,7 +574,7 @@ impl From<WasmtimePoolingAllocatorConfig> for wasm_workers::engines::PoolingOpti
 
 #[cfg(feature = "otlp")]
 pub(crate) mod otlp {
-    use super::{log, Deserialize};
+    use super::{Deserialize, log};
     use log::EnvFilter;
 
     #[derive(Debug, Deserialize)]
@@ -616,7 +616,7 @@ impl From<DurationConfig> for Duration {
 }
 
 pub(crate) mod log {
-    use super::{default_out_style, Deserialize};
+    use super::{Deserialize, default_out_style};
     use serde_with::serde_as;
     use std::str::FromStr;
 
@@ -764,8 +764,8 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 
 pub(crate) mod webhook {
     use super::{
-        resolve_env_vars, verify_frame_files_to_sources, BacktraceFrameFilesToSourcesVerified,
-        ComponentBacktraceConfig, ComponentCommon, ConfigName, InflightSemaphore, StdOutput,
+        BacktraceFrameFilesToSourcesVerified, ComponentBacktraceConfig, ComponentCommon,
+        ConfigName, InflightSemaphore, StdOutput, resolve_env_vars, verify_frame_files_to_sources,
     };
     use crate::config::{config_holder::PathPrefixes, env_var::EnvVarConfig};
     use anyhow::Context;

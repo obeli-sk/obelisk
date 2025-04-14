@@ -1,26 +1,25 @@
 use super::grpc;
-use super::grpc::execution_status::BlockedByJoinSet;
 use super::grpc::GetBacktraceResponse;
+use super::grpc::execution_status::BlockedByJoinSet;
+use crate::ExecutionRepositoryClient;
 use crate::command::grpc::execution_status::Finished;
 use crate::grpc_util::grpc_mapping::TonicClientResultExt;
-use crate::ExecutionRepositoryClient;
-use anyhow::anyhow;
 use anyhow::Context;
+use anyhow::anyhow;
 use chrono::DateTime;
-use concepts::JoinSetKind;
 use concepts::JOIN_SET_ID_INFIX;
+use concepts::JoinSetKind;
 use concepts::{ExecutionId, FunctionFqn};
 use crossterm::{
-    cursor,
+    ExecutableCommand, cursor,
     style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{self, ClearType},
-    ExecutableCommand,
 };
 use grpc::execution_status::Status;
 use itertools::Either;
 use serde_json::json;
 use std::io::Stdout;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;

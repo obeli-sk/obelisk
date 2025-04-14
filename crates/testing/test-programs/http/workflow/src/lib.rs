@@ -1,5 +1,5 @@
 use exports::testing::http_workflow::workflow::Guest;
-use obelisk::workflow::workflow_support::{new_join_set_generated, ClosingStrategy};
+use obelisk::workflow::workflow_support::{ClosingStrategy, new_join_set_generated};
 use testing::{
     http::http_get,
     http_obelisk_ext::http_get::{get_successful_await_next, get_successful_submit},

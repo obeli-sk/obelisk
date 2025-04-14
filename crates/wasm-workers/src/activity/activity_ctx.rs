@@ -1,23 +1,23 @@
 use super::activity_worker::ActivityConfig;
-use crate::component_logger::{log_activities, ComponentLogger};
+use crate::component_logger::{ComponentLogger, log_activities};
 use crate::std_output_stream::LogStream;
 use bytes::Bytes;
+use concepts::ExecutionId;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
-use concepts::ExecutionId;
 use hyper::body::Body;
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
-use tracing::{debug, info_span, Instrument, Span};
-use wasmtime::component::Resource;
+use tracing::{Instrument, Span, debug, info_span};
 use wasmtime::Engine;
-use wasmtime::{component::ResourceTable, Store};
+use wasmtime::component::Resource;
+use wasmtime::{Store, component::ResourceTable};
 use wasmtime_wasi::{self, IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::types::{
-    default_send_request_handler, HostFutureIncomingResponse, HostIncomingRequest,
-    OutgoingRequestConfig,
+    HostFutureIncomingResponse, HostIncomingRequest, OutgoingRequestConfig,
+    default_send_request_handler,
 };
 use wasmtime_wasi_http::{HttpResult, WasiHttpCtx, WasiHttpView};
 

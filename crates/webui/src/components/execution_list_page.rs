@@ -7,9 +7,8 @@ use crate::{
     grpc::{
         ffqn::FunctionFqn,
         grpc_client::{
-            self,
-            list_executions_request::{cursor, NewerThan, OlderThan, Pagination},
-            ExecutionSummary,
+            self, ExecutionSummary,
+            list_executions_request::{NewerThan, OlderThan, Pagination, cursor},
         },
     },
 };

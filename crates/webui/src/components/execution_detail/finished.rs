@@ -2,14 +2,14 @@ use crate::{
     components::{
         execution_detail::tree_component::TreeComponent,
         execution_header::ExecutionLink,
-        json_tree::{insert_json_into_tree, JsonValue},
+        json_tree::{JsonValue, insert_json_into_tree},
     },
     grpc::{grpc_client, version::VersionType},
 };
 use yew::prelude::*;
 use yewprint::{
-    id_tree::{InsertBehavior, Node, NodeId, Tree, TreeBuilder},
     Icon, NodeData, TreeData,
+    id_tree::{InsertBehavior, Node, NodeId, Tree, TreeBuilder},
 };
 
 #[derive(Properties, PartialEq, Clone)]

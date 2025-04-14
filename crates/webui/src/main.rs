@@ -4,7 +4,7 @@ use std::rc::Rc;
 use webui::{
     app::{App, AppProps},
     grpc::{
-        function_detail::{map_interfaces_to_fn_details, InterfaceFilter},
+        function_detail::{InterfaceFilter, map_interfaces_to_fn_details},
         grpc_client,
         ifc_fqn::IfcFqn,
     },

@@ -1,7 +1,7 @@
 use super::grpc_client::{self, ExecutionId};
 use crate::components::execution_header::ExecutionLink;
 use std::{fmt::Display, hash::Hash, str::FromStr};
-use yew::{html, Html, ToHtml};
+use yew::{Html, ToHtml, html};
 
 impl Eq for grpc_client::ExecutionId {}
 

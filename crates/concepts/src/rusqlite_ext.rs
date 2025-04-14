@@ -1,7 +1,7 @@
-use crate::{prefixed_ulid::ExecutionIdDerived, ExecutionId, JoinSetId};
+use crate::{ExecutionId, JoinSetId, prefixed_ulid::ExecutionIdDerived};
 use rusqlite::{
-    types::{FromSql, FromSqlError, ToSqlOutput},
     ToSql,
+    types::{FromSql, FromSqlError, ToSqlOutput},
 };
 use tracing::error;
 
