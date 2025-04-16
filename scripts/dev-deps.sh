@@ -21,6 +21,9 @@ protoc --version >> dev-deps.txt
 rustc --version >> dev-deps.txt
 wasm-tools --version >> dev-deps.txt
 wasmtime --version >> dev-deps.txt
+cargo-zigbuild --version >> dev-deps.txt
+echo "zig $(zig version)" >> dev-deps.txt
+
 
 # web
 nix develop .#web --command wasm-opt --version >> dev-deps.txt # binaryen

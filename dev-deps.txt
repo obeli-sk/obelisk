@@ -10,6 +10,8 @@ libprotoc 29.3
 rustc 1.86.0 (05f9846f8 2025-03-31)
 wasm-tools 1.228.0
 wasmtime 31.0.0
+cargo-zigbuild 0.19.8
+zig 0.14.0
 wasm-opt version 120
 trunk 0.21.9
 wasm-bindgen 0.2.100
