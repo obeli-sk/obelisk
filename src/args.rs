@@ -3,14 +3,16 @@ use concepts::{ExecutionId, FunctionFqn};
 use std::path::PathBuf;
 
 mod shadow {
-    #![allow(clippy::needless_raw_string_hashes)]
-    shadow_rs::shadow!(build);
+    pub(crate) const PKG_VERSION: &str = env!("PKG_VERSION");
+    pub(crate) const PKG_SHA: &str = env!("PKG_SHA");
 }
 
 #[derive(Parser, Debug)]
 #[clap(name = "obelisk")]
-#[command(version = const_format::formatcp!("{} {}", shadow::build::PKG_VERSION, shadow::build::SHORT_COMMIT),
-about = "Obelisk: deterministic backend", disable_version_flag = true, disable_help_subcommand = true)]
+#[command
+(
+    version = const_format::formatcp!("{} {}", shadow::PKG_VERSION, shadow::PKG_SHA),
+about = "Obelisk: deterministic workflow engine", disable_version_flag = true, disable_help_subcommand = true)]
 pub(crate) struct Args {
     #[command(subcommand)]
     pub(crate) command: Subcommand,

@@ -42,7 +42,6 @@ serde_json.workspace = true
 serde_with.workspace = true
 serde.workspace = true
 sha2.workspace = true
-shadow-rs.workspace = true
 strum.workspace = true
 syntect.workspace = true
 tempfile.workspace = true
@@ -97,7 +96,6 @@ workspace = true
 
 [build-dependencies]
 tonic-build = { workspace = true, default-features = true }
-shadow-rs.workspace = true
 
 [workspace]
 resolver = "2"
@@ -232,7 +230,6 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 serde_with = "3.12.0"
 sha2 = "0.10.8"
-shadow-rs = "1.1"
 strum = { version = "0.27.1", features = ["derive"] }
 syntect = { version = "5.2.0", default-features = false, features = ["parsing", "default-syntaxes", "default-themes", "regex-fancy", "yaml-load"] }
 tempfile = "=3.14.0" # yew and madsim use getrandom 0.2
