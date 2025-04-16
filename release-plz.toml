@@ -74,6 +74,7 @@ commit_parsers = [
     { message = "^style", skip = true },
     { message = "^chore", skip = true },
     { message = "^ci", skip = true },
+    { message = "^build", skip = true },
     { message = "^logging", skip = true },
     { message = "^tracing", skip = true },
 ]
