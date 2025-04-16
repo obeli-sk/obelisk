@@ -17,10 +17,10 @@ on:
         type: boolean
         default: true
       extra-args:
-        description: "Extra args to be used with cargo publish"
+        description: "Extra args to be used with cargo publish e.g. --no-verify"
         type: string
         required: false
-        default: "--no-verify"
+        default: ""
 
 defaults:
   run:

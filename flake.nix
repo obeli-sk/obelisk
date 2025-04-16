@@ -123,10 +123,17 @@
           };
           devShells.publish = pkgs.mkShell {
             buildInputs = [
-              # https://github.com/rust-lang/cargo/issues/10948#issuecomment-2540365225
-              (pkgs.rust-bin.nightly."2025-02-10".default.override {
+              (pkgs.rust-bin.nightly."2025-04-01".default.override {
                 extensions = [ "rust-src" "rustfmt" "clippy" ];
               })
+            ];
+          };
+          devShells.release = pkgs.mkShell {
+            buildInputs = with pkgs;[
+              (pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+              protobuf
+              cargo-zigbuild
+              zig
             ];
           };
           packages = rec {
