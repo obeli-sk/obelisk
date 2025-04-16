@@ -4,14 +4,13 @@ use std::path::PathBuf;
 
 mod shadow {
     pub(crate) const PKG_VERSION: &str = env!("PKG_VERSION");
-    pub(crate) const PKG_SHA: &str = env!("PKG_SHA");
 }
 
 #[derive(Parser, Debug)]
 #[clap(name = "obelisk")]
 #[command
 (
-    version = const_format::formatcp!("{} {}", shadow::PKG_VERSION, shadow::PKG_SHA),
+    version = const_format::formatcp!("{}", shadow::PKG_VERSION),
 about = "Obelisk: deterministic workflow engine", disable_version_flag = true, disable_help_subcommand = true)]
 pub(crate) struct Args {
     #[command(subcommand)]
