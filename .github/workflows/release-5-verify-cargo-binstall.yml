@@ -18,8 +18,8 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  verify-assets:
-    name: ${{ matrix.runner }}
+  verify-cargo-binstall:
+    name: verify-cargo-binstall-${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
@@ -63,3 +63,39 @@ jobs:
           obelisk --version
           obelisk server generate-config
           obelisk server verify
+
+  cargo-binstall-alpine:
+    runs-on: ubuntu-24.04
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Use the ref if provided, otherwise obtain the parent workflow branch, defaults to main.
+          ref: ${{ github.event.inputs.ref || github.event.workflow_run.head_branch }}
+
+      - id: git-info
+        run: |
+          VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - run: |
+          docker build --progress=plain --build-arg VERSION=$VERSION - <<EOF
+            FROM alpine:latest
+            ARG VERSION
+            WORKDIR /root
+            RUN wget https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz \
+            && tar xvfz cargo-binstall-x86_64-unknown-linux-musl.tgz
+            RUN ./cargo-binstall \
+              --strategies "crate-meta-data,quick-install" \
+              --install-path . \
+              -y \
+              obelisk@$VERSION
+            RUN ./obelisk --version
+            RUN ./obelisk server generate-config
+            RUN ./obelisk server verify
+          EOF
+        env:
+          TAG: ${{ steps.git-info.outputs.tag }}
+          VERSION: ${{ steps.git-info.outputs.version }}
