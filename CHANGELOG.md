@@ -3,6 +3,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.2](https://github.com/obeli-sk/obelisk/compare/v0.19.1...v0.19.2)
+
+### 🐛 Bug Fixes
+
+- Make sure the runtime is deterministic when using `simd` - ([47728cd](https://github.com/obeli-sk/obelisk/commit/47728cde20d1c2cdd0edafc390feb726adffc00e))
+
+### 📚 Documentation
+
+- Add screencast - ([1e00057](https://github.com/obeli-sk/obelisk/commit/1e0005745a32651827fd1593bb80c28f33dac5e1))
+
+### 🚜 Refactor
+
+- Cross-compile Linux and MacOS targets from `nix` using [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild).
+- Remove git sha from version - ([b575c5e](https://github.com/obeli-sk/obelisk/commit/b575c5e07159a0463e0c5389954956ede76ae54e))
+- Remove `shadow-rs` - ([7aa0847](https://github.com/obeli-sk/obelisk/commit/7aa084763ab6cbc0a45860d6626cf380692f36bf))
+- Rename devShell `release` to `publish` - ([6b7a852](https://github.com/obeli-sk/obelisk/commit/6b7a85233daab669c0238027e9a144e9036d3f42))
+
+
 ## [0.19.1](https://github.com/obeli-sk/obelisk/compare/v0.19.0...v0.19.1)
 
 ### ⛰️ Features
