@@ -78,25 +78,21 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
-            nix: true
 
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04
-            nix: true
 
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04-arm
-            nix: true
+            os: ubuntu-24.04
 
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-22.04-arm
-            nix: true
+            os: ubuntu-24.04
 
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: ubuntu-24.04
 
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -122,42 +118,20 @@ jobs:
         env:
           TAG: ${{ steps.git-info.outputs.tag }}
 
-      # Cross compile all linux targets using nix
       - name: Install Nix
-        if: ${{ matrix.nix }}
         uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            extra-substituters = https://cache.garnix.io                                                         │
+            extra-substituters = https://cache.garnix.io
             extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g
+
       - name: Build Obelisk with Nix
-        if: ${{ matrix.nix }}
         run: nix build '.#obeliskCross-${{ matrix.target }}'
+
       - name: Create a tar.gz archive
-        if: ${{ matrix.nix }}
         run: tar czf archive.tar.gz --transform='s/^result\/bin\///' result/bin/obelisk
 
-      # Build natively for MacOS
-      - name: Install Rust - MacOS
-        if: startsWith(matrix.os, 'macos-')
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-      - name: Install dependencies - MacOS
-        if: startsWith(matrix.os, 'macos-')
-        run: |
-          brew install protobuf
-          brew install gnu-tar
-      - name: Install Obelisk from crates.io - MacOS
-        if: startsWith(matrix.os, 'macos-')
-        run: |
-          source "$HOME/.cargo/env"
-          cargo install obelisk@$VERSION --locked --root .
-          gtar czf archive.tar.gz --transform='s/^bin\///' bin/obelisk
-        env:
-          VERSION: ${{ steps.git-info.outputs.version }}
-
-      # Common for all targets
       - name: Upload the archive
         run: |
           curl -v --fail -X POST \
