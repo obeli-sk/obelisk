@@ -18,7 +18,7 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  verify-assets:
+  verify-using-vm:
     name: ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
@@ -50,5 +50,43 @@ jobs:
           ./obelisk --version | grep $VERSION
           ./obelisk server generate-config
           ./obelisk server verify
+        env:
+          VERSION: ${{ steps.git-info.outputs.version }}
+
+  verify-using-docker:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+          - runner: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Use the ref if provided, otherwise obtain the parent workflow branch, defaults to main.
+          ref: ${{ github.event.inputs.ref || github.event.workflow_run.head_branch }}
+
+      - id: git-info
+        run: |
+          VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - run: |
+          docker build --progress=plain --build-arg VERSION=$VERSION - <<EOF
+            FROM alpine:latest
+            ARG VERSION
+            WORKDIR /root
+            RUN apk add curl
+            RUN curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | sh
+            RUN ldd obelisk
+            RUN ./obelisk --version | grep $VERSION
+            RUN ./obelisk server generate-config
+            RUN ./obelisk server verify
+          EOF
         env:
           VERSION: ${{ steps.git-info.outputs.version }}
