@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.3](https://github.com/obeli-sk/obelisk/compare/v0.19.2...v0.19.3)
+
+### 🐛 Bug Fixes
+
+- Use `release` profile when building MacOS artifacts - ([401cf19](https://github.com/obeli-sk/obelisk/commit/401cf193739eaf8600971275a8e7afc9df0416e5))
+
+
 ## [0.19.2](https://github.com/obeli-sk/obelisk/compare/v0.19.1...v0.19.2)
 
 ### 🐛 Bug Fixes
