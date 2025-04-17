@@ -24,8 +24,11 @@ jobs:
       matrix:
         include:
           - target: default
+            os: ubuntu-24.04
+          - target: default
+            os: ubuntu-24.04-arm
 
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +46,9 @@ jobs:
       - uses: nixbuild/nix-quick-install-action@v30
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Populate the nix store without Obelisk # Workaround for slow garnix cache
+        run: |
+          nix develop --command echo
       - name: Add garnix cache
         run: |
           echo "extra-substituters = https://cache.garnix.io" >> ~/.config/nix/nix.conf
