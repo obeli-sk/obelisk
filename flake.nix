@@ -52,14 +52,78 @@
               cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
               version = cargoToml.workspace.package.version;
 
+              isMacOSTarget = (customTarget == "x86_64-apple-darwin" || customTarget == "aarch64-apple-darwin"); # FIXME: ends with
+              macOSsdkTarball =
+                if isMacOSTarget then
+                  pkgs.fetchurl
+                    {
+                      name = "MacOSX11.3.sdk.tar.xz"; # Optional: better name for the store path
+                      url = "https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX11.3.sdk.tar.xz";
+                      # Confirmed hash for this URL
+                      sha256 = "sha256-zU8Ip1V3FFuPBSRaKXX3yBQB116VNdz/u4ee4d7vy/Q=";
+                    }
+                else
+                  null;
+
+              manualMacOSSdk =
+                if isMacOSTarget then
+                  pkgs.stdenv.mkDerivation
+                    {
+                      pname = "unpacked-macosx-sdk";
+                      version = "11.3";
+                      # Use the fetched tarball as the source
+                      src = macOSsdkTarball;
+                      # Add tools needed for unpacking
+                      nativeBuildInputs = [ pkgs.xz ];
+                      dontConfigure = true;
+                      dontBuild = true;
+                      dontUnpack = true;
+
+                      installPhase = ''
+                        runHook preInstall
+
+                        echo "Unpacking $src into $(pwd)..."
+                        # Extract directly into the current directory
+                        tar -xJf $src -v --strip-components=0 # Adjust strip-components if needed
+                        local extractedDir="MacOSX11.3.sdk" # Assuming this is the top-level dir in the tarball
+                        if [ ! -d "$extractedDir" ]; then
+                          echo "Error: Directory '$extractedDir' not found after unpacking $src"
+                          echo "Contents of current directory:"
+                          ls -la
+                          exit 1
+                        fi
+                        echo "Creating $out/SDKs and moving $extractedDir into it"
+                        mkdir -p $out/SDKs
+                        # Move the extracted directory to the final location
+                        mv "$extractedDir" "$out/SDKs/MacOSX11.3.sdk"
+                        # Check if the final SDK directory exists
+                        if [ ! -d "$out/SDKs/MacOSX11.3.sdk" ]; then
+                          echo "Error: Failed to find SDK directory in $out/SDKs after moving."
+                          exit 1
+                        fi
+                        echo "Successfully installed SDK to $out/SDKs/MacOSX11.3.sdk"
+
+                        runHook postInstall
+                      '';
+                    }
+                else
+                  null; # No unpacked SDK if not targeting macOS
+
               cargoZigbuildWrapped = pkgs.writeShellScriptBin "cargo-zigbuild" ''
                 #!${pkgs.runtimeShell}
                 # Set cache directory within the sandbox's writable temp area
-                # Using TMPDIR is standard practice for build-time caches
                 export XDG_CACHE_HOME="''${TMPDIR:-/tmp}/.cache"
-                # Ensure the base directory exists (optional, but good practice)
                 mkdir -p "$XDG_CACHE_HOME"
-                # Execute the real cargo-zigbuild, passing all arguments through
+                ${pkgs.lib.optionalString isMacOSTarget ''
+                export SDKROOT="${manualMacOSSdk}/SDKs/MacOSX11.3.sdk"
+                echo "Setting SDKROOT for macOS cross-compilation: $SDKROOT"
+                if [ ! -d "$SDKROOT" ]; then
+                  echo "Error: SDKROOT directory does not exist!"
+                  exit 1
+                fi
+                ''}
+                export CARGO_ZIGBUILD_ZIG_PATH="${pkgs.zig_0_13}/bin/zig"
+                echo "Setting zig to $CARGO_ZIGBUILD_ZIG_PATH"
                 exec ${pkgs.cargo-zigbuild}/bin/cargo-zigbuild "$@"
               '';
 
@@ -78,9 +142,15 @@
                   (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                   pkg-config
                   protobuf
-                ] ++ pkgs.lib.optionals (customTarget != null) [
+                ]
+                # Add Zig when cross compiling
+                ++ pkgs.lib.optionals (customTarget != null) [
                   cargoZigbuildWrapped
-                  pkgs.zig
+                  pkgs.zig_0_13
+                ]
+                # Add macOS SDK only if targeting macOS
+                ++ pkgs.lib.optionals isMacOSTarget [
+                  manualMacOSSdk
                 ];
 
                 # Only used when not cross compiling.
@@ -108,7 +178,6 @@
                   echo "Building with cargo zigbuild for target: ${customTarget}"
                   echo "Build type: ${buildType}"
 
-                  # Construct flags
                   # Use --release flag only if buildType is "release"
                   RELEASE_FLAG=${pkgs.lib.optionalString (buildType == "release") "--release"}
 
@@ -118,6 +187,7 @@
                     --locked \
                     --offline \
                     --target ${customTarget} \
+                    --verbose \
                     ''${cargoBuildFlags} # Note the bash variable expansion syntax here
 
                   runHook postBuild
@@ -131,7 +201,7 @@
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = with pkgs;
               [
-                (pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+                (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                 cargo-binstall
                 cargo-edit
                 cargo-expand
@@ -139,7 +209,7 @@
                 cargo-insta
                 cargo-nextest
                 cargo-semver-checks
-                cargo-zigbuild
+                cargo-zigbuild # only here for dev-deps
                 litecli
                 nixd
                 nixpkgs-fmt
@@ -148,13 +218,12 @@
                 release-plz
                 wasm-tools
                 wasmtime
-                zig
               ];
           };
           devShells.web = pkgs.mkShell {
             nativeBuildInputs = with pkgs;
               [
-                (pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+                (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                 binaryen # wasm-opt
                 protobuf
                 trunk
@@ -173,16 +242,24 @@
           packages = rec {
             obeliskLibcNix = makeObelisk "release" null;
             obeliskLibcNixDev = makeObelisk "dev" null;
-            # x86_64
+            # Linux
+            ## x86_64
             obeliskCrossDev-x86_64-unknown-linux-musl = makeObelisk "dev" "x86_64-unknown-linux-musl";
             obeliskCross-x86_64-unknown-linux-musl = makeObelisk "release" "x86_64-unknown-linux-musl";
             obeliskCrossDev-x86_64-unknown-linux-gnu = makeObelisk "dev" "x86_64-unknown-linux-gnu.2.35";
             obeliskCross-x86_64-unknown-linux-gnu = makeObelisk "release" "x86_64-unknown-linux-gnu.2.35";
-            # aarch64
+            ## aarch64
             obeliskCrossDev-aarch64-unknown-linux-musl = makeObelisk "dev" "aarch64-unknown-linux-musl";
             obeliskCross-aarch64-unknown-linux-musl = makeObelisk "release" "aarch64-unknown-linux-musl";
             obeliskCrossDev-aarch64-unknown-linux-gnu = makeObelisk "dev" "aarch64-unknown-linux-gnu.2.35";
             obeliskCross-aarch64-unknown-linux-gnu = makeObelisk "release" "aarch64-unknown-linux-gnu.2.35";
+            # MacOS
+            ## x86_64
+            obeliskCrossDev-x86_64-apple-darwin = makeObelisk "dev" "x86_64-apple-darwin";
+            obeliskCross-x86_64-apple-darwin = makeObelisk "dev" "x86_64-apple-darwin";
+            ## aarch64
+            obeliskCrossDev-aarch64-apple-darwin = makeObelisk "dev" "aarch64-apple-darwin";
+            obeliskCross-aarch64-apple-darwin = makeObelisk "dev" "aarch64-apple-darwin";
 
             default = obeliskLibcNix;
           };
