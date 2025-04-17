@@ -243,8 +243,8 @@
           };
 
           packages = rec {
-            obeliskLibcNix = makeObelisk "release" null;
             obeliskLibcNixDev = makeObelisk "dev" null;
+            obeliskLibcNix = makeObelisk "release" null;
             # Linux
             ## x86_64
             obeliskCrossDev-x86_64-unknown-linux-musl = makeObelisk "dev" "x86_64-unknown-linux-musl";
@@ -259,10 +259,10 @@
             # MacOS
             ## x86_64
             obeliskCrossDev-x86_64-apple-darwin = makeObelisk "dev" "x86_64-apple-darwin";
-            obeliskCross-x86_64-apple-darwin = makeObelisk "dev" "x86_64-apple-darwin";
+            obeliskCross-x86_64-apple-darwin = makeObelisk "release" "x86_64-apple-darwin";
             ## aarch64
             obeliskCrossDev-aarch64-apple-darwin = makeObelisk "dev" "aarch64-apple-darwin";
-            obeliskCross-aarch64-apple-darwin = makeObelisk "dev" "aarch64-apple-darwin";
+            obeliskCross-aarch64-apple-darwin = makeObelisk "release" "aarch64-apple-darwin";
 
             default = obeliskLibcNix;
           };
