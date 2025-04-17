@@ -24,7 +24,6 @@ jobs:
       matrix:
         include:
           - target: default
-          - target: obeliskMusl
 
     runs-on: ubuntu-24.04
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}

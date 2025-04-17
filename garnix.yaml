@@ -2,10 +2,8 @@ builds:
   - branch: latest
     include:
       - "packages.x86_64-linux.default"
-      - "packages.x86_64-linux.obeliskMusl"
 
       - "packages.aarch64-linux.default"
-      - "packages.aarch64-linux.obeliskMusl"
 
       - "packages.x86_64-darwin.default"
 
