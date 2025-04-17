@@ -142,6 +142,7 @@
                   (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                   pkg-config
                   protobuf
+                  findutils # for installPhase
                 ]
                 # Add Zig when cross compiling
                 ++ pkgs.lib.optionals (customTarget != null) [
