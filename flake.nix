@@ -232,11 +232,14 @@
           };
           devShells.publish = pkgs.mkShell {
             # Used to execute scripts/cargo-publish-workspace.sh
-            buildInputs = [
-              (pkgs.rust-bin.nightly."2025-04-01".default.override {
-                extensions = [ "rust-src" "rustfmt" "clippy" ];
-              })
-            ];
+            buildInputs = with pkgs;
+              [
+                (rust-bin.nightly."2025-04-01".default.override
+                  {
+                    extensions = [ "rust-src" "rustfmt" "clippy" ];
+                  })
+                protobuf
+              ];
           };
 
           packages = rec {
