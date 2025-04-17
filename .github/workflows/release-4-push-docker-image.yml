@@ -16,7 +16,7 @@ on:
         default: ubuntu
   workflow_run:
     workflows:
-      - release-3-upload-artifacts
+      - release-3.1-upload-artifacts
     types:
       - completed
 

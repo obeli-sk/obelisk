@@ -1,4 +1,4 @@
-name: release-3-upload-artifacts
+name: release-3.1-upload-artifacts
 
 permissions:
   contents: write
@@ -12,7 +12,7 @@ on:
         type: string
   workflow_run:
     workflows:
-      - release-2-cargo-publish
+      - release-3-create-github-release
     types:
       - completed
 
@@ -29,48 +29,9 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  create-github-release:
-    runs-on: ubuntu-24.04
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # Use the ref if provided, otherwise obtain the parent workflow branch, defaults to main.
-          ref: ${{ github.event.inputs.ref || github.event.workflow_run.head_branch }}
-
-      - id: git-info
-        run: |
-          VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
-          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub Release
-        run: |
-          echo "Releasing $TAG $SHA"
-          body=$(./scripts/extract-release-info.sh "$VERSION" | jq -R -s .)
-          curl -v --fail -X POST \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -d '{
-              "tag_name": "'"$TAG"'",
-              "target_commitish": "'"$SHA"'",
-              "name": "obelisk-'"$TAG"'",
-              "body": '"$body"',
-              "draft": false,
-              "prerelease": false
-            }' \
-            https://api.github.com/repos/obeli-sk/obelisk/releases
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ steps.git-info.outputs.sha }}
-          TAG: ${{ steps.git-info.outputs.tag }}
-          VERSION: ${{ steps.git-info.outputs.version }}
-
   upload-assets:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-    needs: create-github-release
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
@@ -118,13 +79,9 @@ jobs:
         env:
           TAG: ${{ steps.git-info.outputs.tag }}
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
+      - uses: nixbuild/nix-quick-install-action@v30
         with:
-          extra_nix_config: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            extra-substituters = https://cache.garnix.io
-            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Obelisk with Nix
         run: nix build '.#obeliskCross-${{ matrix.target }}'
