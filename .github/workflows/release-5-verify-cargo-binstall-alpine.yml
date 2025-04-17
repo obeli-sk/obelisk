@@ -46,7 +46,6 @@ jobs:
               --install-path . \
               -y \
               obelisk@$VERSION
-            RUN ldd obelisk
             RUN ./obelisk --version
             RUN ./obelisk server generate-config
             RUN ./obelisk server verify

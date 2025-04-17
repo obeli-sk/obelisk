@@ -83,7 +83,6 @@ jobs:
             WORKDIR /root
             RUN apk add curl
             RUN curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | sh
-            RUN ldd obelisk
             RUN ./obelisk --version | grep $VERSION
             RUN ./obelisk server generate-config
             RUN ./obelisk server verify
