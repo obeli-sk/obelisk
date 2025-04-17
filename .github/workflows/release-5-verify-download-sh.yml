@@ -19,7 +19,7 @@ defaults:
 
 jobs:
   verify-using-vm:
-    name: ${{ matrix.runner }}
+    name: verify-using-vm-${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
@@ -54,7 +54,7 @@ jobs:
           VERSION: ${{ steps.git-info.outputs.version }}
 
   verify-using-docker:
-    name: ${{ matrix.runner }}
+    name: verify-using-docker-${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
