@@ -9,7 +9,10 @@ mod oci;
 use anyhow::{Context, bail};
 use args::{Args, Client, ClientSubcommand, Server, Subcommand};
 use clap::Parser;
-use command::server::{RunParams, VerifyParams};
+use command::{
+    execution::{GetStatusOptions, SubmitOutputOpts},
+    server::{RunParams, VerifyParams},
+};
 use config::config_holder::ConfigHolder;
 use directories::{BaseDirs, ProjectDirs};
 use grpc_util::{injector::TracingInjector, to_channel};
@@ -66,80 +69,90 @@ async fn main() -> Result<(), anyhow::Error> {
             )
             .await
         }
-        Subcommand::Client(Client { api_url, command }) => {
-            match command {
-                ClientSubcommand::Component(args::Component::Inspect {
+        Subcommand::Client(Client { api_url, command }) => match command {
+            ClientSubcommand::Component(args::Component::Inspect {
+                path,
+                imports,
+                extensions,
+                convert_core_module,
+            }) => {
+                command::component::inspect(
                     path,
-                    imports,
+                    if imports {
+                        FunctionMetadataVerbosity::ExportsAndImports
+                    } else {
+                        FunctionMetadataVerbosity::ExportsOnly
+                    },
                     extensions,
                     convert_core_module,
-                }) => {
-                    command::component::inspect(
-                        path,
-                        if imports {
-                            FunctionMetadataVerbosity::ExportsAndImports
-                        } else {
-                            FunctionMetadataVerbosity::ExportsOnly
-                        },
-                        extensions,
-                        convert_core_module,
-                    )
-                    .await
-                }
-                ClientSubcommand::Component(args::Component::List {
-                    imports,
-                    extensions,
-                }) => {
-                    let client = get_fn_repository_client(api_url).await?;
-                    command::component::list_components(
-                        client,
-                        if imports {
-                            FunctionMetadataVerbosity::ExportsAndImports
-                        } else {
-                            FunctionMetadataVerbosity::ExportsOnly
-                        },
-                        extensions,
-                    )
-                    .await
-                }
-                ClientSubcommand::Component(args::Component::Push { path, image_name }) => {
-                    oci::push(path, &image_name).await
-                }
-                ClientSubcommand::Execution(args::Execution::Submit {
-                    ffqn,
-                    params,
-                    follow,
-                    json: json_output,
-                }) => {
-                    // TODO interactive search for ffqn showing param types and result, file name
-                    // enter parameters one by one
-                    let client = get_execution_repository_client(api_url).await?;
-                    let params =
-                        serde_json::from_str(&params).context("params should be a json array")?;
-                    let serde_json::Value::Array(params) = params else {
-                        bail!("params should be a JSON array");
-                    };
-                    command::execution::submit(client, ffqn, params, follow, json_output).await
-                }
-                ClientSubcommand::Execution(args::Execution::Get {
-                    execution_id,
-                    follow,
-                    json: json_output,
-                }) => {
-                    let client = get_execution_repository_client(api_url).await?;
-                    if json_output {
-                        command::execution::get_json(client, execution_id, follow, false).await
-                    } else {
-                        command::execution::poll_status_and_backtrace_with_reconnect(
-                            client,
-                            execution_id,
-                            follow,
-                        )
-                        .await
-                    }
-                }
+                )
+                .await
             }
-        }
+            ClientSubcommand::Component(args::Component::List {
+                imports,
+                extensions,
+            }) => {
+                let client = get_fn_repository_client(api_url).await?;
+                command::component::list_components(
+                    client,
+                    if imports {
+                        FunctionMetadataVerbosity::ExportsAndImports
+                    } else {
+                        FunctionMetadataVerbosity::ExportsOnly
+                    },
+                    extensions,
+                )
+                .await
+            }
+            ClientSubcommand::Component(args::Component::Push { path, image_name }) => {
+                oci::push(path, &image_name).await
+            }
+            ClientSubcommand::Execution(args::Execution::Submit {
+                ffqn,
+                params,
+                follow,
+                json: json_output,
+                no_backtrace,
+                no_reconnect,
+            }) => {
+                let client = get_execution_repository_client(api_url).await?;
+                let params =
+                    serde_json::from_str(&params).context("params should be a json array")?;
+                let serde_json::Value::Array(params) = params else {
+                    bail!("params should be a JSON array");
+                };
+                let opts = match (json_output, no_backtrace) {
+                    (true, false) => SubmitOutputOpts::Json,
+                    (false, no_backtrace) => SubmitOutputOpts::PlainFollow {
+                        no_backtrace,
+                        no_reconnect,
+                    },
+                    _ => unreachable!("this must have been handled by `conflicts_with`"),
+                };
+                command::execution::submit(client, ffqn, params, follow, opts).await
+            }
+            ClientSubcommand::Execution(args::Execution::Get {
+                execution_id,
+                follow,
+                no_backtrace,
+                no_reconnect,
+            }) => {
+                let client = get_execution_repository_client(api_url).await?;
+                let opts = GetStatusOptions {
+                    follow,
+                    no_backtrace,
+                    no_reconnect,
+                };
+                command::execution::get_status(client, execution_id, opts).await
+            }
+            ClientSubcommand::Execution(args::Execution::GetJson {
+                follow,
+                execution_id,
+            }) => {
+                let client = get_execution_repository_client(api_url).await?;
+                command::execution::get_status_json(client, execution_id, follow, false).await
+            }
+        },
     }
 }
 

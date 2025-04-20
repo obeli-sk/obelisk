@@ -29,13 +29,22 @@ use syntect::parsing::SyntaxSetBuilder;
 use syntect::util::as_24_bit_terminal_escaped;
 use tracing::instrument;
 
+#[derive(PartialEq)]
+pub(crate) enum SubmitOutputOpts {
+    Json,
+    PlainFollow {
+        no_backtrace: bool,
+        no_reconnect: bool,
+    },
+}
+
 #[instrument(skip_all)]
 pub(crate) async fn submit(
     mut client: ExecutionRepositoryClient,
     ffqn: FunctionFqn,
     params: Vec<serde_json::Value>,
     follow: bool,
-    json_output: bool,
+    opts: SubmitOutputOpts,
 ) -> anyhow::Result<()> {
     let resp = client
         .submit(tonic::Request::new(grpc::SubmitRequest {
@@ -55,7 +64,7 @@ pub(crate) async fn submit(
         .map(|execution_id| {
             ExecutionId::from_str(&execution_id.id).context("cannot parse `execution_id`")
         })??;
-    if json_output {
+    if opts == SubmitOutputOpts::Json {
         let json = json!(
             {"submit": {"execution_id": execution_id }}
         );
@@ -64,10 +73,19 @@ pub(crate) async fn submit(
         println!("{execution_id}");
     }
     if follow {
-        if json_output {
-            get_json(client, execution_id, true, true).await?;
-        } else {
-            poll_status_and_backtrace_with_reconnect(client, execution_id, true).await?;
+        match opts {
+            SubmitOutputOpts::Json => get_status_json(client, execution_id, true, true).await?,
+            SubmitOutputOpts::PlainFollow {
+                no_backtrace,
+                no_reconnect,
+            } => {
+                let opts = GetStatusOptions {
+                    follow: true,
+                    no_backtrace,
+                    no_reconnect,
+                };
+                get_status(client, execution_id, opts).await?
+            }
         }
     }
     Ok(())
@@ -268,7 +286,7 @@ fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> Result<(
     res
 }
 
-pub(crate) async fn get_json(
+pub(crate) async fn get_status_json(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionId,
     follow: bool,
@@ -318,30 +336,45 @@ fn print_status_json(response: grpc::GetStatusResponse) -> Result<(), anyhow::Er
     }
 }
 
-pub(crate) async fn poll_status_and_backtrace_with_reconnect(
+#[derive(Clone, Copy, Default)]
+pub(crate) struct GetStatusOptions {
+    pub(crate) follow: bool,
+    pub(crate) no_backtrace: bool,
+    pub(crate) no_reconnect: bool,
+}
+
+pub(crate) async fn get_status(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionId,
-    follow: bool,
+    opts: GetStatusOptions,
 ) -> anyhow::Result<()> {
     let mut stdout = stdout();
     let mut source_cache = hashbrown::HashMap::new();
+    let reconnect = !opts.no_reconnect;
     loop {
-        match poll_stream(
+        match poll_get_status_stream(
             &mut client,
             &execution_id,
-            follow,
+            opts,
             &mut stdout,
             &mut source_cache,
         )
         .await
         {
             Ok(()) => return Ok(()),
-            Err(err) if follow && err.downcast_ref::<tonic::Status>().is_some() => {
-                clear_screen(&mut stdout)?;
-                println!("Got error while polling the status, reconnecting - {err}");
-                tokio::time::sleep(Duration::from_secs(1)).await;
+            Err(err) => {
+                if reconnect {
+                    if err.downcast_ref::<tonic::Status>().is_some() {
+                        eprintln!("Got error while polling the status, reconnecting - {err}");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    } else {
+                        eprintln!("Encountered unrecoverable error, not reconnecting - {err:?}");
+                        return Err(err);
+                    }
+                } else {
+                    return Err(err);
+                }
             }
-            Err(err) => return Err(err),
         }
     }
 }
@@ -353,17 +386,17 @@ fn clear_screen(stdout: &mut Stdout) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn poll_stream(
+async fn poll_get_status_stream(
     client: &mut ExecutionRepositoryClient,
     execution_id: &ExecutionId,
-    follow: bool,
+    opts: GetStatusOptions,
     stdout: &mut Stdout,
     source_cache: &mut hashbrown::HashMap<String, String>,
 ) -> anyhow::Result<()> {
     let mut stream = client
         .get_status(tonic::Request::new(grpc::GetStatusRequest {
             execution_id: Some(grpc::ExecutionId::from(execution_id.clone())),
-            follow,
+            follow: opts.follow,
             send_finished_status: true,
         }))
         .await
@@ -378,74 +411,77 @@ async fn poll_stream(
             // Do not print last backtrace on finished.
             return Ok(());
         }
-        if let Some(backtrace_response) = fetch_backtrace(client, execution_id).await? {
-            let mut seen_positions = hashbrown::HashSet::new();
-            let wasm_backtrace = backtrace_response
-                .wasm_backtrace
-                .expect("`wasm_backtrace` is sent");
-            println!(
-                "\nBacktrace (version {}):",
-                wasm_backtrace.version_min_including
-            );
-            for (i, frame) in wasm_backtrace.frames.into_iter().enumerate() {
-                println!("{i}: {}, function: {}", frame.module, frame.func_name);
+        if !opts.no_backtrace {
+            if let Some(backtrace_response) = fetch_backtrace(client, execution_id).await? {
+                let mut seen_positions = hashbrown::HashSet::new();
+                let wasm_backtrace = backtrace_response
+                    .wasm_backtrace
+                    .expect("`wasm_backtrace` is sent");
+                println!(
+                    "\nBacktrace (version {}):",
+                    wasm_backtrace.version_min_including
+                );
+                for (i, frame) in wasm_backtrace.frames.into_iter().enumerate() {
+                    println!("{i}: {}, function: {}", frame.module, frame.func_name);
 
-                for symbol in frame.symbols {
-                    // Print location.
-                    let location = match (&symbol.file, symbol.line, symbol.col) {
-                        (Some(file), Some(line), Some(col)) => format!("{file}:{line}:{col}"),
-                        (Some(file), Some(line), None) => format!("{file}:{line}"),
-                        (Some(file), None, None) => file.clone(),
-                        _ => "unknown location".to_string(),
-                    };
-                    stdout
-                        .execute(SetForegroundColor(Color::Green))?
-                        .execute(Print(format!("    at {location}")))?
-                        .execute(ResetColor)?;
+                    for symbol in frame.symbols {
+                        // Print location.
+                        let location = match (&symbol.file, symbol.line, symbol.col) {
+                            (Some(file), Some(line), Some(col)) => format!("{file}:{line}:{col}"),
+                            (Some(file), Some(line), None) => format!("{file}:{line}"),
+                            (Some(file), None, None) => file.clone(),
+                            _ => "unknown location".to_string(),
+                        };
+                        stdout
+                            .execute(SetForegroundColor(Color::Green))?
+                            .execute(Print(format!("    at {location}")))?
+                            .execute(ResetColor)?;
 
-                    // Print function name if it's different from frameinfo
-                    match &symbol.func_name {
-                        Some(func_name) if *func_name != frame.func_name => {
-                            println!(" - {func_name}");
+                        // Print function name if it's different from frameinfo
+                        match &symbol.func_name {
+                            Some(func_name) if *func_name != frame.func_name => {
+                                println!(" - {func_name}");
+                            }
+                            _ => println!(),
                         }
-                        _ => println!(),
-                    }
 
-                    // Print source file.
-                    if let (Some(file), Some(line)) = (&symbol.file, symbol.line) {
-                        let new_position = seen_positions.insert((file.clone(), line));
-                        if new_position {
-                            let source = {
-                                if let Some(source) = source_cache.get(file.as_str()) {
-                                    Some(source)
-                                } else if let Ok(source) = client
-                                    .get_backtrace_source(tonic::Request::new(
-                                        grpc::GetBacktraceSourceRequest {
-                                            component_id: Some(
-                                                backtrace_response
-                                                    .component_id
-                                                    .clone()
-                                                    .expect("`component_id` is sent"),
-                                            ),
-                                            file: file.clone(),
-                                        },
-                                    ))
-                                    .await
-                                {
-                                    source_cache.insert(file.clone(), source.into_inner().content);
-                                    source_cache.get(file.as_str())
-                                } else {
-                                    None
+                        // Print source file.
+                        if let (Some(file), Some(line)) = (&symbol.file, symbol.line) {
+                            let new_position = seen_positions.insert((file.clone(), line));
+                            if new_position {
+                                let source = {
+                                    if let Some(source) = source_cache.get(file.as_str()) {
+                                        Some(source)
+                                    } else if let Ok(source) = client
+                                        .get_backtrace_source(tonic::Request::new(
+                                            grpc::GetBacktraceSourceRequest {
+                                                component_id: Some(
+                                                    backtrace_response
+                                                        .component_id
+                                                        .clone()
+                                                        .expect("`component_id` is sent"),
+                                                ),
+                                                file: file.clone(),
+                                            },
+                                        ))
+                                        .await
+                                    {
+                                        source_cache
+                                            .insert(file.clone(), source.into_inner().content);
+                                        source_cache.get(file.as_str())
+                                    } else {
+                                        None
+                                    }
+                                };
+                                if let Some(source) = source {
+                                    print_backtrace_with_content(
+                                        stdout,
+                                        source.as_str(),
+                                        PathBuf::from(file).extension().and_then(|e| e.to_str()),
+                                        usize::try_from(line).unwrap(),
+                                        symbol.col.map(|col| usize::try_from(col).unwrap()),
+                                    )?;
                                 }
-                            };
-                            if let Some(source) = source {
-                                print_backtrace_with_content(
-                                    stdout,
-                                    source.as_str(),
-                                    PathBuf::from(file).extension().and_then(|e| e.to_str()),
-                                    usize::try_from(line).unwrap(),
-                                    symbol.col.map(|col| usize::try_from(col).unwrap()),
-                                )?;
                             }
                         }
                     }

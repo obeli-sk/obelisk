@@ -114,27 +114,43 @@ pub(crate) enum Component {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Execution {
+    /// Submit new execution and optionally follow its status stream until the it finishes.
     Submit {
-        /// Follow the stream of events until the execution finishes
-        #[arg(short, long)]
-        follow: bool,
         /// Function in the fully qualified format
         #[arg(value_name = "FUNCTION")]
         ffqn: FunctionFqn,
         /// Parameters encoded as an JSON
         #[arg(value_name = "PARAMS")]
         params: String,
-        /// Print output as JSON
-        #[arg(long)]
-        json: bool,
-    },
-    Get {
         /// Follow the stream of events until the execution finishes
         #[arg(short, long)]
         follow: bool,
-        execution_id: ExecutionId,
+        /// Do not show backtrace details while following the status stream.
+        #[arg(long, requires = "follow", conflicts_with = "json")]
+        no_backtrace: bool,
+        /// Do not attempt to reconnect on connection error while following the status stream.
+        #[arg(long, requires = "follow", conflicts_with = "json")]
+        no_reconnect: bool,
         /// Print output as JSON
-        #[arg(long)]
+        #[arg(long, conflicts_with = "no_backtrace")]
         json: bool,
+    },
+    Get {
+        /// Follow the status stream until the execution finishes.
+        #[arg(short, long)]
+        follow: bool,
+        execution_id: ExecutionId,
+        /// Do not show backtrace details.
+        #[arg(long)]
+        no_backtrace: bool,
+        /// Do not attempt to reconnect on connection error while following the status stream.
+        #[arg(long, requires = "follow")]
+        no_reconnect: bool,
+    },
+    GetJson {
+        /// Follow the stream of events until the execution finishes.
+        #[arg(short, long)]
+        follow: bool,
+        execution_id: ExecutionId,
     },
 }
