@@ -3,7 +3,6 @@ use super::grpc::GetBacktraceResponse;
 use super::grpc::execution_status::BlockedByJoinSet;
 use crate::ExecutionRepositoryClient;
 use crate::command::grpc::execution_status::Finished;
-use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use anyhow::Context;
 use anyhow::anyhow;
 use chrono::DateTime;
@@ -55,8 +54,7 @@ pub(crate) async fn submit(
             }),
             function_name: Some(ffqn.into()),
         }))
-        .await
-        .to_anyhow()?
+        .await?
         .into_inner();
     let execution_id = resp
         .execution_id
@@ -84,7 +82,7 @@ pub(crate) async fn submit(
                     no_backtrace,
                     no_reconnect,
                 };
-                get_status(client, execution_id, opts).await?
+                get_status(client, execution_id, opts).await?;
             }
         }
     }
@@ -298,8 +296,7 @@ pub(crate) async fn get_status_json(
             follow,
             send_finished_status: true,
         }))
-        .await
-        .to_anyhow()?
+        .await?
         .into_inner();
 
     if !json_output_started {
@@ -399,8 +396,7 @@ async fn poll_get_status_stream(
             follow: opts.follow,
             send_finished_status: true,
         }))
-        .await
-        .to_anyhow()?
+        .await?
         .into_inner();
     while let Some(status) = stream.message().await? {
         clear_screen(stdout)?;
@@ -589,7 +585,7 @@ async fn fetch_backtrace(
         Err(status) if status.code() == tonic::Code::NotFound => {
             return Ok(None);
         }
-        err @ Err(_) => return Err(err.to_anyhow().unwrap_err()),
+        Err(err) => return Err(anyhow::Error::from(err)),
         Ok(ok) => ok.into_inner(),
     };
     Ok(Some(backtrace_response))

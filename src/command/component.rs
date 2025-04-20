@@ -1,6 +1,6 @@
 use super::grpc;
 use crate::FunctionMetadataVerbosity;
-use crate::{FunctionRepositoryClient, grpc_util::grpc_mapping::TonicClientResultExt};
+use crate::FunctionRepositoryClient;
 use anyhow::Context;
 use concepts::{FunctionFqn, FunctionMetadata};
 use std::path::PathBuf;
@@ -61,8 +61,7 @@ pub(crate) async fn list_components(
             component_id: None,
             extensions,
         }))
-        .await
-        .to_anyhow()?
+        .await?
         .into_inner()
         .components;
     for component in components {

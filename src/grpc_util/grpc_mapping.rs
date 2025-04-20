@@ -1,5 +1,4 @@
 use crate::command::grpc::{self};
-use anyhow::anyhow;
 use concepts::{
     ClosingStrategy, ComponentId, ComponentType, ExecutionId, FinishedExecutionError,
     FinishedExecutionResult, FunctionFqn, SupportedFunctionReturnValue,
@@ -112,16 +111,6 @@ impl<T> TonicServerOptionExt<T> for Option<T> {
 
     fn entity_must_exist(self) -> Result<T, tonic::Status> {
         self.ok_or_else(|| tonic::Status::not_found("entity not found"))
-    }
-}
-
-pub trait TonicClientResultExt<T> {
-    fn to_anyhow(self) -> Result<tonic::Response<T>, anyhow::Error>;
-}
-
-impl<T> TonicClientResultExt<T> for Result<tonic::Response<T>, tonic::Status> {
-    fn to_anyhow(self) -> Result<tonic::Response<T>, anyhow::Error> {
-        self.map_err(|err| anyhow::Error::from(err))
     }
 }
 
