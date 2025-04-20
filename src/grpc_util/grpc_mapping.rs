@@ -121,14 +121,7 @@ pub trait TonicClientResultExt<T> {
 
 impl<T> TonicClientResultExt<T> for Result<tonic::Response<T>, tonic::Status> {
     fn to_anyhow(self) -> Result<tonic::Response<T>, anyhow::Error> {
-        self.map_err(|err| {
-            let msg = err.message();
-            if msg.is_empty() {
-                anyhow!("{err}")
-            } else {
-                anyhow!("{msg}")
-            }
-        })
+        self.map_err(|err| anyhow::Error::from(err))
     }
 }
 
