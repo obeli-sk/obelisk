@@ -57,7 +57,10 @@ https://www.sqlite.org/pragma.html#pragma_journal_size_limit
 
 Inspired by https://github.com/rails/rails/pull/49349
 */
+
+//NB: Each line must match `PRAGMA key = val;`
 const PRAGMA: &str = r"
+PRAGMA journal_mode = wal;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = true;
 PRAGMA busy_timeout = 1000;
@@ -67,8 +70,6 @@ PRAGMA page_size = 8192;
 PRAGMA mmap_size = 134217728;
 PRAGMA journal_size_limit = 67108864;
 ";
-const PRAGMA_JOURNAL_MODE: &str = "journal_mode";
-const PRAGMA_JOURNAL_MODE_WAL: &str = "wal";
 
 const CREATE_TABLE_T_METADATA: &str = r"
 CREATE TABLE IF NOT EXISTS t_metadata (
@@ -497,13 +498,19 @@ impl<S: Sleep> SqlitePool<S> {
             conn.execute(sql, params)
                 .unwrap_or_else(|err| panic!("cannot run `{sql}` - {err:?}"));
         }
+        fn pragma_update(conn: &Connection, name: &str, value: &str) {
+            conn.pragma_update(None, name, value)
+                .unwrap_or_else(|err| panic!("cannot update pragma `{name}`=`{value}` - {err:?}"));
+        }
 
         let conn = Connection::open_with_flags(path, OpenFlags::default())
             .unwrap_or_else(|err| panic!("cannot open the connection - {err:?}"));
 
-        conn.pragma_update(None, PRAGMA_JOURNAL_MODE, PRAGMA_JOURNAL_MODE_WAL)
-            .unwrap_or_else(|err| panic!("cannot set journal_mode - {err:?}"));
-        execute(&conn, PRAGMA, []);
+        for pragma in PRAGMA.split('\n').filter(|it| !it.is_empty()) {
+            let pragma = pragma.strip_prefix("PRAGMA ").unwrap();
+            let (pragma, value) = pragma.split_once(" = ").unwrap();
+            pragma_update(&conn, pragma, value);
+        }
 
         // t_metadata
         execute(&conn, CREATE_TABLE_T_METADATA, []);
