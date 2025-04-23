@@ -1,6 +1,7 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer};
 
-#[derive(Clone, derive_more::Debug, Hash)]
+#[derive(Clone, derive_more::Debug, Hash, JsonSchema)]
 pub struct EnvVarConfig {
     pub key: String,
     #[debug(skip)]

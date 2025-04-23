@@ -8,6 +8,7 @@ use concepts::{
 };
 use db_sqlite::sqlite_dao::SqliteConfig;
 use log::{LoggingConfig, LoggingStyle};
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer};
 use std::{
     net::SocketAddr,
@@ -46,7 +47,7 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}codegen", CACHE_DIR_PREFIX);
 const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConfigToml {
     pub(crate) api: ApiConfig,
@@ -95,13 +96,13 @@ impl ConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ApiConfig {
     pub(crate) listening_addr: SocketAddr,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SqliteConfigToml {
     #[serde(default)]
@@ -133,20 +134,20 @@ impl SqliteConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WebUIConfig {
     pub(crate) listening_addr: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
     #[serde(default)]
     pub(crate) backtrace: WorkflowsGlobalBacktrace,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalBacktrace {
     #[serde(default = "default_global_backtrace_persist")]
@@ -170,7 +171,7 @@ impl Default for WorkflowsGlobalBacktrace {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CodegenCache {
     #[serde(default = "default_codegen_enabled")]
@@ -205,9 +206,11 @@ impl CodegenCache {
 }
 
 /// Activity, Webhook, Workflow or a Http server
-#[derive(Debug, Clone, Hash, PartialEq, Eq, derive_more::Display, derive_more::Into)]
+#[derive(
+    Debug, Clone, Hash, PartialEq, Eq, derive_more::Display, derive_more::Into, JsonSchema,
+)]
 #[display("{_0}")]
-pub struct ConfigName(StrVariant);
+pub struct ConfigName(#[schemars(with = "String")] StrVariant);
 impl ConfigName {
     pub fn new(name: StrVariant) -> Result<Self, InvalidNameError<ConfigName>> {
         Ok(Self(check_name(name, "_")?))
@@ -223,7 +226,7 @@ impl<'de> Deserialize<'de> for ConfigName {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentCommon {
     pub(crate) name: ConfigName,
@@ -254,7 +257,7 @@ impl ComponentCommon {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecConfigToml {
     #[serde(default = "default_batch_size")]
@@ -293,7 +296,7 @@ impl ExecConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityComponentConfigToml {
     #[serde(flatten)]
@@ -369,7 +372,7 @@ impl ActivityComponentConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowComponentConfigToml {
     #[serde(flatten)]
@@ -379,7 +382,7 @@ pub(crate) struct WorkflowComponentConfigToml {
     #[serde(default = "default_retry_exp_backoff")]
     pub(crate) retry_exp_backoff: DurationConfig,
     #[serde(default = "default_strategy")]
-    pub(crate) join_next_blocking_strategy: JoinNextBlockingStrategy,
+    pub(crate) join_next_blocking_strategy: JoinNextBlockingStrategyConfigToml,
     #[serde(default = "default_non_blocking_event_batching")]
     pub(crate) non_blocking_event_batching: u32,
     #[serde(default = "default_retry_on_trap")]
@@ -392,13 +395,31 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) backtrace: ComponentBacktraceConfig,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JoinNextBlockingStrategyConfigToml {
+    /// Shut down the current runtime. When the [`JoinSetResponse`] is appended, workflow is reexecuted with a new `RunId`.
+    Interrupt,
+    /// Keep the execution hot. Worker will poll the database until the execution lock expires.
+    Await, // TODO: Move `non_blocking_event_batching` here
+}
+impl From<JoinNextBlockingStrategyConfigToml> for JoinNextBlockingStrategy {
+    fn from(value: JoinNextBlockingStrategyConfigToml) -> Self {
+        match value {
+            JoinNextBlockingStrategyConfigToml::Interrupt => Self::Interrupt,
+            JoinNextBlockingStrategyConfigToml::Await => Self::Await,
+        }
+    }
+}
+
 type BacktraceFrameFilesToSourcesUnverified = hashbrown::HashMap<String, String>;
 type BacktraceFrameFilesToSourcesVerified = hashbrown::HashMap<String, PathBuf>;
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentBacktraceConfig {
     #[serde(rename = "sources")]
+    #[schemars(with = "std::collections::HashMap<String, String>")]
     pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesUnverified,
 }
 
@@ -474,7 +495,7 @@ impl WorkflowComponentConfigToml {
 
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy: self.join_next_blocking_strategy,
+            join_next_blocking_strategy: self.join_next_blocking_strategy.into(),
             non_blocking_event_batching: self.non_blocking_event_batching,
             retry_on_trap: self.retry_on_trap,
             forward_unhandled_child_errors_in_join_set_close: self
@@ -498,7 +519,7 @@ impl WorkflowComponentConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, Default)]
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum WasmtimeAllocatorConfig {
     #[default]
@@ -507,7 +528,7 @@ pub(crate) enum WasmtimeAllocatorConfig {
     Pooling,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, Default)]
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WasmtimePoolingAllocatorConfig {
     /// How many bytes to keep resident between instantiations for the
@@ -576,8 +597,9 @@ impl From<WasmtimePoolingAllocatorConfig> for wasm_workers::engines::PoolingOpti
 pub(crate) mod otlp {
     use super::{Deserialize, log};
     use log::EnvFilter;
+    use schemars::JsonSchema;
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct OtlpConfig {
         pub(crate) enabled: bool,
@@ -599,7 +621,7 @@ pub(crate) mod otlp {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DurationConfig {
     Seconds(u64),
@@ -616,11 +638,11 @@ impl From<DurationConfig> for Duration {
 }
 
 pub(crate) mod log {
-    use super::{Deserialize, default_out_style};
+    use super::{Deserialize, JsonSchema, default_out_style};
     use serde_with::serde_as;
     use std::str::FromStr;
 
-    #[derive(Debug, Deserialize, Default)]
+    #[derive(Debug, Deserialize, JsonSchema, Default)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct LoggingConfig {
         #[serde(default)]
@@ -629,7 +651,7 @@ pub(crate) mod log {
         pub(crate) stdout: Option<AppenderOut>,
     }
 
-    #[derive(Debug, Deserialize, Default, Copy, Clone)]
+    #[derive(Debug, Deserialize, JsonSchema, Default, Copy, Clone)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum SpanConfig {
         /// spans are ignored (this is the default)
@@ -663,7 +685,7 @@ pub(crate) mod log {
         }
     }
 
-    #[derive(Debug, Deserialize, Default)]
+    #[derive(Debug, Deserialize, JsonSchema, Default)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum LoggingStyle {
         #[default]
@@ -673,7 +695,7 @@ pub(crate) mod log {
     }
 
     #[serde_as]
-    #[derive(Debug, Deserialize, Default)]
+    #[derive(Debug, Deserialize, JsonSchema, Default)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct AppenderCommon {
         #[serde(default)]
@@ -684,8 +706,10 @@ pub(crate) mod log {
         pub(crate) target: bool,
     }
 
-    #[derive(Debug, serde_with::DeserializeFromStr)]
-    pub(crate) struct EnvFilter(pub(crate) tracing_subscriber::EnvFilter);
+    #[derive(Debug, serde_with::DeserializeFromStr, JsonSchema)]
+    pub(crate) struct EnvFilter(
+        #[schemars(with = "String")] pub(crate) tracing_subscriber::EnvFilter,
+    );
     impl FromStr for EnvFilter {
         type Err = tracing_subscriber::filter::ParseError;
 
@@ -701,7 +725,7 @@ pub(crate) mod log {
         }
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct AppenderOut {
         pub(crate) enabled: bool,
@@ -711,7 +735,7 @@ pub(crate) mod log {
         pub(crate) style: LoggingStyle,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct AppenderRollingFile {
         pub(crate) enabled: bool,
@@ -724,7 +748,7 @@ pub(crate) mod log {
         pub(crate) style: LoggingStyle,
     }
 
-    #[derive(Debug, Deserialize, Clone, Copy)]
+    #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum Rotation {
         Minutely,
@@ -744,7 +768,7 @@ pub(crate) mod log {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, Default)]
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum StdOutput {
     #[default]
@@ -770,6 +794,7 @@ pub(crate) mod webhook {
     use crate::config::{config_holder::PathPrefixes, env_var::EnvVarConfig};
     use anyhow::Context;
     use concepts::{ComponentId, ComponentType, ContentDigest, StrVariant};
+    use schemars::JsonSchema;
     use serde::Deserialize;
     use std::{
         net::SocketAddr,
@@ -779,7 +804,7 @@ pub(crate) mod webhook {
     use tracing::instrument;
     use wasm_workers::envvar::EnvVar;
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct HttpServer {
         pub(crate) name: ConfigName,
@@ -788,7 +813,7 @@ pub(crate) mod webhook {
         pub(crate) max_inflight_requests: InflightSemaphore,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookComponentConfigToml {
         // TODO: Rename to WebhookComponentConfigToml
@@ -847,7 +872,7 @@ pub(crate) mod webhook {
         }
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(untagged)]
     pub(crate) enum WebhookRoute {
         String(String),
@@ -860,7 +885,7 @@ pub(crate) mod webhook {
         }
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookRouteDetail {
         // Empty means all methods.
@@ -912,7 +937,7 @@ pub(crate) mod webhook {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub(crate) enum InflightSemaphore {
     Unlimited(Unlimited),
@@ -925,7 +950,7 @@ impl Default for InflightSemaphore {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Unlimited {
     #[default]
@@ -1111,8 +1136,8 @@ const fn default_retry_exp_backoff() -> DurationConfig {
     DurationConfig::Milliseconds(100)
 }
 
-const fn default_strategy() -> JoinNextBlockingStrategy {
-    JoinNextBlockingStrategy::Await
+const fn default_strategy() -> JoinNextBlockingStrategyConfigToml {
+    JoinNextBlockingStrategyConfigToml::Await
 }
 
 const fn default_batch_size() -> u32 {

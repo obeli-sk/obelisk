@@ -9,6 +9,8 @@ use concepts::ComponentRetryConfig;
 use concepts::ContentDigest;
 use concepts::FunctionMetadata;
 use concepts::PackageIfcFns;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_with::serde_as;
 use std::path::{Path, PathBuf};
 use toml::ConfigName;
@@ -41,11 +43,15 @@ pub(crate) struct ConfigStoreCommon {
 }
 
 #[serde_as]
-#[derive(Debug, Clone, Hash, serde::Deserialize)]
+#[derive(Debug, Clone, Hash, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ComponentLocation {
     Path(PathBuf),
-    Oci(#[serde_as(as = "serde_with::DisplayFromStr")] oci_client::Reference),
+    Oci(
+        #[serde_as(as = "serde_with::DisplayFromStr")]
+        #[schemars(with = "String")]
+        oci_client::Reference,
+    ),
 }
 
 impl ComponentLocation {
