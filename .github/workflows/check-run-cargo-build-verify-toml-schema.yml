@@ -1,0 +1,46 @@
+name: check-run-cargo-build-verify-toml-schema
+
+on:
+  push:
+    branches:
+      - main
+      - latest
+  pull_request:
+
+# If new code is pushed to a PR branch, then cancel in progress workflows for that PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  check-build-verify-toml-schema:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Populate the nix store
+        run: nix develop --command echo
+
+      - name: Run `cargo build`
+        run: nix develop --command cargo build
+
+      - name: Run `obelisk server verify`
+        run: |
+          target/debug/obelisk server verify
+
+      - name: Run `obelisk generate config-schema`
+        run: |
+          target/debug/obelisk generate config-schema toml/schema.json
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Uncommitted changes after running `obelisk generate config-schema toml/schema.json`"
+            exit 1
+          fi
