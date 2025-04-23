@@ -7,7 +7,7 @@ mod init;
 mod oci;
 
 use anyhow::{Context, bail};
-use args::{Args, Client, ClientSubcommand, Server, Subcommand};
+use args::{Args, Client, ClientSubcommand, Generate, Server, Subcommand};
 use clap::Parser;
 use command::{
     execution::{GetStatusOptions, SubmitOutputOpts},
@@ -153,6 +153,9 @@ async fn main() -> Result<(), anyhow::Error> {
                 command::execution::get_status_json(client, execution_id, follow, false).await
             }
         },
+        Subcommand::Generate(Generate::ConfigSchema { output }) => {
+            command::generate::generate_toml_schema(output)
+        }
     }
 }
 

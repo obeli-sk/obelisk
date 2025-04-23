@@ -1,0 +1,796 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConfigToml",
+  "type": "object",
+  "properties": {
+    "activity_wasm": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActivityComponentConfigToml"
+      }
+    },
+    "api": {
+      "$ref": "#/$defs/ApiConfig"
+    },
+    "codegen_cache": {
+      "$ref": "#/$defs/CodegenCache"
+    },
+    "http_server": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/HttpServer"
+      }
+    },
+    "log": {
+      "$ref": "#/$defs/LoggingConfig"
+    },
+    "otlp": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OtlpConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sqlite": {
+      "$ref": "#/$defs/SqliteConfigToml"
+    },
+    "wasm_cache_directory": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "wasmtime_allocator_config": {
+      "$ref": "#/$defs/WasmtimeAllocatorConfig"
+    },
+    "wasmtime_pooling_config": {
+      "$ref": "#/$defs/WasmtimePoolingAllocatorConfig"
+    },
+    "webhook_endpoint": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WebhookComponentConfigToml"
+      }
+    },
+    "webui": {
+      "$ref": "#/$defs/WebUIConfig"
+    },
+    "workflow": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WorkflowComponentConfigToml"
+      }
+    },
+    "workflows": {
+      "$ref": "#/$defs/WorkflowsGlobalConfigToml"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "api"
+  ],
+  "$defs": {
+    "ActivityComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          }
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml"
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/StdOutput"
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/StdOutput"
+        },
+        "location": {
+          "$ref": "#/$defs/ComponentLocation"
+        },
+        "max_retries": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig"
+        },
+        "retry_on_err": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location"
+      ]
+    },
+    "ApiConfig": {
+      "type": "object",
+      "properties": {
+        "listening_addr": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "listening_addr"
+      ]
+    },
+    "AppenderOut": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "level": {
+          "$ref": "#/$defs/EnvFilter"
+        },
+        "span": {
+          "$ref": "#/$defs/SpanConfig"
+        },
+        "style": {
+          "$ref": "#/$defs/LoggingStyle"
+        },
+        "target": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "enabled"
+      ]
+    },
+    "AppenderRollingFile": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "level": {
+          "$ref": "#/$defs/EnvFilter"
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "rotation": {
+          "$ref": "#/$defs/Rotation"
+        },
+        "span": {
+          "$ref": "#/$defs/SpanConfig"
+        },
+        "style": {
+          "$ref": "#/$defs/LoggingStyle"
+        },
+        "target": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "directory",
+        "prefix",
+        "rotation"
+      ]
+    },
+    "BlockingStrategyConfigCustomized": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "await"
+            },
+            "non_blocking_event_batching": {
+              "type": "integer",
+              "format": "uint32",
+              "default": 100,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "BlockingStrategyConfigSimple": {
+      "type": "string",
+      "enum": [
+        "interrupt",
+        "await"
+      ]
+    },
+    "CodegenCache": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ComponentBacktraceConfig": {
+      "type": "object",
+      "properties": {
+        "sources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sources"
+      ]
+    },
+    "ComponentLocation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "oci": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "oci"
+          ]
+        }
+      ]
+    },
+    "ConfigName": {
+      "description": "Activity, Webhook, Workflow or a Http server",
+      "type": "string"
+    },
+    "DurationConfig": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "seconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "seconds"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "milliseconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "milliseconds"
+          ]
+        }
+      ]
+    },
+    "EnvFilter": {
+      "type": "string"
+    },
+    "EnvVarConfig": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "val": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "ExecConfigToml": {
+      "type": "object",
+      "properties": {
+        "batch_size": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "lock_expiry": {
+          "$ref": "#/$defs/DurationConfig"
+        },
+        "max_inflight_instances": {
+          "$ref": "#/$defs/InflightSemaphore"
+        },
+        "tick_sleep": {
+          "$ref": "#/$defs/DurationConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "HttpServer": {
+      "type": "object",
+      "properties": {
+        "listening_addr": {
+          "type": "string"
+        },
+        "max_inflight_requests": {
+          "$ref": "#/$defs/InflightSemaphore"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "listening_addr"
+      ]
+    },
+    "InflightSemaphore": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Unlimited"
+        },
+        {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      ]
+    },
+    "JoinNextBlockingStrategyConfigToml": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BlockingStrategyConfigCustomized"
+        },
+        {
+          "$ref": "#/$defs/BlockingStrategyConfigSimple"
+        }
+      ]
+    },
+    "LoggingConfig": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppenderRollingFile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stdout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppenderOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "LoggingStyle": {
+      "type": "string",
+      "enum": [
+        "plain",
+        "plain_compact",
+        "json"
+      ]
+    },
+    "OtlpConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "level": {
+          "$ref": "#/$defs/EnvFilter"
+        },
+        "otlp_endpoint": {
+          "type": "string",
+          "default": "http://localhost:4317"
+        },
+        "service_name": {
+          "type": "string",
+          "default": "obelisk-server"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "enabled"
+      ]
+    },
+    "Rotation": {
+      "type": "string",
+      "enum": [
+        "minutely",
+        "hourly",
+        "daily",
+        "never"
+      ]
+    },
+    "SpanConfig": {
+      "oneOf": [
+        {
+          "description": "spans are ignored (this is the default)",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "one event when span is created",
+          "type": "string",
+          "const": "new"
+        },
+        {
+          "description": "one event per enter of a span",
+          "type": "string",
+          "const": "enter"
+        },
+        {
+          "description": "one event per exit of a span",
+          "type": "string",
+          "const": "exit"
+        },
+        {
+          "description": "one event when the span is dropped",
+          "type": "string",
+          "const": "close"
+        },
+        {
+          "description": "one event per enter/exit of a span",
+          "type": "string",
+          "const": "active"
+        },
+        {
+          "description": "events at all points (new, enter, exit, drop)",
+          "type": "string",
+          "const": "full"
+        }
+      ]
+    },
+    "SqliteConfigToml": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "low_prio_threshold": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "queue_capacity": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "StdOutput": {
+      "type": "string",
+      "enum": [
+        "none",
+        "stdout",
+        "stderr"
+      ]
+    },
+    "Unlimited": {
+      "type": "string",
+      "enum": [
+        "unlimited"
+      ]
+    },
+    "WasmtimeAllocatorConfig": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "on_demand",
+        "pooling"
+      ]
+    },
+    "WasmtimePoolingAllocatorConfig": {
+      "type": "object",
+      "properties": {
+        "memory_protection_keys": {
+          "description": "Enable memory protection keys for the pooling allocator; this can\n optimize the size of memory slots.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "pooling_max_memory_size": {
+          "description": "The maximum runtime size of each linear memory in the pooling\n allocator, in bytes.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "default": null,
+          "minimum": 0
+        },
+        "pooling_memory_keep_resident": {
+          "description": "How many bytes to keep resident between instantiations for the\n pooling allocator in linear memories.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "default": null,
+          "minimum": 0
+        },
+        "pooling_table_keep_resident": {
+          "description": "How many bytes to keep resident between instantiations for the\n pooling allocator in tables.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "default": null,
+          "minimum": 0
+        },
+        "pooling_total_component_instances": {
+          "description": "The maximum number of WebAssembly components which can be created\n with the pooling allocator.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "pooling_total_core_instances": {
+          "description": "The maximum number of WebAssembly instances which can be created\n with the pooling allocator.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "pooling_total_memories": {
+          "description": "The maximum number of WebAssembly memories which can be created with\n the pooling allocator.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "pooling_total_stacks": {
+          "description": "The maximum number of WebAssembly stacks which can be created with\n the pooling allocator.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "pooling_total_tables": {
+          "description": "The maximum number of WebAssembly tables which can be created with\n the pooling allocator.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "WebUIConfig": {
+      "type": "object",
+      "properties": {
+        "listening_addr": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "WebhookComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "backtrace": {
+          "$ref": "#/$defs/ComponentBacktraceConfig"
+        },
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          }
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/StdOutput"
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/StdOutput"
+        },
+        "http_server": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "location": {
+          "$ref": "#/$defs/ComponentLocation"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WebhookRoute"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location",
+        "http_server",
+        "routes"
+      ]
+    },
+    "WebhookRoute": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/WebhookRouteDetail"
+        }
+      ]
+    },
+    "WebhookRouteDetail": {
+      "type": "object",
+      "properties": {
+        "methods": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "route": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "route"
+      ]
+    },
+    "WorkflowComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "backtrace": {
+          "$ref": "#/$defs/ComponentBacktraceConfig"
+        },
+        "blocking_strategy": {
+          "$ref": "#/$defs/JoinNextBlockingStrategyConfigToml"
+        },
+        "convert_core_module": {
+          "type": "boolean",
+          "default": true
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml"
+        },
+        "forward_unhandled_child_errors_in_completing_join_set_close": {
+          "type": "boolean",
+          "default": true
+        },
+        "location": {
+          "$ref": "#/$defs/ComponentLocation"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig"
+        },
+        "retry_on_trap": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location"
+      ]
+    },
+    "WorkflowsGlobalBacktrace": {
+      "type": "object",
+      "properties": {
+        "persist": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkflowsGlobalConfigToml": {
+      "type": "object",
+      "properties": {
+        "backtrace": {
+          "$ref": "#/$defs/WorkflowsGlobalBacktrace"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

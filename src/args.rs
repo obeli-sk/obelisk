@@ -27,6 +27,17 @@ pub(crate) enum Subcommand {
     Server(Server),
     #[command()]
     Client(Client),
+    #[command(subcommand)]
+    Generate(Generate),
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum Generate {
+    /// Generate the Obelisk configuration schema in JSON schema format.
+    ConfigSchema {
+        /// Filename to write the schema to, defaults to `<stdout>`.
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]
