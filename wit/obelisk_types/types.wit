@@ -26,6 +26,8 @@ interface time {
 
 interface execution {
     resource join-set-id {
+        // TODO: sleep-submit
+        // TODO: await-next
     }
     record execution-id {
         id: string,

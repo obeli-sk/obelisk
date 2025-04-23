@@ -6,9 +6,9 @@ interface workflow-support {
 
     /// The closing strategy of a join set. Join sets are closed when execution finishes.
     enum closing-strategy {
-        /// All submitted executions that were not polled are awaited.
+        /// All submitted executions that were not awaited are awaited.
         complete,
-        /// All submitted executions that were not polled are cancelled.
+        /// All submitted executions that were not awaited are cancelled.
         // TODO: Implement
         cancel,
     }
@@ -24,7 +24,6 @@ interface workflow-support {
 
     /// Persistent sleep.
     sleep: func(duration: duration);
-    // TODO: sleep-submit
 
     /// Create a new completing join set.
     new-join-set-named: func(name: string, closing-strategy: closing-strategy) -> join-set-id;
