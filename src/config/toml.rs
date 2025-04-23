@@ -384,7 +384,7 @@ pub(crate) struct WorkflowComponentConfigToml {
     #[serde(default = "default_retry_exp_backoff")]
     pub(crate) retry_exp_backoff: DurationConfig,
     #[serde(default)]
-    pub(crate) blocking_strategy: JoinNextBlockingStrategyConfigToml,
+    pub(crate) blocking_strategy: BlockingStrategyConfigToml,
     #[serde(default = "default_retry_on_trap")]
     pub(crate) retry_on_trap: bool,
     #[serde(default = "default_convert_core_module")]
@@ -397,13 +397,13 @@ pub(crate) struct WorkflowComponentConfigToml {
 
 #[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
 #[serde(untagged)] // Try variants without needing a specific outer tag
-pub(crate) enum JoinNextBlockingStrategyConfigToml {
+pub(crate) enum BlockingStrategyConfigToml {
     // Try the more specific map format first
     Tagged(BlockingStrategyConfigCustomized),
     // If it's not the map format, try the simple string format
     Simple(BlockingStrategyConfigSimple),
 }
-impl Default for JoinNextBlockingStrategyConfigToml {
+impl Default for BlockingStrategyConfigToml {
     fn default() -> Self {
         Self::Simple(BlockingStrategyConfigSimple::default())
     }
@@ -428,20 +428,20 @@ pub(crate) enum BlockingStrategyConfigSimple {
     #[default]
     Await,
 }
-impl From<JoinNextBlockingStrategyConfigToml> for JoinNextBlockingStrategy {
-    fn from(input: JoinNextBlockingStrategyConfigToml) -> Self {
+impl From<BlockingStrategyConfigToml> for JoinNextBlockingStrategy {
+    fn from(input: BlockingStrategyConfigToml) -> Self {
         match input {
-            JoinNextBlockingStrategyConfigToml::Tagged(
+            BlockingStrategyConfigToml::Tagged(
                 BlockingStrategyConfigCustomized::Await(BlockingStrategyAwaitConfig {
                     non_blocking_event_batching,
                 }),
             ) => JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching,
             },
-            JoinNextBlockingStrategyConfigToml::Simple(BlockingStrategyConfigSimple::Interrupt) => {
+            BlockingStrategyConfigToml::Simple(BlockingStrategyConfigSimple::Interrupt) => {
                 JoinNextBlockingStrategy::Interrupt
             }
-            JoinNextBlockingStrategyConfigToml::Simple(BlockingStrategyConfigSimple::Await) => {
+            BlockingStrategyConfigToml::Simple(BlockingStrategyConfigSimple::Await) => {
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
                 }
@@ -1214,7 +1214,7 @@ mod tests {
         // Helper struct to deserialize into
         #[derive(Deserialize, Debug, PartialEq)]
         struct TestConfig {
-            strategy: JoinNextBlockingStrategyConfigToml,
+            strategy: BlockingStrategyConfigToml,
         }
 
         #[test]
@@ -1223,7 +1223,7 @@ mod tests {
 strategy = "interrupt"
 "#;
             let expected = TestConfig {
-                strategy: JoinNextBlockingStrategyConfigToml::Simple(
+                strategy: BlockingStrategyConfigToml::Simple(
                     BlockingStrategyConfigSimple::Interrupt,
                 ),
             };
@@ -1244,7 +1244,7 @@ strategy = "interrupt"
 strategy = "await"
 "#;
             let expected = TestConfig {
-                strategy: JoinNextBlockingStrategyConfigToml::Simple(
+                strategy: BlockingStrategyConfigToml::Simple(
                     BlockingStrategyConfigSimple::Await, // The default variant of Simple
                 ),
             };
@@ -1266,7 +1266,7 @@ strategy = "await"
 strategy = { kind = "await" }
 "#;
             let expected = TestConfig {
-                strategy: JoinNextBlockingStrategyConfigToml::Tagged(
+                strategy: BlockingStrategyConfigToml::Tagged(
                     BlockingStrategyConfigCustomized::Await(BlockingStrategyAwaitConfig {
                         non_blocking_event_batching: default_non_blocking_event_batching(),
                     }),
@@ -1291,7 +1291,7 @@ strategy = { kind = "await" }
 strategy = { kind = "await", non_blocking_event_batching = 99 }
 "#;
             let expected = TestConfig {
-                strategy: JoinNextBlockingStrategyConfigToml::Tagged(
+                strategy: BlockingStrategyConfigToml::Tagged(
                     BlockingStrategyConfigCustomized::Await(BlockingStrategyAwaitConfig {
                         non_blocking_event_batching: 99,
                     }),
