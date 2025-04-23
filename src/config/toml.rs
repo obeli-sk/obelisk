@@ -1341,9 +1341,9 @@ strategy = { name = "await", non_blocking_event_batching = 10 } # Missing 'kind'
 
         #[test]
         fn deserialize_invalid_type_should_fail() {
-            let toml_str = r#"
+            let toml_str = r"
 strategy = 123
-"#;
+";
             let result = toml::from_str::<TestConfig>(toml_str);
             // Fails `Tagged` because not a map. Fails `Simple` because not a string.
             assert!(result.is_err(), "Should fail on incorrect type (integer)");
