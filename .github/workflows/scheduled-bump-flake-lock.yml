@@ -29,10 +29,6 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Populate the nix store
-        run: |
-          nix develop --command echo
-
       - name: Bump flake.lock
         run: |
           nix flake update
