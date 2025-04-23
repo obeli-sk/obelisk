@@ -222,6 +222,16 @@
         "await"
       ]
     },
+    "BlockingStrategyConfigToml": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BlockingStrategyConfigCustomized"
+        },
+        {
+          "$ref": "#/$defs/BlockingStrategyConfigSimple"
+        }
+      ]
+    },
     "CodegenCache": {
       "type": "object",
       "properties": {
@@ -387,16 +397,6 @@
           "type": "integer",
           "format": "uint32",
           "minimum": 0
-        }
-      ]
-    },
-    "JoinNextBlockingStrategyConfigToml": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/BlockingStrategyConfigCustomized"
-        },
-        {
-          "$ref": "#/$defs/BlockingStrategyConfigSimple"
         }
       ]
     },
@@ -740,7 +740,7 @@
           "$ref": "#/$defs/ComponentBacktraceConfig"
         },
         "blocking_strategy": {
-          "$ref": "#/$defs/JoinNextBlockingStrategyConfigToml"
+          "$ref": "#/$defs/BlockingStrategyConfigToml"
         },
         "convert_core_module": {
           "type": "boolean",
