@@ -1037,8 +1037,9 @@ pub(crate) mod tests {
                 let workflow_exec_task = spawn_workflow_fibo(
                     db_pool.clone(),
                     sim_clock.clone(),
-                    JoinNextBlockingStrategy::Await,
-                    0,
+                    JoinNextBlockingStrategy::Await {
+                        non_blocking_event_batching: 0,
+                    },
                     fn_registry.clone(),
                 )
                 .await;

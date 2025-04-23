@@ -24,7 +24,9 @@ use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
     activity::activity_worker::ActivityConfig,
     envvar::EnvVar,
-    workflow::workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig},
+    workflow::workflow_worker::{
+        DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
+    },
 };
 use wasmtime::WasmBacktraceDetails;
 use webhook::{HttpServer, WebhookComponentConfigToml};
@@ -381,10 +383,8 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_retry_exp_backoff")]
     pub(crate) retry_exp_backoff: DurationConfig,
-    #[serde(default = "default_strategy")]
+    #[serde(default)]
     pub(crate) join_next_blocking_strategy: JoinNextBlockingStrategyConfigToml,
-    #[serde(default = "default_non_blocking_event_batching")]
-    pub(crate) non_blocking_event_batching: u32,
     #[serde(default = "default_retry_on_trap")]
     pub(crate) retry_on_trap: bool,
     #[serde(default = "default_convert_core_module")]
@@ -395,19 +395,57 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) backtrace: ComponentBacktraceConfig,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
+#[serde(untagged)] // Try variants without needing a specific outer tag
+pub(crate) enum JoinNextBlockingStrategyConfigToml {
+    // Try the more specific map format first
+    Tagged(BlockingStrategyConfigCustomized),
+    // If it's not the map format, try the simple string format
+    Simple(BlockingStrategyConfigSimple),
+}
+impl Default for JoinNextBlockingStrategyConfigToml {
+    fn default() -> Self {
+        Self::Simple(BlockingStrategyConfigSimple::default())
+    }
+}
+// Enum to handle the tagged map case ({ kind = "await", ... })
+#[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")] // Expects a map with "kind" field
+pub(crate) enum BlockingStrategyConfigCustomized {
+    Await(BlockingStrategyAwaitConfig),
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BlockingStrategyAwaitConfig {
+    #[serde(default = "default_non_blocking_event_batching")]
+    non_blocking_event_batching: u32,
+}
+#[derive(Debug, Deserialize, Clone, Copy, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum JoinNextBlockingStrategyConfigToml {
-    /// Shut down the current runtime. When the [`JoinSetResponse`] is appended, workflow is reexecuted with a new `RunId`.
+pub(crate) enum BlockingStrategyConfigSimple {
     Interrupt,
-    /// Keep the execution hot. Worker will poll the database until the execution lock expires.
-    Await, // TODO: Move `non_blocking_event_batching` here
+    #[default]
+    Await,
 }
 impl From<JoinNextBlockingStrategyConfigToml> for JoinNextBlockingStrategy {
-    fn from(value: JoinNextBlockingStrategyConfigToml) -> Self {
-        match value {
-            JoinNextBlockingStrategyConfigToml::Interrupt => Self::Interrupt,
-            JoinNextBlockingStrategyConfigToml::Await => Self::Await,
+    fn from(input: JoinNextBlockingStrategyConfigToml) -> Self {
+        match input {
+            JoinNextBlockingStrategyConfigToml::Tagged(
+                BlockingStrategyConfigCustomized::Await(BlockingStrategyAwaitConfig {
+                    non_blocking_event_batching,
+                }),
+            ) => JoinNextBlockingStrategy::Await {
+                non_blocking_event_batching,
+            },
+            JoinNextBlockingStrategyConfigToml::Simple(BlockingStrategyConfigSimple::Interrupt) => {
+                JoinNextBlockingStrategy::Interrupt
+            }
+            JoinNextBlockingStrategyConfigToml::Simple(BlockingStrategyConfigSimple::Await) => {
+                JoinNextBlockingStrategy::Await {
+                    non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
+                }
+            }
         }
     }
 }
@@ -496,7 +534,6 @@ impl WorkflowComponentConfigToml {
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
             join_next_blocking_strategy: self.join_next_blocking_strategy.into(),
-            non_blocking_event_batching: self.non_blocking_event_batching,
             retry_on_trap: self.retry_on_trap,
             forward_unhandled_child_errors_in_join_set_close: self
                 .forward_unhandled_child_errors_in_completing_join_set_close,
@@ -1136,8 +1173,8 @@ const fn default_retry_exp_backoff() -> DurationConfig {
     DurationConfig::Milliseconds(100)
 }
 
-const fn default_strategy() -> JoinNextBlockingStrategyConfigToml {
-    JoinNextBlockingStrategyConfigToml::Await
+const fn default_non_blocking_event_batching() -> u32 {
+    DEFAULT_NON_BLOCKING_EVENT_BATCHING
 }
 
 const fn default_batch_size() -> u32 {
@@ -1150,10 +1187,6 @@ const fn default_lock_expiry() -> DurationConfig {
 
 const fn default_tick_sleep() -> DurationConfig {
     DurationConfig::Milliseconds(200)
-}
-
-const fn default_non_blocking_event_batching() -> u32 {
-    100
 }
 
 const fn default_retry_on_trap() -> bool {
@@ -1170,4 +1203,160 @@ const fn default_forward_unhandled_child_errors_in_completing_join_set_close() -
 
 fn default_out_style() -> LoggingStyle {
     LoggingStyle::PlainCompact
+}
+
+#[cfg(test)]
+mod tests {
+    mod blocking_strategy {
+        use super::super::*;
+        use serde::Deserialize;
+
+        // Helper struct to deserialize into
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct TestConfig {
+            strategy: JoinNextBlockingStrategyConfigToml,
+        }
+
+        #[test]
+        fn deserialize_simple_interrupt() {
+            let toml_str = r#"
+strategy = "interrupt"
+"#;
+            let expected = TestConfig {
+                strategy: JoinNextBlockingStrategyConfigToml::Simple(
+                    BlockingStrategyConfigSimple::Interrupt,
+                ),
+            };
+            let actual: TestConfig =
+                toml::from_str(toml_str).expect("Should parse interrupt string");
+            assert_eq!(actual, expected);
+
+            // Verify From impl result
+            assert_eq!(
+                JoinNextBlockingStrategy::from(actual.strategy),
+                JoinNextBlockingStrategy::Interrupt
+            );
+        }
+
+        #[test]
+        fn deserialize_simple_await() {
+            let toml_str = r#"
+strategy = "await"
+"#;
+            let expected = TestConfig {
+                strategy: JoinNextBlockingStrategyConfigToml::Simple(
+                    BlockingStrategyConfigSimple::Await, // The default variant of Simple
+                ),
+            };
+            let actual: TestConfig = toml::from_str(toml_str).expect("Should parse await string");
+            assert_eq!(actual, expected);
+
+            // Verify From impl result (uses default batching)
+            assert_eq!(
+                JoinNextBlockingStrategy::from(actual.strategy),
+                JoinNextBlockingStrategy::Await {
+                    non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING
+                }
+            );
+        }
+
+        #[test]
+        fn deserialize_tagged_await_default_batching() {
+            let toml_str = r#"
+strategy = { kind = "await" }
+"#;
+            let expected = TestConfig {
+                strategy: JoinNextBlockingStrategyConfigToml::Tagged(
+                    BlockingStrategyConfigCustomized::Await(BlockingStrategyAwaitConfig {
+                        non_blocking_event_batching: default_non_blocking_event_batching(),
+                    }),
+                ),
+            };
+            let actual: TestConfig =
+                toml::from_str(toml_str).expect("Should parse tagged await with default batching");
+            assert_eq!(actual, expected);
+
+            // Verify From impl result (uses default batching)
+            assert_eq!(
+                JoinNextBlockingStrategy::from(actual.strategy),
+                JoinNextBlockingStrategy::Await {
+                    non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING
+                }
+            );
+        }
+
+        #[test]
+        fn deserialize_tagged_await_custom_batching() {
+            let toml_str = r#"
+strategy = { kind = "await", non_blocking_event_batching = 99 }
+"#;
+            let expected = TestConfig {
+                strategy: JoinNextBlockingStrategyConfigToml::Tagged(
+                    BlockingStrategyConfigCustomized::Await(BlockingStrategyAwaitConfig {
+                        non_blocking_event_batching: 99,
+                    }),
+                ),
+            };
+            let actual: TestConfig =
+                toml::from_str(toml_str).expect("Should parse tagged await with custom batching");
+            assert_eq!(actual, expected);
+
+            // Verify From impl result (uses custom batching)
+            assert_eq!(
+                JoinNextBlockingStrategy::from(actual.strategy),
+                JoinNextBlockingStrategy::Await {
+                    non_blocking_event_batching: 99
+                }
+            );
+        }
+
+        #[test]
+        fn deserialize_invalid_string_should_fail() {
+            let toml_str = r#"
+strategy = "unknown"
+"#;
+            let result = toml::from_str::<TestConfig>(toml_str);
+            assert!(result.is_err(), "Should fail on unknown string");
+            // Check for a more specific error if needed, e.g., contains "unknown variant"
+        }
+
+        #[test]
+        fn deserialize_invalid_kind_in_tagged_should_fail() {
+            let toml_str = r#"
+strategy = { kind = "interrupt", non_blocking_event_batching = 10 }
+"#;
+            let result = toml::from_str::<TestConfig>(toml_str);
+            assert!(result.is_err(), "Should fail on invalid kind in map");
+        }
+
+        #[test]
+        fn deserialize_invalid_structure_missing_kind_should_fail() {
+            let toml_str = r#"
+strategy = { name = "await", non_blocking_event_batching = 10 } # Missing 'kind'
+"#;
+            let result = toml::from_str::<TestConfig>(toml_str);
+            // Fails `Tagged` because 'kind' is missing. Fails `Simple` because it's not a string.
+            assert!(result.is_err(), "Should fail on map missing 'kind'");
+        }
+
+        #[test]
+        fn deserialize_invalid_type_should_fail() {
+            let toml_str = r#"
+strategy = 123
+"#;
+            let result = toml::from_str::<TestConfig>(toml_str);
+            // Fails `Tagged` because not a map. Fails `Simple` because not a string.
+            assert!(result.is_err(), "Should fail on incorrect type (integer)");
+        }
+
+        #[test]
+        fn deserialize_tagged_await_with_extra_field_should_fail() {
+            // TOML allows extra fields by default, Serde ignores them if not in the struct
+            let toml_str = r#"
+strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "hello" }
+"#;
+            let result = toml::from_str::<TestConfig>(toml_str);
+            assert!(result.is_err(), "Should fail on `extra_stuff`");
+        }
+    }
 }

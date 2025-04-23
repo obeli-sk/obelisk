@@ -340,7 +340,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         db_pool: P,
         version: Version,
         execution_deadline: DateTime<Utc>,
-        non_blocking_event_batching: u32,
         interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
         fn_registry: Arc<dyn FunctionRegistry>,
         worker_span: Span,
@@ -355,7 +354,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 responses,
                 join_next_blocking_strategy,
                 execution_deadline,
-                non_blocking_event_batching,
                 clock_fn.clone(),
                 interrupt_on_timeout_container,
                 worker_span.clone(),
@@ -1067,7 +1065,6 @@ pub(crate) mod tests {
                 self.db_pool.clone(),
                 ctx.version,
                 ctx.execution_deadline,
-                0, // TODO: parametrize batch size
                 Arc::new(std::sync::Mutex::new(None)),
                 self.fn_registry.clone(),
                 tracing::info_span!("workflow-test"),

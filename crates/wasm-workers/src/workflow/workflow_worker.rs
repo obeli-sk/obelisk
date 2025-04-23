@@ -24,24 +24,29 @@ use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{Engine, component::Val};
 use wasmtime::{Store, UpdateDeadline};
 
+// TODO: rename to BlockingStrategy
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
-#[derive(
-    Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Hash,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum JoinNextBlockingStrategy {
     /// Shut down the current runtime. When the [`JoinSetResponse`] is appended, workflow is reexecuted with a new `RunId`.
     Interrupt,
     /// Keep the execution hot. Worker will poll the database until the execution lock expires.
-    #[default]
-    Await, // TODO: Move `non_blocking_event_batching` here
+    Await { non_blocking_event_batching: u32 },
+}
+pub const DEFAULT_NON_BLOCKING_EVENT_BATCHING: u32 = 100;
+impl Default for JoinNextBlockingStrategy {
+    fn default() -> Self {
+        JoinNextBlockingStrategy::Await {
+            non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct WorkflowConfig {
     pub component_id: ComponentId,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
-    pub non_blocking_event_batching: u32,
     pub retry_on_trap: bool,
     pub forward_unhandled_child_errors_in_join_set_close: bool,
 }
@@ -276,7 +281,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
             self.db_pool.clone(),
             ctx.version,
             ctx.execution_deadline,
-            self.config.non_blocking_event_batching,
             interrupt_on_timeout_container,
             self.fn_registry.clone(),
             ctx.worker_span,
@@ -712,7 +716,6 @@ pub(crate) mod tests {
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        non_blocking_event_batching: u32,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         let workflow_engine = Engines::get_workflow_engine(
@@ -733,7 +736,6 @@ pub(crate) mod tests {
                 WorkflowConfig {
                     component_id: component_id.clone(),
                     join_next_blocking_strategy,
-                    non_blocking_event_batching,
                     retry_on_trap: false,
                     forward_unhandled_child_errors_in_join_set_close: false,
                 },
@@ -766,7 +768,6 @@ pub(crate) mod tests {
         db_pool: P,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        non_blocking_event_batching: u32,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         spawn_workflow(
@@ -774,7 +775,6 @@ pub(crate) mod tests {
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
             clock_fn,
             join_next_blocking_strategy,
-            non_blocking_event_batching,
             fn_registry,
         )
         .await
@@ -783,9 +783,8 @@ pub(crate) mod tests {
     #[rstest]
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity_mem(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        #[values(0, 10)] batching: u32,
     ) {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
@@ -793,7 +792,6 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock,
             join_next_blocking_strategy,
-            batching,
         )
         .await;
         db_pool.close().await.unwrap();
@@ -803,9 +801,8 @@ pub(crate) mod tests {
     #[rstest]
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity_sqlite(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        #[values(0, 10)] batching: u32,
     ) {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Sqlite.set_up().await;
@@ -813,7 +810,6 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock,
             join_next_blocking_strategy,
-            batching,
         )
         .await;
         db_pool.close().await.unwrap();
@@ -826,7 +822,6 @@ pub(crate) mod tests {
         db_pool: P,
         sim_clock: SimClock,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        batching: u32,
     ) {
         const INPUT_ITERATIONS: u32 = 1;
         test_utils::set_up();
@@ -840,7 +835,6 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock.clone(),
             join_next_blocking_strategy,
-            batching,
             fn_registry,
         )
         .await;
@@ -910,7 +904,6 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
-            0,
             fn_registry,
         )
         .await;
@@ -928,7 +921,6 @@ pub(crate) mod tests {
         clock_fn: C,
         sleep: S,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        non_blocking_event_batching: u32,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Arc<WorkflowWorker<C, S, DB, P>> {
         let workflow_engine = Engines::get_workflow_engine(
@@ -947,7 +939,6 @@ pub(crate) mod tests {
                 WorkflowConfig {
                     component_id: ComponentId::dummy_workflow(),
                     join_next_blocking_strategy,
-                    non_blocking_event_batching,
                     retry_on_trap: false,
                     forward_unhandled_child_errors_in_join_set_close: false,
                 },
@@ -975,7 +966,6 @@ pub(crate) mod tests {
             sim_clock.clone(),
             TokioSleep,
             JoinNextBlockingStrategy::Interrupt,
-            0,
             TestingFnRegistry::new_from_components(vec![
                 compile_activity(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
@@ -1018,7 +1008,7 @@ pub(crate) mod tests {
     // TODO: Test await interleaving with timer - execution should finished in one go.
     async fn sleep_should_be_persisted_after_executor_restart(
         #[values(Database::Memory, Database::Sqlite)] database: Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         const SLEEP_MILLIS: u32 = 100;
@@ -1060,7 +1050,6 @@ pub(crate) mod tests {
                 sim_clock.clone(),
                 TokioSleep,
                 join_next_blocking_strategy,
-                0,
                 fn_registry,
             )
             .await;
@@ -1099,7 +1088,7 @@ pub(crate) mod tests {
         };
         match join_next_blocking_strategy {
             JoinNextBlockingStrategy::Interrupt => assert_eq!(sim_clock.now(), blocked_until),
-            JoinNextBlockingStrategy::Await => {
+            JoinNextBlockingStrategy::Await { .. } => {
                 assert_eq!(sim_clock.now() + LOCK_DURATION, blocked_until);
             }
         }
@@ -1144,7 +1133,7 @@ pub(crate) mod tests {
                 JoinNextBlockingStrategy::Interrupt => {
                     assert_eq!(sim_clock.now(), actual_pending_at);
                 }
-                JoinNextBlockingStrategy::Await => {
+                JoinNextBlockingStrategy::Await { .. } => {
                     assert_eq!(blocked_until, actual_pending_at);
                     sim_clock.move_time_to(blocked_until).await;
                 }
@@ -1215,7 +1204,6 @@ pub(crate) mod tests {
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
-            0,
             fn_registry,
         )
         .await;
@@ -1255,9 +1243,8 @@ pub(crate) mod tests {
     #[rstest]
     #[tokio::test]
     async fn http_get(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        #[values(0, 10)] batching: u32,
         #[values(
             FFQN_WORKFLOW_HTTP_GET,
             FFQN_WORKFLOW_HTTP_GET_RESP,
@@ -1304,7 +1291,6 @@ pub(crate) mod tests {
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
             join_next_blocking_strategy,
-            batching,
             fn_registry,
         )
         .await;
@@ -1359,9 +1345,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn http_get_concurrent(
         #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_strategy: JoinNextBlockingStrategy,
-        #[values(0, 10)] batching: u32,
     ) {
         use crate::activity::activity_worker::tests::spawn_activity;
         use chrono::DateTime;
@@ -1410,7 +1395,6 @@ pub(crate) mod tests {
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
             join_next_strategy,
-            batching,
             fn_registry,
         )
         .await;
@@ -1469,9 +1453,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn schedule(
         #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_strategy: JoinNextBlockingStrategy,
-        #[values(0, 10)] batching: u32,
     ) {
         use concepts::prefixed_ulid::ExecutorId;
 
@@ -1494,7 +1477,6 @@ pub(crate) mod tests {
             sim_clock.clone(),
             TokioSleep,
             join_next_strategy,
-            batching,
             fn_registry,
         )
         .await;
@@ -1618,8 +1600,9 @@ pub(crate) mod tests {
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
-            JoinNextBlockingStrategy::Await,
-            0,
+            JoinNextBlockingStrategy::Await {
+                non_blocking_event_batching: 0,
+            },
             fn_registry,
         )
         .await;

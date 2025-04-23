@@ -139,13 +139,17 @@ impl<C: ClockFn> EventHistory<C> {
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         execution_deadline: DateTime<Utc>,
-        non_blocking_event_batching: u32,
         clock_fn: C,
         interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
         worker_span: Span,
         forward_unhandled_child_errors_in_join_set_close: bool,
     ) -> Self {
-        let non_blocking_event_batch_size = non_blocking_event_batching as usize;
+        let non_blocking_event_batch_size = match join_next_blocking_strategy {
+            JoinNextBlockingStrategy::Await {
+                non_blocking_event_batching,
+            } => non_blocking_event_batching as usize,
+            JoinNextBlockingStrategy::Interrupt => 0,
+        };
         EventHistory {
             execution_id,
             component_id,
@@ -300,7 +304,10 @@ impl<C: ClockFn> EventHistory<C> {
         // Now either wait or interrupt.
         // FIXME: perf: if start_from_index was at top, it should move forward to n - 1
 
-        if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Await {
+        if matches!(
+            self.join_next_blocking_strategy,
+            JoinNextBlockingStrategy::Await { .. }
+        ) {
             // JoinNext was written, wait for next response.
             debug!(join_set_id = %poll_variant.join_set_id(), "Waiting for {poll_variant:?}");
             *self.interrupt_on_timeout_container.lock().unwrap() = Some(InterruptRequested);
@@ -1660,7 +1667,6 @@ mod tests {
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        non_blocking_event_batching: u32,
     ) -> (EventHistory<C>, Version) {
         let exec_log = db_connection.get(&execution_id).await.unwrap();
         let event_history = EventHistory::new(
@@ -1674,7 +1680,6 @@ mod tests {
                 .collect(),
             join_next_blocking_strategy,
             execution_deadline,
-            non_blocking_event_batching,
             clock_fn,
             Arc::new(std::sync::Mutex::new(None)),
             info_span!("worker-test"),
@@ -1686,9 +1691,8 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn regular_join_next_child(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100})]
         second_run_strategy: JoinNextBlockingStrategy,
-        #[values(0, 10)] batching: u32,
     ) {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
@@ -1722,7 +1726,6 @@ mod tests {
             sim_clock.now(),
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
-            batching,
         )
         .await;
 
@@ -1816,7 +1819,6 @@ mod tests {
             sim_clock.now(),
             sim_clock.clone(),
             second_run_strategy,
-            batching,
         )
         .await;
         blocking_join_first(event_history, version, fn_registry.clone(), join_set_id)
@@ -1830,9 +1832,8 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn start_async_respond_then_join_next(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        #[values(0, 10)] batching: u32,
     ) {
         const CHILD_RESP: SupportedFunctionReturnValue =
             SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
@@ -1909,7 +1910,6 @@ mod tests {
             sim_clock.now(),
             sim_clock.clone(),
             join_next_blocking_strategy,
-            batching,
         )
         .await;
 
@@ -1952,7 +1952,6 @@ mod tests {
             sim_clock.now(),
             sim_clock.clone(),
             join_next_blocking_strategy,
-            batching,
         )
         .await;
 
@@ -1994,9 +1993,8 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn create_two_non_blocking_childs_then_two_join_nexts(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         second_run_strategy: JoinNextBlockingStrategy,
-        #[values(0, 10)] batching: u32,
     ) {
         const KID_A: SupportedFunctionReturnValue =
             SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
@@ -2107,8 +2105,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             sim_clock.clone(),
-            JoinNextBlockingStrategy::Interrupt,
-            batching,
+            JoinNextBlockingStrategy::Interrupt, // First blocking strategy is always Interrupt
         )
         .await;
 
@@ -2172,7 +2169,6 @@ mod tests {
             sim_clock.now(),
             sim_clock.clone(),
             second_run_strategy,
-            batching,
         )
         .await;
 
