@@ -384,7 +384,7 @@ pub(crate) struct WorkflowComponentConfigToml {
     #[serde(default = "default_retry_exp_backoff")]
     pub(crate) retry_exp_backoff: DurationConfig,
     #[serde(default)]
-    pub(crate) join_next_blocking_strategy: JoinNextBlockingStrategyConfigToml,
+    pub(crate) blocking_strategy: JoinNextBlockingStrategyConfigToml,
     #[serde(default = "default_retry_on_trap")]
     pub(crate) retry_on_trap: bool,
     #[serde(default = "default_convert_core_module")]
@@ -533,7 +533,7 @@ impl WorkflowComponentConfigToml {
 
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy: self.join_next_blocking_strategy.into(),
+            join_next_blocking_strategy: self.blocking_strategy.into(),
             retry_on_trap: self.retry_on_trap,
             forward_unhandled_child_errors_in_join_set_close: self
                 .forward_unhandled_child_errors_in_completing_join_set_close,

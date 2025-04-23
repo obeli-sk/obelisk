@@ -51,8 +51,8 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # retry_exp_backoff.milliseconds = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
 ## Blocking strategy: When workflow requests a child execution result, it can either be interrupted, or kept in the memory until its execution lock expires or the response arrives.
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.
-# join_next_blocking_strategy = "await" # Default blocking strategy is "await"
-# join_next_blocking_strategy = { kind = "await", non_blocking_event_batching = 100 } # Number of non-blocking events that can be cached and written in a batch.
+# blocking_strategy = "await" # Default blocking strategy is "await"
+# blocking_strategy = { kind = "await", non_blocking_event_batching = 100 } # Number of non-blocking events that can be cached and written in a batch.
 # retry_on_trap = false # If set to true, traps(panics) will be handled as temporary failures and retried until the problem goes away.
 # convert_core_module = true # Transparently convert Core WASM modules to WASM Components during startup.
 # forward_unhandled_child_errors_in_completing_join_set_close = true # Forward unhandled child errors to the parent workflow when closing completing join sets.
