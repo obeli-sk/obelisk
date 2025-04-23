@@ -431,11 +431,11 @@ pub(crate) enum BlockingStrategyConfigSimple {
 impl From<BlockingStrategyConfigToml> for JoinNextBlockingStrategy {
     fn from(input: BlockingStrategyConfigToml) -> Self {
         match input {
-            BlockingStrategyConfigToml::Tagged(
-                BlockingStrategyConfigCustomized::Await(BlockingStrategyAwaitConfig {
+            BlockingStrategyConfigToml::Tagged(BlockingStrategyConfigCustomized::Await(
+                BlockingStrategyAwaitConfig {
                     non_blocking_event_batching,
-                }),
-            ) => JoinNextBlockingStrategy::Await {
+                },
+            )) => JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching,
             },
             BlockingStrategyConfigToml::Simple(BlockingStrategyConfigSimple::Interrupt) => {
