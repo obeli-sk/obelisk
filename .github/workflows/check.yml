@@ -52,7 +52,7 @@ jobs:
           if git diff --quiet; then
               echo "No changes"
           else
-              echo "Changes detected:"
+              echo "::error::Changes in dev-deps.txt detected"
               git diff
               exit 1
           fi
@@ -72,7 +72,7 @@ jobs:
           if git diff --quiet; then
               echo "No changes"
           else
-              echo "Changes detected:"
+              echo "::error::Changes in unpublishable-packages.txt detected"
               git diff
               exit 1
           fi
