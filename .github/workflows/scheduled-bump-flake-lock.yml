@@ -36,6 +36,7 @@ jobs:
       - name: Bump flake.lock
         run: |
           nix flake update
+          nix develop --command ./scripts/dev-deps.sh
 
       - name: Configure Git
         run: |
@@ -45,7 +46,7 @@ jobs:
       - name: Commit Changes
         run: |
           git checkout -b ${{ steps.branch-name.outputs.branch_name }}
-          git add flake.lock
+          git add .
           if [ -n "$(git status --porcelain)" ]; then
               git commit -m "chore: Bump `flake.lock`"
               git push origin ${{ steps.branch-name.outputs.branch_name }}
