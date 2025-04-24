@@ -25,7 +25,7 @@ impl FormData {
         param_value: &str,
         idx: usize,
     ) -> Result<(), String> {
-        match serde_json::from_str::<serde_json::Value>(&param_value) {
+        match serde_json::from_str::<serde_json::Value>(param_value) {
             Ok(param_value) => {
                 let type_wrapper = function_detail
                     .params

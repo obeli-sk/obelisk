@@ -172,10 +172,7 @@ impl EffectHook {
                 .cloned()
                 .unwrap_or_default()
         };
-        for execution_id in execution_ids
-            .iter()
-            .filter(|id| is_not_being_fetched(id))
-        {
+        for execution_id in execution_ids.iter().filter(|id| is_not_being_fetched(id)) {
             trace!("Setting is_fetching_state=true for {execution_id}");
             let mut is_fetching_map = self.is_fetching_state.deref().clone();
             is_fetching_map.insert(execution_id.clone(), true);
