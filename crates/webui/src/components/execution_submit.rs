@@ -20,41 +20,48 @@ struct FormData {
 }
 
 impl FormData {
+    fn validate_param(
+        function_detail: &grpc_client::FunctionDetail,
+        param_value: &str,
+        idx: usize,
+    ) -> Result<(), String> {
+        match serde_json::from_str::<serde_json::Value>(&param_value) {
+            Ok(param_value) => {
+                let type_wrapper = function_detail
+                    .params
+                    .get(idx)
+                    .as_ref()
+                    .expect("FunctionDetail.params cardinality must match FormData.param_refs")
+                    .r#type
+                    .as_ref()
+                    .expect("`FunctionParameter.type` is sent")
+                    .type_wrapper
+                    .as_str();
+                let type_and_value_json =
+                    format!("{{\"type\": {type_wrapper}, \"value\": {param_value}}}");
+                match serde_json::from_str::<WastValWithType>(&type_and_value_json) {
+                    Ok(_) => Ok(()),
+                    Err(err) => {
+                        warn!("oninput[{idx}] - typecheck error {err:?}");
+                        Err(format!("Typecheck error: {err}"))
+                    }
+                }
+            }
+            Err(err) => {
+                warn!("oninput[{idx}] - cannot serialize value to JSON - {err:?}");
+                Err(format!("Cannot serialize value to JSON: {err}"))
+            }
+        }
+    }
+
     fn validate(&mut self, function_detail: &grpc_client::FunctionDetail) -> Result<(), String> {
         let mut is_err = false;
         for (idx, param_ref) in self.param_refs.iter().enumerate() {
             let param_value = param_ref.cast::<HtmlInputElement>().unwrap().value();
             debug!("oninput[{idx}] value {param_value}");
-            let param_value: serde_json::Value = match serde_json::from_str(&param_value) {
-                Ok(v) => v,
-                Err(err) => {
-                    warn!("oninput[{idx}] - cannot serialize value to JSON - {err:?}");
-                    self.param_errs[idx] = Some(format!("Cannot serialize value to JSON: {err}"));
-                    is_err = true;
-                    continue;
-                }
-            };
-            let type_wrapper = function_detail
-                .params
-                .get(idx)
-                .as_ref()
-                .expect("FunctionDetail.params cardinality must match FormData.param_refs")
-                .r#type
-                .as_ref()
-                .expect("`FunctionParameter.type` is sent")
-                .type_wrapper
-                .as_str();
-            let type_and_value_json =
-                format!("{{\"type\": {type_wrapper}, \"value\": {param_value}}}");
-            match serde_json::from_str::<WastValWithType>(&type_and_value_json) {
-                Ok(_) => {
-                    self.param_errs[idx] = None;
-                }
-                Err(err) => {
-                    warn!("oninput[{idx}] - typecheck error {err:?}");
-                    self.param_errs[idx] = Some(format!("Typecheck error: {err}"));
-                    is_err = true;
-                }
+            if let Err(err) = Self::validate_param(function_detail, &param_value, idx) {
+                self.param_errs[idx] = Some(err);
+                is_err = true;
             }
         }
         if is_err {
