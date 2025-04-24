@@ -108,15 +108,16 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
     ) -> Result<WorkflowWorkerLinked<C, S, DB, P>, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
 
-        // Link obelisk: workflow-support and log
+        // Link obelisk:workflow-support and obelisk:log
         WorkflowCtx::add_to_linker(&mut linker)?;
 
         // Mock imported functions
-        for import in fn_registry.all_exports() {
-            if import.ifc_fqn.is_namespace_obelisk() {
-                warn!(ifc_fqn = %import.ifc_fqn, "Skipping mock of reserved interface");
-                continue;
-            }
+        for import in fn_registry
+            .all_exports()
+            .iter()
+            // Skip already linked functions to avoid unexpected behavior and security issues.
+            .filter(|import| !import.ifc_fqn.is_namespace_obelisk())
+        {
             trace!(
                 ifc_fqn = %import.ifc_fqn,
                 "Adding imported interface to the linker",

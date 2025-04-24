@@ -33,6 +33,7 @@ pub mod storage;
 pub mod time;
 
 pub const NAMESPACE_OBELISK: &str = "obelisk";
+const NAMESPACE_WASI: &str = "wasi";
 pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
 
 pub type FinishedExecutionResult = Result<SupportedFunctionReturnValue, FinishedExecutionError>;
@@ -394,6 +395,11 @@ impl IfcFqnName {
     #[must_use]
     pub fn is_namespace_obelisk(&self) -> bool {
         self.namespace() == NAMESPACE_OBELISK
+    }
+
+    #[must_use]
+    pub fn is_namespace_wasi(&self) -> bool {
+        self.namespace() == NAMESPACE_WASI
     }
 }
 

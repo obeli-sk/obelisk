@@ -29,7 +29,7 @@ use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{Instrument, Level, Span, debug, error, info, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, Span, debug, error, info, info_span, instrument, trace};
 use utils::wasm_tools::{ExIm, HTTP_HANDLER_FFQN, WasmComponent};
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
@@ -40,8 +40,6 @@ use wasmtime_wasi_http::bindings::ProxyPre;
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
-
-const WASI_NAMESPACE_WITH_COLON: &str = "wasi:";
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HttpTriggerConfig {
@@ -117,16 +115,10 @@ impl WebhookEndpointCompiled {
         WebhookEndpointCtx::add_to_linker(&mut linker)?;
 
         // Mock imported functions
-        for import in fn_registry.all_exports() {
-            if import.ifc_fqn.is_namespace_obelisk()
-                || import
-                    .ifc_fqn
-                    .deref()
-                    .starts_with(WASI_NAMESPACE_WITH_COLON)
-            {
-                warn!(ifc_fqn = %import.ifc_fqn, "Skipping mock of reserved interface");
-                continue;
-            }
+        for import in fn_registry.all_exports().iter().filter(|import| {
+            // Skip already linked functions to avoid unexpected behavior and security issues.
+            !import.ifc_fqn.is_namespace_obelisk() && !import.ifc_fqn.is_namespace_wasi()
+        }) {
             trace!(
                 ifc_fqn = %import.ifc_fqn,
                 "Adding imported interface to the linker",
