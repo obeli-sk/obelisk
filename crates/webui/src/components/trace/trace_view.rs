@@ -166,15 +166,16 @@ impl EffectHook {
         current_is_fetching_map: &HashMap<ExecutionId, bool>,
     ) {
         trace!("Triggered fetch callback: {execution_ids:?}");
-        for execution_id in execution_ids {
-            if current_is_fetching_map
+        let is_not_being_fetched = |execution_id: &ExecutionId| {
+            !current_is_fetching_map
                 .get(execution_id)
                 .cloned()
                 .unwrap_or_default()
-            {
-                trace!("Skipping {execution_id}");
-                continue;
-            }
+        };
+        for execution_id in execution_ids
+            .iter()
+            .filter(|id| is_not_being_fetched(id))
+        {
             trace!("Setting is_fetching_state=true for {execution_id}");
             let mut is_fetching_map = self.is_fetching_state.deref().clone();
             is_fetching_map.insert(execution_id.clone(), true);
