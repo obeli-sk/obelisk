@@ -9,15 +9,19 @@ generate!({ generate_all });
 
 #[handler]
 fn handle(_req: Request) -> Result<Response, ErrorCode> {
-    let n = std::env::var("N")
-        .expect("env var `N` must be set")
+    let Ok(n) = std::env::var("N")
+        .expect("env var `N` must be set by Obelisk if routes are configured properly")
         .parse()
-        .expect("parameter `N` must be of type u8");
+    else {
+        return Response::builder().status_code(400).build();
+    };
 
-    let iterations = std::env::var("ITERATIONS")
-        .expect("env var `ITERATIONS` must be set")
+    let Ok(iterations) = std::env::var("ITERATIONS")
+        .expect("env var `ITERATIONS` must be set by Obelisk if routes are configured properly")
         .parse()
-        .expect("parameter `ITERATIONS` must be of type u32");
+    else {
+        return Response::builder().status_code(400).build();
+    };
 
     let fibo_res = if n >= 10 {
         println!("scheduling");
