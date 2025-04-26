@@ -50,6 +50,7 @@ Currently only the first unhandled error is tracked, as well as only one root ca
 E.g. `JoinSetCreated` to `JoinSetCreate`.
 
 ## Future ideas
+* Optional caching of activity executions with a TTL - serve cached response if parameters are the same
 * Interactive CLI for execution management
 * External activities gRPC API
 * External executors support - starting executions solely based on WIT exports. External executors must share write access to the sqlite database.
