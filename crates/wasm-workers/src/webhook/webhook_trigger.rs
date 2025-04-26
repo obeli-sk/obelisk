@@ -1080,9 +1080,12 @@ pub(crate) mod tests {
             }
 
             async fn fetch(&self, n: u8, iterations: u32, expected_status_code: u16) -> String {
-                let resp = reqwest::get(format!("http://{}/fibo/{n}/{iterations}", &self.server_addr))
-                    .await
-                    .unwrap();
+                let resp = reqwest::get(format!(
+                    "http://{}/fibo/{n}/{iterations}",
+                    &self.server_addr
+                ))
+                .await
+                .unwrap();
                 assert_eq!(resp.status().as_u16(), expected_status_code);
                 resp.text().await.unwrap()
             }
