@@ -1079,8 +1079,8 @@ pub(crate) mod tests {
                 }
             }
 
-            async fn fetch(&self, n: u8, expected_status_code: u16) -> String {
-                let resp = reqwest::get(format!("http://{}/fibo/{n}/1", &self.server_addr))
+            async fn fetch(&self, n: u8, iterations: u32, expected_status_code: u16) -> String {
+                let resp = reqwest::get(format!("http://{}/fibo/{n}/{iterations}", &self.server_addr))
                     .await
                     .unwrap();
                 assert_eq!(resp.status().as_u16(), expected_status_code);
@@ -1098,8 +1098,8 @@ pub(crate) mod tests {
             test_utils::set_up();
             let fibo_webhook_harness = SetUpFiboWebhook::new().await;
             assert_eq!(
-                "fiboa(1, 1) = hardcoded: 1",
-                fibo_webhook_harness.fetch(1, 200).await
+                "fiboa(1, 0) = hardcoded: 1",
+                fibo_webhook_harness.fetch(1, 0, 200).await
             );
         }
 
@@ -1109,7 +1109,7 @@ pub(crate) mod tests {
             let fibo_webhook_harness = SetUpFiboWebhook::new().await;
             assert_eq!(
                 "fiboa(2, 1) = direct call: 1",
-                fibo_webhook_harness.fetch(2, 200).await
+                fibo_webhook_harness.fetch(2, 1, 200).await
             );
         }
 
@@ -1117,7 +1117,7 @@ pub(crate) mod tests {
         async fn scheduling_should_work() {
             test_utils::set_up();
             let fibo_webhook_harness = SetUpFiboWebhook::new().await;
-            let resp = fibo_webhook_harness.fetch(10, 200).await;
+            let resp = fibo_webhook_harness.fetch(10, 1, 200).await;
             let execution_id = resp.strip_prefix("fiboa(10, 1) = scheduled: ").unwrap();
             let execution_id = ExecutionId::from_str(execution_id).unwrap();
             let conn = fibo_webhook_harness.db_pool.connection();
@@ -1147,7 +1147,7 @@ pub(crate) mod tests {
             assert_eq!("Route not found", resp.text().await.unwrap());
             // Check panicking inside WASM before response is streamed
             let resp = reqwest::get(format!(
-                "http://{}/fibo/1a/1",
+                "http://{}/fibo/0/1",
                 &fibo_webhook_harness.server_addr
             ))
             .await

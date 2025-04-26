@@ -33,6 +33,7 @@ fn handle(_req: Request) -> Result<Response, ErrorCode> {
         let fibo_res = workflow::fiboa(n, iterations);
         format!("direct call: {fibo_res}")
     } else {
+        assert_eq!(iterations, 0); // For testing traps
         println!("hardcoded");
         "hardcoded: 1".to_string() // For performance testing - no activity is called
     };
