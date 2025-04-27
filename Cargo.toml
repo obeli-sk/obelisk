@@ -203,7 +203,7 @@ http-body-util = "0.1"
 hyper = "1.6.0"
 hyper-util = { version = "0.1", features = ["tokio"] }
 indexmap = { version = "2.9", features = ["serde"] }
-insta = { version = "1.42.2", features = ["json"] }
+insta = { version = "1.43.0", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
 madsim = "0.2.31"
@@ -247,7 +247,7 @@ tokio = { version = "0.2.30", package = "madsim-tokio", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.17"
-toml = { version = "0.8.20", features = ["preserve_order"] }
+toml = { version = "0.8.21", features = ["preserve_order"] }
 tonic = { version = "0.13.0", default-features = false }
 tonic-build = { version = "0.13.0", default-features = false }
 tonic-web = "0.13.0"
