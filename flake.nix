@@ -47,7 +47,7 @@
             inherit system overlays;
           };
 
-          makeObelisk = buildType: customTarget:
+          makeObelisk = buildType: customTarget: rustToolchainToml:
             let
               cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
               version = cargoToml.workspace.package.version;
@@ -139,7 +139,7 @@
                 };
 
                 nativeBuildInputs = with pkgs; [
-                  (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+                  (rust-bin.fromRustupToolchainFile rustToolchainToml)
                   pkg-config
                   protobuf
                   findutils # for installPhase
@@ -244,26 +244,26 @@
           };
 
           packages = rec {
-            obeliskLibcNixDev = makeObelisk "dev" null;
-            obeliskLibcNix = makeObelisk "release" null;
+            obeliskLibcNixDev = makeObelisk "dev" null ./rust-toolchain.toml;
+            obeliskLibcNix = makeObelisk "release" null ./rust-toolchain.toml;
             # Linux
             ## x86_64
-            obeliskCrossDev-x86_64-unknown-linux-musl = makeObelisk "dev" "x86_64-unknown-linux-musl";
-            obeliskCross-x86_64-unknown-linux-musl = makeObelisk "release" "x86_64-unknown-linux-musl";
-            obeliskCrossDev-x86_64-unknown-linux-gnu = makeObelisk "dev" "x86_64-unknown-linux-gnu.2.35";
-            obeliskCross-x86_64-unknown-linux-gnu = makeObelisk "release" "x86_64-unknown-linux-gnu.2.35";
+            obeliskCrossDev-x86_64-unknown-linux-musl = makeObelisk "dev" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml;
+            obeliskCross-x86_64-unknown-linux-musl = makeObelisk "release" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml;
+            obeliskCrossDev-x86_64-unknown-linux-gnu = makeObelisk "dev" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml;
+            obeliskCross-x86_64-unknown-linux-gnu = makeObelisk "release" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml;
             ## aarch64
-            obeliskCrossDev-aarch64-unknown-linux-musl = makeObelisk "dev" "aarch64-unknown-linux-musl";
-            obeliskCross-aarch64-unknown-linux-musl = makeObelisk "release" "aarch64-unknown-linux-musl";
-            obeliskCrossDev-aarch64-unknown-linux-gnu = makeObelisk "dev" "aarch64-unknown-linux-gnu.2.35";
-            obeliskCross-aarch64-unknown-linux-gnu = makeObelisk "release" "aarch64-unknown-linux-gnu.2.35";
+            obeliskCrossDev-aarch64-unknown-linux-musl = makeObelisk "dev" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml;
+            obeliskCross-aarch64-unknown-linux-musl = makeObelisk "release" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml;
+            obeliskCrossDev-aarch64-unknown-linux-gnu = makeObelisk "dev" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml;
+            obeliskCross-aarch64-unknown-linux-gnu = makeObelisk "release" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml;
             # MacOS
             ## x86_64
-            obeliskCrossDev-x86_64-apple-darwin = makeObelisk "dev" "x86_64-apple-darwin";
-            obeliskCross-x86_64-apple-darwin = makeObelisk "release" "x86_64-apple-darwin";
+            obeliskCrossDev-x86_64-apple-darwin = makeObelisk "dev" "x86_64-apple-darwin" ./rust-toolchain-cross.toml;
+            obeliskCross-x86_64-apple-darwin = makeObelisk "release" "x86_64-apple-darwin" ./rust-toolchain-cross.toml;
             ## aarch64
-            obeliskCrossDev-aarch64-apple-darwin = makeObelisk "dev" "aarch64-apple-darwin";
-            obeliskCross-aarch64-apple-darwin = makeObelisk "release" "aarch64-apple-darwin";
+            obeliskCrossDev-aarch64-apple-darwin = makeObelisk "dev" "aarch64-apple-darwin" ./rust-toolchain-cross.toml;
+            obeliskCross-aarch64-apple-darwin = makeObelisk "release" "aarch64-apple-darwin" ./rust-toolchain-cross.toml;
 
             default = obeliskLibcNix;
           };
