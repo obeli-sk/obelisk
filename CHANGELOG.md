@@ -3,6 +3,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.0](https://github.com/obeli-sk/obelisk/compare/v0.19.3...v0.20.0)
+
+### ⛰️ Features
+
+- *(cli)* Add `generate config-schema` - ([d3f5506](https://github.com/obeli-sk/obelisk/commit/d3f55063d08a397f406f34ca3149f9d5eece200c))
+- *(cli)* Add `no-reconnect` and `no-backtrace` to `get` and `submit` - ([eb96ae7](https://github.com/obeli-sk/obelisk/commit/eb96ae78fcb2baf2e53645fbd1af644116134028))
+
+### 🐛 Bug Fixes
+
+- *(cli)* Fix reconnect while polling status stream - ([4a1ef58](https://github.com/obeli-sk/obelisk/commit/4a1ef58d974a1487693453502b9fe11a78464355))
+
+### 📚 Documentation
+
+- Update roadmap - ([860232c](https://github.com/obeli-sk/obelisk/commit/860232c8bcbf3905ce7bcd803ef44e5492d8014d))
+
+### 🚜 Refactor
+
+- *(cli)* Remove `TonicClientResultExt` - ([7cfcba1](https://github.com/obeli-sk/obelisk/commit/7cfcba13db446127035b57c055fb71d876c7ac47))
+- *(toml)* [**breaking**] Simplify config attribute `blocking_strategy` - ([d8c216c](https://github.com/obeli-sk/obelisk/commit/d8c216c3fcf2ccf649c9c82ca5e113e210933f33))
+- *(toml)* [**breaking**] Make `non_blocking_event_batching` part of `await` strategy - ([3cac492](https://github.com/obeli-sk/obelisk/commit/3cac4925f4ce959c13316d864ead015ea4f26f29))
+- Replace `continue` with `filter` when skipping already linked fns - ([7bd8579](https://github.com/obeli-sk/obelisk/commit/7bd8579b0157668cd1fa9083525d89282816c1d5))
+
+
 ## [0.19.3](https://github.com/obeli-sk/obelisk/compare/v0.19.2...v0.19.3)
 
 ### 🐛 Bug Fixes
