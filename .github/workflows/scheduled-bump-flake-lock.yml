@@ -44,7 +44,7 @@ jobs:
           git checkout -b ${{ steps.branch-name.outputs.branch_name }}
           git add .
           if [ -n "$(git status --porcelain)" ]; then
-              git commit -m "chore: Bump `flake.lock`"
+              git commit -m 'chore: Bump `flake.lock`'
               git push origin ${{ steps.branch-name.outputs.branch_name }}
 
               OWNER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
