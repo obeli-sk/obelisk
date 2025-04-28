@@ -58,18 +58,17 @@ https://www.sqlite.org/pragma.html#pragma_journal_size_limit
 Inspired by https://github.com/rails/rails/pull/49349
 */
 
-//NB: Each line must match `PRAGMA key = val;`
-const PRAGMA: &str = r"
-PRAGMA journal_mode = wal;
-PRAGMA synchronous = NORMAL;
-PRAGMA foreign_keys = true;
-PRAGMA busy_timeout = 1000;
-PRAGMA cache_size = 10000;
-PRAGMA temp_store = MEMORY;
-PRAGMA page_size = 8192;
-PRAGMA mmap_size = 134217728;
-PRAGMA journal_size_limit = 67108864;
-";
+const PRAGMA: [[&str; 2]; 9] = [
+    ["journal_mode", "wal"],
+    ["synchronous", "NORMAL"],
+    ["foreign_keys", "true"],
+    ["busy_timeout", "1000"],
+    ["cache_size", "10000"],
+    ["temp_store", "MEMORY"],
+    ["page_size", "8192"],
+    ["mmap_size", "134217728"],
+    ["journal_size_limit", "67108864"],
+];
 
 const CREATE_TABLE_T_METADATA: &str = r"
 CREATE TABLE IF NOT EXISTS t_metadata (
@@ -507,10 +506,8 @@ impl<S: Sleep> SqlitePool<S> {
         let conn = Connection::open_with_flags(path, OpenFlags::default())
             .unwrap_or_else(|err| panic!("cannot open the connection - {err:?}"));
 
-        for pragma in PRAGMA.split('\n').filter(|it| !it.is_empty()) {
-            let pragma = pragma.strip_prefix("PRAGMA ").unwrap();
-            let (pragma, value) = pragma.split_once(" = ").unwrap();
-            pragma_update(&conn, pragma, value);
+        for [pragma_name, pragma_value] in PRAGMA {
+            pragma_update(&conn, pragma_name, pragma_value);
         }
 
         // t_metadata
