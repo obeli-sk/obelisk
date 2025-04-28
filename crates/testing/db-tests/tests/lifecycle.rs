@@ -1192,7 +1192,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
         .unwrap();
     assert_eq!(1, actual.len());
     let actual = actual.pop().unwrap();
-    let expected = ExpiredTimer::AsyncDelay {
+    let expected = ExpiredTimer::Delay {
         execution_id: execution_id.clone(),
         join_set_id,
         delay_id,

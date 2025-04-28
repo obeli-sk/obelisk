@@ -178,7 +178,7 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                     expired_locks += 1;
                 }
             }
-            ExpiredTimer::AsyncDelay {
+            ExpiredTimer::Delay {
                 execution_id,
                 join_set_id,
                 delay_id,

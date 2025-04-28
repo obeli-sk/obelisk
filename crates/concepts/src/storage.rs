@@ -1086,7 +1086,7 @@ pub enum ExpiredTimer {
         retry_exp_backoff: Duration,
         parent: Option<(ExecutionId, JoinSetId)>,
     },
-    AsyncDelay {
+    Delay {
         execution_id: ExecutionId,
         join_set_id: JoinSetId,
         delay_id: DelayId,

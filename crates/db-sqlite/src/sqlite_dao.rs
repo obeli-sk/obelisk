@@ -2744,7 +2744,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
         ).await
     }
 
-    /// Get currently expired locks and async timers (delay requests)
+    /// Get currently expired delays and locks.
     #[instrument(level = Level::TRACE, skip(self))]
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
         self.conn_low_prio(
@@ -2759,7 +2759,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                             let execution_id = row.get("execution_id")?;
                             let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
                             let delay_id = row.get::<_, DelayIdW>("delay_id")?.0;
-                            Ok(ExpiredTimer::AsyncDelay { execution_id, join_set_id, delay_id })
+                            Ok(ExpiredTimer::Delay { execution_id, join_set_id, delay_id })
                         },
                     ).map_err(convert_err)?
                     .collect::<Result<Vec<_>, _>>().map_err(convert_err)?

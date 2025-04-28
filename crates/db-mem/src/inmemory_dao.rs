@@ -666,7 +666,7 @@ impl DbHolder {
         for (execution_id, is_async_timer) in expired {
             let journal = self.journals.get(&execution_id).unwrap();
             vec.push(match is_async_timer {
-                Some((join_set_id, delay_id)) => ExpiredTimer::AsyncDelay {
+                Some((join_set_id, delay_id)) => ExpiredTimer::Delay {
                     execution_id,
                     join_set_id,
                     delay_id,
