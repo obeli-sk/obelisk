@@ -55,8 +55,6 @@ pub(crate) enum WorkflowFunctionError {
     DbError(DbError),
 }
 
-pub(crate) struct InterruptRequested;
-
 #[derive(Debug)]
 pub(crate) enum WorkerPartialResult {
     FatalError(FatalError, Version),
@@ -340,7 +338,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         db_pool: P,
         version: Version,
         execution_deadline: DateTime<Utc>,
-        interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
         fn_registry: Arc<dyn FunctionRegistry>,
         worker_span: Span,
         forward_unhandled_child_errors_in_join_set_close: bool,
@@ -355,7 +352,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 join_next_blocking_strategy,
                 execution_deadline,
                 clock_fn.clone(),
-                interrupt_on_timeout_container,
                 worker_span.clone(),
                 forward_unhandled_child_errors_in_join_set_close,
             ),
@@ -1065,7 +1061,6 @@ pub(crate) mod tests {
                 self.db_pool.clone(),
                 ctx.version,
                 ctx.execution_deadline,
-                Arc::new(std::sync::Mutex::new(None)),
                 self.fn_registry.clone(),
                 tracing::info_span!("workflow-test"),
                 false,

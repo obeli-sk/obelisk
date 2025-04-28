@@ -1,6 +1,5 @@
 use super::event_history::ProcessingStatus::Processed;
 use super::event_history::ProcessingStatus::Unprocessed;
-use super::workflow_ctx::InterruptRequested;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::host_exports::delay_id_into_wast_val;
 use crate::host_exports::execution_id_derived_into_wast_val;
@@ -35,7 +34,6 @@ use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use indexmap::IndexMap;
 use std::fmt::Debug;
 use std::fmt::Display;
-use std::sync::Arc;
 use strum::IntoStaticStr;
 use tracing::Level;
 use tracing::Span;
@@ -106,7 +104,6 @@ pub(crate) struct EventHistory<C: ClockFn> {
     non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     clock_fn: C,
-    interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
     worker_span: Span,
     forward_unhandled_child_errors_in_join_set_close: bool,
     // TODO: optimize using start_from_idx: usize,
@@ -140,7 +137,6 @@ impl<C: ClockFn> EventHistory<C> {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
-        interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
         worker_span: Span,
         forward_unhandled_child_errors_in_join_set_close: bool,
     ) -> Self {
@@ -170,7 +166,6 @@ impl<C: ClockFn> EventHistory<C> {
                 Some(Vec::with_capacity(non_blocking_event_batch_size))
             },
             clock_fn,
-            interrupt_on_timeout_container,
             worker_span,
             forward_unhandled_child_errors_in_join_set_close,
         }
@@ -310,7 +305,6 @@ impl<C: ClockFn> EventHistory<C> {
         ) {
             // JoinNext was written, wait for next response.
             debug!(join_set_id = %poll_variant.join_set_id(), "Waiting for {poll_variant:?}");
-            *self.interrupt_on_timeout_container.lock().unwrap() = Some(InterruptRequested);
             let key = poll_variant.as_key();
 
             // Subscribe to the next response.
@@ -1681,7 +1675,6 @@ mod tests {
             join_next_blocking_strategy,
             execution_deadline,
             clock_fn,
-            Arc::new(std::sync::Mutex::new(None)),
             info_span!("worker-test"),
             false,
         );

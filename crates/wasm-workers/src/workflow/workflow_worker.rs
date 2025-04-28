@@ -1,5 +1,4 @@
 use super::event_history::ApplyError;
-use super::workflow_ctx::InterruptRequested;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::WasmFileError;
 use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
@@ -255,7 +254,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
     async fn prepare_func(
         &self,
         ctx: WorkerContext,
-        interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
     ) -> Result<
         (
             Store<WorkflowCtx<C, DB, P>>,
@@ -281,7 +279,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
             self.db_pool.clone(),
             ctx.version,
             ctx.execution_deadline,
-            interrupt_on_timeout_container,
             self.fn_registry.clone(),
             ctx.worker_span,
             self.config.forward_unhandled_child_errors_in_join_set_close,
@@ -381,7 +378,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
         store: Store<WorkflowCtx<C, DB, P>>,
         func: wasmtime::component::Func,
         params: Arc<[Val]>,
-        interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
         worker_span: Span,
         execution_deadline: DateTime<Utc>,
     ) -> WorkerResult {
@@ -400,15 +396,10 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
             () = self.sleep.sleep(deadline_duration) => {
                 // Not flushing the workflow_ctx as it would introduce locking.
                 // Not closing the join sets, workflow MUST be retried.
-                if interrupt_on_timeout_container.lock().unwrap().take().is_some() {
-                    worker_span.in_scope(||
-                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %self.clock_fn.now(), "Interrupt requested at timeout")
-                    );
-                } else {
-                    worker_span.in_scope(||
-                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %self.clock_fn.now(), "Timed out")
-                    );
-                }
+                worker_span.in_scope(||
+                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %self.clock_fn.now(), "Timed out")
+                );
+
                 WorkerResult::DbUpdatedByWorkerOrWatcher
             }
         }
@@ -606,26 +597,15 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
                 "Workflow configuration set to not retry anymore. This can lead to nondeterministic results."
             );
         }
-        let interrupt_on_timeout_container = Arc::new(std::sync::Mutex::new(None));
         let worker_span = ctx.worker_span.clone();
         worker_span.in_scope(|| info!("Execution run started"));
         let execution_deadline = ctx.execution_deadline;
-        let (store, func, params) = match self
-            .prepare_func(ctx, interrupt_on_timeout_container.clone())
-            .await
-        {
+        let (store, func, params) = match self.prepare_func(ctx).await {
             Ok(ok) => ok,
             Err(err) => return WorkerResult::Err(err), // errors here cannot affect joinset closing, as they happen before fn invocation
         };
-        self.race_func_with_timeout(
-            store,
-            func,
-            params,
-            interrupt_on_timeout_container,
-            worker_span,
-            execution_deadline,
-        )
-        .await
+        self.race_func_with_timeout(store, func, params, worker_span, execution_deadline)
+            .await
     }
 }
 
