@@ -367,14 +367,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     child_finished,
                 })
             }
-            WorkerResult::DbUpdatedByWorker => None,
+            WorkerResult::DbUpdatedByWorkerOrWatcher => None,
             WorkerResult::Err(err) => {
                 let reason = err.to_string();
                 let (primary_event, child_finished, version) = match err {
-                    WorkerError::TemporaryTimeoutHandledByWatcher => {
-                        info!("Temporary timeout handled by watcher");
-                        return Ok(None);
-                    }
                     WorkerError::TemporaryTimeout {
                         http_client_traces,
                         version,
@@ -1165,18 +1161,23 @@ mod tests {
             kind: PermanentFailureKind::ActivityTrap,
             detail: Some("detail".to_string()),
         };
-        child_execution_permanently_failed_should_notify_parent(worker_error, expected_child_err)
-            .await;
+        child_execution_permanently_failed_should_notify_parent(
+            WorkerResult::Err(worker_error),
+            expected_child_err,
+        )
+        .await;
     }
 
     // TODO: Add test for WorkerError::TemporaryTimeout
 
     #[tokio::test]
     async fn child_execution_permanently_failed_handled_by_watcher_should_notify_parent_timeout() {
-        let worker_error = WorkerError::TemporaryTimeoutHandledByWatcher;
         let expected_child_err = FinishedExecutionError::PermanentTimeout;
-        child_execution_permanently_failed_should_notify_parent(worker_error, expected_child_err)
-            .await;
+        child_execution_permanently_failed_should_notify_parent(
+            WorkerResult::DbUpdatedByWorkerOrWatcher,
+            expected_child_err,
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -1199,13 +1200,16 @@ mod tests {
             child_execution_id,
             root_cause_id,
         };
-        child_execution_permanently_failed_should_notify_parent(worker_error, expected_child_err)
-            .await;
+        child_execution_permanently_failed_should_notify_parent(
+            WorkerResult::Err(worker_error),
+            expected_child_err,
+        )
+        .await;
     }
 
     #[expect(clippy::too_many_lines)]
     async fn child_execution_permanently_failed_should_notify_parent(
-        worker_error: WorkerError,
+        worker_result: WorkerResult,
         expected_child_err: FinishedExecutionError,
     ) {
         use concepts::storage::JoinSetResponseEventOuter;
@@ -1216,7 +1220,7 @@ mod tests {
         let (_guard, db_pool) = Database::Memory.set_up().await;
 
         let parent_worker = Arc::new(SimpleWorker::with_single_result(
-            WorkerResult::DbUpdatedByWorker,
+            WorkerResult::DbUpdatedByWorkerOrWatcher,
         ));
         let parent_execution_id = ExecutionId::generate();
         db_pool
@@ -1312,9 +1316,8 @@ mod tests {
                 .unwrap();
         }
 
-        let child_worker = Arc::new(
-            SimpleWorker::with_single_result(WorkerResult::Err(worker_error)).with_ffqn(FFQN_CHILD),
-        );
+        let child_worker =
+            Arc::new(SimpleWorker::with_single_result(worker_result).with_ffqn(FFQN_CHILD));
 
         // execute the child
         tick_fn(

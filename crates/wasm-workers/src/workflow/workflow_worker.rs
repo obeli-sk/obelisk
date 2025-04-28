@@ -24,7 +24,6 @@ use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{Engine, component::Val};
 use wasmtime::{Store, UpdateDeadline};
 
-// TODO: rename to BlockingStrategy
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -391,7 +390,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
             worker_span.in_scope(||
                 info!(%execution_deadline, %started_at, "Timed out - started_at later than execution_deadline")
             );
-            return WorkerResult::Err(WorkerError::TemporaryTimeoutHandledByWatcher);
+            return WorkerResult::DbUpdatedByWorkerOrWatcher;
         };
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! { // future's liveness: Dropping the loser immediately.
@@ -405,13 +404,12 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
                     worker_span.in_scope(||
                         info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %self.clock_fn.now(), "Interrupt requested at timeout")
                     );
-                    WorkerResult::DbUpdatedByWorker
                 } else {
                     worker_span.in_scope(||
                         info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %self.clock_fn.now(), "Timed out")
                     );
-                    WorkerResult::Err(WorkerError::TemporaryTimeoutHandledByWatcher)
                 }
+                WorkerResult::DbUpdatedByWorkerOrWatcher
             }
         }
     }
@@ -538,7 +536,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
                     }
                     WorkerPartialResult::InterruptRequested => {
                         worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Interrupt requested"));
-                        WorkerResultRefactored::Retriable(WorkerResult::DbUpdatedByWorker)
+                        WorkerResultRefactored::Retriable(WorkerResult::DbUpdatedByWorkerOrWatcher)
                     }
                     WorkerPartialResult::DbError(db_err) => WorkerResultRefactored::Retriable(
                         WorkerResult::Err(WorkerError::DbError(db_err)),
@@ -572,7 +570,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
                         workflow_ctx.version.clone(),
                     ))
                 }
-                ApplyError::InterruptRequested => WorkerResult::DbUpdatedByWorker,
+                ApplyError::InterruptRequested => WorkerResult::DbUpdatedByWorkerOrWatcher,
                 ApplyError::DbError(db_error) => WorkerResult::Err(WorkerError::DbError(db_error)),
                 // Can only happen when forwarding unhandled child errors in join set close.
                 ApplyError::UnhandledChildExecutionError {
@@ -998,10 +996,8 @@ pub(crate) mod tests {
             run_id: RunId::generate(),
             worker_span: info_span!("worker-test"),
         };
-        let WorkerResult::Err(err) = worker.run(ctx).await else {
-            panic!()
-        };
-        assert_matches!(err, WorkerError::TemporaryTimeoutHandledByWatcher);
+        let worker_result = worker.run(ctx).await;
+        assert_matches!(worker_result, WorkerResult::DbUpdatedByWorkerOrWatcher);
     }
 
     #[rstest]

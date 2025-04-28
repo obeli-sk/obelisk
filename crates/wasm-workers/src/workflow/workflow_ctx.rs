@@ -961,7 +961,7 @@ pub(crate) mod tests {
                 WorkerPartialResult::FatalError(err, version) => {
                     WorkerResult::Err(executor::worker::WorkerError::FatalError(err, version))
                 }
-                WorkerPartialResult::InterruptRequested => WorkerResult::DbUpdatedByWorker,
+                WorkerPartialResult::InterruptRequested => WorkerResult::DbUpdatedByWorkerOrWatcher,
                 WorkerPartialResult::DbError(db_err) => {
                     WorkerResult::Err(executor::worker::WorkerError::DbError(db_err))
                 }
@@ -1168,7 +1168,7 @@ pub(crate) mod tests {
                 }
                 Err(ApplyError::InterruptRequested) => {
                     info!("Interrupting");
-                    return WorkerResult::DbUpdatedByWorker;
+                    return WorkerResult::DbUpdatedByWorkerOrWatcher;
                 }
                 other => panic!("Unexpected error: {other:?}"),
             };
@@ -1293,12 +1293,12 @@ pub(crate) mod tests {
                 .await;
             assert_matches!(
                 worker_result,
-                WorkerResult::DbUpdatedByWorker,
+                WorkerResult::DbUpdatedByWorkerOrWatcher,
                 "At least one -submit is expected"
             );
             // Run it SUBMITS times to close all join sets.
             for run in 0..SUBMITS {
-                assert_matches!(worker_result, WorkerResult::DbUpdatedByWorker);
+                assert_matches!(worker_result, WorkerResult::DbUpdatedByWorkerOrWatcher);
                 let execution_log = db_connection.get(&execution_id).await.unwrap();
                 let closing_join_nexts: hashbrown::HashSet<_> = execution_log
                     .event_history()
@@ -1379,7 +1379,7 @@ pub(crate) mod tests {
                 if run + 1 < SUBMITS {
                     assert_matches!(
                         worker_result,
-                        WorkerResult::DbUpdatedByWorker,
+                        WorkerResult::DbUpdatedByWorkerOrWatcher,
                         "At another -submit is expected"
                     );
                 }

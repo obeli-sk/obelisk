@@ -35,7 +35,7 @@ pub enum WorkerResult {
         Version,
         Option<Vec<HttpClientTrace>>,
     ),
-    DbUpdatedByWorker,
+    DbUpdatedByWorkerOrWatcher,
     Err(WorkerError),
 }
 
@@ -90,9 +90,6 @@ pub enum WorkerError {
         http_client_traces: Option<Vec<HttpClientTrace>>,
         version: Version,
     },
-    #[error("temporary timeout handled by watcher")]
-    // only applicable to workflows
-    TemporaryTimeoutHandledByWatcher,
     #[error(transparent)]
     DbError(DbError),
     // non-retriable errors
