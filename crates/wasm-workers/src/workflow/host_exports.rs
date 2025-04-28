@@ -1,3 +1,5 @@
+// TODO: Move to workflow module.
+
 // Generate `obelisk::workflow::workflow_support`
 wasmtime::component::bindgen!({
     path: "host-wit/",

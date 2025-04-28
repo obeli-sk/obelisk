@@ -1,10 +1,10 @@
 use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::envvar::EnvVar;
-use crate::host_exports::{
+use crate::std_output_stream::{LogStream, StdOutput};
+use crate::workflow::host_exports::{
     SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, execution_id_into_val,
 };
-use crate::std_output_stream::{LogStream, StdOutput};
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, ClientError, CreateRequest, DbConnection, DbError, DbPool,

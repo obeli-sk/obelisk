@@ -1,10 +1,10 @@
 use super::event_history::ProcessingStatus::Processed;
 use super::event_history::ProcessingStatus::Unprocessed;
+use super::host_exports::delay_id_into_wast_val;
+use super::host_exports::execution_id_derived_into_wast_val;
+use super::host_exports::execution_id_into_wast_val;
+use super::host_exports::join_set_id_into_wast_val;
 use super::workflow_worker::JoinNextBlockingStrategy;
-use crate::host_exports::delay_id_into_wast_val;
-use crate::host_exports::execution_id_derived_into_wast_val;
-use crate::host_exports::execution_id_into_wast_val;
-use crate::host_exports::join_set_id_into_wast_val;
 use chrono::{DateTime, Utc};
 use concepts::ClosingStrategy;
 use concepts::ComponentId;
@@ -1629,8 +1629,8 @@ impl EventCall {
 #[cfg(test)]
 mod tests {
     use super::super::event_history::{EventCall, EventHistory};
+    use super::super::host_exports::execution_id_into_wast_val;
     use super::super::workflow_worker::JoinNextBlockingStrategy;
-    use crate::host_exports::execution_id_into_wast_val;
     use crate::tests::fn_registry_dummy;
     use crate::workflow::event_history::ApplyError;
     use assert_matches::assert_matches;
