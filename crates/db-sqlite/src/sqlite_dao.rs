@@ -63,9 +63,9 @@ const PRAGMA: [[&str; 2]; 9] = [
     ["synchronous", "NORMAL"],
     ["foreign_keys", "true"],
     ["busy_timeout", "1000"],
-    ["cache_size", "10000"],
+    ["cache_size", "10000"], // number of pages
     ["temp_store", "MEMORY"],
-    ["page_size", "8192"],
+    ["page_size", "8192"], // 8 KB
     ["mmap_size", "134217728"],
     ["journal_size_limit", "67108864"],
 ];
@@ -476,22 +476,27 @@ impl<S: Sleep> DbPool<SqlitePool<S>> for SqlitePool<S> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SqliteConfig {
     pub queue_capacity: usize,
     pub low_prio_threshold: usize,
+    pub pragma_override: Option<hashbrown::HashMap<String, String>>,
 }
 impl Default for SqliteConfig {
     fn default() -> Self {
         Self {
             queue_capacity: 100,
             low_prio_threshold: 100,
+            pragma_override: None,
         }
     }
 }
 
 impl<S: Sleep> SqlitePool<S> {
-    fn init_thread(path: &Path) -> Connection {
+    fn init_thread(
+        path: &Path,
+        mut pragma_override: hashbrown::HashMap<String, String>,
+    ) -> Connection {
         // No need to log errors - propagate error messages via panic.
         // It is OK to panic here - spawned on blocking thread pool, panic will error the initialization.
         fn execute<P: Params>(conn: &Connection, sql: &str, params: P) {
@@ -499,6 +504,7 @@ impl<S: Sleep> SqlitePool<S> {
                 .unwrap_or_else(|err| panic!("cannot run `{sql}` - {err:?}"));
         }
         fn pragma_update(conn: &Connection, name: &str, value: &str) {
+            debug!("Setting PRAGMA {name}={value}");
             conn.pragma_update(None, name, value)
                 .unwrap_or_else(|err| panic!("cannot update pragma `{name}`=`{value}` - {err:?}"));
         }
@@ -507,7 +513,14 @@ impl<S: Sleep> SqlitePool<S> {
             .unwrap_or_else(|err| panic!("cannot open the connection - {err:?}"));
 
         for [pragma_name, pragma_value] in PRAGMA {
-            pragma_update(&conn, pragma_name, pragma_value);
+            let pragma_value = pragma_override
+                .remove(pragma_name)
+                .unwrap_or_else(|| pragma_value.to_string());
+            pragma_update(&conn, pragma_name, &pragma_value);
+        }
+        // drain the rest overrides
+        for (pragma_name, pragma_value) in pragma_override.drain() {
+            pragma_update(&conn, &pragma_name, &pragma_value);
         }
 
         // t_metadata
@@ -573,10 +586,11 @@ impl<S: Sleep> SqlitePool<S> {
         mut conn: Connection,
         shutdown: &Arc<AtomicBool>,
         mut command_rx: mpsc::Receiver<ThreadCommand>,
-        config: SqliteConfig,
+        queue_capacity: usize,
+        low_prio_threshold: usize,
     ) {
         const METRIC_DUMPING_TRESHOLD: usize = 0; // 0 to disable histogram dumping
-        let mut vec: Vec<ThreadCommand> = Vec::with_capacity(config.queue_capacity);
+        let mut vec: Vec<ThreadCommand> = Vec::with_capacity(queue_capacity);
         // measure how long it takes to receive the `ThreadCommand`. 1us-1s
         let mut send_hist = Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap();
         let mut func_histograms = hashbrown::HashMap::new();
@@ -644,7 +658,7 @@ impl<S: Sleep> SqlitePool<S> {
                 processed
             };
             let processed = execute(CommandPriority::High) + execute(CommandPriority::Medium);
-            if processed < config.low_prio_threshold {
+            if processed < low_prio_threshold {
                 execute(CommandPriority::Low);
             }
 
@@ -676,7 +690,10 @@ impl<S: Sleep> SqlitePool<S> {
             // Initialize the `Connection`.
             let init_task = {
                 #[cfg_attr(madsim, allow(deprecated))]
-                tokio::task::spawn_blocking(move || Self::init_thread(&path)).await
+                tokio::task::spawn_blocking(move || {
+                    Self::init_thread(&path, config.pragma_override.unwrap_or_default())
+                })
+                .await
             };
             let conn = match init_task {
                 Ok(conn) => conn,
@@ -689,7 +706,15 @@ impl<S: Sleep> SqlitePool<S> {
             };
             let shutdown = shutdown.clone();
             // Start the RPC thread.
-            std::thread::spawn(move || Self::connection_rpc(conn, &shutdown, command_rx, config));
+            std::thread::spawn(move || {
+                Self::connection_rpc(
+                    conn,
+                    &shutdown,
+                    command_rx,
+                    config.queue_capacity,
+                    config.low_prio_threshold,
+                );
+            });
         };
         Ok(Self {
             shutdown,

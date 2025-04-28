@@ -4,6 +4,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # Note: listening on all interfaces using [::]:port is not advised, as there is no auth yet.
 
 # sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
+# sqlite.pragma = { "cache_size" = "3000" } # Customize PRAGMA statements.
 
 # wasm_cache_directory = "${CACHE_DIR}/wasm" # Path to directory where downloaded or transformed WASM files are stored. Supports path prefixes.
 
@@ -100,7 +101,7 @@ max_retries = 0
 name = "test_programs_fibo_workflow"
 location.oci = "docker.io/getobelisk/test_programs_fibo_workflow:2025-03-20@sha256:3b941f5e52942b92acbb6f979cafa14339da0f272ff72eb8673e88dd8923ac9f"
 exec.lock_expiry.seconds = 2
-backtrace.sources = {"/home/runner/work/obelisk/obelisk/crates/testing/test-programs/fibo/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs"}
+backtrace.sources = { "/home/runner/work/obelisk/obelisk/crates/testing/test-programs/fibo/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
 
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
@@ -117,7 +118,7 @@ forward_stderr = "stderr"
 [[workflow]]
 name = "test_programs_http_get_workflow"
 location.oci = "docker.io/getobelisk/test_programs_http_get_workflow:2025-03-20@sha256:3cec01c9061f92f9cbcc52eb871b49f58ab9c31f9c8dd7cc984fbb3ff2efd074"
-backtrace.sources = {"/home/runner/work/obelisk/obelisk/crates/testing/test-programs/http/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs"}
+backtrace.sources = { "/home/runner/work/obelisk/obelisk/crates/testing/test-programs/http/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
 
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
@@ -127,7 +128,7 @@ exec.lock_expiry.seconds = 10
 [[workflow]]
 name = "test_programs_sleep_workflow"
 location.oci = "docker.io/getobelisk/test_programs_sleep_workflow:2025-03-20@sha256:81a9f24a42a6d2cbf988385b0ea496a7eeabe124df381e87d499b3102a694e7f"
-backtrace.sources = {"/home/runner/work/obelisk/obelisk/crates/testing/test-programs/sleep/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs"}
+backtrace.sources = { "/home/runner/work/obelisk/obelisk/crates/testing/test-programs/sleep/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
 
 ### Send spans via gRPC to an OTLP collector.
 # [otlp]

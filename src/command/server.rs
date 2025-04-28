@@ -1091,7 +1091,7 @@ impl ServerVerified {
                 )?,
             }
         };
-        let sqlite_config = config.sqlite.as_config();
+        let sqlite_config = config.sqlite.into_sqlite_config();
         let mut http_servers = config.http_servers;
         let mut webhooks = config.webhooks;
         if let Some(webui_listening_addr) = config.webui.listening_addr {

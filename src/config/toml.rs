@@ -109,8 +109,12 @@ pub(crate) struct ApiConfig {
 pub(crate) struct SqliteConfigToml {
     #[serde(default)]
     directory: Option<String>,
-    queue_capacity: Option<usize>,
-    low_prio_threshold: Option<usize>,
+    #[serde(default = "default_sqlite_queue_capacity")]
+    queue_capacity: usize,
+    #[serde(default = "default_sqlite_low_prio_threshold")]
+    low_prio_threshold: usize,
+    #[serde(default)]
+    pragma: std::collections::HashMap<String, String>, // hashbrown is not supported by schemars
 }
 impl SqliteConfigToml {
     pub(crate) async fn get_sqlite_dir(
@@ -127,11 +131,11 @@ impl SqliteConfigToml {
         replace_path_prefix_mkdir(sqlite_file, path_prefixes).await
     }
 
-    pub(crate) fn as_config(&self) -> SqliteConfig {
-        let def = SqliteConfig::default();
+    pub(crate) fn into_sqlite_config(self) -> SqliteConfig {
         SqliteConfig {
-            queue_capacity: self.queue_capacity.unwrap_or(def.queue_capacity),
-            low_prio_threshold: self.low_prio_threshold.unwrap_or(def.low_prio_threshold),
+            queue_capacity: self.queue_capacity,
+            low_prio_threshold: self.low_prio_threshold,
+            pragma_override: Some(self.pragma.into_iter().collect()),
         }
     }
 }
@@ -1203,6 +1207,13 @@ const fn default_forward_unhandled_child_errors_in_completing_join_set_close() -
 
 fn default_out_style() -> LoggingStyle {
     LoggingStyle::PlainCompact
+}
+
+fn default_sqlite_queue_capacity() -> usize {
+    SqliteConfig::default().queue_capacity
+}
+fn default_sqlite_low_prio_threshold() -> usize {
+    SqliteConfig::default().low_prio_threshold
 }
 
 #[cfg(test)]

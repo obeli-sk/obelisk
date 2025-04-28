@@ -516,19 +516,22 @@
           "default": null
         },
         "low_prio_threshold": {
-          "type": [
-            "integer",
-            "null"
-          ],
+          "type": "integer",
           "format": "uint",
+          "default": 100,
           "minimum": 0
         },
+        "pragma": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
         "queue_capacity": {
-          "type": [
-            "integer",
-            "null"
-          ],
+          "type": "integer",
           "format": "uint",
+          "default": 100,
           "minimum": 0
         }
       },
