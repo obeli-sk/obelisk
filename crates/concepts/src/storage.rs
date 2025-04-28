@@ -1079,7 +1079,8 @@ pub async fn wait_for_pending_state_fn<T: Debug>(
 pub enum ExpiredTimer {
     Lock {
         execution_id: ExecutionId,
-        version: Version,
+        locked_at_version: Version,
+        version: Version, // Next version
         /// As the execution may still be running, this represents the number of temporary failures + timeouts prior to this execution.
         temporary_event_count: u32,
         max_retries: u32,

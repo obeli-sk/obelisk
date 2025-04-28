@@ -1,6 +1,7 @@
 use crate::executor::Append;
 use crate::executor::ChildFinishedResponse;
 use chrono::{DateTime, Utc};
+use concepts::StrVariant;
 use concepts::storage::AppendRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbError;
@@ -121,13 +122,30 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
         match expired_timer {
             ExpiredTimer::Lock {
                 execution_id,
+                locked_at_version,
                 version,
                 temporary_event_count,
                 max_retries,
                 retry_exp_backoff,
                 parent,
             } => {
-                let append = if let Some(duration) = ExecutionLog::can_be_retried_after(
+                let append = if max_retries == u32::MAX && locked_at_version.0 + 1 < version.0 {
+                    // Workflow that made progress is unlocked and immediately available for locking.
+                    debug!(%execution_id, "Unlocking workflow execution");
+                    Append {
+                        created_at: executed_at,
+                        primary_event: AppendRequest {
+                            created_at: executed_at,
+                            event: ExecutionEventInner::Unlocked {
+                                backoff_expires_at: executed_at,
+                                reason: StrVariant::Static("made progress"),
+                            },
+                        },
+                        execution_id: execution_id.clone(),
+                        version,
+                        child_finished: None,
+                    }
+                } else if let Some(duration) = ExecutionLog::can_be_retried_after(
                     temporary_event_count + 1,
                     max_retries,
                     retry_exp_backoff,

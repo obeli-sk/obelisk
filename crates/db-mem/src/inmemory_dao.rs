@@ -663,9 +663,9 @@ impl DbHolder {
     fn get_expired_timers(&mut self, at: DateTime<Utc>) -> Vec<ExpiredTimer> {
         let expired = self.index.fetch_expired(at);
         let mut vec = Vec::new();
-        for (execution_id, is_async_timer) in expired {
+        for (execution_id, is_delay) in expired {
             let journal = self.journals.get(&execution_id).unwrap();
-            vec.push(match is_async_timer {
+            vec.push(match is_delay {
                 Some((join_set_id, delay_id)) => ExpiredTimer::Delay {
                     execution_id,
                     join_set_id,
@@ -673,6 +673,15 @@ impl DbHolder {
                 },
                 None => ExpiredTimer::Lock {
                     execution_id: journal.execution_id().clone(),
+                    locked_at_version: journal
+                        .execution_events
+                        .iter()
+                        .enumerate()
+                        .rfind(|(_idx, outer)| {
+                            matches!(outer.event, ExecutionEventInner::Locked { .. })
+                        })
+                        .map(|(idx, _)| Version::new(VersionType::try_from(idx).unwrap()))
+                        .expect("must have been locked"),
                     version: journal.version(),
                     max_retries: journal.max_retries(),
                     temporary_event_count: journal.temporary_event_count(),

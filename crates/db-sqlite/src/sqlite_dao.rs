@@ -131,7 +131,7 @@ CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_id ON t_join_set
 /// `state` to column mapping:
 /// `PendingAt`:
 /// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
-/// `Locked`:               `executor_id`, `run_id`, `temporary_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>
+/// `Locked`:               `executor_id`, `run_id`, `temporary_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>, `locked_at_version`
 /// `Finished` :            `result_kind`, `next_version` is not bumped, points to the finished version.
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     retry_exp_backoff_millis INTEGER,
     parent_execution_id TEXT,
     parent_join_set_id TEXT,
+    locked_at_version INTEGER,
 
     result_kind TEXT,
 
@@ -990,7 +991,7 @@ impl<S: Sleep> SqlitePool<S> {
                         state=:state, next_version = :next_version, pending_expires_finished = :pending_expires_finished, \
                         join_set_id = NULL,join_set_closing=NULL, \
                         executor_id = NULL,run_id = NULL,temporary_event_count = NULL, \
-                        max_retries = NULL,retry_exp_backoff_millis = NULL,parent_execution_id = NULL,parent_join_set_id = NULL, \
+                        max_retries = NULL,retry_exp_backoff_millis = NULL,parent_execution_id = NULL,parent_join_set_id = NULL, locked_at_version = NULL, \
                         result_kind = NULL \
                         WHERE execution_id = :execution_id AND next_version = :expected_current_version",
                     )
@@ -1043,7 +1044,7 @@ impl<S: Sleep> SqlitePool<S> {
                         join_set_id = NULL,join_set_closing=NULL, \
                         executor_id = :executor_id, run_id = :run_id, temporary_event_count = :temporary_event_count, \
                         max_retries = :max_retries, retry_exp_backoff_millis = :retry_exp_backoff_millis, \
-                        parent_execution_id = :parent_execution_id, parent_join_set_id = :parent_join_set_id, \
+                        parent_execution_id = :parent_execution_id, parent_join_set_id = :parent_join_set_id, locked_at_version = :locked_at_version, \
                         result_kind = NULL \
                         WHERE execution_id = :execution_id AND next_version = :expected_current_version",
                     )
@@ -1060,6 +1061,7 @@ impl<S: Sleep> SqlitePool<S> {
                         ":retry_exp_backoff_millis": u64::try_from(create_req.retry_exp_backoff.as_millis()).unwrap(),
                         ":parent_execution_id": create_req.parent.as_ref().map(|(pid, _) | pid.to_string()),
                         ":parent_join_set_id": create_req.parent.as_ref().map(|(_, join_set_id)| join_set_id.to_string()),
+                        ":locked_at_version": expected_current_version.0,
 
                         ":execution_id": execution_id.to_string(),
                         ":expected_current_version": expected_current_version.0,
@@ -1090,7 +1092,7 @@ impl<S: Sleep> SqlitePool<S> {
                         state=:state, next_version = :next_version, pending_expires_finished = :pending_expires_finished, \
                         join_set_id = :join_set_id, join_set_closing=:join_set_closing, \
                         executor_id = NULL,run_id = NULL,temporary_event_count = NULL, \
-                        max_retries = NULL,retry_exp_backoff_millis = NULL,parent_execution_id = NULL,parent_join_set_id = NULL, \
+                        max_retries = NULL,retry_exp_backoff_millis = NULL,parent_execution_id = NULL,parent_join_set_id = NULL, locked_at_version = NULL, \
                         result_kind = NULL \
                         WHERE execution_id = :execution_id AND next_version = :expected_current_version",
                     )
@@ -1133,7 +1135,7 @@ impl<S: Sleep> SqlitePool<S> {
                         state=:state, next_version = :next_version, pending_expires_finished = :pending_expires_finished, \
                         join_set_id = NULL,join_set_closing=NULL, \
                         executor_id = NULL,run_id = NULL,temporary_event_count = NULL, \
-                        max_retries = NULL,retry_exp_backoff_millis = NULL,parent_execution_id = NULL,parent_join_set_id = NULL, \
+                        max_retries = NULL,retry_exp_backoff_millis = NULL,parent_execution_id = NULL,parent_join_set_id = NULL, locked_at_version = NULL, \
                         result_kind = :result_kind \
                         WHERE execution_id = :execution_id AND next_version = :expected_current_version",
                     )
@@ -2762,11 +2764,10 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                             Ok(ExpiredTimer::Delay { execution_id, join_set_id, delay_id })
                         },
                     ).map_err(convert_err)?
-                    .collect::<Result<Vec<_>, _>>().map_err(convert_err)?
-                    ;
+                    .collect::<Result<Vec<_>, _>>().map_err(convert_err)?;
                     // Extend with expired locks
                     expired_timers.extend(conn.prepare(&format!(
-                        "SELECT execution_id, next_version, temporary_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id FROM t_state \
+                        "SELECT execution_id, next_version, temporary_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id, locked_at_version FROM t_state \
                         WHERE pending_expires_finished <= :at AND state = \"{STATE_LOCKED}\"")
                     ).map_err(convert_err)?
                     .query_map(
@@ -2776,6 +2777,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                             |row| {
                                 let execution_id = row.get("execution_id")?;
                                 let version = Version::new(row.get::<_, VersionType>("next_version")?);
+                                let locked_at_version = Version::new(row.get::<_, VersionType>("locked_at_version")?);
 
                                 let temporary_event_count = row.get::<_, u32>("temporary_event_count")?;
                                 let max_retries = row.get::<_, u32>("max_retries")?;
@@ -2783,7 +2785,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                                 let parent_execution_id = row.get::<_, Option<ExecutionId>>("parent_execution_id")?;
                                 let parent_join_set_id = row.get::<_, Option<JoinSetId>>("parent_join_set_id")?;
 
-                                Ok(ExpiredTimer::Lock { execution_id, version, temporary_event_count, max_retries,
+                                Ok(ExpiredTimer::Lock { execution_id, locked_at_version, version, temporary_event_count, max_retries,
                                     retry_exp_backoff, parent: parent_execution_id.and_then(|pexe| parent_join_set_id.map(|pjs| (pexe, pjs)))})
                             },
                         ).map_err(convert_err)?

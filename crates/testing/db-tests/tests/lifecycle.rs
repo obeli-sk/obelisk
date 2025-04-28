@@ -668,15 +668,17 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
         let expired = &expired[0];
         let (
             found_execution_id,
+            locked_at_version,
             version,
             already_retried_count,
             max_retries,
             retry_exp_backoff,
             parent,
         ) = assert_matches!(expired,
-            ExpiredTimer::Lock { execution_id, version, temporary_event_count, max_retries, retry_exp_backoff, parent } =>
-            (execution_id, version, temporary_event_count, max_retries, retry_exp_backoff, parent));
+            ExpiredTimer::Lock { execution_id, locked_at_version, version, temporary_event_count, max_retries, retry_exp_backoff, parent } =>
+            (execution_id, locked_at_version, version, temporary_event_count, max_retries, retry_exp_backoff, parent));
         assert_eq!(execution_id, *found_execution_id);
+        assert_eq!(Version::new(1), *locked_at_version);
         assert_eq!(Version::new(2), *version);
         assert_eq!(0, *already_retried_count);
         assert_eq!(MAX_RETRIES, *max_retries);
@@ -1111,6 +1113,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
     let actual = actual.pop().unwrap();
     let expected = ExpiredTimer::Lock {
         execution_id,
+        locked_at_version: Version::new(1),
         version,
         temporary_event_count: 0,
         max_retries: 0,

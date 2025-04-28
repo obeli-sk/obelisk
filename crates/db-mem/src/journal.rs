@@ -155,7 +155,7 @@ impl ExecutionJournal {
                     assert_eq!(self.execution_events.len() - 1, idx);
                     Some(PendingState::Finished {
                         finished: PendingStateFinished {
-                            version: VersionType::try_from(idx).unwrap(),
+                            version: VersionType::try_from(idx).expect("version limit reached"),
                             finished_at: event.created_at,
                             result_kind: PendingStateFinishedResultKind::from(result),
                         },
