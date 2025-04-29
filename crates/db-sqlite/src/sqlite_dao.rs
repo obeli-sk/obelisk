@@ -923,7 +923,7 @@ impl<S: Sleep> SqlitePool<S> {
         appending_version: &Version,
     ) -> Result<(), DbError> {
         if *expected_version != *appending_version {
-            error!(
+            debug!(
                 "Version mismatch - expected: {expected_version:?}, appending: {appending_version:?}"
             );
             return Err(DbError::Specific(SpecificError::VersionMismatch {
