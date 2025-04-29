@@ -57,8 +57,8 @@ pub(crate) struct ConfigToml {
     pub(crate) sqlite: SqliteConfigToml,
     #[serde(default)]
     pub(crate) webui: WebUIConfig,
-    #[serde(default, rename = "workflows")]
-    pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
+    #[serde(default, rename = "wasm")]
+    pub(crate) wasm_global_config: WasmGlobalConfigToml,
     #[serde(default)]
     wasm_cache_directory: Option<String>,
     #[serde(default)]
@@ -158,19 +158,19 @@ pub(crate) struct WebUIConfig {
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkflowsGlobalConfigToml {
+pub(crate) struct WasmGlobalConfigToml {
     #[serde(default)]
-    pub(crate) backtrace: WorkflowsGlobalBacktrace,
+    pub(crate) backtrace: WasmGlobalBacktrace,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkflowsGlobalBacktrace {
+pub(crate) struct WasmGlobalBacktrace {
     #[serde(default = "default_global_backtrace_persist")]
     pub(crate) persist: bool,
 }
 
-impl WorkflowsGlobalBacktrace {
+impl WasmGlobalBacktrace {
     pub(crate) fn as_wasm_backtrace_details(&self) -> WasmBacktraceDetails {
         if self.persist {
             WasmBacktraceDetails::Enable
@@ -179,7 +179,7 @@ impl WorkflowsGlobalBacktrace {
         }
     }
 }
-impl Default for WorkflowsGlobalBacktrace {
+impl Default for WasmGlobalBacktrace {
     fn default() -> Self {
         Self {
             persist: default_global_backtrace_persist(),

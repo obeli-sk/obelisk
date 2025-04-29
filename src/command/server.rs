@@ -1079,14 +1079,14 @@ impl ServerVerified {
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
                     config
-                        .workflows_global_config
+                        .wasm_global_config
                         .backtrace
                         .as_wasm_backtrace_details(),
                 )?,
                 WasmtimeAllocatorConfig::OnDemand => Engines::on_demand(
                     codegen_cache_config_file_holder,
                     config
-                        .workflows_global_config
+                        .wasm_global_config
                         .backtrace
                         .as_wasm_backtrace_details(),
                 )?,
@@ -1094,7 +1094,7 @@ impl ServerVerified {
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
                     config
-                        .workflows_global_config
+                        .wasm_global_config
                         .backtrace
                         .as_wasm_backtrace_details(),
                 )?,
@@ -1132,7 +1132,7 @@ impl ServerVerified {
                 backtrace: WorkflowComponentBacktraceConfig::default(),
             });
         }
-        let global_backtrace_persist = config.workflows_global_config.backtrace.persist;
+        let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
         let mut config = fetch_and_verify_all(
             config.wasm_activities,
             config.workflows,

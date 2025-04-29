@@ -37,6 +37,9 @@
     "sqlite": {
       "$ref": "#/$defs/SqliteConfigToml"
     },
+    "wasm": {
+      "$ref": "#/$defs/WasmGlobalConfigToml"
+    },
     "wasm_cache_directory": {
       "type": [
         "string",
@@ -64,9 +67,6 @@
       "items": {
         "$ref": "#/$defs/WorkflowComponentConfigToml"
       }
-    },
-    "workflows": {
-      "$ref": "#/$defs/WorkflowsGlobalConfigToml"
     }
   },
   "additionalProperties": false,
@@ -248,21 +248,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "ComponentBacktraceConfig": {
-      "type": "object",
-      "properties": {
-        "sources": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "sources"
-      ]
     },
     "ComponentLocation": {
       "oneOf": [
@@ -551,6 +536,25 @@
         "unlimited"
       ]
     },
+    "WasmGlobalBacktrace": {
+      "type": "object",
+      "properties": {
+        "persist": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "WasmGlobalConfigToml": {
+      "type": "object",
+      "properties": {
+        "backtrace": {
+          "$ref": "#/$defs/WasmGlobalBacktrace"
+        }
+      },
+      "additionalProperties": false
+    },
     "WasmtimeAllocatorConfig": {
       "type": "string",
       "enum": [
@@ -669,7 +673,7 @@
       "type": "object",
       "properties": {
         "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfig"
+          "$ref": "#/$defs/WorkflowComponentBacktraceConfig"
         },
         "env_vars": {
           "type": "array",
@@ -736,11 +740,26 @@
         "route"
       ]
     },
+    "WorkflowComponentBacktraceConfig": {
+      "type": "object",
+      "properties": {
+        "sources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sources"
+      ]
+    },
     "WorkflowComponentConfigToml": {
       "type": "object",
       "properties": {
         "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfig"
+          "$ref": "#/$defs/WorkflowComponentBacktraceConfig"
         },
         "blocking_strategy": {
           "$ref": "#/$defs/BlockingStrategyConfigToml"
@@ -775,25 +794,6 @@
         "name",
         "location"
       ]
-    },
-    "WorkflowsGlobalBacktrace": {
-      "type": "object",
-      "properties": {
-        "persist": {
-          "type": "boolean",
-          "default": true
-        }
-      },
-      "additionalProperties": false
-    },
-    "WorkflowsGlobalConfigToml": {
-      "type": "object",
-      "properties": {
-        "backtrace": {
-          "$ref": "#/$defs/WorkflowsGlobalBacktrace"
-        }
-      },
-      "additionalProperties": false
     }
   }
 }
