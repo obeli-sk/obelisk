@@ -171,7 +171,7 @@ pub(crate) struct WorkflowsGlobalBacktrace {
 }
 
 impl WorkflowsGlobalBacktrace {
-    pub(crate) fn persist_backtrace(&self) -> WasmBacktraceDetails {
+    pub(crate) fn as_wasm_backtrace_details(&self) -> WasmBacktraceDetails {
         if self.persist {
             WasmBacktraceDetails::Enable
         } else {
@@ -406,7 +406,7 @@ pub(crate) struct WorkflowComponentConfigToml {
     #[serde(default = "default_forward_unhandled_child_errors_in_completing_join_set_close")]
     pub(crate) forward_unhandled_child_errors_in_completing_join_set_close: bool,
     #[serde(default)]
-    pub(crate) backtrace: ComponentBacktraceConfig,
+    pub(crate) backtrace: WorkflowComponentBacktraceConfig,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
@@ -469,7 +469,7 @@ type BacktraceFrameFilesToSourcesVerified = hashbrown::HashMap<String, PathBuf>;
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ComponentBacktraceConfig {
+pub(crate) struct WorkflowComponentBacktraceConfig {
     #[serde(rename = "sources")]
     #[schemars(with = "std::collections::HashMap<String, String>")]
     pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesUnverified,
@@ -519,6 +519,7 @@ impl WorkflowComponentConfigToml {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         path_prefixes: impl AsRef<PathPrefixes>,
+        global_backtrace_persist: bool,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
         let component_id = ComponentId::new(
             ComponentType::Workflow,
@@ -551,6 +552,7 @@ impl WorkflowComponentConfigToml {
             retry_on_trap: self.retry_on_trap,
             forward_unhandled_child_errors_in_join_set_close: self
                 .forward_unhandled_child_errors_in_completing_join_set_close,
+            backtrace_persist: global_backtrace_persist,
         };
         let frame_files_to_sources = verify_frame_files_to_sources(
             self.backtrace.frame_files_to_sources,
@@ -839,8 +841,9 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 
 pub(crate) mod webhook {
     use super::{
-        BacktraceFrameFilesToSourcesVerified, ComponentBacktraceConfig, ComponentCommon,
-        ConfigName, InflightSemaphore, StdOutput, resolve_env_vars, verify_frame_files_to_sources,
+        BacktraceFrameFilesToSourcesVerified, ComponentCommon, ConfigName, InflightSemaphore,
+        StdOutput, WorkflowComponentBacktraceConfig, resolve_env_vars,
+        verify_frame_files_to_sources,
     };
     use crate::config::{config_holder::PathPrefixes, env_var::EnvVarConfig};
     use anyhow::Context;
@@ -879,7 +882,7 @@ pub(crate) mod webhook {
         #[serde(default)]
         pub(crate) env_vars: Vec<EnvVarConfig>,
         #[serde(default)]
-        pub(crate) backtrace: ComponentBacktraceConfig,
+        pub(crate) backtrace: WorkflowComponentBacktraceConfig,
     }
 
     impl WebhookComponentConfigToml {

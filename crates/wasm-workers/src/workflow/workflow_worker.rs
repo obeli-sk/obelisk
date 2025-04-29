@@ -47,6 +47,7 @@ pub struct WorkflowConfig {
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub retry_on_trap: bool,
     pub forward_unhandled_child_errors_in_join_set_close: bool,
+    pub backtrace_persist: bool,
 }
 
 pub struct WorkflowWorkerCompiled<C: ClockFn, S: Sleep> {
@@ -135,15 +136,19 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
                         >,
                               params: &[Val],
                               results: &mut [Val]| {
-                            let imported_fn_call =
-                                match ImportedFnCall::new(ffqn.clone(), &mut store_ctx, params) {
-                                    Ok(imported_fn_call) => imported_fn_call,
-                                    Err(err) => {
-                                        return Box::new(future::ready(Result::Err(
-                                            wasmtime::Error::new(err),
-                                        )));
-                                    }
-                                };
+                            let imported_fn_call = match ImportedFnCall::new(
+                                ffqn.clone(),
+                                &mut store_ctx,
+                                params,
+                                self.config.backtrace_persist,
+                            ) {
+                                Ok(imported_fn_call) => imported_fn_call,
+                                Err(err) => {
+                                    return Box::new(future::ready(Result::Err(
+                                        wasmtime::Error::new(err),
+                                    )));
+                                }
+                            };
                             let ffqn = ffqn.clone();
                             Box::new(async move {
                                 Ok(store_ctx
@@ -282,6 +287,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
             self.fn_registry.clone(),
             ctx.worker_span,
             self.config.forward_unhandled_child_errors_in_join_set_close,
+            self.config.backtrace_persist,
         );
         let mut store = Store::new(&self.engine, workflow_ctx);
         let instance = match self.instance_pre.instantiate_async(&mut store).await {
@@ -717,6 +723,7 @@ pub(crate) mod tests {
                     join_next_blocking_strategy,
                     retry_on_trap: false,
                     forward_unhandled_child_errors_in_join_set_close: false,
+                    backtrace_persist: false,
                 },
                 workflow_engine,
                 clock_fn.clone(),
@@ -920,6 +927,7 @@ pub(crate) mod tests {
                     join_next_blocking_strategy,
                     retry_on_trap: false,
                     forward_unhandled_child_errors_in_join_set_close: false,
+                    backtrace_persist: false,
                 },
                 workflow_engine,
                 clock_fn,

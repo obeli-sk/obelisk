@@ -934,10 +934,14 @@ pub struct FrameSymbol {
 mod wasm_backtrace {
     use super::{FrameInfo, FrameSymbol, WasmBacktrace};
 
-    impl From<wasmtime::WasmBacktrace> for WasmBacktrace {
-        fn from(backtrace: wasmtime::WasmBacktrace) -> Self {
-            Self {
-                frames: backtrace.frames().iter().map(FrameInfo::from).collect(),
+    impl WasmBacktrace {
+        pub fn maybe_from(backtrace: wasmtime::WasmBacktrace) -> Option<Self> {
+            if backtrace.frames().is_empty() {
+                None
+            } else {
+                Some(Self {
+                    frames: backtrace.frames().iter().map(FrameInfo::from).collect(),
+                })
             }
         }
     }

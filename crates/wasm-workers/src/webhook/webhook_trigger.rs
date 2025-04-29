@@ -58,6 +58,7 @@ pub struct WebhookEndpointCompiled {
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
+    backtrace_persist: bool,
 
     pub wasm_component: WasmComponent,
 }
@@ -70,6 +71,7 @@ impl WebhookEndpointCompiled {
         forward_stdout: Option<StdOutput>,
         forward_stderr: Option<StdOutput>,
         env_vars: Arc<[EnvVar]>,
+        backtrace_persist: bool,
     ) -> Result<Self, WasmFileError> {
         let wasm_component = WasmComponent::new(
             wasm_path,
@@ -82,6 +84,7 @@ impl WebhookEndpointCompiled {
             forward_stderr,
             env_vars,
             wasm_component,
+            backtrace_persist,
         })
     }
 
@@ -139,12 +142,13 @@ impl WebhookEndpointCompiled {
                               params: &[Val],
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
-                            let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
-                            let wasm_backtrace = if wasm_backtrace.frames().is_empty() {
-                                None
+                            let wasm_backtrace = if self.backtrace_persist {
+                                let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
+                                concepts::storage::WasmBacktrace::maybe_from(wasm_backtrace)
                             } else {
-                                Some(concepts::storage::WasmBacktrace::from(wasm_backtrace))
+                                None
                             };
+
                             Box::new(async move {
                                 Ok(store_ctx
                                     .data_mut()
@@ -1044,6 +1048,7 @@ pub(crate) mod tests {
                         None,
                         None,
                         Arc::from([]),
+                        false,
                     )
                     .unwrap()
                     .link(&engine, fn_registry.as_ref())

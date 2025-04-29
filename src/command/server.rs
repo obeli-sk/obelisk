@@ -8,7 +8,6 @@ use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivityComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
-use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
@@ -16,6 +15,7 @@ use crate::config::toml::InflightSemaphore;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::StdOutput;
 use crate::config::toml::WasmtimeAllocatorConfig;
+use crate::config::toml::WorkflowComponentBacktraceConfig;
 use crate::config::toml::WorkflowComponentConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::webhook;
@@ -1078,16 +1078,25 @@ impl ServerVerified {
                 WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
-                    config.workflows_global_config.backtrace.persist_backtrace(),
+                    config
+                        .workflows_global_config
+                        .backtrace
+                        .as_wasm_backtrace_details(),
                 )?,
                 WasmtimeAllocatorConfig::OnDemand => Engines::on_demand(
                     codegen_cache_config_file_holder,
-                    config.workflows_global_config.backtrace.persist_backtrace(),
+                    config
+                        .workflows_global_config
+                        .backtrace
+                        .as_wasm_backtrace_details(),
                 )?,
                 WasmtimeAllocatorConfig::Pooling => Engines::pooling(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
-                    config.workflows_global_config.backtrace.persist_backtrace(),
+                    config
+                        .workflows_global_config
+                        .backtrace
+                        .as_wasm_backtrace_details(),
                 )?,
             }
         };
@@ -1120,9 +1129,10 @@ impl ServerVerified {
                     key: "TARGET_URL".to_string(),
                     val: Some(format!("http://{}", config.api.listening_addr)),
                 }],
-                backtrace: ComponentBacktraceConfig::default(),
+                backtrace: WorkflowComponentBacktraceConfig::default(),
             });
         }
+        let global_backtrace_persist = config.workflows_global_config.backtrace.persist;
         let mut config = fetch_and_verify_all(
             config.wasm_activities,
             config.workflows,
@@ -1132,6 +1142,7 @@ impl ServerVerified {
             metadata_dir,
             ignore_missing_env_vars,
             path_prefixes,
+            global_backtrace_persist,
         )
         .await?;
         debug!("Verified config: {config:#?}");
@@ -1152,6 +1163,7 @@ impl ServerVerified {
             config.wasm_activities,
             config.workflows,
             config.webhooks_by_names,
+            global_backtrace_persist,
         )
         .await?;
         Ok(Self {
@@ -1337,6 +1349,7 @@ async fn fetch_and_verify_all(
     metadata_dir: Arc<Path>,
     ignore_missing_env_vars: bool,
     path_prefixes: PathPrefixes,
+    global_backtrace_persist: bool,
 ) -> Result<ConfigVerified, anyhow::Error> {
     // Check uniqueness of server and webhook names.
     {
@@ -1419,7 +1432,12 @@ async fn fetch_and_verify_all(
             let path_prefixes = path_prefixes.clone();
             tokio::spawn(
                 workflow
-                    .fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone(), path_prefixes)
+                    .fetch_and_verify(
+                        wasm_cache_dir.clone(),
+                        metadata_dir.clone(),
+                        path_prefixes,
+                        global_backtrace_persist,
+                    )
                     .in_current_span(),
             )
         })
@@ -1494,6 +1512,7 @@ async fn compile_and_verify(
     wasm_activities: Vec<ActivityWasmConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
+    global_backtrace_persist: bool,
 ) -> Result<(LinkedComponents, ComponentConfigRegistryRO), anyhow::Error> {
     let mut component_registry = ComponentConfigRegistry::default();
     let pre_spawns: Vec<tokio::task::JoinHandle<Result<_, anyhow::Error>>> = wasm_activities
@@ -1534,6 +1553,7 @@ async fn compile_and_verify(
                         webhook.forward_stdout,
                         webhook.forward_stderr,
                         webhook.env_vars,
+                        global_backtrace_persist,
                     )?;
                     Ok(Either::Right((
                         name,

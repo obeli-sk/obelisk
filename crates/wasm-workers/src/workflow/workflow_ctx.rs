@@ -132,7 +132,8 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     fn_registry: Arc<dyn FunctionRegistry>,
     component_logger: ComponentLogger,
     pub(crate) resource_table: wasmtime::component::ResourceTable,
-    backtrace: Option<wasmtime::WasmBacktrace>,
+    backtrace: Option<WasmBacktrace>, // Temporary storage of current backtrace
+    backtrace_persist: bool,
     phantom_data: PhantomData<DB>,
 }
 
@@ -184,12 +185,13 @@ impl<'a> ImportedFnCall<'a> {
         called_ffqn: FunctionFqn,
         store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C, DB, P>>,
         params: &'a [Val],
+        backtrace_persist: bool,
     ) -> Result<ImportedFnCall<'a>, WorkflowFunctionError> {
-        let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
-        let wasm_backtrace = if wasm_backtrace.frames().is_empty() {
-            None
+        let wasm_backtrace = if backtrace_persist {
+            let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
+            concepts::storage::WasmBacktrace::maybe_from(wasm_backtrace)
         } else {
-            Some(concepts::storage::WasmBacktrace::from(wasm_backtrace))
+            None
         };
 
         if let Some(package_name) = called_ffqn.ifc_fqn.package_strip_extension_suffix() {
@@ -342,6 +344,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         fn_registry: Arc<dyn FunctionRegistry>,
         worker_span: Span,
         forward_unhandled_child_errors_in_join_set_close: bool,
+        backtrace_persist: bool,
     ) -> Self {
         Self {
             execution_id: execution_id.clone(),
@@ -364,6 +367,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             component_logger: ComponentLogger { span: worker_span },
             resource_table: wasmtime::component::ResourceTable::default(),
             backtrace: None,
+            backtrace_persist,
             phantom_data: PhantomData,
         }
     }
@@ -420,7 +424,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     join_set_id,
                     delay_id,
                     expires_at_if_new: self.clock_fn.now() + duration, // FIXME: this can overflow when Duration is converted into TimeDelta
-                    wasm_backtrace: self.backtrace.take().map(WasmBacktrace::from),
+                    wasm_backtrace: self.backtrace.take(),
                 },
                 &self.db_pool.connection(),
                 &mut self.version,
@@ -462,7 +466,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     EventCall::CreateJoinSet {
                         join_set_id,
                         closing_strategy,
-                        wasm_backtrace: self.backtrace.take().map(WasmBacktrace::from),
+                        wasm_backtrace: self.backtrace.take(),
                     },
                     &self.db_pool.connection(),
                     &mut self.version,
@@ -481,17 +485,22 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         }
     }
 
-    fn backtrace_from_caller(
-        caller: &wasmtime::StoreContextMut<'_, Self>,
-    ) -> Option<wasmtime::WasmBacktrace> {
-        let backtrace = wasmtime::WasmBacktrace::capture(caller);
-        if backtrace.frames().is_empty() {
-            None
+    // NB: Caller must not forget to clear `host.backtrace` afterwards.
+    fn get_host_maybe_capture_backtrace<'a>(
+        caller: &'a mut wasmtime::StoreContextMut<'_, Self>,
+    ) -> &'a mut WorkflowCtx<C, DB, P> {
+        let backtrace = if caller.data().backtrace_persist {
+            let backtrace = wasmtime::WasmBacktrace::capture(&caller);
+            WasmBacktrace::maybe_from(backtrace)
         } else {
-            Some(backtrace)
-        }
+            None
+        };
+        let host = caller.data_mut();
+        host.backtrace = backtrace;
+        host
     }
 
+    // Adding host functions using `func_wrap_async` so that we can capture the backtrace.
     #[expect(clippy::too_many_lines)]
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
         use host_exports::obelisk::workflow::workflow_support::Host;
@@ -515,14 +524,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         inst.func_wrap_async(
             "random-u64",
             move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-                  (arg0, arg1): (u64, u64)| {
+                  (min, max_exclusive): (u64, u64)| {
                 wasmtime::component::__internal::Box::new(async move {
-                    let backtrace = Self::backtrace_from_caller(&caller);
-                    let host = caller.data_mut();
-                    host.backtrace = backtrace;
-                    let r = Host::random_u64(host, arg0, arg1).await;
+                    let host = Self::get_host_maybe_capture_backtrace(&mut caller);
+                    let result = host.random_u64(min, max_exclusive).await;
                     host.backtrace = None;
-                    Ok((r?,))
+                    Ok((result?,))
                 })
             },
         )
@@ -534,14 +541,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         inst.func_wrap_async(
             "random-u64-inclusive",
             move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-                  (arg0, arg1): (u64, u64)| {
+                  (min, max_inclusive): (u64, u64)| {
                 wasmtime::component::__internal::Box::new(async move {
-                    let backtrace = Self::backtrace_from_caller(&caller);
-                    let host = caller.data_mut();
-                    host.backtrace = backtrace;
-                    let r = Host::random_u64_inclusive(host, arg0, arg1).await;
+                    let host = Self::get_host_maybe_capture_backtrace(&mut caller);
+                    let result = host.random_u64_inclusive(min, max_inclusive).await;
                     host.backtrace = None;
-                    Ok((r?,))
+                    Ok((result?,))
                 })
             },
         )
@@ -553,14 +558,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         inst.func_wrap_async(
             "random-string",
             move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-                  (arg0, arg1): (u16, u16)| {
+                  (min_length, max_length_exclusive): (u16, u16)| {
                 wasmtime::component::__internal::Box::new(async move {
-                    let backtrace = Self::backtrace_from_caller(&caller);
-                    let host = caller.data_mut();
-                    host.backtrace = backtrace;
-                    let r = Host::random_string(host, arg0, arg1).await;
+                    let host = Self::get_host_maybe_capture_backtrace(&mut caller);
+                    let result = host.random_string(min_length, max_length_exclusive).await;
                     host.backtrace = None;
-                    Ok((r?,))
+                    Ok((result?,))
                 })
             },
         )
@@ -572,14 +575,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         inst.func_wrap_async(
             "sleep",
             move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-                  (arg0,): (DurationEnum,)| {
+                  (duration,): (DurationEnum,)| {
                 wasmtime::component::__internal::Box::new(async move {
-                    let backtrace = Self::backtrace_from_caller(&caller);
-                    let host = caller.data_mut();
-                    host.backtrace = backtrace;
-                    let r = Host::sleep(host, arg0).await;
+                    let host = Self::get_host_maybe_capture_backtrace(&mut caller);
+                    let result = host.sleep(duration).await;
                     host.backtrace = None;
-                    r
+                    result
                 })
             },
         )
@@ -591,17 +592,15 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         inst.func_wrap_async(
             "new-join-set-named",
             move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-                  (arg0, arg1): (
+                  (name, closing_strategy): (
                 String,
                 host_exports::obelisk::workflow::workflow_support::ClosingStrategy,
             )| {
                 wasmtime::component::__internal::Box::new(async move {
-                    let backtrace = Self::backtrace_from_caller(&caller);
-                    let host = caller.data_mut();
-                    host.backtrace = backtrace;
-                    let r = Host::new_join_set_named(host, arg0, arg1).await;
+                    let host = Self::get_host_maybe_capture_backtrace(&mut caller);
+                    let result = host.new_join_set_named(name, closing_strategy).await;
                     host.backtrace = None;
-                    Ok((r?,))
+                    Ok((result?,))
                 })
             },
         )
@@ -610,27 +609,24 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             err: err.into(),
         })?;
 
-        inst
-            .func_wrap_async(
-                "new-join-set-generated",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-                      (arg0,): (
-                    host_exports::obelisk::workflow::workflow_support::ClosingStrategy,
-                )| {
-                    wasmtime::component::__internal::Box::new(async move {
-                        let backtrace = Self::backtrace_from_caller(&caller);
-                        let host = caller.data_mut();
-                        host.backtrace = backtrace;
-                        let r = Host::new_join_set_generated(host, arg0).await;
-                        host.backtrace = None;
-                        Ok((r?,))
-                    })
-                },
-            )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function new-join-set-generated"),
-                err: err.into(),
-            })?;
+        inst.func_wrap_async(
+            "new-join-set-generated",
+            move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                  (closing_strategy,): (
+                host_exports::obelisk::workflow::workflow_support::ClosingStrategy,
+            )| {
+                wasmtime::component::__internal::Box::new(async move {
+                    let host = Self::get_host_maybe_capture_backtrace(&mut caller);
+                    let result = host.new_join_set_generated(closing_strategy).await;
+                    host.backtrace = None;
+                    Ok((result?,))
+                })
+            },
+        )
+        .map_err(|err| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking function new-join-set-generated"),
+            err: err.into(),
+        })?;
 
         Ok(())
     }
@@ -748,7 +744,6 @@ mod workflow_support {
     {
     }
 
-    // TODO: Capture and persist backtrace for host functions.
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
         host_exports::obelisk::workflow::workflow_support::Host for WorkflowCtx<C, DB, P>
     {
@@ -778,7 +773,7 @@ mod workflow_support {
                     EventCall::Persist {
                         value,
                         kind: PersistKind::RandomU64 { min, max_inclusive },
-                        wasm_backtrace: self.backtrace.take().map(storage::WasmBacktrace::from),
+                        wasm_backtrace: self.backtrace.take(),
                     },
                     &self.db_pool.connection(),
                     &mut self.version,
@@ -825,7 +820,7 @@ mod workflow_support {
                             min_length: u64::from(min_length),
                             max_length_exclusive: u64::from(max_length_exclusive),
                         },
-                        wasm_backtrace: self.backtrace.take().map(storage::WasmBacktrace::from),
+                        wasm_backtrace: self.backtrace.take(),
                     },
                     &self.db_pool.connection(),
                     &mut self.version,
@@ -1062,6 +1057,7 @@ pub(crate) mod tests {
                 ctx.execution_deadline,
                 self.fn_registry.clone(),
                 tracing::info_span!("workflow-test"),
+                false,
                 false,
             );
             for step in &self.steps {
