@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.21.0](https://github.com/obeli-sk/obelisk/compare/v0.20.0...v0.21.0)
 
-Performance: Workflows that make progress after being locked are now unlocked and allowed to contiune immediately. Previously they were sometimes marked as timed out
+Performance: Workflows that make progress after being locked are now unlocked and allowed to continue immediately. Previously they were sometimes marked as timed out
 and became pending only after backoff period.
 
 **Breaking (sqlite)**: This release fixes performance regression in sqlite introduced in v0.20.0, and changes the SQL schema. Use `--clean-db` to wipe out the old
