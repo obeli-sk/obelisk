@@ -935,7 +935,7 @@ mod wasm_backtrace {
     use super::{FrameInfo, FrameSymbol, WasmBacktrace};
 
     impl WasmBacktrace {
-        pub fn maybe_from(backtrace: wasmtime::WasmBacktrace) -> Option<Self> {
+        pub fn maybe_from(backtrace: &wasmtime::WasmBacktrace) -> Option<Self> {
             if backtrace.frames().is_empty() {
                 None
             } else {

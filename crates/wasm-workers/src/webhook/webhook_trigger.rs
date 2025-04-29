@@ -83,8 +83,8 @@ impl WebhookEndpointCompiled {
             forward_stdout,
             forward_stderr,
             env_vars,
-            wasm_component,
             backtrace_persist,
+            wasm_component,
         })
     }
 
@@ -144,7 +144,7 @@ impl WebhookEndpointCompiled {
                             let ffqn = ffqn.clone();
                             let wasm_backtrace = if self.backtrace_persist {
                                 let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
-                                concepts::storage::WasmBacktrace::maybe_from(wasm_backtrace)
+                                concepts::storage::WasmBacktrace::maybe_from(&wasm_backtrace)
                             } else {
                                 None
                             };

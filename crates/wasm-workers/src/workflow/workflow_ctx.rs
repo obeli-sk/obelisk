@@ -189,7 +189,7 @@ impl<'a> ImportedFnCall<'a> {
     ) -> Result<ImportedFnCall<'a>, WorkflowFunctionError> {
         let wasm_backtrace = if backtrace_persist {
             let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
-            concepts::storage::WasmBacktrace::maybe_from(wasm_backtrace)
+            concepts::storage::WasmBacktrace::maybe_from(&wasm_backtrace)
         } else {
             None
         };
@@ -491,7 +491,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     ) -> &'a mut WorkflowCtx<C, DB, P> {
         let backtrace = if caller.data().backtrace_persist {
             let backtrace = wasmtime::WasmBacktrace::capture(&caller);
-            WasmBacktrace::maybe_from(backtrace)
+            WasmBacktrace::maybe_from(&backtrace)
         } else {
             None
         };
