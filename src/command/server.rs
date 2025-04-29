@@ -1078,25 +1078,13 @@ impl ServerVerified {
                 WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
-                    config
-                        .wasm_global_config
-                        .backtrace
-                        .as_wasm_backtrace_details(),
                 )?,
-                WasmtimeAllocatorConfig::OnDemand => Engines::on_demand(
-                    codegen_cache_config_file_holder,
-                    config
-                        .wasm_global_config
-                        .backtrace
-                        .as_wasm_backtrace_details(),
-                )?,
+                WasmtimeAllocatorConfig::OnDemand => {
+                    Engines::on_demand(codegen_cache_config_file_holder)?
+                }
                 WasmtimeAllocatorConfig::Pooling => Engines::pooling(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_config_file_holder,
-                    config
-                        .wasm_global_config
-                        .backtrace
-                        .as_wasm_backtrace_details(),
                 )?,
             }
         };

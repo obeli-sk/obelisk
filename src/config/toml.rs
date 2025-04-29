@@ -28,7 +28,6 @@ use wasm_workers::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
     },
 };
-use wasmtime::WasmBacktraceDetails;
 use webhook::{HttpServer, WebhookComponentConfigToml};
 
 // Path prefixes
@@ -170,15 +169,6 @@ pub(crate) struct WasmGlobalBacktrace {
     pub(crate) persist: bool,
 }
 
-impl WasmGlobalBacktrace {
-    pub(crate) fn as_wasm_backtrace_details(&self) -> WasmBacktraceDetails {
-        if self.persist {
-            WasmBacktraceDetails::Enable
-        } else {
-            WasmBacktraceDetails::Disable
-        }
-    }
-}
 impl Default for WasmGlobalBacktrace {
     fn default() -> Self {
         Self {

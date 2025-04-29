@@ -170,12 +170,9 @@ impl Engines {
         Self::configure_common(wasmtime_config, config)
     }
 
-    pub(crate) fn get_workflow_engine(
-        config: EngineConfig,
-        backtrace_capture: WasmBacktraceDetails,
-    ) -> Result<Arc<Engine>, EngineError> {
+    pub(crate) fn get_workflow_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_backtrace_details(backtrace_capture);
+        wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
         wasmtime_config.epoch_interruption(true);
         // Make sure the runtime is deterministic when using `simd` or `relaxed_simd`.
         // https://bytecodealliance.zulipchat.com/#narrow/channel/206238-general/topic/Determinism.20of.20Wasm.20SIMD.20in.20Wasmtime
@@ -185,10 +182,7 @@ impl Engines {
     }
 
     #[instrument(skip_all)]
-    pub fn on_demand(
-        cache_config_file: Option<Rc<NamedTempFile>>,
-        workflow_capture_backtrace: WasmBacktraceDetails,
-    ) -> Result<Self, EngineError> {
+    pub fn on_demand(cache_config_file: Option<Rc<NamedTempFile>>) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: None,
             cache_config_file,
@@ -196,7 +190,7 @@ impl Engines {
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
             webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
-            workflow_engine: Self::get_workflow_engine(engine_config, workflow_capture_backtrace)?,
+            workflow_engine: Self::get_workflow_engine(engine_config)?,
         })
     }
 
@@ -204,7 +198,6 @@ impl Engines {
     pub fn pooling(
         opts: PoolingOptions,
         cache_config_file: Option<Rc<NamedTempFile>>,
-        workflow_capture_backtrace: WasmBacktraceDetails,
     ) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: Some(opts),
@@ -213,24 +206,18 @@ impl Engines {
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
             webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
-            workflow_engine: Self::get_workflow_engine(engine_config, workflow_capture_backtrace)?,
+            workflow_engine: Self::get_workflow_engine(engine_config)?,
         })
     }
 
     pub fn auto_detect_allocator(
         pooling_opts: PoolingOptions,
         cache_config: Option<Rc<NamedTempFile>>,
-        workflow_capture_backtrace: WasmBacktraceDetails,
     ) -> Result<Self, EngineError> {
-        Self::pooling(
-            pooling_opts,
-            cache_config.clone(),
-            workflow_capture_backtrace,
-        )
-        .or_else(|err| {
+        Self::pooling(pooling_opts, cache_config.clone()).or_else(|err| {
             warn!("Falling back to on-demand allocator - {err}");
             debug!("{err:?}");
-            Self::on_demand(cache_config, workflow_capture_backtrace)
+            Self::on_demand(cache_config)
         })
     }
 
