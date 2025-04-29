@@ -3,6 +3,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.21.0](https://github.com/obeli-sk/obelisk/compare/v0.20.0...v0.21.0)
+
+Performance: Workflows that make progress after being locked are now unlocked and allowed to contiune immediately. Previously they were sometimes marked as timed out
+and became pending only after backoff period.
+
+**Breaking (sqlite)**: This release fixes performance regression in sqlite introduced in v0.20.0, and changes the SQL schema. Use `--clean-db` to wipe out the old
+sqlite database files on first run if affected.
+
+**Breaking (toml)**: Setting `workflows.backtrace.persist` was renamed to `wasm.backtrace.persist`.
+
+### ⛰️ Features
+
+- *(db)* [**breaking**] Unlock workflows with progress instead of timing out - ([f193858](https://github.com/obeli-sk/obelisk/commit/f193858b6962b04915d697615368a432cf5f20ef))
+- *(toml,sqlite)* Allow customizing PRAGMA statements - ([5d1cbd2](https://github.com/obeli-sk/obelisk/commit/5d1cbd2df82a7921f80448cb19d032fa50a33f4a))
+- Decouple backtrace capture from persisting - ([6bd7244](https://github.com/obeli-sk/obelisk/commit/6bd7244014bd1a341a0d97db90663be8b5788c1e))
+- Do not capture nor persit backtrace if disabled - ([11c9d4d](https://github.com/obeli-sk/obelisk/commit/11c9d4d41953dcf7aeba9160a32af997f2182c66))
+
+### 🐛 Bug Fixes
+
+- *(sqlite)* Fix `PRAGMA` settings broken by 316ee7a - ([859d335](https://github.com/obeli-sk/obelisk/commit/859d33597321e4f1c965e7ef67d48f2cc3de6578))
+- *(toml)* Make `SqliteConfigToml` defaults consistent - ([0f0d8b4](https://github.com/obeli-sk/obelisk/commit/0f0d8b4c699582cab724d8ea99a0bfc603f9ebf5))
+
+### 🚜 Refactor
+
+- *(toml)* [**breaking**] Rename key `workflows` to `wasm` - ([c4f6a3a](https://github.com/obeli-sk/obelisk/commit/c4f6a3a37ff14914967d023888e22f67169c7097))
+- Merge `TemporaryTimeoutHandledByWatcher` into `DbUpdatedByWorkerOrWatcher` - ([3572301](https://github.com/obeli-sk/obelisk/commit/3572301d9b3ffe588ec9ce69eb37eca040b06885))
+- Remove `interrupt_on_timeout_container` - ([e5031e7](https://github.com/obeli-sk/obelisk/commit/e5031e78e6cb28f0994db234a4e1541bf0f59283))
+
+
 ## [0.20.0](https://github.com/obeli-sk/obelisk/compare/v0.19.3...v0.20.0)
 
 ### ⛰️ Features
