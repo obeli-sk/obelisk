@@ -104,7 +104,7 @@ pub(crate) struct ApiConfig {
     pub(crate) listening_addr: SocketAddr,
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SqliteConfigToml {
     #[serde(default)]
@@ -115,6 +115,16 @@ pub(crate) struct SqliteConfigToml {
     low_prio_threshold: usize,
     #[serde(default)]
     pragma: std::collections::HashMap<String, String>, // hashbrown is not supported by schemars
+}
+impl Default for SqliteConfigToml {
+    fn default() -> Self {
+        Self {
+            directory: None,
+            queue_capacity: default_sqlite_queue_capacity(),
+            low_prio_threshold: default_sqlite_low_prio_threshold(),
+            pragma: std::collections::HashMap::default(),
+        }
+    }
 }
 impl SqliteConfigToml {
     pub(crate) async fn get_sqlite_dir(
