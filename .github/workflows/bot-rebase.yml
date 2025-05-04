@@ -27,6 +27,6 @@ jobs:
           git fetch origin $BRANCH:$BRANCH
           git checkout $BRANCH
           git rebase origin/$BASE
-          git push --force-with-lease
+          git push --force-with-lease origin $BRANCH
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
