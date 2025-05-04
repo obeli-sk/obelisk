@@ -7,14 +7,21 @@ use std::{
 const WASI_P2: &str = "wasm32-wasip2";
 const WASM_CORE_MODULE: &str = "wasm32-unknown-unknown";
 
+#[derive(Debug, Clone, Default)]
+pub struct BuildConfig {
+    profile: Option<String>,
+    custom_dst_target_dir: Option<PathBuf>,
+}
+
 /// Build the parent activity WASM component and place it into the `target` directory.
 ///
 /// This function must be called from `build.rs`. It reads the current package
 /// name and strips the `-builder` suffix to determine the target package name.
 /// Then, it runs `cargo build` with the appropriate target triple and sets
 /// the `--target` directory to the output of [`get_target_dir`].
-pub fn build_activity() {
-    build_internal(WASI_P2, ComponentType::ActivityWasm, &get_target_dir());
+#[allow(clippy::must_use_candidate)]
+pub fn build_activity(conf: BuildConfig) -> PathBuf {
+    build_internal(WASI_P2, ComponentType::ActivityWasm, conf)
 }
 
 /// Build the parent webhook endpoint WASM component and place it into the `target` directory.
@@ -23,8 +30,9 @@ pub fn build_activity() {
 /// name and strips the `-builder` suffix to determine the target package name.
 /// Then, it runs `cargo build` with the appropriate target triple and sets
 /// the `--target` directory to the output of [`get_target_dir`].
-pub fn build_webhook_endpoint() {
-    build_internal(WASI_P2, ComponentType::WebhookEndpoint, &get_target_dir());
+#[allow(clippy::must_use_candidate)]
+pub fn build_webhook_endpoint(conf: BuildConfig) -> PathBuf {
+    build_internal(WASI_P2, ComponentType::WebhookEndpoint, conf)
 }
 
 /// Build the parent workflow WASM component and place it into the `target` directory.
@@ -33,8 +41,9 @@ pub fn build_webhook_endpoint() {
 /// name and strips the `-builder` suffix to determine the target package name.
 /// Then, it runs `cargo build` with the appropriate target triple and sets
 /// the `--target` directory to the output of [`get_target_dir`].
-pub fn build_workflow() {
-    build_internal(WASM_CORE_MODULE, ComponentType::Workflow, &get_target_dir());
+#[allow(clippy::must_use_candidate)]
+pub fn build_workflow(conf: BuildConfig) -> PathBuf {
+    build_internal(WASM_CORE_MODULE, ComponentType::Workflow, conf)
 }
 
 enum ComponentType {
@@ -81,10 +90,20 @@ fn get_out_dir() -> PathBuf {
     PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR environment variable not set"))
 }
 
-fn build_internal(target_tripple: &str, component_type: ComponentType, dst_target_dir: &Path) {
+fn build_internal(
+    target_tripple: &str,
+    component_type: ComponentType,
+    conf: BuildConfig,
+) -> PathBuf {
+    let dst_target_dir = conf.custom_dst_target_dir.unwrap_or_else(get_target_dir);
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
-    let wasm_path = run_cargo_build(dst_target_dir, pkg_name, target_tripple);
+    let wasm_path = run_cargo_build(
+        &dst_target_dir,
+        pkg_name,
+        target_tripple,
+        conf.profile.as_deref(),
+    );
     if std::env::var("RUST_LOG").is_ok() {
         println!("cargo:warning=Built `{pkg_name}` - {wasm_path:?}");
     }
@@ -110,6 +129,7 @@ fn build_internal(target_tripple: &str, component_type: ComponentType, dst_targe
     if wit_path.exists() && wit_path.is_dir() {
         add_dependency(wit_path);
     }
+    wasm_path
 }
 
 #[cfg(not(feature = "genrs"))]
@@ -219,10 +239,21 @@ fn add_dependency(file: &Utf8Path) {
     println!("cargo:rerun-if-changed={file}");
 }
 
-fn run_cargo_build(dst_target_dir: &Path, name: &str, tripple: &str) -> PathBuf {
+fn run_cargo_build(
+    dst_target_dir: &Path,
+    name: &str,
+    tripple: &str,
+    profile: Option<&str>,
+) -> PathBuf {
     let mut cmd = Command::new("cargo");
+    let temp_str;
     cmd.arg("build")
-        .arg("--release")
+        .arg(if let Some(profile) = profile {
+            temp_str = format!("--profile={profile}");
+            &temp_str
+        } else {
+            "--release"
+        })
         .arg(format!("--target={tripple}"))
         .arg(format!("--package={name}"))
         .env("CARGO_TARGET_DIR", dst_target_dir)
