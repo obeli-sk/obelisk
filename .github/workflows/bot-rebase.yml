@@ -1,0 +1,32 @@
+name: Bot Rebase PR
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  rebase:
+    if: github.event.comment.body == '/rebase'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Rebase PR
+        run: |
+          PR_NUMBER=$(jq --raw-output .issue.number "$GITHUB_EVENT_PATH")
+          BRANCH=$(gh pr view $PR_NUMBER --json headRefName -q .headRefName)
+          BASE=$(gh pr view $PR_NUMBER --json baseRefName -q .baseRefName)
+          
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          
+          git fetch origin $BRANCH:$BRANCH
+          git checkout $BRANCH
+          git rebase origin/$BASE
+          git push --force-with-lease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
