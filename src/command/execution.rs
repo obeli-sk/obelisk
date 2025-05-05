@@ -4,7 +4,6 @@ use super::grpc::execution_status::BlockedByJoinSet;
 use crate::ExecutionRepositoryClient;
 use crate::command::grpc::execution_status::Finished;
 use anyhow::Context;
-use anyhow::anyhow;
 use chrono::DateTime;
 use concepts::JOIN_SET_ID_INFIX;
 use concepts::JoinSetKind;
@@ -90,7 +89,7 @@ pub(crate) async fn submit(
 }
 
 /// Return true if the status is Finished.
-fn print_status(response: grpc::GetStatusResponse) -> anyhow::Result<bool> {
+fn print_status(response: grpc::GetStatusResponse) -> Result<bool, ExecutionError> {
     use grpc::get_status_response::Message;
     let message = response.message.expect("message expected");
 
@@ -138,7 +137,21 @@ fn format_pending_status(pending_status: grpc::ExecutionStatus) -> String {
     }
 }
 
-fn print_finished_status(finished_status: grpc::FinishedStatus) -> anyhow::Result<()> {
+#[derive(Debug, thiserror::Error)]
+// This error is printed in the same function that constructs it.
+enum ExecutionError {
+    #[error("fallible error")]
+    FallibleError,
+    #[error("timeout")]
+    Timeout,
+    #[error("execution failure")]
+    ExecutionFailure,
+    #[error("unhandled child execution error")]
+    #[expect(clippy::enum_variant_names)]
+    UnhandledChildExecutionError,
+}
+
+fn print_finished_status(finished_status: grpc::FinishedStatus) -> Result<(), ExecutionError> {
     let created_at = DateTime::from(
         finished_status
             .created_at
@@ -170,11 +183,11 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> anyhow::Resul
             let return_value = String::from_utf8_lossy(&return_value.value);
             (
                 format!("Err: {return_value}"),
-                Err(anyhow!("fallible error")),
+                Err(ExecutionError::FallibleError),
             )
         }
         Some(grpc::result_detail::Value::Timeout(_)) => {
-            ("Timeout".to_string(), Err(anyhow!("timeout")))
+            ("Timeout".to_string(), Err(ExecutionError::Timeout))
         }
         Some(grpc::result_detail::Value::ExecutionFailure(
             grpc::result_detail::ExecutionFailure {
@@ -183,7 +196,7 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> anyhow::Resul
             },
         )) => (
             format!("Execution failure: {reason}\ndetail: {detail}"),
-            Err(anyhow!("failure")),
+            Err(ExecutionError::ExecutionFailure),
         ),
         Some(grpc::result_detail::Value::ExecutionFailure(
             grpc::result_detail::ExecutionFailure {
@@ -192,7 +205,7 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> anyhow::Resul
             },
         )) => (
             format!("Execution failure: {reason}"),
-            Err(anyhow!("failure")),
+            Err(ExecutionError::ExecutionFailure),
         ),
         Some(grpc::result_detail::Value::UnhandledChildExecutionError(
             grpc::result_detail::UnhandledChildExecutionError {
@@ -201,11 +214,11 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> anyhow::Resul
             },
         )) => (
             format!(
-                "Unhandled child execution, child_execution_id: {child_execution_id}, root_cause_id: {root_cause_id}",
+                "Unhandled child execution error, child_execution_id: {child_execution_id}, root_cause_id: {root_cause_id}",
                 child_execution_id = child_execution_id.unwrap().id,
                 root_cause_id = root_cause_id.unwrap().id
             ),
-            Err(anyhow!("unhandled child execution error")),
+            Err(ExecutionError::UnhandledChildExecutionError),
         ),
         other => unreachable!("unexpected variant {other:?}"),
     };
@@ -220,7 +233,7 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> anyhow::Resul
     res
 }
 
-fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> Result<(), anyhow::Error> {
+fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> Result<(), ExecutionError> {
     let created_at = finished_status
         .created_at
         .expect("`created_at` is sent by the server");
@@ -253,17 +266,17 @@ fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> Result<(
                 .expect("return_value must be JSON encoded");
             (
                 json!({"fallible_error": return_value}),
-                Err(anyhow!("fallible error")),
+                Err(ExecutionError::FallibleError),
             )
         }
         Some(grpc::result_detail::Value::Timeout(_)) => {
-            (json!({"timeout": null}), Err(anyhow!("timeout")))
+            (json!({"timeout": null}), Err(ExecutionError::Timeout))
         }
         Some(grpc::result_detail::Value::ExecutionFailure(
             grpc::result_detail::ExecutionFailure { reason, detail },
         )) => (
             json!({"execution_failure": {"reason": reason, "detail": detail}}),
-            Err(anyhow!("failure")),
+            Err(ExecutionError::ExecutionFailure),
         ),
         Some(grpc::result_detail::Value::UnhandledChildExecutionError(
             grpc::result_detail::UnhandledChildExecutionError {
@@ -273,7 +286,7 @@ fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> Result<(
         )) => (
             json!({"unhandled_child_execution_error": {"child_execution_id": child_execution_id,
                 "root_cause_id": root_cause_id}}),
-            Err(anyhow!("unhandled child execution error")),
+            Err(ExecutionError::UnhandledChildExecutionError),
         ),
         other => unreachable!("unexpected variant {other:?}"),
     };
@@ -314,10 +327,10 @@ pub(crate) async fn get_status_json(
         json_output_started = true;
     }
     println!("\n]");
-    res
+    res.map_err(anyhow::Error::from)
 }
 
-fn print_status_json(response: grpc::GetStatusResponse) -> Result<(), anyhow::Error> {
+fn print_status_json(response: grpc::GetStatusResponse) -> Result<(), ExecutionError> {
     use grpc::get_status_response::Message;
     let message = response.message.expect("message expected");
 
@@ -364,6 +377,9 @@ pub(crate) async fn get_status(
                     if err.downcast_ref::<tonic::Status>().is_some() {
                         eprintln!("Got error while polling the status, reconnecting - {err}");
                         tokio::time::sleep(Duration::from_secs(1)).await;
+                    } else if err.downcast_ref::<ExecutionError>().is_some() {
+                        // Already printed.
+                        return Err(err);
                     } else {
                         eprintln!("Encountered unrecoverable error, not reconnecting - {err:?}");
                         return Err(err);
