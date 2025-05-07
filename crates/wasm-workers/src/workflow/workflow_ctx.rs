@@ -1,8 +1,5 @@
 use super::event_history::{ApplyError, ChildReturnValue, EventCall, EventHistory, HostResource};
-use super::host_exports::v1_0_0::obelisk::types::time::Duration as DurationEnum_v1_0_0;
-use super::host_exports::{
-    self, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, val_to_join_set_id,
-};
+use super::host_exports::{self, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT};
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
@@ -20,6 +17,10 @@ use concepts::{
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
 use executor::worker::FatalError;
+use host_exports::v1_0_0::obelisk::types1_0_0::time::Duration as DurationEnum_1_0_0;
+use host_exports::v1_0_0::obelisk::workflow1_0_0::workflow_support::ClosingStrategy as ClosingStrategy_1_0_0;
+use host_exports::v1_1_0::obelisk::types1_1_0::time::Duration as DurationEnum_1_1_0;
+use host_exports::v1_1_0::obelisk::workflow1_1_0::workflow_support::ClosingStrategy as ClosingStrategy_1_1_0;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
@@ -29,6 +30,7 @@ use std::time::Duration;
 use tracing::{Span, error, instrument, trace};
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, Val};
+use wasmtime_wasi::ResourceTableError;
 
 /// Result that is passed from guest to host as an error, must be downcast from anyhow.
 #[derive(thiserror::Error, Debug, Clone)]
@@ -131,7 +133,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     pub(crate) version: Version,
     fn_registry: Arc<dyn FunctionRegistry>,
     component_logger: ComponentLogger,
-    pub(crate) resource_table: wasmtime::component::ResourceTable,
+    resource_table: wasmtime::component::ResourceTable,
     backtrace: Option<WasmBacktrace>, // Temporary storage of current backtrace
     backtrace_persist: bool,
     phantom_data: PhantomData<DB>,
@@ -175,9 +177,24 @@ impl<'a> ImportedFnCall<'a> {
                 "error running {called_ffqn} extension function: exepcted at least one parameter with JoinSetId, got empty parameter list"
             ));
         };
-        let join_set_id = val_to_join_set_id(join_set_id, store_ctx)
-            .map_err(|err| format!("error running {called_ffqn} extension function: {err:?}"))?;
-        Ok((join_set_id, params))
+        if let Val::Resource(resource) = join_set_id {
+            let resource: Resource<JoinSetId> = resource
+                .try_into_resource(&mut *store_ctx)
+                .inspect_err(|err| error!("Cannot turn `ResourceAny` into a `Resource` - {err:?}"))
+                .map_err(|err| format!("cannot turn `ResourceAny` into a `Resource` - {err:?}"))?;
+            let join_set_id = store_ctx
+                .data()
+                .resource_to_join_set_id(&resource)
+                .map_err(|resource_err| {
+                    format!("error running {called_ffqn} extension function: {resource_err:?}")
+                })?;
+            Ok((join_set_id.clone(), params))
+        } else {
+            error!("Wrong type for JoinSetId, expected join-set-id, got `{join_set_id:?}`");
+            Err(format!(
+                "wrong type for JoinSetId, expected join-set-id, got `{join_set_id:?}`"
+            ))
+        }
     }
 
     #[instrument(skip_all, fields(ffqn = %called_ffqn, otel.name = format!("imported_fn_call {called_ffqn}")), name = "imported_fn_call")]
@@ -439,6 +456,15 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         rand::Rng::r#gen(&mut self.rng)
     }
 
+    pub(crate) fn resource_to_join_set_id(
+        &self,
+        resource: &Resource<JoinSetId>,
+    ) -> Result<&JoinSetId, ResourceTableError> {
+        self.resource_table
+            .get(resource)
+            .inspect_err(|err| error!("Cannot get resource - {err:?}"))
+    }
+
     fn next_join_set_name_index(&mut self, kind: JoinSetKind) -> String {
         assert!(kind != JoinSetKind::Named);
         (self.event_history.join_set_count(kind) + 1).to_string()
@@ -501,14 +527,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 
     // Adding host functions using `func_wrap_async` so that we can capture the backtrace.
-    #[expect(clippy::too_many_lines)]
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
         log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
             .map_err(|err| WasmFileError::LinkingError {
                 context: StrVariant::Static("linking obelisk:log/log@1.0.0"),
                 err: err.into(),
             })?;
-        host_exports::v1_0_0::obelisk::types::execution::add_to_linker(
+        // link types
+        host_exports::v1_0_0::obelisk::types1_0_0::execution::add_to_linker(
             linker,
             |state: &mut Self| state,
         )
@@ -516,14 +542,43 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             context: StrVariant::Static("linking obelisk:types/execution@1.0.0"),
             err: err.into(),
         })?;
+        host_exports::v1_1_0::obelisk::types1_1_0::execution::add_to_linker(
+            linker,
+            |state: &mut Self| state,
+        )
+        .map_err(|err| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking obelisk:types/execution@1.1.0"),
+            err: err.into(),
+        })?;
 
-        let mut inst_workflow_support_v1_0_0 = linker
-            .instance("obelisk:workflow/workflow-support@1.0.0")
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking obelisk:workflow/workflow-support@1.0.0"),
-                err: err.into(),
-            })?;
-        inst_workflow_support_v1_0_0
+        // link workflow-support
+        Self::add_to_linker_workflow_support::<ClosingStrategy_1_0_0, DurationEnum_1_0_0>(
+            linker,
+            "obelisk:workflow/workflow-support@1.0.0",
+        )?;
+        Self::add_to_linker_workflow_support::<ClosingStrategy_1_1_0, DurationEnum_1_1_0>(
+            linker,
+            "obelisk:workflow/workflow-support@1.1.0",
+        )?;
+        Ok(())
+    }
+
+    #[expect(clippy::too_many_lines)]
+    pub(crate) fn add_to_linker_workflow_support<
+        ClosingStrategyType: wasmtime::component::Lift + 'static,
+        DurationEnumType: wasmtime::component::Lift + Into<Duration> + 'static,
+    >(
+        linker: &mut Linker<Self>,
+        ifc_fqn: &'static str,
+    ) -> Result<(), WasmFileError> {
+        let mut inst_workflow_support =
+            linker
+                .instance(ifc_fqn)
+                .map_err(|err| WasmFileError::LinkingError {
+                    context: StrVariant::Static(ifc_fqn),
+                    err: err.into(),
+                })?;
+        inst_workflow_support
             .func_wrap_async(
                 "random-u64",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
@@ -541,7 +596,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 err: err.into(),
             })?;
 
-        inst_workflow_support_v1_0_0
+        inst_workflow_support
             .func_wrap_async(
                 "random-u64-inclusive",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
@@ -559,7 +614,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 err: err.into(),
             })?;
 
-        inst_workflow_support_v1_0_0
+        inst_workflow_support
             .func_wrap_async(
                 "random-string",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
@@ -577,11 +632,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 err: err.into(),
             })?;
 
-        inst_workflow_support_v1_0_0
+        inst_workflow_support
             .func_wrap_async(
                 "sleep",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-                      (duration,): (DurationEnum_v1_0_0,)| {
+                      (duration,): (DurationEnumType,)| {
+                    let duration: Duration = duration.into();
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host.sleep(duration).await;
@@ -595,14 +651,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 err: err.into(),
             })?;
 
-        inst_workflow_support_v1_0_0
+        inst_workflow_support
             .func_wrap_async(
                 "new-join-set-named",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-                      (name, _closing_strategy): (
-                    String,
-                    host_exports::v1_0_0::obelisk::workflow::workflow_support::ClosingStrategy,
-                )| {
+                      (name, _closing_strategy): (String, ClosingStrategyType)| {
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host.new_join_set_named(name).await;
@@ -616,13 +669,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 err: err.into(),
             })?;
 
-        inst_workflow_support_v1_0_0
+        inst_workflow_support
             .func_wrap_async(
                 "new-join-set-generated",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-                      (_closing_strategy,): (
-                    host_exports::v1_0_0::obelisk::workflow::workflow_support::ClosingStrategy,
-                )| {
+                      (_closing_strategy,): (ClosingStrategyType,)| {
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host.new_join_set_generated().await;
@@ -721,7 +772,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 }
 
 mod workflow_support {
-    use super::DurationEnum_v1_0_0;
     use super::host_exports::{self};
     use super::{
         ClockFn, DbConnection, DbPool, Duration, EventCall, WorkflowCtx, WorkflowFunctionError,
@@ -732,22 +782,40 @@ mod workflow_support {
         CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind,
         storage::{self, PersistKind},
     };
-    use host_exports::v1_0_0::obelisk::types::execution::Host as ExecutionHost_v1_0_0;
-    use host_exports::v1_0_0::obelisk::types::execution::HostJoinSetId as HostJoinSetId_v1_0_0;
+    use host_exports::v1_0_0::obelisk::types1_0_0::execution::Host as ExecutionHost_1_0_0;
+    use host_exports::v1_0_0::obelisk::types1_0_0::execution::HostJoinSetId as HostJoinSetId_1_0_0;
+    use host_exports::v1_1_0::obelisk::types1_1_0::execution::Host as ExecutionHost_1_1_0;
+    use host_exports::v1_1_0::obelisk::types1_1_0::execution::HostJoinSetId as HostJoinSetId_1_1_0;
     use tracing::trace;
     use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
 
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> HostJoinSetId_v1_0_0 for WorkflowCtx<C, DB, P> {
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> HostJoinSetId_1_0_0 for WorkflowCtx<C, DB, P> {
         async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
             self.resource_table.delete(resource)?;
             Ok(())
         }
     }
 
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ExecutionHost_v1_0_0 for WorkflowCtx<C, DB, P> {}
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ExecutionHost_1_0_0 for WorkflowCtx<C, DB, P> {}
 
-    // Functions dynamically linked for Workflow Support 1.0.0
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> HostJoinSetId_1_1_0 for WorkflowCtx<C, DB, P> {
+        async fn id(
+            &mut self,
+            resource: wasmtime::component::Resource<JoinSetId>,
+        ) -> wasmtime::Result<String> {
+            Ok(self.resource_to_join_set_id(&resource)?.to_string())
+        }
+
+        async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
+            self.resource_table.delete(resource)?;
+            Ok(())
+        }
+    }
+
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ExecutionHost_1_1_0 for WorkflowCtx<C, DB, P> {}
+
+    // Functions dynamically linked for Workflow Support 1.0.0 and 1.1.0
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         pub(crate) async fn random_u64(
             &mut self,
@@ -839,11 +907,8 @@ mod workflow_support {
             Ok(value)
         }
 
-        pub(crate) async fn sleep(
-            &mut self,
-            duration: DurationEnum_v1_0_0,
-        ) -> wasmtime::Result<()> {
-            Ok(self.persist_sleep(Duration::from(duration)).await?)
+        pub(crate) async fn sleep(&mut self, duration: Duration) -> wasmtime::Result<()> {
+            Ok(self.persist_sleep(duration).await?)
         }
 
         pub(crate) async fn new_join_set_named(

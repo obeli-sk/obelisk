@@ -1861,19 +1861,33 @@ impl ComponentConfigRegistry {
         match component_id.component_type {
             ComponentType::ActivityWasm => {
                 // wasi + log
-                import.ffqn.ifc_fqn.namespace() == "wasi"
-                    || import.ffqn.ifc_fqn.deref() == "obelisk:log/log@1.0.0"
+                match import.ffqn.ifc_fqn.namespace() {
+                    "wasi" => true,
+                    "obelisk" => import.ffqn.ifc_fqn.deref() == "obelisk:log/log@1.0.0",
+                    _ => false,
+                }
             }
             ComponentType::Workflow => {
                 // workflow-support + log
-                import.ffqn.ifc_fqn.deref() == "obelisk:log/log@1.0.0"
-                    || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/workflow-support@1.0.0"
+                matches!(
+                    import.ffqn.ifc_fqn.deref(),
+                    "obelisk:log/log@1.0.0"
+                        | "obelisk:workflow/workflow-support@1.0.0"
+                        | "obelisk:workflow/workflow-support@1.1.0"
+                )
             }
             ComponentType::WebhookEndpoint => {
-                // wasi + host activities + log
-                import.ffqn.ifc_fqn.namespace() == "wasi"
-                    || import.ffqn.ifc_fqn.deref() == "obelisk:log/log@1.0.0"
-                    || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/workflow-support@1.0.0"
+                // wasi + workflow-support + log
+                match import.ffqn.ifc_fqn.namespace() {
+                    "wasi" => true,
+                    "obelisk" => matches!(
+                        import.ffqn.ifc_fqn.deref(),
+                        "obelisk:log/log@1.0.0"
+                            | "obelisk:workflow/workflow-support@1.0.0"
+                            | "obelisk:workflow/workflow-support@1.1.0"
+                    ),
+                    _ => false,
+                }
             }
         }
     }

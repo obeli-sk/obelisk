@@ -8,9 +8,9 @@ interface workflow-support {
     enum closing-strategy {
         /// All submitted executions that were not awaited are awaited.
         complete,
-        /// All submitted executions that were not awaited are cancelled.
-        // TODO: Implement
-        cancel,
+
+        // All submitted executions that were not awaited are cancelled.
+        // TODO: Implement cancel
     }
 
     /// Returns a random u64 in the range [min, max).
