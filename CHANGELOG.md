@@ -3,6 +3,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.0](https://github.com/obeli-sk/obelisk/compare/v0.21.0...v0.22.0)
+
+This release requires components to upgrade to version 1.1 of `obelisk:types` and `obelisk:workflow`.
+The main motivation is to work around a bug in [ComponentizeJs](https://github.com/bytecodealliance/ComponentizeJS),
+which enables writing workflows and activities in JavaScript.
+There are two changes in the WIT files:
+* Removed `closing-strategy` variant `cancel`, which was not implemeted yet
+* Added `id` function to `join-set-id` resource. This is the workaround.
+
+### ⛰️ Features
+
+- *(cli)* Skip printing the error twice when reconnect is enabled - ([8e9850f](https://github.com/obeli-sk/obelisk/commit/8e9850faa504e007f4a7cc8cbe9dab0c4da9f310))
+- *(wit)* [**breaking**] Switch `types`,`workflow-support` to 1.1.0 - ([fc031ab](https://github.com/obeli-sk/obelisk/commit/fc031ab7700096984263433f70d4c7df4c4bfdf0))
+- *(wit)* Add `types`,`workflow-support` version 1.1.0 - ([51d7367](https://github.com/obeli-sk/obelisk/commit/51d736751d4384aff54d6031bc620a185fb790ee))
+
+### 🚜 Refactor
+
+- *(workflow)* Disregard `closing-strategy` - ([6822d09](https://github.com/obeli-sk/obelisk/commit/6822d0946a3f2375940eae93cf92f3aea99f51b5))
+- *(workflow)* Move generated types and support to `v1_0_0` - ([4ac8b09](https://github.com/obeli-sk/obelisk/commit/4ac8b09809e8d72945323d6087bd35d355cbfaac))
+
+
 ## [0.21.0](https://github.com/obeli-sk/obelisk/compare/v0.20.0...v0.21.0)
 
 Performance: Workflows that make progress after being locked are now unlocked and allowed to continue immediately. Previously they were sometimes marked as timed out
