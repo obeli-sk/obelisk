@@ -1,19 +1,3 @@
-// Generate `obelisk::workflow::workflow-support@1.0.0`
-wasmtime::component::bindgen!({
-    path: "host-wit/",
-    async: true,
-    // interfaces: "import obelisk:workflow/workflow-support@1.0.0;", // Broken in 26.0.0
-    inline: "package any:any;
-                world bindings {
-                    import obelisk:workflow/workflow-support@1.0.0;
-                }",
-    world: "any:any/bindings",
-    trappable_imports: true,
-    with: {
-        "obelisk:types/execution/join-set-id": concepts::JoinSetId,
-    }
-});
-
 use crate::workflow::workflow_ctx::WorkflowCtx;
 use concepts::JoinSetId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
@@ -24,9 +8,9 @@ use concepts::{
     storage::{DbConnection, DbPool},
 };
 use indexmap::indexmap;
-pub(crate) use obelisk::types::time::Duration as DurationEnum;
 use std::time::Duration;
 use tracing::error;
+use v1_0_0::obelisk::types::time::Duration as DurationEnum_v1_0_0;
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Resource, Val};
 
@@ -34,14 +18,32 @@ pub(crate) const SUFFIX_FN_SUBMIT: &str = "-submit";
 pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 pub(crate) const SUFFIX_FN_SCHEDULE: &str = "-schedule";
 
-impl From<DurationEnum> for Duration {
-    fn from(value: DurationEnum) -> Self {
+// Generate `obelisk::workflow::workflow-support@1.0.0`
+pub(crate) mod v1_0_0 {
+    wasmtime::component::bindgen!({
+        path: "host-wit/",
+        async: true,
+        // interfaces: "import obelisk:workflow/workflow-support@1.0.0;", // Broken in 26.0.0
+        inline: "package any:any;
+                world bindings {
+                    import obelisk:workflow/workflow-support@1.0.0;
+                }",
+        world: "any:any/bindings",
+        trappable_imports: true,
+        with: {
+            "obelisk:types/execution/join-set-id": concepts::JoinSetId,
+        }
+    });
+}
+
+impl From<DurationEnum_v1_0_0> for Duration {
+    fn from(value: DurationEnum_v1_0_0) -> Self {
         match value {
-            DurationEnum::Milliseconds(millis) => Duration::from_millis(millis),
-            DurationEnum::Seconds(secs) => Duration::from_secs(secs),
-            DurationEnum::Minutes(mins) => Duration::from_secs(u64::from(mins * 60)),
-            DurationEnum::Hours(hours) => Duration::from_secs(u64::from(hours * 60 * 60)),
-            DurationEnum::Days(days) => Duration::from_secs(u64::from(days * 24 * 60 * 60)),
+            DurationEnum_v1_0_0::Milliseconds(millis) => Duration::from_millis(millis),
+            DurationEnum_v1_0_0::Seconds(secs) => Duration::from_secs(secs),
+            DurationEnum_v1_0_0::Minutes(mins) => Duration::from_secs(u64::from(mins * 60)),
+            DurationEnum_v1_0_0::Hours(hours) => Duration::from_secs(u64::from(hours * 60 * 60)),
+            DurationEnum_v1_0_0::Days(days) => Duration::from_secs(u64::from(days * 24 * 60 * 60)),
         }
     }
 }
