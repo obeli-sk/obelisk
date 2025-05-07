@@ -1,6 +1,7 @@
 use crate::wasm_tools::{ComponentExportsType, ExIm};
 use anyhow::Context;
 use concepts::{FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT};
+use const_format::formatcp;
 use hashbrown::HashMap;
 use id_arena::Arena;
 use indexmap::IndexMap;
@@ -13,9 +14,17 @@ use wit_parser::{
     TypeDefKind, TypeOwner, UnresolvedPackageGroup,
 };
 
+const OBELISK_TYPES_VERSION_MAJOR: u64 = 1;
+const OBELISK_TYPES_VERSION_MINOR: u64 = 1;
+const OBELISK_TYPES_VERSION_PATCH: u64 = 0;
+const OBELISK_TYPES_VERSION: &str = formatcp!(
+    "{OBELISK_TYPES_VERSION_MAJOR}.{OBELISK_TYPES_VERSION_MINOR}.{OBELISK_TYPES_VERSION_PATCH}"
+);
+const OBELISK_TYPES_PACKAGE_NAME: &str = formatcp!("obelisk:types@{OBELISK_TYPES_VERSION}");
+
 const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@1.0.0/types@1.0.0.wit"
+    "/wit/obelisk_types@1.1.0/types@1.1.0.wit"
 ));
 
 pub(crate) fn wit(
@@ -53,7 +62,9 @@ fn obelisk_types_with_nesting() -> String {
 
 #[expect(clippy::too_many_lines)]
 fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
-    let wit = remove_nested_package(wit, "package obelisk:types@1.0.0 {");
+    const TYPES_NESTED_PACKAGE_FIRST_LINE: &str =
+        formatcp!("package {OBELISK_TYPES_PACKAGE_NAME} {{");
+    let wit = remove_nested_package(wit, TYPES_NESTED_PACKAGE_FIRST_LINE);
     let wit = format!(
         "{wit}\n{types_nesting}",
         types_nesting = obelisk_types_with_nesting()
@@ -70,9 +81,9 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
         namespace: "obelisk".to_string(),
         name: "types".to_string(),
         version: Some(Version {
-            major: 1,
-            minor: 0,
-            patch: 0,
+            major: OBELISK_TYPES_VERSION_MAJOR,
+            minor: OBELISK_TYPES_VERSION_MINOR,
+            patch: OBELISK_TYPES_VERSION_PATCH,
             pre: Prerelease::EMPTY,
             build: BuildMetadata::EMPTY,
         }),
@@ -100,11 +111,11 @@ fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
     let time_ifc = &resolve.interfaces[time_ifc_id];
 
     let (execution_ifc_id, execution_ifc) = find_interface(
-        &IfcFqnName::from_parts("obelisk", "types", "execution", Some("1.0.0")),
+        &IfcFqnName::from_parts("obelisk", "types", "execution", Some(OBELISK_TYPES_VERSION)),
         &resolve,
         &resolve.interfaces,
     )
-    .expect("`obelisk:types/execution@1.0.0` must be found");
+    .expect(formatcp!("{OBELISK_TYPES_PACKAGE_NAME} must be found"));
     let type_id_execution_id = {
         // obelisk:types/execution@VERSION.{execution-id}
         let actual_type_id = *execution_ifc

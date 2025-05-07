@@ -23,7 +23,7 @@ world root {
 
   export testing:http/http-get;
 }
-package obelisk:types@1.0.0 {
+package obelisk:types@1.1.0 {
   interface time {
     variant duration {
       milliseconds(u64),
@@ -47,7 +47,9 @@ package obelisk:types@1.0.0 {
     }
   }
   interface execution {
-    resource join-set-id;
+    resource join-set-id {
+      id: func() -> string;
+    }
 
     record execution-id {
       id: string,
@@ -403,9 +405,9 @@ package testing:http {
 
 package testing:http-obelisk-ext {
   interface http-get {
-    use obelisk:types/execution@1.0.0.{execution-id, join-set-id};
-    use obelisk:types/time@1.0.0.{schedule-at};
-    use obelisk:types/execution@1.0.0.{execution-error};
+    use obelisk:types/execution@1.1.0.{execution-id, join-set-id};
+    use obelisk:types/time@1.1.0.{schedule-at};
+    use obelisk:types/execution@1.1.0.{execution-error};
     use testing:http/http-get.{response, stargazers};
 
     get-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;

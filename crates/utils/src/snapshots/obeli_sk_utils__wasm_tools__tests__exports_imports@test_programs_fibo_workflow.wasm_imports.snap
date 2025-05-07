@@ -3,17 +3,16 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:workflow/workflow-support@1.0.0.new-join-set-generated": {
+  "obelisk:workflow/workflow-support@1.1.0.new-join-set-generated": {
     "ffqn": {
-      "ifc_fqn": "obelisk:workflow/workflow-support@1.0.0",
+      "ifc_fqn": "obelisk:workflow/workflow-support@1.1.0",
       "function_name": "new-join-set-generated"
     },
     "parameter_types": [
       {
         "type_wrapper": {
           "enum": [
-            "complete",
-            "cancel"
+            "complete"
           ]
         },
         "name": "closing-strategy",

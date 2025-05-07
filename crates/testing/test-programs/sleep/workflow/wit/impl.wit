@@ -2,7 +2,7 @@ package any:any;
 
 world any {
     export testing:sleep-workflow/workflow;
-    import obelisk:workflow/workflow-support@1.0.0;
+    import obelisk:workflow/workflow-support@1.1.0;
     import testing:sleep-obelisk-ext/sleep;
     import testing:sleep-workflow-obelisk-ext/workflow;
     import testing:sleep/sleep;

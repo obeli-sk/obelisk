@@ -17,10 +17,8 @@ use concepts::{
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
 use executor::worker::FatalError;
-use host_exports::v1_0_0::obelisk::types1_0_0::time::Duration as DurationEnum_1_0_0;
-use host_exports::v1_0_0::obelisk::workflow1_0_0::workflow_support::ClosingStrategy as ClosingStrategy_1_0_0;
-use host_exports::v1_1_0::obelisk::types1_1_0::time::Duration as DurationEnum_1_1_0;
-use host_exports::v1_1_0::obelisk::workflow1_1_0::workflow_support::ClosingStrategy as ClosingStrategy_1_1_0;
+use host_exports::v1_1_0::obelisk::types::time::Duration as DurationEnum_1_1_0;
+use host_exports::v1_1_0::obelisk::workflow::workflow_support::ClosingStrategy as ClosingStrategy_1_1_0;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
@@ -534,15 +532,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 err: err.into(),
             })?;
         // link types
-        host_exports::v1_0_0::obelisk::types1_0_0::execution::add_to_linker(
-            linker,
-            |state: &mut Self| state,
-        )
-        .map_err(|err| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking obelisk:types/execution@1.0.0"),
-            err: err.into(),
-        })?;
-        host_exports::v1_1_0::obelisk::types1_1_0::execution::add_to_linker(
+        host_exports::v1_1_0::obelisk::types::execution::add_to_linker(
             linker,
             |state: &mut Self| state,
         )
@@ -552,10 +542,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         })?;
 
         // link workflow-support
-        Self::add_to_linker_workflow_support::<ClosingStrategy_1_0_0, DurationEnum_1_0_0>(
-            linker,
-            "obelisk:workflow/workflow-support@1.0.0",
-        )?;
         Self::add_to_linker_workflow_support::<ClosingStrategy_1_1_0, DurationEnum_1_1_0>(
             linker,
             "obelisk:workflow/workflow-support@1.1.0",
@@ -782,22 +768,11 @@ mod workflow_support {
         CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind,
         storage::{self, PersistKind},
     };
-    use host_exports::v1_0_0::obelisk::types1_0_0::execution::Host as ExecutionHost_1_0_0;
-    use host_exports::v1_0_0::obelisk::types1_0_0::execution::HostJoinSetId as HostJoinSetId_1_0_0;
-    use host_exports::v1_1_0::obelisk::types1_1_0::execution::Host as ExecutionHost_1_1_0;
-    use host_exports::v1_1_0::obelisk::types1_1_0::execution::HostJoinSetId as HostJoinSetId_1_1_0;
+    use host_exports::v1_1_0::obelisk::types::execution::Host as ExecutionHost_1_1_0;
+    use host_exports::v1_1_0::obelisk::types::execution::HostJoinSetId as HostJoinSetId_1_1_0;
     use tracing::trace;
     use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
-
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> HostJoinSetId_1_0_0 for WorkflowCtx<C, DB, P> {
-        async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
-            self.resource_table.delete(resource)?;
-            Ok(())
-        }
-    }
-
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ExecutionHost_1_0_0 for WorkflowCtx<C, DB, P> {}
 
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> HostJoinSetId_1_1_0 for WorkflowCtx<C, DB, P> {
         async fn id(

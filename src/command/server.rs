@@ -1871,9 +1871,7 @@ impl ComponentConfigRegistry {
                 // workflow-support + log
                 matches!(
                     import.ffqn.ifc_fqn.deref(),
-                    "obelisk:log/log@1.0.0"
-                        | "obelisk:workflow/workflow-support@1.0.0"
-                        | "obelisk:workflow/workflow-support@1.1.0"
+                    "obelisk:log/log@1.0.0" | "obelisk:workflow/workflow-support@1.1.0"
                 )
             }
             ComponentType::WebhookEndpoint => {
@@ -1882,9 +1880,7 @@ impl ComponentConfigRegistry {
                     "wasi" => true,
                     "obelisk" => matches!(
                         import.ffqn.ifc_fqn.deref(),
-                        "obelisk:log/log@1.0.0"
-                            | "obelisk:workflow/workflow-support@1.0.0"
-                            | "obelisk:workflow/workflow-support@1.1.0"
+                        "obelisk:log/log@1.0.0" | "obelisk:workflow/workflow-support@1.1.0"
                     ),
                     _ => false,
                 }
