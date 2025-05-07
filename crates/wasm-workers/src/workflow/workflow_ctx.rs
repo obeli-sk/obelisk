@@ -503,7 +503,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     // Adding host functions using `func_wrap_async` so that we can capture the backtrace.
     #[expect(clippy::too_many_lines)]
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
-        // use host_exports::obelisk::workflow::workflow_support::Host;
         log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
             .map_err(|err| WasmFileError::LinkingError {
                 context: StrVariant::Static("linking obelisk:log/log@1.0.0"),
@@ -514,7 +513,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             |state: &mut Self| state,
         )
         .map_err(|err| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking obelisk::types::execution"),
+            context: StrVariant::Static("linking obelisk:types/execution@1.0.0"),
             err: err.into(),
         })?;
 
@@ -600,13 +599,13 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             .func_wrap_async(
                 "new-join-set-named",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-                      (name, closing_strategy): (
+                      (name, _closing_strategy): (
                     String,
                     host_exports::v1_0_0::obelisk::workflow::workflow_support::ClosingStrategy,
                 )| {
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.new_join_set_named(name, closing_strategy).await;
+                        let result = host.new_join_set_named(name).await;
                         host.backtrace = None;
                         Ok((result?,))
                     })
@@ -621,12 +620,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             .func_wrap_async(
                 "new-join-set-generated",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
-                      (closing_strategy,): (
+                      (_closing_strategy,): (
                     host_exports::v1_0_0::obelisk::workflow::workflow_support::ClosingStrategy,
                 )| {
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.new_join_set_generated(closing_strategy).await;
+                        let result = host.new_join_set_generated().await;
                         host.backtrace = None;
                         Ok((result?,))
                     })
@@ -723,10 +722,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 
 mod workflow_support {
     use super::DurationEnum_v1_0_0;
-    use super::host_exports::{
-        self,
-        v1_0_0::obelisk::workflow::workflow_support::ClosingStrategy as WitClosingStrategy_v1_0_0,
-    };
+    use super::host_exports::{self};
     use super::{
         ClockFn, DbConnection, DbPool, Duration, EventCall, WorkflowCtx, WorkflowFunctionError,
         assert_matches,
@@ -738,7 +734,7 @@ mod workflow_support {
     };
     use host_exports::v1_0_0::obelisk::types::execution::Host as ExecutionHost_v1_0_0;
     use host_exports::v1_0_0::obelisk::types::execution::HostJoinSetId as HostJoinSetId_v1_0_0;
-    use tracing::{trace, warn};
+    use tracing::trace;
     use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
 
@@ -749,9 +745,9 @@ mod workflow_support {
         }
     }
 
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ExecutionHost_v1_0_0 for WorkflowCtx<C, DB, P> {} // FIXME Needed?
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ExecutionHost_v1_0_0 for WorkflowCtx<C, DB, P> {}
 
-    // Workflow Support 1.0.0 and 1.1.0
+    // Functions dynamically linked for Workflow Support 1.0.0
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         pub(crate) async fn random_u64(
             &mut self,
@@ -853,16 +849,7 @@ mod workflow_support {
         pub(crate) async fn new_join_set_named(
             &mut self,
             name: String,
-            closing_strategy: WitClosingStrategy_v1_0_0,
         ) -> wasmtime::Result<Resource<JoinSetId>> {
-            match closing_strategy {
-                WitClosingStrategy_v1_0_0::Complete => {}
-                WitClosingStrategy_v1_0_0::Cancel => {
-                    warn!(
-                        "ClosingStrategy::Cancel is not supported yet, using ClosingStrategy::Complete"
-                    );
-                }
-            }
             self.persist_join_set_with_kind(
                 name,
                 JoinSetKind::Named,
@@ -873,16 +860,7 @@ mod workflow_support {
 
         pub(crate) async fn new_join_set_generated(
             &mut self,
-            closing_strategy: WitClosingStrategy_v1_0_0,
         ) -> wasmtime::Result<Resource<JoinSetId>> {
-            match closing_strategy {
-                WitClosingStrategy_v1_0_0::Complete => {}
-                WitClosingStrategy_v1_0_0::Cancel => {
-                    warn!(
-                        "ClosingStrategy::Cancel is not supported yet, using ClosingStrategy::Complete"
-                    );
-                }
-            }
             let name = self.next_join_set_name_index(JoinSetKind::Generated);
             trace!("new_join_set_generated: {name}");
             self.persist_join_set_with_kind(
@@ -922,8 +900,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::
 #[cfg(madsim)]
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::workflow::host_exports::obelisk::workflow::workflow_support::Host as _;
-    use crate::workflow::host_exports::{self, SUFFIX_FN_SUBMIT};
+    use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
     use crate::workflow::workflow_ctx::ApplyError;
     use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
     use crate::{
@@ -1095,10 +1072,8 @@ pub(crate) mod tests {
                     }
                     WorkflowStep::SubmitWithoutAwait { target_ffqn } => {
                         // Create new join set
-                        let join_set_resource = workflow_ctx
-                            .new_join_set_generated(host_exports::obelisk::workflow::workflow_support::ClosingStrategy::Complete)
-                            .await
-                            .unwrap();
+                        let join_set_resource =
+                            workflow_ctx.new_join_set_generated().await.unwrap();
                         let join_set_id = workflow_ctx
                             .resource_table
                             .get(&join_set_resource)
