@@ -3,6 +3,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.1](https://github.com/obeli-sk/obelisk/compare/v0.22.0...v0.22.1)
+
+### 🐛 Bug Fixes
+
+- Catch webhooks importing `workflow-support` in `verify_imports` - ([39f7a05](https://github.com/obeli-sk/obelisk/commit/39f7a05f7b3ae448c26a3a6f77a11c06d8816d9c))
+- Allow workflows to use `join-set-id`.`id()` - ([e14c71d](https://github.com/obeli-sk/obelisk/commit/e14c71d2246aa5d1acefe1e9bc01b12f556bc8d9))
+
+
 ## [0.22.0](https://github.com/obeli-sk/obelisk/compare/v0.21.0...v0.22.0)
 
 This release requires components to upgrade to version 1.1 of `obelisk:types` and `obelisk:workflow`.
