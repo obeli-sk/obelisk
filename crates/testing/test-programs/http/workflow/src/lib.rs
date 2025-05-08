@@ -26,6 +26,7 @@ impl Guest for Component {
 
     fn get_successful_concurrently(urls: Vec<String>) -> Result<Vec<String>, String> {
         let join_set_id = new_join_set_generated(ClosingStrategy::Complete);
+        println!("Created join set {}", join_set_id.id());
         let length = urls.len();
         for url in urls {
             let _execution_id = get_successful_submit(&join_set_id, &url);

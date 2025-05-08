@@ -1868,10 +1868,10 @@ impl ComponentConfigRegistry {
                 }
             }
             ComponentType::Workflow => {
-                // workflow-support + log
+                // log + workflow(-support) + types
                 matches!(
-                    import.ffqn.ifc_fqn.deref(),
-                    "obelisk:log/log@1.0.0" | "obelisk:workflow/workflow-support@1.1.0"
+                    import.ffqn.ifc_fqn.pkg_fqn_name().to_string().as_str(),
+                    "obelisk:log@1.0.0" | "obelisk:workflow@1.1.0" | "obelisk:types@1.1.0"
                 )
             }
             ComponentType::WebhookEndpoint => {
