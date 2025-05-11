@@ -108,6 +108,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
         trace!("Params: {params:?}", params = ctx.params);
         assert!(ctx.event_history.is_empty());
         let http_client_traces = HttpClientTracesContainer::default();
+
         let mut store = activity_ctx::store(
             &self.engine,
             &ctx.execution_id,
@@ -116,6 +117,9 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
             self.clock_fn.clone(),
             http_client_traces.clone(),
         );
+
+        // Configure epoch callback before running the initialization to avoid interruption
+        store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
 
         let instance = match self.instance_pre.instantiate_async(&mut store).await {
             Ok(instance) => instance,
@@ -136,14 +140,16 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                 ));
             }
         };
-        store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
-        let fn_export_index = self
-            .exported_ffqn_to_index
-            .get(&ctx.ffqn)
-            .expect("executor only calls `run` with ffqns that are exported");
-        let func = instance
-            .get_func(&mut store, fn_export_index)
-            .expect("exported function must be found");
+
+        let func = {
+            let fn_export_index = self
+                .exported_ffqn_to_index
+                .get(&ctx.ffqn)
+                .expect("executor only calls `run` with ffqns that are exported");
+            instance
+                .get_func(&mut store, fn_export_index)
+                .expect("exported function must be found")
+        };
 
         let params = match ctx.params.as_vals(func.params(&store)) {
             Ok(params) => params,

@@ -268,10 +268,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
         WorkerError,
     > {
         let version_at_start = ctx.version.clone();
-        let fn_export_index = self
-            .exported_ffqn_to_index
-            .get(&ctx.ffqn)
-            .expect("executor only calls `run` with ffqns that are exported");
         let seed = ctx.execution_id.random_seed();
         let workflow_ctx = WorkflowCtx::new(
             ctx.execution_id,
@@ -289,7 +285,12 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
             self.config.forward_unhandled_child_errors_in_join_set_close,
             self.config.backtrace_persist,
         );
+
         let mut store = Store::new(&self.engine, workflow_ctx);
+
+        // Configure epoch callback before running the initialization to avoid interruption
+        store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
+
         let instance = match self.instance_pre.instantiate_async(&mut store).await {
             Ok(instance) => instance,
             Err(err) => {
@@ -307,11 +308,16 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
                 ));
             }
         };
-        store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
 
-        let func = instance
-            .get_func(&mut store, fn_export_index)
-            .expect("exported function must be found");
+        let func = {
+            let fn_export_index = self
+                .exported_ffqn_to_index
+                .get(&ctx.ffqn)
+                .expect("executor only calls `run` with ffqns that are exported");
+            instance
+                .get_func(&mut store, fn_export_index)
+                .expect("exported function must be found")
+        };
 
         let params = match ctx.params.as_vals(func.params(&store)) {
             Ok(params) => params,

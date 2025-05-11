@@ -754,6 +754,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             phantom_data: PhantomData,
         };
         let mut store = Store::new(engine, ctx);
+        // Configure epoch callback before running the initialization to avoid interruption
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
         store
     }
