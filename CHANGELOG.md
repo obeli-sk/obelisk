@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.2](https://github.com/obeli-sk/obelisk/compare/v0.22.1...v0.22.2)
+
+### 🐛 Bug Fixes
+
+- *(webhook)* Link `obelisk:types@1.1.0` in webhook - ([b47c826](https://github.com/obeli-sk/obelisk/commit/b47c826aa36de4ee2b9fdcf383c07a228430899f))
+
+
 ## [0.22.1](https://github.com/obeli-sk/obelisk/compare/v0.22.0...v0.22.1)
 
 ### 🐛 Bug Fixes
