@@ -30,16 +30,36 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{Instrument, Level, Span, debug, error, info, info_span, instrument, trace};
+use types_v1_1_0::obelisk::types::execution::Host as ExecutionHost_1_1_0;
+use types_v1_1_0::obelisk::types::execution::HostJoinSetId as HostJoinSetId_1_1_0;
 use utils::wasm_tools::{ExIm, HTTP_HANDLER_FFQN, WasmComponent};
 use val_json::wast_val::WastVal;
-use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
+use wasmtime::component::{Resource, ResourceTable};
 use wasmtime::{Engine, Store, UpdateDeadline};
 use wasmtime_wasi::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::bindings::ProxyPre;
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+
+// Generate `obelisk:types@1.1.0`
+pub(crate) mod types_v1_1_0 {
+    wasmtime::component::bindgen!({
+        path: "host-wit/",
+        async: true,
+        inline: "package any:any;
+                world bindings {
+                    import obelisk:types/time@1.1.0;
+                    import obelisk:types/execution@1.1.0;
+                }",
+        world: "any:any/bindings",
+        trappable_imports: true,
+        with: {
+            "obelisk:types/execution/join-set-id": concepts::JoinSetId,
+        }
+    });
+}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HttpTriggerConfig {
@@ -114,7 +134,7 @@ impl WebhookEndpointCompiled {
                 err: err.into(),
             }
         })?;
-        // Link obelisk:log
+        // Link log and types
         WebhookEndpointCtx::add_to_linker(&mut linker)?;
 
         // Mock imported functions
@@ -359,6 +379,26 @@ struct WebhookEndpointCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     version: Option<Version>,
     component_logger: ComponentLogger,
     phantom_data: PhantomData<DB>,
+}
+
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> HostJoinSetId_1_1_0
+    for WebhookEndpointCtx<C, DB, P>
+{
+    async fn id(
+        &mut self,
+        _resource: wasmtime::component::Resource<JoinSetId>,
+    ) -> wasmtime::Result<String> {
+        unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
+    }
+
+    async fn drop(&mut self, _resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ExecutionHost_1_1_0
+    for WebhookEndpointCtx<C, DB, P>
+{
 }
 
 #[derive(thiserror::Error, Debug, Clone)]
@@ -652,9 +692,16 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
     fn add_to_linker(
         linker: &mut Linker<WebhookEndpointCtx<C, DB, P>>,
     ) -> Result<(), WasmFileError> {
+        // link obelisk:log@1.0.0
         log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
             .map_err(|err| WasmFileError::LinkingError {
                 context: StrVariant::Static("linking log activities"),
+                err: err.into(),
+            })?;
+        // link obelisk:types@1.1.0
+        types_v1_1_0::obelisk::types::execution::add_to_linker(linker, |state: &mut Self| state)
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking obelisk:types/execution@1.1.0"),
                 err: err.into(),
             })?;
         Ok(())

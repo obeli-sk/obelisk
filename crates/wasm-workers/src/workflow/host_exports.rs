@@ -9,7 +9,7 @@ pub(crate) const SUFFIX_FN_SUBMIT: &str = "-submit";
 pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 pub(crate) const SUFFIX_FN_SCHEDULE: &str = "-schedule";
 
-// Generate `obelisk::workflow::workflow-support@1.1.0`
+// Generate `obelisk:workflow:workflow-support@1.1.0`
 pub(crate) mod v1_1_0 {
     wasmtime::component::bindgen!({
         path: "host-wit/",

@@ -531,7 +531,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 context: StrVariant::Static("linking obelisk:log/log@1.0.0"),
                 err: err.into(),
             })?;
-        // link types
+        // link obelisk:types@1.0.0
         host_exports::v1_1_0::obelisk::types::execution::add_to_linker(
             linker,
             |state: &mut Self| state,
