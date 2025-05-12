@@ -377,7 +377,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     } => {
                         if let Some(duration) = can_be_retried {
                             let backoff_expires_at = result_obtained_at + duration;
-                            info!("Temporary timeout after {duration:?} at {backoff_expires_at}");
+                            info!(
+                                "Temporary timeout, retrying after {duration:?} at {backoff_expires_at}"
+                            );
                             (
                                 ExecutionEventInner::TemporarilyTimedOut {
                                     backoff_expires_at,
