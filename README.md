@@ -38,24 +38,20 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 - **End-to-End Testing**: Automate tests with detailed logs of each step.
 
 ## Key Features
-### **Activities**
-- Must be idempotent (retriable). This contract must be fulfilled by the activity itself.
-- Executed in a WASM sandbox.
+### [**WASI Activities**](https://obeli.sk/docs/latest/concepts/activities/)
+- Activities must be idempotent (retriable). This contract must be fulfilled by the activity itself.
 - Support for HTTP requests via WASI 0.2 HTTP client.
-- Execution timeout handling.
-- Automatic retries on errors, timeouts, and panics.
+- Automatic retries on errors, timeouts, and panics (WASM traps).
 - Persistent execution results.
 
-### **Deterministic Workflows**
-- Fully replayable with persistent execution log.
-- Executed in a WASM sandbox.
+### [**Deterministic Workflows**](https://obeli.sk/docs/latest/concepts/workflows/)
+- Runtime guaranteed determinism, fully replayable with persistent execution log and thus crash resilient.
 - Automatic retries on failures.
-- Support for spawning child executions with structured concurrency.
+- Support for spawning child executions with [structured concurrency](https://obeli.sk/docs/latest/concepts/structured-concurrency/).
 - Distributed sagas (planned).
 
-### **Webhook Endpoints**
+### [**WASI Webhook Endpoints**](https://obeli.sk/docs/latest/concepts/webhook-endpoints/)
 - Mounted as a URL path, serving HTTP traffic.
-- Executed in a WASM sandbox.
 - Support for spawning child executions.
 
 ### **Work Stealing Executor**
@@ -64,8 +60,7 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 ## Installation
 ### Supported Platforms
 - Linux x64, arm64 (musl, glibc v2.35+, NixOS)
-- macOS 13 x64
-- macOS 14 arm64
+- MacOS x64, arm64
 
 ### Pre-built Binary
 ```sh
