@@ -397,6 +397,8 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) forward_unhandled_child_errors_in_completing_join_set_close: bool,
     #[serde(default)]
     pub(crate) backtrace: WorkflowComponentBacktraceConfig,
+    #[serde(default)]
+    pub(crate) stub_wasi: bool,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
@@ -543,6 +545,7 @@ impl WorkflowComponentConfigToml {
             forward_unhandled_child_errors_in_join_set_close: self
                 .forward_unhandled_child_errors_in_completing_join_set_close,
             backtrace_persist: global_backtrace_persist,
+            stub_wasi: self.stub_wasi,
         };
         let frame_files_to_sources = verify_frame_files_to_sources(
             self.backtrace.frame_files_to_sources,

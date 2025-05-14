@@ -1669,7 +1669,7 @@ fn prespawn_workflow(
         engine,
         Now,
         TokioSleep,
-    );
+    )?;
     Ok(WorkerCompiled::new_workflow(
         worker,
         workflow.content_digest,

@@ -18,7 +18,7 @@ use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{Span, debug, error, info, instrument, trace, warn};
-use utils::wasm_tools::{ExIm, WasmComponent};
+use utils::wasm_tools::{DecodeError, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{Engine, component::Val};
 use wasmtime::{Store, UpdateDeadline};
@@ -48,6 +48,7 @@ pub struct WorkflowConfig {
     pub retry_on_trap: bool,
     pub forward_unhandled_child_errors_in_join_set_close: bool,
     pub backtrace_persist: bool,
+    pub stub_wasi: bool,
 }
 
 pub struct WorkflowWorkerCompiled<C: ClockFn, S: Sleep> {
@@ -55,25 +56,31 @@ pub struct WorkflowWorkerCompiled<C: ClockFn, S: Sleep> {
     engine: Arc<Engine>,
     clock_fn: C,
     sleep: S,
-    wasm_component: WasmComponent,
+    // wasm_component: WasmComponent,
+    wasmtime_component: wasmtime::component::Component,
+    exported_functions_ext: Vec<FunctionMetadata>,
+    exports_hierarchy_ext: Vec<PackageIfcFns>,
+    exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
+    exported_functions_noext: Vec<FunctionMetadata>,
+    imported_functions: Vec<FunctionMetadata>,
 }
 
 pub struct WorkflowWorkerLinked<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
-    exim: ExIm,
     clock_fn: C,
     sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     fn_registry: Arc<dyn FunctionRegistry>,
     instance_pre: InstancePre<WorkflowCtx<C, DB, P>>,
+    exported_functions_noext: Vec<FunctionMetadata>,
 }
 
 #[derive(Clone)]
 pub struct WorkflowWorker<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
-    exim: ExIm,
+    exported_functions_noext: Vec<FunctionMetadata>,
     db_pool: P,
     clock_fn: C,
     sleep: S,
@@ -82,22 +89,97 @@ pub struct WorkflowWorker<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>>
     instance_pre: InstancePre<WorkflowCtx<C, DB, P>>,
 }
 
+const WASI_NAMESPACE: &str = "wasi";
+
 impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
     #[tracing::instrument(skip_all, fields(%config.component_id))]
     pub fn new_with_config(
-        wasm_component: WasmComponent,
+        wasm_component: WasmComponent, // Must be stripped of WASI here
         config: WorkflowConfig,
         engine: Arc<Engine>,
         clock_fn: C,
         sleep: S,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, DecodeError> {
+        let exported_functions_ext = wasm_component
+            .exim
+            .get_exports(true)
+            .iter()
+            .cloned()
+            .filter(|fn_meta| {
+                if config.stub_wasi {
+                    // Hide wasi exports
+                    fn_meta.ffqn.ifc_fqn.namespace() != WASI_NAMESPACE
+                } else {
+                    true
+                }
+            })
+            .collect();
+        let exports_hierarchy_ext = wasm_component
+            .exim
+            .get_exports_hierarchy_ext()
+            .iter()
+            .cloned()
+            .filter(|package_ifc_fns| {
+                if config.stub_wasi {
+                    // Hide wasi exports
+                    package_ifc_fns.ifc_fqn.namespace() != WASI_NAMESPACE
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        let mut exported_ffqn_to_index = wasm_component.index_exported_functions()?;
+        exported_ffqn_to_index.retain(|ffqn, _| {
+            if config.stub_wasi {
+                // Hide wasi exports
+                ffqn.ifc_fqn.namespace() != WASI_NAMESPACE
+            } else {
+                true
+            }
+        });
+
+        let exported_functions_noext = wasm_component
+            .exim
+            .get_exports(false)
+            .iter()
+            .cloned()
+            .filter(|fn_meta| {
+                if config.stub_wasi {
+                    // Hide wasi exports
+                    fn_meta.ffqn.ifc_fqn.namespace() != WASI_NAMESPACE
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        let imported_functions = wasm_component
+            .exim
+            .imports_flat
+            .into_iter()
+            .filter(|fn_meta| {
+                if config.stub_wasi {
+                    // Hide wasi exports
+                    fn_meta.ffqn.ifc_fqn.namespace() != WASI_NAMESPACE
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        Ok(Self {
             config,
             engine,
             clock_fn,
             sleep,
-            wasm_component,
-        }
+            wasmtime_component: wasm_component.wasmtime_component,
+            exported_functions_ext,
+            exports_hierarchy_ext,
+            exported_ffqn_to_index,
+            exported_functions_noext,
+            imported_functions,
+        })
     }
 
     #[instrument(skip_all, fields(component_id = %self.config.component_id))]
@@ -108,7 +190,7 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
 
         // Link obelisk:workflow-support and obelisk:log
-        WorkflowCtx::add_to_linker(&mut linker)?;
+        WorkflowCtx::add_to_linker(&mut linker, self.config.stub_wasi)?;
 
         // Mock imported functions
         for import in fn_registry
@@ -179,39 +261,34 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
 
         // Pre-instantiate to catch missing imports
         let instance_pre = linker
-            .instantiate_pre(&self.wasm_component.wasmtime_component)
+            .instantiate_pre(&self.wasmtime_component)
             .map_err(|err| WasmFileError::LinkingError {
                 context: StrVariant::Static("preinstantiation error"),
                 err: err.into(),
             })?;
 
-        let exported_ffqn_to_index = self
-            .wasm_component
-            .index_exported_functions()
-            .map_err(WasmFileError::DecodeError)?;
-
         Ok(WorkflowWorkerLinked {
             config: self.config,
             engine: self.engine,
-            exim: self.wasm_component.exim,
             clock_fn: self.clock_fn,
             sleep: self.sleep,
-            exported_ffqn_to_index,
+            exported_ffqn_to_index: self.exported_ffqn_to_index,
             fn_registry,
             instance_pre,
+            exported_functions_noext: self.exported_functions_noext,
         })
     }
 
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
-        self.wasm_component.exim.get_exports(true)
+        &self.exported_functions_ext
     }
 
     pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
-        self.wasm_component.exim.get_exports_hierarchy_ext()
+        &self.exports_hierarchy_ext
     }
 
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
-        &self.wasm_component.exim.imports_flat
+        &self.imported_functions
     }
 }
 
@@ -220,13 +297,13 @@ impl<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerLinked
         WorkflowWorker {
             config: self.config,
             engine: self.engine,
-            exim: self.exim,
             db_pool,
             clock_fn: self.clock_fn,
             sleep: self.sleep,
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             fn_registry: self.fn_registry,
             instance_pre: self.instance_pre,
+            exported_functions_noext: self.exported_functions_noext,
         }
     }
 }
@@ -595,7 +672,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
     Worker for WorkflowWorker<C, S, DB, P>
 {
     fn exported_functions(&self) -> &[FunctionMetadata] {
-        self.exim.get_exports(false)
+        &self.exported_functions_noext
     }
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
@@ -718,11 +795,13 @@ pub(crate) mod tests {
                     retry_on_trap: false,
                     forward_unhandled_child_errors_in_join_set_close: false,
                     backtrace_persist: false,
+                    stub_wasi: false,
                 },
                 workflow_engine,
                 clock_fn.clone(),
                 TokioSleep,
             )
+            .unwrap()
             .link(fn_registry)
             .unwrap()
             .into_worker(db_pool.clone()),
@@ -919,11 +998,13 @@ pub(crate) mod tests {
                     retry_on_trap: false,
                     forward_unhandled_child_errors_in_join_set_close: false,
                     backtrace_persist: false,
+                    stub_wasi: false,
                 },
                 workflow_engine,
                 clock_fn,
                 sleep,
             )
+            .unwrap()
             .link(fn_registry)
             .unwrap()
             .into_worker(db_pool),

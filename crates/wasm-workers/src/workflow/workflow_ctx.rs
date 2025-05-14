@@ -28,7 +28,7 @@ use std::time::Duration;
 use tracing::{Span, error, instrument, trace};
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, Val};
-use wasmtime_wasi::ResourceTableError;
+use wasmtime_wasi::{IoView, ResourceTable, ResourceTableError, WasiCtx, WasiCtxBuilder, WasiView};
 
 /// Result that is passed from guest to host as an error, must be downcast from anyhow.
 #[derive(thiserror::Error, Debug, Clone)]
@@ -135,6 +135,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     backtrace: Option<WasmBacktrace>, // Temporary storage of current backtrace
     backtrace_persist: bool,
     phantom_data: PhantomData<DB>,
+    wasi_ctx: WasiCtx,
 }
 
 #[derive(Debug)]
@@ -343,6 +344,17 @@ impl<'a> ImportedFnCall<'a> {
     }
 }
 
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> IoView for WorkflowCtx<C, DB, P> {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.resource_table
+    }
+}
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiView for WorkflowCtx<C, DB, P> {
+    fn ctx(&mut self) -> &mut WasiCtx {
+        &mut self.wasi_ctx
+    }
+}
+
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -361,6 +373,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         forward_unhandled_child_errors_in_join_set_close: bool,
         backtrace_persist: bool,
     ) -> Self {
+        let mut wasi_ctx_builder = WasiCtxBuilder::new();
+        wasi_ctx_builder.allow_tcp(false);
+        wasi_ctx_builder.allow_udp(false);
+        wasi_ctx_builder.insecure_random_seed(0);
+
         Self {
             execution_id: execution_id.clone(),
             event_history: EventHistory::new(
@@ -384,6 +401,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             backtrace: None,
             backtrace_persist,
             phantom_data: PhantomData,
+            wasi_ctx: wasi_ctx_builder.build(),
         }
     }
 
@@ -525,27 +543,32 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 
     // Adding host functions using `func_wrap_async` so that we can capture the backtrace.
-    pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
+    pub(crate) fn add_to_linker(
+        linker: &mut Linker<Self>,
+        stub_wasi: bool,
+    ) -> Result<(), WasmFileError> {
+        let linking_err = |err: wasmtime::Error| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking error"),
+            err: err.into(),
+        };
+
         log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking obelisk:log/log@1.0.0"),
-                err: err.into(),
-            })?;
+            .map_err(linking_err)?;
         // link obelisk:types@1.0.0
         host_exports::v1_1_0::obelisk::types::execution::add_to_linker(
             linker,
             |state: &mut Self| state,
         )
-        .map_err(|err| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking obelisk:types/execution@1.1.0"),
-            err: err.into(),
-        })?;
+        .map_err(linking_err)?;
 
         // link workflow-support
         Self::add_to_linker_workflow_support::<ClosingStrategy_1_1_0, DurationEnum_1_1_0>(
             linker,
             "obelisk:workflow/workflow-support@1.1.0",
         )?;
+        if stub_wasi {
+            wasmtime_wasi::add_to_linker_async(linker).map_err(linking_err)?;
+        }
         Ok(())
     }
 
