@@ -639,7 +639,7 @@ pub(crate) mod tests {
     };
     use concepts::{ExecutionId, Params};
     use db_tests::Database;
-    use executor::executor::extract_ffqns_test;
+    use executor::executor::extract_exported_ffqns_noext_test;
     use executor::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
         expired_timers_watcher,
@@ -1036,7 +1036,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
             };
-            let ffqns = extract_ffqns_test(worker.as_ref());
+            let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
             ExecTask::new(
                 worker,
                 exec_config,

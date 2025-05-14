@@ -95,11 +95,11 @@ impl Drop for ExecutorTaskHandle {
 }
 
 #[cfg(feature = "test")]
-pub fn extract_ffqns_test(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
-    extract_ffqns(worker)
+pub fn extract_exported_ffqns_noext_test(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
+    extract_exported_ffqns_noext(worker)
 }
 
-pub(crate) fn extract_ffqns(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
+fn extract_exported_ffqns_noext(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
     worker
         .exported_functions()
         .iter()
@@ -136,7 +136,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     ) -> ExecutorTaskHandle {
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
-        let ffqns = extract_ffqns(worker.as_ref());
+        let ffqns = extract_exported_ffqns_noext(worker.as_ref());
         let component_id = config.component_id.clone();
         let abort_handle = tokio::spawn(async move {
             debug!(%executor_id, component_id = %config.component_id, "Spawned executor");
@@ -742,7 +742,7 @@ mod tests {
         executed_at: DateTime<Utc>,
     ) -> ExecutionProgress {
         trace!("Ticking with {worker:?}");
-        let ffqns = super::extract_ffqns(worker.as_ref());
+        let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
         let executor = ExecTask::new(worker, config, clock_fn, db_pool, ffqns);
         let mut execution_progress = executor.tick(executed_at).await.unwrap();
         loop {
@@ -1459,7 +1459,7 @@ mod tests {
             .await
             .unwrap();
 
-        let ffqns = super::extract_ffqns(worker.as_ref());
+        let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
         let executor = ExecTask::new(
             worker,
             exec_config,
