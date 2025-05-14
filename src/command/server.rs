@@ -1562,6 +1562,7 @@ async fn compile_and_verify(
             for handle in results_of_results {
                 match handle?? {
                     Either::Left((worker_compiled, component)) => {
+                        // Activity or Workflow
                         component_registry.insert(component)?;
                         workers_compiled.push(worker_compiled);
                     },

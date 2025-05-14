@@ -1196,10 +1196,6 @@ pub(crate) mod tests {
         fn exported_functions(&self) -> &[FunctionMetadata] {
             &self.exports
         }
-
-        fn imported_functions(&self) -> &[FunctionMetadata] {
-            &[]
-        }
     }
 
     // TODO: verify nondeterminism detection:

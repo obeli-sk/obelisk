@@ -700,10 +700,6 @@ pub mod simple_worker {
         fn exported_functions(&self) -> &[FunctionMetadata] {
             &self.exported
         }
-
-        fn imported_functions(&self) -> &[FunctionMetadata] {
-            &[]
-        }
     }
 }
 
@@ -1413,10 +1409,6 @@ mod tests {
 
         fn exported_functions(&self) -> &[FunctionMetadata] {
             &self.exported
-        }
-
-        fn imported_functions(&self) -> &[FunctionMetadata] {
-            &[]
         }
     }
 

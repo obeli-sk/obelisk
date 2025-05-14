@@ -91,16 +91,16 @@ impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
     pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
         self.exim.get_exports_hierarchy_ext()
     }
+
+    pub fn imported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.imports_flat
+    }
 }
 
 #[async_trait]
 impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
     fn exported_functions(&self) -> &[FunctionMetadata] {
         self.exim.get_exports(false)
-    }
-
-    fn imported_functions(&self) -> &[FunctionMetadata] {
-        &self.exim.imports_flat
     }
 
     #[expect(clippy::too_many_lines)]

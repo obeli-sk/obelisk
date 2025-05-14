@@ -22,9 +22,10 @@ use tracing::Span;
 pub trait Worker: Send + Sync + 'static {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult;
 
+    // List exported functions without extensions.
+    // Used by executor.
+    // TODO: Rename to `exported_functions_noext`
     fn exported_functions(&self) -> &[FunctionMetadata];
-
-    fn imported_functions(&self) -> &[FunctionMetadata];
 }
 
 #[must_use]

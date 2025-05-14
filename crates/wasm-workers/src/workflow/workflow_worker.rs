@@ -598,10 +598,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
         self.exim.get_exports(false)
     }
 
-    fn imported_functions(&self) -> &[FunctionMetadata] {
-        &self.exim.imports_flat
-    }
-
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Run with ctx: {ctx:?}");
         if !ctx.can_be_retried {
