@@ -41,6 +41,7 @@ tracing.workspace = true
 ulid.workspace = true
 wasmtime-wasi-http.workspace = true
 wasmtime-wasi.workspace = true
+wasmtime-wasi-io.workspace = true
 wasmtime.workspace = true
 
 [dev-dependencies]

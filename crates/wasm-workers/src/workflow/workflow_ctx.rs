@@ -131,7 +131,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     pub(crate) version: Version,
     fn_registry: Arc<dyn FunctionRegistry>,
     component_logger: ComponentLogger,
-    resource_table: wasmtime::component::ResourceTable,
+    pub(crate) resource_table: wasmtime::component::ResourceTable,
     backtrace: Option<WasmBacktrace>, // Temporary storage of current backtrace
     backtrace_persist: bool,
     phantom_data: PhantomData<DB>,
@@ -567,7 +567,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             "obelisk:workflow/workflow-support@1.1.0",
         )?;
         if stub_wasi {
-            wasmtime_wasi::add_to_linker_async(linker).map_err(linking_err)?;
+            super::wasi::add_to_linker_async(linker)?;
         }
         Ok(())
     }

@@ -3269,6 +3269,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+ "wasmtime-wasi-io",
  "wiremock",
 ]
 

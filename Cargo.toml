@@ -283,6 +283,7 @@ wstd = "0.5.3"
 # wasmtime
 wasmtime = { version = "32.0.0", features = ["memory-protection-keys"] }
 wasmtime-wasi = "32.0.0"
+wasmtime-wasi-io = "32.0.0"
 wasmtime-wasi-http = "32.0.0"
 wasmtime-environ = "32.0.0"
 # wasm-tools
