@@ -787,6 +787,10 @@
         "retry_on_trap": {
           "type": "boolean",
           "default": false
+        },
+        "stub_wasi": {
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false,
