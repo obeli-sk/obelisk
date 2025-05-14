@@ -42,6 +42,7 @@ impl Default for JoinNextBlockingStrategy {
 }
 
 #[derive(Clone, Debug)]
+#[expect(clippy::struct_excessive_bools)]
 pub struct WorkflowConfig {
     pub component_id: ComponentId,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -104,8 +105,7 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
             .exim
             .get_exports(true)
             .iter()
-            .cloned()
-            .filter(|fn_meta| {
+            .filter(|&fn_meta| {
                 if config.stub_wasi {
                     // Hide wasi exports
                     fn_meta.ffqn.ifc_fqn.namespace() != WASI_NAMESPACE
@@ -113,13 +113,13 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
                     true
                 }
             })
+            .cloned()
             .collect();
         let exports_hierarchy_ext = wasm_component
             .exim
             .get_exports_hierarchy_ext()
             .iter()
-            .cloned()
-            .filter(|package_ifc_fns| {
+            .filter(|&package_ifc_fns| {
                 if config.stub_wasi {
                     // Hide wasi exports
                     package_ifc_fns.ifc_fqn.namespace() != WASI_NAMESPACE
@@ -127,6 +127,7 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
                     true
                 }
             })
+            .cloned()
             .collect();
 
         let mut exported_ffqn_to_index = wasm_component.index_exported_functions()?;
@@ -143,8 +144,7 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
             .exim
             .get_exports(false)
             .iter()
-            .cloned()
-            .filter(|fn_meta| {
+            .filter(|&fn_meta| {
                 if config.stub_wasi {
                     // Hide wasi exports
                     fn_meta.ffqn.ifc_fqn.namespace() != WASI_NAMESPACE
@@ -152,6 +152,7 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
                     true
                 }
             })
+            .cloned()
             .collect();
 
         let imported_functions = wasm_component

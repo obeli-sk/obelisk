@@ -25,16 +25,17 @@ wasmtime::component::bindgen!({
 pub(crate) fn add_to_linker_async<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
     linker: &mut Linker<WorkflowCtx<C, DB, P>>,
 ) -> Result<(), WasmFileError> {
-    let linking_err = |err: wasmtime::Error| WasmFileError::LinkingError {
-        context: StrVariant::Static("linking error"),
-        err: err.into(),
-    };
     fn type_annotate<F, C: ClockFn, DB: DbConnection, P: DbPool<DB>>(val: F) -> F
     where
         F: Fn(&mut WorkflowCtx<C, DB, P>) -> &mut WorkflowCtx<C, DB, P>,
     {
         val
     }
+
+    let linking_err = |err: wasmtime::Error| WasmFileError::LinkingError {
+        context: StrVariant::Static("linking error"),
+        err: err.into(),
+    };
     let options = LinkOptions::default();
     let closure = type_annotate(|t| t);
     wasi::clocks::monotonic_clock::add_to_linker_get_host(linker, closure).map_err(linking_err)?;
