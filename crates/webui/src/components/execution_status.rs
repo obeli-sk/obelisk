@@ -5,6 +5,7 @@ use crate::{
         execution_status::{Finished, Locked, PendingAt},
         get_status_response,
     },
+    util::trace_id,
 };
 use chrono::DateTime;
 use futures::FutureExt as _;
@@ -52,7 +53,7 @@ pub fn execution_status(
         // Subscribe to GetStatus if needed.
         let status_state = status_state.clone();
         let execution_id = execution_id.clone();
-        let connectin_id = random_string();
+        let connectin_id = trace_id();
         use_effect_with(
             (execution_id.clone(), status.clone()),
             move |(execution_id, status)| {
@@ -206,12 +207,4 @@ fn convert_date(prefix: &str, date: Option<&::prost_wkt_types::Timestamp>) -> St
         format!("{prefix}{date:?}")
     })
     .unwrap_or_default()
-}
-
-fn random_string() -> String {
-    use rand::SeedableRng;
-    let mut rng = rand::rngs::SmallRng::from_entropy();
-    (0..10)
-        .map(|_| (rand::Rng::gen_range(&mut rng, b'a'..=b'z') as char))
-        .collect()
 }

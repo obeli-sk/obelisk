@@ -15,6 +15,7 @@ use crate::{
         },
         version::VersionType,
     },
+    util::trace_id,
 };
 use gloo::timers::future::TimeoutFuture;
 use hashbrown::HashMap;
@@ -29,11 +30,43 @@ pub struct DebuggerViewProps {
     pub versions: BacktraceVersions,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum SourceCodeState {
-    Requested,
+    Added,
+    InFlight,
     Found(Rc<[(Html, usize)]>),
     NotFoundOrErr,
+}
+
+type SourceKey = (ComponentId, String);
+
+#[derive(Default, PartialEq)]
+struct SourcesState(HashMap<SourceKey, SourceCodeState>);
+struct SourcesStateAction {
+    key: SourceKey,
+    value: SourceCodeState,
+    trace_id: Rc<str>,
+}
+impl Reducible for SourcesState {
+    type Action = SourcesStateAction;
+
+    fn reduce(
+        self: Rc<Self>,
+        SourcesStateAction {
+            key,
+            value,
+            trace_id,
+        }: Self::Action,
+    ) -> Rc<Self> {
+        if value == SourceCodeState::Added && self.0.contains_key(&key) {
+            // Do not readd the same entry.
+            return self;
+        }
+        let mut next_map = self.0.clone();
+        let old = next_map.insert(key.clone(), value.clone());
+        debug!("[{trace_id}] Updated {key:?} from {old:?} to {value:?}");
+        Self(next_map).into()
+    }
 }
 
 #[function_component(DebuggerView)]
@@ -71,21 +104,21 @@ pub fn debugger_view(
     let backtraces_state: UseStateHandle<
         HashMap<(ExecutionId, VersionType), GetBacktraceResponse>,
     > = use_state(Default::default);
-    let sources_state: UseStateHandle<HashMap<(ComponentId, String), SourceCodeState>> =
-        use_state(Default::default);
+    let sources_state = use_reducer(SourcesState::default);
     let version = versions.last();
     use_effect_with((execution_id.clone(), version), {
+        let hook_id = trace_id();
         let backtraces_state = backtraces_state.clone();
         let sources_state = sources_state.clone(); // Write a request to obtain the sources.
         move |(execution_id, version)| {
             let execution_id = execution_id.clone();
             let version = *version;
             if backtraces_state.contains_key(&(execution_id.clone(), version)) {
-                trace!("Prevented GetBacktrace fetch");
+                trace!("[{hook_id}] Prevented GetBacktrace fetch");
                 return;
             }
             wasm_bindgen_futures::spawn_local(async move {
-                trace!("GetBacktraceRequest {execution_id} {version:?}");
+                trace!("[{hook_id}] GetBacktraceRequest {execution_id} {version:?}");
                 let base_url = "/api";
                 let mut execution_client =
                     grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
@@ -108,8 +141,7 @@ pub fn debugger_view(
                     Ok(ok) => ok.into_inner(),
                     err @ Err(_) => panic!("{err:?}"),
                 };
-                debug!("Got backtrace_response {backtrace_response:?}");
-                let mut sources = sources_state.deref().clone();
+                trace!("[{hook_id}] Got backtrace_response {backtrace_response:?}");
                 let component_id = backtrace_response
                     .component_id
                     .clone()
@@ -124,11 +156,12 @@ pub fn debugger_view(
                     .filter_map(|frame_symbol| frame_symbol.file.as_ref())
                 {
                     let key = (component_id.clone(), file.clone());
-                    if !sources.contains_key(&key) {
-                        sources.insert(key, SourceCodeState::Requested);
-                    }
+                    sources_state.dispatch(SourcesStateAction {
+                        key,
+                        value: SourceCodeState::Added,
+                        trace_id: hook_id.clone(),
+                    });
                 }
-                sources_state.set(sources);
 
                 let mut backtraces: HashMap<_, _> = backtraces_state.deref().clone();
                 backtraces.insert((execution_id, version), backtrace_response);
@@ -137,18 +170,28 @@ pub fn debugger_view(
         }
     });
 
-    use_effect_with(sources_state.deref().clone(), {
-        let sources_state = sources_state.clone();
-        move |sources| {
-            for ((component_id, file), _) in sources
+    use_effect_with(sources_state.clone(), {
+        move |sources_state| {
+            let hook_id = trace_id();
+            debug!("[{hook_id}] sources_state hook started");
+
+            for (key, _state) in sources_state
+                .deref()
+                .0
                 .iter()
-                .filter(|(_key, val)| **val == SourceCodeState::Requested)
+                .filter(|(_key, state)| **state == SourceCodeState::Added)
             {
-                let component_id = component_id.clone();
-                let file = file.clone();
+                sources_state.dispatch(SourcesStateAction {
+                    key: key.clone(),
+                    value: SourceCodeState::InFlight,
+                    trace_id: hook_id.clone(),
+                });
+                let trace_id = Rc::from(format!("{hook_id} {}", trace_id()));
+                let component_id = key.0.clone();
+                let file = key.1.clone();
                 let sources_state = sources_state.clone();
                 wasm_bindgen_futures::spawn_local(async move {
-                    trace!("GetBacktraceSourceRequest {component_id} {file}");
+                    trace!("[{trace_id}] `GetBacktraceSourceRequest` start {component_id} {file}");
                     let base_url = "/api";
                     let mut execution_client =
                         grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
@@ -162,7 +205,7 @@ pub fn debugger_view(
                         .await;
                     let source_code_state = match backtrace_src_response {
                         Err(err) => {
-                            log::warn!("Cannot obtain source `{file}` - {err:?}");
+                            log::warn!("[{trace_id}] Cannot obtain source `{file}` - {err:?}");
                             SourceCodeState::NotFoundOrErr
                         }
                         Ok(ok) => {
@@ -175,9 +218,14 @@ pub fn debugger_view(
                             )))
                         }
                     };
-                    let mut sources = sources_state.deref().clone();
-                    sources.insert((component_id, file), source_code_state);
-                    sources_state.set(sources);
+                    debug!(
+                        "[{trace_id}] GetBacktraceSourceRequest inserting {component_id}  {file} = {source_code_state:?}",
+                    );
+                    sources_state.dispatch(SourcesStateAction {
+                        key: (component_id, file),
+                        value: source_code_state,
+                        trace_id,
+                    });
                 });
             }
         }
@@ -360,10 +408,9 @@ pub fn debugger_view(
         });
 
         for (i, frame) in wasm_backtrace.frames.iter().enumerate() {
-            htmls.push(html! {
-                <p>
-                    {format!("{i}: {}, function: {}", frame.module, frame.func_name)}
-                </p>
+            let mut frame_html = Vec::new();
+            frame_html.push(html! {
+                {format!("{i}: {}, function: {}", frame.module, frame.func_name)}
             });
 
             for symbol in &frame.symbols {
@@ -374,7 +421,7 @@ pub fn debugger_view(
                     (Some(file), None, None) => file.clone(),
                     _ => "unknown location".to_string(),
                 };
-                let mut line = format!("    at {location}");
+                let mut line = format!("at {location}");
 
                 // Print function name if it's different from frameinfo
                 match &symbol.func_name {
@@ -383,11 +430,10 @@ pub fn debugger_view(
                     }
                     _ => {}
                 }
-                htmls.push(html! {
-                    <p>
-                        {line}
-                    </p>
-                });
+                frame_html.push(html! {<>
+                    <br/>
+                    {line}
+                </>});
 
                 // Print source file.
                 if let (Some(file), Some(line)) = (&symbol.file, symbol.line) {
@@ -395,15 +441,22 @@ pub fn debugger_view(
                     if new_position {
                         if let Some(SourceCodeState::Found(source)) = sources_state
                             .deref()
+                            .0
                             .get(&(component_id.clone(), file.clone()))
                         {
-                            htmls.push(html! {
+                            frame_html.push(html! {<>
+                                <br/>
                                 <SyntectCodeBlock source={source.clone()} focus_line={Some(line as usize)}/>
-                            });
+                            </>});
                         }
                     }
                 }
             }
+            htmls.push(html! {
+                <p>
+                    {frame_html}
+                </p>
+            });
         }
         htmls.to_html()
     } else if is_finished {
