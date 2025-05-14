@@ -49,6 +49,9 @@ Currently only the first unhandled error is tracked, as well as only one root ca
 ## fix: Rename all gRPC history event messages to match storage.rs
 E.g. `JoinSetCreated` to `JoinSetCreate`.
 
+## fix: Change FFQN - allow dots in function name
+Accomodate for resource functions.
+
 ## Future ideas
 * Optional caching of activity executions with a TTL - serve cached response if parameters are the same
 * Interactive CLI for execution management

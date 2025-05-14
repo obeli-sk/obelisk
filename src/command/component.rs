@@ -83,8 +83,15 @@ pub(crate) async fn list_components(
 
 fn print_fn_details(vec: Vec<grpc::FunctionDetail>) -> Result<(), anyhow::Error> {
     for fn_detail in vec {
-        let func = FunctionFqn::try_from(fn_detail.function_name.context("function must exist")?)
-            .expect("ffqn sent by the server must be valid");
+        let func = fn_detail.function_name.context("function must exist")?;
+        let func = if let Ok(func) = FunctionFqn::try_from(func.clone())
+            .with_context(|| format!("ffqn sent by the server must be valid - {func:?}"))
+        {
+            func.to_string()
+        } else {
+            // FIXME: here because of functions like: interface_name: "wasi:io/poll@0.2.3", function_name: "[method]pollable.block"
+            format!("{} . {}", func.interface_name, func.function_name)
+        };
         print!("\t{func} : func(");
         let mut params = fn_detail.params.into_iter().peekable();
         while let Some(param) = params.next() {
