@@ -52,6 +52,10 @@ E.g. `JoinSetCreated` to `JoinSetCreate`.
 ## fix: Change FFQN - allow dots in function name
 Accomodate for resource functions.
 
+## fix: Migrate logging to wasi
+Use wasi:logging/logging@0.1.0-draft
+
+
 ## Future ideas
 * Optional caching of activity executions with a TTL - serve cached response if parameters are the same
 * Interactive CLI for execution management
