@@ -3,6 +3,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.4](https://github.com/obeli-sk/obelisk/compare/v0.22.3...v0.22.4)
+
+Adds experimental support for creating workflows in TinyGo.
+
+### ⛰️ Features
+
+- *(workflow)* Add preliminary support for `stub_wasi` - ([ed8a297](https://github.com/obeli-sk/obelisk/commit/ed8a297e3e812b2fa3428768e013e83d59097f79))
+
+### 🐛 Bug Fixes
+
+- *(cli)* Work around dots in function name - ([c382787](https://github.com/obeli-sk/obelisk/commit/c382787fd1a72c6cd145c7fb34ffa90ca4959468))
+- *(workflow)* Switch to minimal impl for supporting  `stub_wasi` - ([2babfec](https://github.com/obeli-sk/obelisk/commit/2babfec04afe9fc44cea1eb79c17d59105e99734))
+
+### 📚 Documentation
+
+- Update README.md - ([8532630](https://github.com/obeli-sk/obelisk/commit/8532630a8fa78d382ec87e07b7cdbd334ed10073))
+
+### 🚜 Refactor
+
+- *(worker)* Rename `extract_exported_ffqns_noext` - ([6c27f6c](https://github.com/obeli-sk/obelisk/commit/6c27f6cc958824901ec0e4c712a8d42eecb78faa))
+- Remove `Worker.imported_functions` - ([8204459](https://github.com/obeli-sk/obelisk/commit/8204459bad8ce029bdc183776fafea2f33c0a6e5))
+
+
 ## [0.22.3](https://github.com/obeli-sk/obelisk/compare/v0.22.2...v0.22.3)
 
 Fixes instantiation error that blocked starting components built by TinyGo.
