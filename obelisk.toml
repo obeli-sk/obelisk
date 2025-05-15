@@ -48,17 +48,26 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # [[workflow]]
 ## Common settings for all components - see above.
 ## Common executor settings - see above.
+
 ## Retry customization: All workflows are retried on trap (panic) and timeouts forever. Therefore, `retry_exp_backoff` must not be zero.
 # retry_exp_backoff.milliseconds = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
+
 ## Blocking strategy: When workflow requests a child execution result, it can either be interrupted, or kept in the memory until its execution lock expires or the response arrives.
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.
 # blocking_strategy = "await" # Default blocking strategy is "await"
 # blocking_strategy = { kind = "await", non_blocking_event_batching = 100 } # Number of non-blocking events that can be cached and written in a batch.
+
 # retry_on_trap = false # If set to true, traps(panics) will be handled as temporary failures and retried until the problem goes away.
+
 # convert_core_module = true # Transparently convert Core WASM modules to WASM Components during startup.
+
 # forward_unhandled_child_errors_in_completing_join_set_close = true # Forward unhandled child errors to the parent workflow when closing completing join sets.
 ## Map from frame symbol file names to corresponding file paths on local filesystem. Supports path path prefixes on both sides.
 # backtrace.sources = {"frame symbol file path" = "path to the source file"}
+
+# Stub WASI CLI world. Only needed for workflows authored in TinyGo.
+# stub_wasi = false # Default is false.
+
 
 ### Webhook Endpoint section
 # [[http_server]]
@@ -69,6 +78,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # [[webhook_endpoint]]
 ## Common settings for all components - see above.
 # http_server = "external" # link to a `http_server`'s name
+
 ### Routes section
 ## An array of routes that will be matched against incoming requests.
 ## Only the path portion of a URL is taken into cosideration, the query part
@@ -82,9 +92,11 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## ""                                           # Matches every possible URL, same as `/*`
 ## For details about the matching engine please see https://docs.rs/route-recognizer/latest/route_recognizer/
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]
+
 ## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".
 # forward_stdout="stderr" # forwards stdout to host's stderr
 # forward_stderr="stderr" # forwards stderr to host's stderr
+
 ## Environment variables: Set to a specific value or forward from the host. Default is empty.
 # env_vars = ["ENV1", "ENV2=somevalue"]
 
