@@ -97,8 +97,10 @@ impl TryFrom<grpc::ExecutionId> for ExecutionId {
 }
 
 pub trait TonicServerOptionExt<T> {
+    #[expect(clippy::result_large_err)]
     fn argument_must_exist(self, argument: &str) -> Result<T, tonic::Status>;
 
+    #[expect(clippy::result_large_err)]
     fn entity_must_exist(self) -> Result<T, tonic::Status>;
 }
 
@@ -115,6 +117,7 @@ impl<T> TonicServerOptionExt<T> for Option<T> {
 }
 
 pub trait TonicServerResultExt<T> {
+    #[expect(clippy::result_large_err)]
     fn to_status(self) -> Result<T, tonic::Status>;
 }
 

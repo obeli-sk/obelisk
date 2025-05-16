@@ -109,6 +109,7 @@ pub(crate) struct EventHistory<C: ClockFn> {
     // TODO: optimize using start_from_idx: usize,
 }
 
+#[expect(clippy::large_enum_variant)]
 enum NonBlockingCache {
     StartAsync {
         batch: Vec<AppendRequest>,

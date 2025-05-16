@@ -273,10 +273,7 @@ impl<T> MethodAwareRouter<T> {
         self.method_map
             .get(method)
             .and_then(|router| router.recognize(path).ok())
-            .or_else(|| {
-                let fallback = self.fallback.recognize(path).ok();
-                fallback
-            })
+            .or_else(|| self.fallback.recognize(path).ok())
     }
 }
 

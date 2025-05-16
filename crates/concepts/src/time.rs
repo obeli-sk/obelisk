@@ -45,7 +45,6 @@ pub struct Now;
 impl ClockFn for Now {
     cfg_if::cfg_if! {
         if #[cfg(all(test, madsim))] {
-            #[must_use]
             fn now(&self) -> DateTime<Utc> {
                 if madsim::rand::random() {
                     madsim::time::advance(std::time::Duration::from_millis(madsim::rand::random()));
@@ -54,7 +53,6 @@ impl ClockFn for Now {
             }
 
         } else {
-            #[must_use]
             fn now(&self) -> DateTime<Utc> {
                 Utc::now()
             }

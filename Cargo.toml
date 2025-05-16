@@ -233,7 +233,13 @@ serde_json = "1.0.140"
 serde_with = "3.12.0"
 sha2 = "0.10.9"
 strum = { version = "0.27.1", features = ["derive"] }
-syntect = { version = "5.2.0", default-features = false, features = ["parsing", "default-syntaxes", "default-themes", "regex-fancy", "yaml-load"] }
+syntect = { version = "5.2.0", default-features = false, features = [
+    "parsing",
+    "default-syntaxes",
+    "default-themes",
+    "regex-fancy",
+    "yaml-load",
+] }
 tempfile = "=3.14.0" # yew and madsim use getrandom 0.2
 thiserror = "2.0"
 tokio = { version = "0.2.30", package = "madsim-tokio", features = [
@@ -270,9 +276,11 @@ implicit-clone = "0.5.1"
 log = "0.4.27"
 semver = "1.0.26"
 tonic-web-wasm-client = "0.7.0"
-wasm-bindgen = "=0.2.100"                                                     # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml.
-wasm-bindgen-futures = "=0.4.50"                                              # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/futures/Cargo.toml
-web-sys = {version = "=0.3.77", features = ["Performance"] }                  # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/web-sys/Cargo.toml
+wasm-bindgen = "=0.2.100" # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml.
+wasm-bindgen-futures = "=0.4.50" # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/futures/Cargo.toml
+web-sys = { version = "=0.3.77", features = [
+    "Performance",
+] } # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/web-sys/Cargo.toml
 yew = { version = "0.21.0", features = ["csr"] }
 yew_icons = { version = "0.8.0", features = ["LucideBox", "LucideFileDiff"] }
 yew-router = "0.18.0"
@@ -330,6 +338,8 @@ clippy.module_name_repetitions = "allow"
 clippy.from_iter_instead_of_collect = "allow"
 # Happy path should be first no matter the condition.
 clippy.if_not_else = "allow"
+# Keep paths surrounded with quotes
+clippy.unnecessary_debug_formatting = "allow"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(madsim)'] }
