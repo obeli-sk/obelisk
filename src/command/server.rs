@@ -1581,7 +1581,7 @@ async fn compile_and_verify(
                     },
                 }
             }
-            let component_registry_ro = component_registry.verify_imports()?;
+            let component_registry_ro = component_registry.verify_imports();
             let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
             let workers_linked = workers_compiled.into_iter().map(|worker| worker.link(&fn_registry)).collect::<Result<Vec<_>,_>>()?;
             let webhooks_by_names = webhooks_compiled_by_names
@@ -1843,18 +1843,19 @@ impl ComponentConfigRegistry {
     /// This is a best effort to give function-level error messages.
     /// WASI imports and host functions are not validated at the moment, those errors
     /// are caught by wasmtime while pre-instantiation with a message containing the missing interface.
-    pub fn verify_imports(self) -> Result<ComponentConfigRegistryRO, anyhow::Error> {
+    pub fn verify_imports(self) -> ComponentConfigRegistryRO {
         let mut errors = Vec::new();
         for (component_id, examined_component) in &self.inner.ids_to_components {
             self.verify_imports_component(component_id, &examined_component.imports, &mut errors);
         }
-        if errors.is_empty() {
-            Ok(ComponentConfigRegistryRO {
-                inner: Arc::new(self.inner),
-            })
-        } else {
+        if !errors.is_empty() {
             let errors = errors.join("\n");
-            bail!("component resolution error: \n{errors}")
+            // TODO: Promote to an error when version resolution is implemented
+            // https://github.com/bytecodealliance/wasmtime/blob/8dbd5db30d05e96594e2516cdbd7cc213f1c2fa4/crates/environ/src/component/names.rs#L102-L104
+            tracing::warn!("component resolution error: \n{errors}");
+        }
+        ComponentConfigRegistryRO {
+            inner: Arc::new(self.inner),
         }
     }
 
