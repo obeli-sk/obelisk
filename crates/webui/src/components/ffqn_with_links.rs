@@ -10,6 +10,8 @@ pub struct FfqnWithLinksProps {
     pub fully_qualified: bool,
     #[prop_or_default]
     pub hide_submit: bool,
+    #[prop_or_default]
+    pub hide_find: bool,
 }
 #[function_component(FfqnWithLinks)]
 pub fn ffqn_with_links(
@@ -17,6 +19,7 @@ pub fn ffqn_with_links(
         ffqn,
         fully_qualified,
         hide_submit,
+        hide_find,
     }: &FfqnWithLinksProps,
 ) -> Html {
     let label = if *fully_qualified {
@@ -27,8 +30,8 @@ pub fn ffqn_with_links(
     let ext = ffqn.ifc_fqn.pkg_fqn.is_extension();
     html! {
         <div style="display: inline-flex;">
-            // Hide search button when rendering an extension function.
-            if !ext {
+            // Finding makes no sense when rendering an extension function.
+            if !ext && !hide_find {
                 <Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() } }>
                     <Icon icon = { Icon::Search }/>
                 </Link<Route>>

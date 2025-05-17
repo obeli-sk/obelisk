@@ -79,7 +79,7 @@ impl ComponentTree {
                 tree.insert(
                     Node::new(NodeData {
                         icon: Icon::Function,
-                        label: html! {<FfqnWithLinks {ffqn} hide_submit={true}/> },
+                        label: html! {<FfqnWithLinks {ffqn}/> },
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(&ifc_node_id),
