@@ -9,7 +9,7 @@ pkg-config 0.29.2
 libprotoc 30.2
 rustc 1.87.0 (17067e9ac 2025-05-09)
 wasm-tools 1.229.0
-wasmtime 31.0.0
+wasmtime 32.0.0
 cargo-zigbuild 0.20.0
 wasm-opt version 123
 trunk 0.21.14
