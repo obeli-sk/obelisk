@@ -180,7 +180,7 @@ config = { version = "0.15.11", default-features = false, features = [
 ] }
 console-subscriber = "0.4.1"
 const_format = "0.2.34"
-criterion = "0.5"
+criterion = "0.6"
 crossterm = "0.29.0"
 derive_more = { version = "2.0.1", features = [
     "debug",
@@ -207,10 +207,10 @@ insta = { version = "1.43.1", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
 madsim = "0.2.31"
-oci-client = { version = "0.14.0", default-features = false, features = [
+oci-client = { version = "0.15.0", default-features = false, features = [
     "rustls-tls",
 ] }
-oci-wasm = { version = "0.2.1", default-features = false, features = [ # Dependent on matching oci-client
+oci-wasm = { version = "0.3.0", default-features = false, features = [ # Dependent on matching oci-client
     "rustls-tls",
 ] }
 prost = "0.13.5"
