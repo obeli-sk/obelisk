@@ -180,9 +180,9 @@ pub(crate) mod tests {
         #[rstest::rstest(wasm_path => [
             test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK
             ])]
-        #[tokio::test]
-        async fn webhook(wasm_path: &str) {
-            crate::webhook::webhook_trigger::tests::nosim::compile_webhook(wasm_path).await;
+        #[test]
+        fn webhook(wasm_path: &str) {
+            crate::webhook::webhook_trigger::tests::nosim::compile_webhook(wasm_path);
         }
     }
 }

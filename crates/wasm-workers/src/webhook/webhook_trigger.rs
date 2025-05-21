@@ -1035,9 +1035,8 @@ pub(crate) mod tests {
             }
         }
 
-        pub(crate) async fn compile_webhook(wasm_path: &str) -> WasmComponent {
-            let engine =
-                Engines::get_webhook_engine(EngineConfig::on_demand_testing().await).unwrap();
+        pub(crate) fn compile_webhook(wasm_path: &str) -> WasmComponent {
+            let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
             WasmComponent::new(
                 wasm_path,
                 &engine,
@@ -1062,7 +1061,7 @@ pub(crate) mod tests {
                 let sim_clock = SimClock::default();
                 let (guard, db_pool) = Database::Memory.set_up().await;
                 let activity_exec_task =
-                    spawn_activity_fibo(db_pool.clone(), sim_clock.clone(), TokioSleep).await;
+                    spawn_activity_fibo(db_pool.clone(), sim_clock.clone(), TokioSleep);
                 let fn_registry = TestingFnRegistry::new_from_components(vec![
                     compile_activity(
                         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
@@ -1074,7 +1073,7 @@ pub(crate) mod tests {
                     .await,
                 ]);
                 let engine =
-                    Engines::get_webhook_engine(EngineConfig::on_demand_testing().await).unwrap();
+                    Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
                 let workflow_exec_task = spawn_workflow_fibo(
                     db_pool.clone(),
                     sim_clock.clone(),
@@ -1082,8 +1081,7 @@ pub(crate) mod tests {
                         non_blocking_event_batching: 0,
                     },
                     fn_registry.clone(),
-                )
-                .await;
+                );
 
                 let router = {
                     let instance = WebhookEndpointCompiled::new(

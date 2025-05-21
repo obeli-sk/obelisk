@@ -754,7 +754,7 @@ pub(crate) mod tests {
     const FFQN_WORKFLOW_HTTP_GET_RESP: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_RESP);
 
     pub(crate) async fn compile_workflow(wasm_path: &str) -> (WasmComponent, ComponentId) {
-        let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
+        let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
         compile_workflow_with_engine(wasm_path, &engine)
     }
 
@@ -771,7 +771,7 @@ pub(crate) mod tests {
         )
     }
 
-    async fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
@@ -779,7 +779,7 @@ pub(crate) mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         let workflow_engine =
-            Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
+            Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
         let component_id =
             ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         let worker = Arc::new(
@@ -824,7 +824,7 @@ pub(crate) mod tests {
         )
     }
 
-    pub(crate) async fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -837,7 +837,6 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
             fn_registry,
         )
-        .await
     }
 
     #[rstest]
@@ -896,8 +895,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             join_next_blocking_strategy,
             fn_registry,
-        )
-        .await;
+        );
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -938,7 +936,7 @@ pub(crate) mod tests {
 
         info!("Execution should call the activity and finish");
         let activity_exec_task =
-            spawn_activity_fibo(db_pool.clone(), sim_clock.clone(), TokioSleep).await;
+            spawn_activity_fibo(db_pool.clone(), sim_clock.clone(), TokioSleep);
 
         let res = db_connection
             .wait_for_finished_result(&execution_id, None)
@@ -965,12 +963,11 @@ pub(crate) mod tests {
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             fn_registry,
-        )
-        .await;
+        );
         db_pool.close().await.unwrap();
     }
 
-    pub(crate) async fn compile_workflow_worker<
+    pub(crate) fn compile_workflow_worker<
         C: ClockFn,
         S: Sleep,
         DB: DbConnection + 'static,
@@ -984,7 +981,7 @@ pub(crate) mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Arc<WorkflowWorker<C, S, DB, P>> {
         let workflow_engine =
-            Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
+            Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
         Arc::new(
             WorkflowWorkerCompiled::new_with_config(
                 WasmComponent::new(
@@ -1036,8 +1033,7 @@ pub(crate) mod tests {
                 )
                 .await,
             ]),
-        )
-        .await;
+        );
         // simulate a scheduling problem where deadline < now
         let execution_deadline = sim_clock.now();
         sim_clock
@@ -1109,8 +1105,7 @@ pub(crate) mod tests {
                 TokioSleep,
                 join_next_blocking_strategy,
                 fn_registry,
-            )
-            .await;
+            );
             let exec_config = ExecConfig {
                 batch_size: 1,
                 lock_expiry: LOCK_DURATION,
@@ -1254,8 +1249,7 @@ pub(crate) mod tests {
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
-        )
-        .await;
+        );
 
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
@@ -1263,8 +1257,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             fn_registry,
-        )
-        .await;
+        );
         let execution_id = ExecutionId::generate();
         db_connection
             .create(CreateRequest {
@@ -1341,8 +1334,7 @@ pub(crate) mod tests {
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
-        )
-        .await;
+        );
 
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
@@ -1350,8 +1342,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             join_next_blocking_strategy,
             fn_registry,
-        )
-        .await;
+        );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/"))
@@ -1446,16 +1437,14 @@ pub(crate) mod tests {
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
-        )
-        .await;
+        );
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
             join_next_strategy,
             fn_registry,
-        )
-        .await;
+        );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/"))
@@ -1536,8 +1525,7 @@ pub(crate) mod tests {
             TokioSleep,
             join_next_strategy,
             fn_registry,
-        )
-        .await;
+        );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
 
@@ -1651,8 +1639,7 @@ pub(crate) mod tests {
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
-        )
-        .await;
+        );
 
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
@@ -1662,8 +1649,7 @@ pub(crate) mod tests {
                 non_blocking_event_batching: 0,
             },
             fn_registry,
-        )
-        .await;
+        );
 
         let url = "http://";
         let params = Params::from_json_values(vec![json!(url)]);

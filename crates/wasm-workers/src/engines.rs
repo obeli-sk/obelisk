@@ -96,8 +96,7 @@ impl EngineConfig {
     }
 
     #[cfg(test)]
-    pub(crate) async fn on_demand_testing() -> Self {
-        use std::path::PathBuf;
+    pub(crate) fn on_demand_testing() -> Self {
         let codegen_cache = PathBuf::from("test-codegen-cache");
         Self {
             pooling_opts: None,
