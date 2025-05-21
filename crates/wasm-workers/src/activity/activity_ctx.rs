@@ -12,7 +12,7 @@ use tracing::{Instrument, Span, debug, info_span};
 use wasmtime::Engine;
 use wasmtime::component::Resource;
 use wasmtime::{Store, component::ResourceTable};
-use wasmtime_wasi::{self, IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::types::{

@@ -37,7 +37,7 @@ use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Val};
 use wasmtime::component::{Resource, ResourceTable};
 use wasmtime::{Engine, Store, UpdateDeadline};
-use wasmtime_wasi::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::bindings::ProxyPre;
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
@@ -121,7 +121,7 @@ impl WebhookEndpointCompiled {
     ) -> Result<WebhookEndpointInstance<C, DB, P>, WasmFileError> {
         let mut linker = Linker::new(engine);
         // Link wasi
-        wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| {
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(|err| {
             WasmFileError::LinkingError {
                 context: StrVariant::Static("linking `wasmtime_wasi`"),
                 err: err.into(),

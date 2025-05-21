@@ -6,7 +6,7 @@ use concepts::{
 };
 use wasmtime::Result;
 use wasmtime::component::Resource;
-use wasmtime_wasi::{StdinStream as _, pipe};
+use wasmtime_wasi::p2::{StdinStream as _, pipe};
 use wasmtime_wasi_io::streams::{DynInputStream, DynOutputStream};
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> environment::Host for WorkflowCtx<C, DB, P> {

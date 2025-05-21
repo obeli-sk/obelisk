@@ -228,17 +228,18 @@ impl WasmComponent {
     ) -> Result<hashbrown::HashMap<FunctionFqn, ComponentExportIndex>, DecodeError> {
         let mut exported_ffqn_to_index = hashbrown::HashMap::new();
         for FunctionMetadata { ffqn, .. } in &self.exim.exports_flat_noext {
-            let Some((_, ifc_export_index)) =
-                self.wasmtime_component.export_index(None, &ffqn.ifc_fqn)
+            let Some(ifc_export_index) = self
+                .wasmtime_component
+                .get_export_index(None, &ffqn.ifc_fqn)
             else {
                 error!("Cannot find exported interface `{}`", ffqn.ifc_fqn);
                 return Err(DecodeError::CannotReadComponentWithReason {
                     reason: format!("cannot find exported interface {ffqn}"),
                 });
             };
-            let Some((_, fn_export_index)) = self
+            let Some(fn_export_index) = self
                 .wasmtime_component
-                .export_index(Some(&ifc_export_index), &ffqn.function_name)
+                .get_export_index(Some(&ifc_export_index), &ffqn.function_name)
             else {
                 error!("Cannot find exported function {ffqn}");
                 return Err(DecodeError::CannotReadComponentWithReason {

@@ -960,7 +960,7 @@ async fn verify_internal(
 
     let server_verified = ServerVerified::new(
         config,
-        codegen_cache.as_deref(),
+        codegen_cache,
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
         db_dir,
@@ -1063,7 +1063,7 @@ impl ServerVerified {
     #[instrument(name = "ServerVerified::new", skip_all)]
     async fn new(
         config: ConfigToml,
-        codegen_cache: Option<&Path>,
+        codegen_cache_dir: Option<PathBuf>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         db_dir: PathBuf,
@@ -1071,21 +1071,15 @@ impl ServerVerified {
         path_prefixes: PathPrefixes,
     ) -> Result<Self, anyhow::Error> {
         let engines = {
-            let codegen_cache_config_file_holder = Engines::write_codegen_config(codegen_cache)
-                .await
-                .context("error configuring codegen cache")?;
             match config.wasmtime_allocator_config {
                 WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
                     config.wasmtime_pooling_config.into(),
-                    codegen_cache_config_file_holder,
+                    codegen_cache_dir,
                 )?,
-                WasmtimeAllocatorConfig::OnDemand => {
-                    Engines::on_demand(codegen_cache_config_file_holder)?
+                WasmtimeAllocatorConfig::OnDemand => Engines::on_demand(codegen_cache_dir)?,
+                WasmtimeAllocatorConfig::Pooling => {
+                    Engines::pooling(config.wasmtime_pooling_config.into(), codegen_cache_dir)?
                 }
-                WasmtimeAllocatorConfig::Pooling => Engines::pooling(
-                    config.wasmtime_pooling_config.into(),
-                    codegen_cache_config_file_holder,
-                )?,
             }
         };
         let sqlite_config = config.sqlite.into_sqlite_config();

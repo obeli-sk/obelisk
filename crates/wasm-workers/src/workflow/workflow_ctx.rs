@@ -28,7 +28,8 @@ use std::time::Duration;
 use tracing::{Span, error, instrument, trace};
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, Val};
-use wasmtime_wasi::{IoView, ResourceTable, ResourceTableError, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{ResourceTable, ResourceTableError};
 
 /// Result that is passed from guest to host as an error, must be downcast from anyhow.
 #[derive(thiserror::Error, Debug, Clone)]

@@ -1,7 +1,6 @@
-use std::{error::Error, fmt::Debug, path::Path, rc::Rc, sync::Arc};
-use tempfile::NamedTempFile;
-use tracing::{debug, instrument, trace, warn};
-use wasmtime::{Engine, EngineWeak, WasmBacktraceDetails};
+use std::{error::Error, fmt::Debug, path::PathBuf, sync::Arc};
+use tracing::{debug, instrument, warn};
+use wasmtime::{Cache, CacheConfig, Engine, EngineWeak, WasmBacktraceDetails};
 
 #[derive(thiserror::Error, Debug)]
 pub enum EngineError {
@@ -54,7 +53,7 @@ pub struct PoolingOptions {
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
     pooling_opts: Option<PoolingOptions>,
-    cache_config_file: Option<Rc<NamedTempFile>>,
+    codegen_cache_dir: Option<PathBuf>,
 }
 
 impl EngineConfig {
@@ -100,15 +99,9 @@ impl EngineConfig {
     pub(crate) async fn on_demand_testing() -> Self {
         use std::path::PathBuf;
         let codegen_cache = PathBuf::from("test-codegen-cache");
-        std::fs::create_dir_all(&codegen_cache).unwrap();
-        let temp_file = Engines::write_codegen_config(Some(&codegen_cache))
-            .await
-            .unwrap()
-            .unwrap();
-        std::fs::create_dir_all(&codegen_cache).unwrap();
         Self {
             pooling_opts: None,
-            cache_config_file: Some(temp_file),
+            codegen_cache_dir: Some(codegen_cache),
         }
     }
     #[cfg(not(madsim))]
@@ -116,7 +109,7 @@ impl EngineConfig {
     pub(crate) fn pooling_nocache_testing(opts: PoolingOptions) -> Self {
         Self {
             pooling_opts: Some(opts),
-            cache_config_file: None,
+            codegen_cache_dir: None,
         }
     }
 }
@@ -146,10 +139,12 @@ impl Engines {
         wasmtime_config.async_support(true);
 
         wasmtime_config.allocation_strategy(config.strategy());
-        if let Some(cache_config) = config.cache_config_file {
-            wasmtime_config
-                .cache_config_load(cache_config.path())
-                .map_err(|err| EngineError::CodegenCache(err.into()))?;
+        if let Some(codegen_cache_dir) = config.codegen_cache_dir {
+            let mut cache_config = CacheConfig::new();
+            cache_config.with_directory(codegen_cache_dir);
+            let cache =
+                Cache::new(cache_config).map_err(|err| EngineError::CodegenCache(err.into()))?;
+            wasmtime_config.cache(Some(cache));
         }
         Engine::new(&wasmtime_config)
             .map(Arc::new)
@@ -182,10 +177,10 @@ impl Engines {
     }
 
     #[instrument(skip_all)]
-    pub fn on_demand(cache_config_file: Option<Rc<NamedTempFile>>) -> Result<Self, EngineError> {
+    pub fn on_demand(codegen_cache_dir: Option<PathBuf>) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: None,
-            cache_config_file,
+            codegen_cache_dir,
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
@@ -197,11 +192,11 @@ impl Engines {
     #[instrument(skip_all)]
     pub fn pooling(
         opts: PoolingOptions,
-        cache_config_file: Option<Rc<NamedTempFile>>,
+        codegen_cache_dir: Option<PathBuf>,
     ) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: Some(opts),
-            cache_config_file,
+            codegen_cache_dir,
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
@@ -212,48 +207,12 @@ impl Engines {
 
     pub fn auto_detect_allocator(
         pooling_opts: PoolingOptions,
-        cache_config: Option<Rc<NamedTempFile>>,
+        codegen_cache_dir: Option<PathBuf>,
     ) -> Result<Self, EngineError> {
-        Self::pooling(pooling_opts, cache_config.clone()).or_else(|err| {
+        Self::pooling(pooling_opts, codegen_cache_dir.clone()).or_else(|err| {
             warn!("Falling back to on-demand allocator - {err}");
             debug!("{err:?}");
-            Self::on_demand(cache_config)
-        })
-    }
-
-    // TODO: Create a wasmtime issue requesting a better cache config API
-    #[instrument(skip_all)]
-    pub async fn write_codegen_config(
-        codegen_cache: Option<&Path>,
-    ) -> Result<Option<Rc<NamedTempFile>>, std::io::Error> {
-        #[cfg(not(madsim))]
-        async fn write(file: &NamedTempFile, content: String) -> Result<(), std::io::Error> {
-            tokio::fs::write(file, content).await
-        }
-        #[cfg(madsim)]
-        #[expect(clippy::unused_async)]
-        async fn write(mut file: &NamedTempFile, content: String) -> Result<(), std::io::Error> {
-            use std::io::Write;
-            writeln!(file, "{content}")
-        }
-        Ok(if let Some(codegen_cache) = codegen_cache {
-            let codegen_cache_config_file = tempfile::NamedTempFile::new()?;
-            debug!("Setting codegen cache to {codegen_cache:?}");
-            let codegen_cache = codegen_cache.canonicalize()?;
-            let content = format!(
-                r"[cache]
-enabled = true
-directory = {codegen_cache:?}
-"
-            );
-            write(&codegen_cache_config_file, content).await?;
-            trace!(
-                "Wrote temporary cache config to {:?}",
-                codegen_cache_config_file.path()
-            );
-            Some(Rc::new(codegen_cache_config_file))
-        } else {
-            None
+            Self::on_demand(codegen_cache_dir)
         })
     }
 }

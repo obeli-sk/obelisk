@@ -1,5 +1,5 @@
 // https://github.com/bytecodealliance/wasmtime/tree/v24.0.0/src/commands/serve.rs
-use wasmtime_wasi::{StreamError, StreamResult};
+use wasmtime_wasi::p2::{StreamError, StreamResult};
 
 #[derive(Clone, Copy, Debug)]
 pub enum StdOutput {
@@ -39,8 +39,8 @@ impl LogStream {
     }
 }
 
-impl wasmtime_wasi::StdoutStream for LogStream {
-    fn stream(&self) -> Box<dyn wasmtime_wasi::OutputStream> {
+impl wasmtime_wasi::p2::StdoutStream for LogStream {
+    fn stream(&self) -> Box<dyn wasmtime_wasi::p2::OutputStream> {
         Box::new(self.clone())
     }
 
@@ -54,7 +54,7 @@ impl wasmtime_wasi::StdoutStream for LogStream {
     }
 }
 
-impl wasmtime_wasi::OutputStream for LogStream {
+impl wasmtime_wasi::p2::OutputStream for LogStream {
     fn write(&mut self, bytes: bytes::Bytes) -> StreamResult<()> {
         let mut bytes = &bytes[..];
 
@@ -93,6 +93,6 @@ impl wasmtime_wasi::OutputStream for LogStream {
 }
 
 #[async_trait::async_trait]
-impl wasmtime_wasi::Pollable for LogStream {
+impl wasmtime_wasi::p2::Pollable for LogStream {
     async fn ready(&mut self) {}
 }

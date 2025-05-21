@@ -55,7 +55,7 @@ impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
 
         let mut linker = wasmtime::component::Linker::new(&engine);
         // wasi
-        wasmtime_wasi::add_to_linker_async(&mut linker).map_err(linking_err)?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(linking_err)?;
         // wasi-http
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(linking_err)?;
         // obelisk:log
