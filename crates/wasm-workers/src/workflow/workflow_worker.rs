@@ -367,7 +367,12 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
         let mut store = Store::new(&self.engine, workflow_ctx);
 
         // Configure epoch callback before running the initialization to avoid interruption
-        store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
+        store.epoch_deadline_callback(|_store_ctx| {
+            Ok(UpdateDeadline::YieldCustom(
+                1,
+                Box::pin(tokio::task::yield_now()),
+            ))
+        });
 
         let instance = match self.instance_pre.instantiate_async(&mut store).await {
             Ok(instance) => instance,
