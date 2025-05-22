@@ -97,7 +97,10 @@ impl EngineConfig {
 
     #[cfg(test)]
     pub(crate) fn on_demand_testing() -> Self {
-        let codegen_cache = PathBuf::from("test-codegen-cache");
+        let workspace_dir = PathBuf::from(
+            std::env::var("CARGO_WORKSPACE_DIR").expect("CARGO_WORKSPACE_DIR must be set"),
+        );
+        let codegen_cache = workspace_dir.join("test-codegen-cache");
         Self {
             pooling_opts: None,
             codegen_cache_dir: Some(codegen_cache),
