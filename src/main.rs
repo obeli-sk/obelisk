@@ -160,7 +160,7 @@ async fn main() -> Result<(), anyhow::Error> {
 }
 
 fn project_dirs() -> Option<ProjectDirs> {
-    ProjectDirs::from("com", "obelisk", "obelisk")
+    ProjectDirs::from("", "obelisk", "obelisk")
 }
 
 type ExecutionRepositoryClient =
