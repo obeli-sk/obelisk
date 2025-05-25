@@ -76,13 +76,13 @@ header .hash {
     border-bottom: 1px solid #44475a;
 }
 
-.execution-header > .header-and-links {
+.execution-header>.header-and-links {
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
 
-.execution-header > .header-and-links > .execution-links {
+.execution-header>.header-and-links>.execution-links {
     display: flex;
     padding: 10px;
     gap: 15px;
@@ -140,11 +140,11 @@ table.execution_list th {
     background-color: #44475a;
 }
 
-.container > .pagination {
+.container>.pagination {
     margin-top: 20px;
 }
 
-.container > div.pagination a {
+.container>div.pagination a {
     padding: 10px;
     margin: 0 5px;
     text-decoration: none;
@@ -153,7 +153,7 @@ table.execution_list th {
     border-radius: 4px;
 }
 
-.container > div.pagination a:hover {
+.container>div.pagination a:hover {
     background-color: #44475a;
     color: #f1fa8c;
 }
@@ -507,4 +507,26 @@ ul li span {
 
 .expand-button:hover {
     background-color: #4f4f4f;
+}
+
+/* --- Execution submit form --- */
+#execution-submit-form p {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+#execution-submit-form label {
+    width: 120px;
+    flex-shrink: 0;
+}
+
+#execution-submit-form input {
+    flex: 1;
+    max-width: 300px;
+}
+
+#execution-submit-form span {
+    color: red;
 }

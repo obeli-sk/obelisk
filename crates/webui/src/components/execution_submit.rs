@@ -220,14 +220,14 @@ pub fn execution_submit_form(
                 <label for={id.clone()}>{ format!("{}: {}", param.name, ty.wit_type) }</label>
                 <input id={id} type="text" ref={&form_data_state.param_refs[idx]} oninput = {Callback::from(move |_| { on_param_change()})} />
                 if let Some(err) = form_data_state.param_errs.get(idx) {
-                    <span style={"color:red"}>{err}</span>
+                    <span>{err}</span>
                 }
             </p>}
         })
         .collect();
 
     html! {<>
-        <form onsubmit = {on_submit }>
+        <form id="execution-submit-form" onsubmit = {on_submit }>
             {for params_html}
             <button type="submit" disabled={*request_processing_state}>
                 {"Submit"}
