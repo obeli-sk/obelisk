@@ -62,6 +62,8 @@ impl FormData {
             if let Err(err) = Self::validate_param(function_detail, &param_value, idx) {
                 self.param_errs[idx] = Some(err);
                 is_err = true;
+            } else {
+                self.param_errs[idx] = None;
             }
         }
         if is_err {
