@@ -104,7 +104,7 @@ pub fn debugger_view(
     let backtraces_state: UseStateHandle<
         HashMap<(ExecutionId, VersionType), GetBacktraceResponse>,
     > = use_state(Default::default);
-    let sources_state = use_reducer(SourcesState::default);
+    let sources_state = use_reducer_eq(SourcesState::default);
     let version = versions.last();
     use_effect_with((execution_id.clone(), version), {
         let hook_id = trace_id();
