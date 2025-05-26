@@ -37,8 +37,8 @@ pub struct TraceViewProps {
     pub execution_id: grpc_client::ExecutionId,
 }
 
-const PAGE: u32 = 500;
-const SLEEP_MILLIS: u32 = 100;
+pub const PAGE: u32 = 500;
+pub const SLEEP_MILLIS: u32 = 100;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Cursors {

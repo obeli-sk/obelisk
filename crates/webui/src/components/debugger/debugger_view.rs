@@ -4,6 +4,7 @@ use crate::{
         code::syntect_code_block::{SyntectCodeBlock, highlight_code_line_by_line},
         execution_detail::utils::{compute_join_next_to_response, event_to_detail},
         execution_header::{ExecutionHeader, ExecutionLink},
+        trace::trace_view::{PAGE, SLEEP_MILLIS},
     },
     grpc::{
         execution_id::ExecutionIdExt as _,
@@ -497,8 +498,6 @@ impl EventsAndResponsesState {
         is_fetching: &(ExecutionId, usize),
         include_backtrace_id: bool,
     ) {
-        const PAGE: u32 = 100;
-        const SLEEP_MILLIS: u32 = 1000;
         if execution_id != &is_fetching.0 {
             debug!("Cleaning up the state after execution id change");
             self.events_state.set(Default::default());
