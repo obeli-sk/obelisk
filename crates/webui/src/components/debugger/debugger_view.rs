@@ -34,11 +34,11 @@ pub struct DebuggerViewProps {
 enum SourceCodeState {
     Added,
     InFlight,
-    Found(Rc<[(Html, usize)]>),
+    Found(Rc<[(Html, usize /* line */)]>), // Array of lines + line numbers
     NotFoundOrErr,
 }
 
-type SourceKey = (ComponentId, String);
+type SourceKey = (ComponentId, String /* file name */);
 
 #[derive(Default, PartialEq)]
 struct SourcesState(HashMap<SourceKey, SourceCodeState>);
@@ -498,7 +498,7 @@ impl EventsAndResponsesState {
         include_backtrace_id: bool,
     ) {
         const PAGE: u32 = 100;
-        const TIMEOUT_MILLIS: u32 = 1000;
+        const SLEEP_MILLIS: u32 = 1000;
         if execution_id != &is_fetching.0 {
             debug!("Cleaning up the state after execution id change");
             self.events_state.set(Default::default());
@@ -571,9 +571,9 @@ impl EventsAndResponsesState {
                 if is_finished {
                     debug!("Execution Finished {execution_id} ");
                 } else {
-                    trace!("Timeout: start");
-                    TimeoutFuture::new(TIMEOUT_MILLIS).await;
-                    trace!("Timeout: Triggering refetch");
+                    trace!("Sleep start");
+                    TimeoutFuture::new(SLEEP_MILLIS).await;
+                    trace!("Triggering refetch");
                     is_fetching_state.set((execution_id, is_fetching + 1)); // Retrigger
                 }
             });

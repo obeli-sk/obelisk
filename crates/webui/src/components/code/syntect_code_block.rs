@@ -11,7 +11,10 @@ const DEFAULT_THEME: &str = "base16-ocean.dark"; // NB: Sync with build.rs
 
 pub static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
 
-pub fn highlight_code_line_by_line(source: &str, language_ext: Option<&str>) -> Vec<(Html, usize)> {
+pub fn highlight_code_line_by_line(
+    source: &str,
+    language_ext: Option<&str>,
+) -> Vec<(Html, usize /* line number */)> {
     const DEFAULT_LANGUAGE: &str = "txt";
     let language_ext = language_ext.unwrap_or(DEFAULT_LANGUAGE);
     let start = web_sys::window().unwrap().performance().unwrap().now();
