@@ -13,7 +13,8 @@ use crate::{
         execution_id::{EXECUTION_ID_INFIX, ExecutionIdExt as _},
         ffqn::FunctionFqn,
         grpc_client::{
-            self, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent, ResultDetail,
+            self, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent, ResponseWithCursor,
+            ResultDetail,
             execution_event::{
                 self, Finished, TemporarilyFailed, TemporarilyTimedOut,
                 history_event::{JoinSetRequest, join_set_request},
@@ -25,9 +26,9 @@ use crate::{
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use gloo::timers::future::TimeoutFuture;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 use log::{debug, trace};
-use std::ops::Deref as _;
+use std::{ops::Deref as _, rc::Rc};
 use yew::prelude::*;
 use yew_router::prelude::Link;
 
@@ -36,74 +37,154 @@ pub struct TraceViewProps {
     pub execution_id: grpc_client::ExecutionId,
 }
 
-const PAGE: u32 = 100;
+const PAGE: u32 = 500;
+const SLEEP_MILLIS: u32 = 100;
 
-type ExecutionIdsStateType = UseStateHandle<HashSet<ExecutionId>>;
-type IsFetchingStateType = UseStateHandle<HashMap<ExecutionId, bool>>;
-type EventsStateType = UseStateHandle<HashMap<ExecutionId, Vec<ExecutionEvent>>>;
-type ResponsesStateType = UseStateHandle<
-    HashMap<
-        ExecutionId,
-        (
-            HashMap<JoinSetId, Vec<JoinSetResponseEvent>>,
-            u32, /* Cursor */
-        ),
-    >,
->;
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Cursors {
+    version_from: u32,
+    responses_cursor_from: u32,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ExecutionFetchState {
+    Requested(Cursors),
+    Pending,
+    Finished,
+}
+
+enum TraceviewStateAction {
+    AddExecutionId(ExecutionId),
+    SetPending(ExecutionId),
+    SavePage {
+        execution_id: ExecutionId,
+        new_events: Vec<ExecutionEvent>,
+        new_responses: Vec<ResponseWithCursor>,
+        is_finished: bool,
+    },
+    RequestNextPage {
+        execution_id: ExecutionId,
+        cursors: Cursors,
+    },
+}
+
+#[derive(Default, Clone, PartialEq)]
+struct TraceViewState {
+    execution_ids_to_fetch_state: HashMap<ExecutionId, ExecutionFetchState>,
+    events: HashMap<ExecutionId, Vec<ExecutionEvent>>,
+    responses: HashMap<ExecutionId, HashMap<JoinSetId, Vec<JoinSetResponseEvent>>>,
+}
+impl Reducible for TraceViewState {
+    type Action = TraceviewStateAction;
+
+    fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
+        let (execution_id, next_state) = match action {
+            TraceviewStateAction::AddExecutionId(execution_id) => {
+                if !self
+                    .execution_ids_to_fetch_state
+                    .contains_key(&execution_id)
+                {
+                    (
+                        execution_id,
+                        ExecutionFetchState::Requested(Cursors::default()),
+                    )
+                } else {
+                    return self;
+                }
+            }
+            TraceviewStateAction::SetPending(execution_id) => {
+                (execution_id, ExecutionFetchState::Pending)
+            }
+            TraceviewStateAction::RequestNextPage {
+                execution_id,
+                cursors,
+            } => (execution_id, ExecutionFetchState::Requested(cursors)),
+            TraceviewStateAction::SavePage {
+                execution_id,
+                new_events,
+                new_responses,
+                is_finished: finished,
+            } => {
+                let mut s = self.as_ref().clone();
+
+                s.events
+                    .entry(execution_id.clone())
+                    .or_default()
+                    .extend(new_events);
+
+                let join_set_to_resps = s.responses.entry(execution_id.clone()).or_default();
+                for response in new_responses {
+                    let response = response
+                        .event
+                        .expect("`event` is sent in `ResponseWithCursor`");
+                    let join_set_id = response
+                        .join_set_id
+                        .clone()
+                        .expect("`join_set_id` is sent in `JoinSetResponseEvent`");
+                    let execution_responses = join_set_to_resps.entry(join_set_id).or_default();
+                    execution_responses.push(response);
+                }
+                let new_state = if finished {
+                    ExecutionFetchState::Finished
+                } else {
+                    ExecutionFetchState::Pending
+                };
+                // Will be followed by ExecutionFetchState::RequestNextPage
+                s.execution_ids_to_fetch_state
+                    .insert(execution_id, new_state);
+                return Rc::from(s);
+            }
+        };
+        let mut s = self.as_ref().clone();
+        s.execution_ids_to_fetch_state
+            .insert(execution_id, next_state);
+        Rc::from(s)
+    }
+}
 
 #[function_component(TraceView)]
 pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
-    let execution_ids_state: ExecutionIdsStateType = use_state(HashSet::default);
+    let trace_view_state = use_reducer_eq(TraceViewState::default);
+    // Fill the current execution id
     use_effect_with(execution_id.clone(), {
-        let execution_ids_state = execution_ids_state.clone();
+        let trace_view_state = trace_view_state.clone();
         move |execution_id| {
-            let mut execution_ids = execution_ids_state.deref().clone();
-            if !execution_ids.contains(execution_id) {
-                execution_ids.insert(execution_id.clone());
-                execution_ids_state.set(execution_ids);
-            }
+            trace_view_state.dispatch(TraceviewStateAction::AddExecutionId(execution_id.clone()));
         }
     });
-    let events_state: EventsStateType = use_state(Default::default);
-    let responses_state: ResponsesStateType = use_state(Default::default);
-    let is_fetching_state: IsFetchingStateType = use_state(Default::default); // Track if we're currently fetching
-    let effect_hook = EffectHook {
-        is_fetching_state: is_fetching_state.clone(),
-        events_state: events_state.clone(),
-        responses_state: responses_state.clone(),
-    };
 
-    use_effect_with(
-        (
-            execution_ids_state.deref().clone(), // Retrigger on adding child executions
-            is_fetching_state.deref().clone(), // Retrigger on change, used for fetching the next page.
-        ),
-        move |(execution_ids, current_is_fetching_map)| {
-            effect_hook.call(execution_ids, current_is_fetching_map)
-        },
-    );
+    use_effect_with(trace_view_state.clone(), on_state_change);
+
+    let trace_view = trace_view_state.deref();
 
     let root_trace = {
-        let events_map = events_state.deref();
-        let responses_map = responses_state.deref();
+        let events_map = &trace_view.events;
+        let responses_map = &trace_view.responses;
         compute_root_trace(
             execution_id,
             events_map,
             responses_map,
-            &execution_ids_state,
+            |execution_id| {
+                trace_view
+                    .execution_ids_to_fetch_state
+                    .contains_key(execution_id)
+            },
+            {
+                let trace_view_state = trace_view_state.clone();
+                move |execution_id| {
+                    trace_view_state.dispatch(TraceviewStateAction::AddExecutionId(execution_id));
+                }
+            },
         )
     };
 
     let execution_log = {
-        let event_lock = events_state.deref();
+        let events = &trace_view.events;
         let dummy_events = Vec::new();
-        let events = event_lock.get(execution_id).unwrap_or(&dummy_events);
+        let events = events.get(execution_id).unwrap_or(&dummy_events);
         let dummy_response_map = HashMap::new();
-        let responses_lock = responses_state.deref();
-        let responses = responses_lock
-            .get(execution_id)
-            .map(|(map, _)| map)
-            .unwrap_or(&dummy_response_map);
+        let responses = &trace_view.responses;
+        let responses = responses.get(execution_id).unwrap_or(&dummy_response_map);
         let join_next_version_to_response = compute_join_next_to_response(events, responses);
         events
             .iter()
@@ -153,131 +234,85 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
     </>}
 }
 
-struct EffectHook {
-    is_fetching_state: IsFetchingStateType, // triggered, read by the hook. Modified asynchronously.
-    events_state: EventsStateType,          // Modified asynchronously.
-    responses_state: ResponsesStateType,    // Modified asynchronously.
-}
-impl EffectHook {
-    // Fetch ListExecutionEventsAndResponses, populate events_state,responses_state based on execution_ids
-    fn call(
-        &self,
-        execution_ids: &HashSet<ExecutionId>,
-        current_is_fetching_map: &HashMap<ExecutionId, bool>,
-    ) {
-        trace!("Triggered fetch callback: {execution_ids:?}");
-        let is_not_being_fetched = |execution_id: &ExecutionId| {
-            !current_is_fetching_map
-                .get(execution_id)
-                .cloned()
-                .unwrap_or_default()
-        };
-        for execution_id in execution_ids.iter().filter(|id| is_not_being_fetched(id)) {
-            trace!("Setting is_fetching_state=true for {execution_id}");
-            let mut is_fetching_map = self.is_fetching_state.deref().clone();
-            is_fetching_map.insert(execution_id.clone(), true);
-            self.is_fetching_state.set(is_fetching_map); // this will trigger the outer `use_effect` but will be short-circuted.
-            {
-                let execution_id = execution_id.clone();
-                let events_state = self.events_state.clone();
-                let responses_state = self.responses_state.clone();
-                let is_fetching_state = self.is_fetching_state.clone();
-                wasm_bindgen_futures::spawn_local(async move {
-                    let events_rwlock = events_state.deref();
-                    let mut events = events_rwlock
-                        .get(&execution_id)
-                        .cloned()
-                        .unwrap_or_default();
-                    let version_from = events.last().map(|e| e.version + 1).unwrap_or_default();
-                    let responses_rwlock = responses_state.deref();
-                    let (mut responses, responses_cursor_from) = responses_rwlock
-                        .get(&execution_id)
-                        .cloned()
-                        .unwrap_or_default();
-                    trace!("list_execution_events {execution_id} {version_from}");
-                    let base_url = "/api";
-                    let mut execution_client =
-                        grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
-                            tonic_web_wasm_client::Client::new(base_url.to_string()),
-                        );
-                    let new_events_and_responses = execution_client
-                        .list_execution_events_and_responses(
-                            grpc_client::ListExecutionEventsAndResponsesRequest {
-                                execution_id: Some(execution_id.clone()),
-                                version_from,
-                                events_length: PAGE,
-                                responses_cursor_from,
-                                responses_length: PAGE,
-                                responses_including_cursor: responses_cursor_from == 0,
-                                include_backtrace_id: true,
-                            },
-                        )
-                        .await
-                        .unwrap()
-                        .into_inner();
-                    debug!(
-                        "{execution_id} Got {} events, {} responses",
-                        new_events_and_responses.events.len(),
-                        new_events_and_responses.responses.len()
-                    );
-                    events.extend(new_events_and_responses.events);
-                    let last_event = events.last().expect("not found is sent as an error");
-                    let is_finished =
-                        matches!(last_event.event, Some(execution_event::Event::Finished(_)));
+fn on_state_change(trace_view_state: &UseReducerHandle<TraceViewState>) {
+    trace!("Triggered use_effects");
+    for (execution_id, cursors) in trace_view_state
+        .execution_ids_to_fetch_state
+        .iter()
+        .filter_map(|(id, state)| match state {
+            ExecutionFetchState::Requested(cursors) => Some((id, *cursors)),
+            ExecutionFetchState::Pending | ExecutionFetchState::Finished => None,
+        })
+    {
+        trace_view_state.dispatch(TraceviewStateAction::SetPending(execution_id.clone()));
+        let execution_id = execution_id.clone();
+        let trace_view_state = trace_view_state.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            trace!("list_execution_events {cursors:?}");
+            let base_url = "/api";
+            let mut execution_client =
+                grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
+                    tonic_web_wasm_client::Client::new(base_url.to_string()),
+                );
+            let new_events_and_responses = execution_client
+                .list_execution_events_and_responses(
+                    grpc_client::ListExecutionEventsAndResponsesRequest {
+                        execution_id: Some(execution_id.clone()),
+                        version_from: cursors.version_from,
+                        events_length: PAGE,
+                        responses_cursor_from: cursors.responses_cursor_from,
+                        responses_length: PAGE,
+                        responses_including_cursor: cursors.responses_cursor_from == 0,
+                        include_backtrace_id: true,
+                    },
+                )
+                .await
+                .unwrap()
+                .into_inner();
+            debug!(
+                "{execution_id} Got {} events, {} responses",
+                new_events_and_responses.events.len(),
+                new_events_and_responses.responses.len()
+            );
 
-                    {
-                        // Persist `events_state`
-                        let mut events_map = events_state.deref().clone();
-                        events_map.insert(execution_id.clone(), events);
-                        events_state.set(events_map);
-                    }
-
-                    {
-                        // Persist `responses_state`
-                        let responses_cursor_from = new_events_and_responses
-                            .responses
-                            .last()
-                            .map(|r| r.cursor)
-                            .unwrap_or(responses_cursor_from);
-                        for response in new_events_and_responses.responses {
-                            let response = response
-                                .event
-                                .expect("`event` is sent in `ResponseWithCursor`");
-                            let join_set_id = response
-                                .join_set_id
-                                .clone()
-                                .expect("`join_set_id` is sent in `JoinSetResponseEvent`");
-                            let execution_responses = responses.entry(join_set_id).or_default();
-                            execution_responses.push(response);
-                        }
-                        let mut responses_outer_map = responses_state.deref().clone();
-                        responses_outer_map
-                            .insert(execution_id.clone(), (responses, responses_cursor_from));
-                        responses_state.set(responses_outer_map);
-                    }
-
-                    if is_finished {
-                        debug!("{execution_id} Execution Finished");
-                        // Keep is_fetching_state as true, the use_effect_with will not be triggered again.
-                    } else {
-                        trace!("{execution_id} Timeout: start");
-                        TimeoutFuture::new(1000).await;
-                        trace!("{execution_id} Timeout: Triggering refetch");
-                        let mut is_fetching_map = is_fetching_state.deref().clone();
-                        is_fetching_map.insert(execution_id.clone(), false);
-                        is_fetching_state.set(is_fetching_map); // Trigger use_effect_with again.
-                    }
+            let last_event = new_events_and_responses.events.last();
+            let is_finished = matches!(
+                last_event.and_then(|e| e.event.as_ref()),
+                Some(execution_event::Event::Finished(_))
+            );
+            let cursors = Cursors {
+                version_from: last_event
+                    .map(|e| e.version + 1)
+                    .unwrap_or(cursors.version_from),
+                responses_cursor_from: new_events_and_responses
+                    .responses
+                    .last()
+                    .map(|resp| resp.cursor)
+                    .unwrap_or(cursors.responses_cursor_from),
+            };
+            trace_view_state.dispatch(TraceviewStateAction::SavePage {
+                execution_id: execution_id.clone(),
+                new_events: new_events_and_responses.events,
+                new_responses: new_events_and_responses.responses,
+                is_finished,
+            });
+            if !is_finished {
+                TimeoutFuture::new(SLEEP_MILLIS).await;
+                trace_view_state.dispatch(TraceviewStateAction::RequestNextPage {
+                    execution_id,
+                    cursors,
                 });
-            }
-        }
+            };
+        });
     }
 }
 
 fn compute_root_trace(
     execution_id: &ExecutionId,
     events_map: &HashMap<ExecutionId, Vec<ExecutionEvent>>,
-    responses_map: &HashMap<ExecutionId, (HashMap<JoinSetId, Vec<JoinSetResponseEvent>>, u32)>,
-    execution_ids_state: &UseStateHandle<HashSet<ExecutionId>>,
+    responses_map: &HashMap<ExecutionId, HashMap<JoinSetId, Vec<JoinSetResponseEvent>>>,
+    contains: impl Fn(&ExecutionId) -> bool + Clone,
+    on_execution_load: impl Fn(ExecutionId) + Clone + 'static,
 ) -> Option<TraceDataRoot> {
     let events = match events_map.get(execution_id) {
         Some(events) if !events.is_empty() => events,
@@ -286,7 +321,7 @@ fn compute_root_trace(
 
     let last_event = events.last().expect("not found is sent as an error");
     let is_finished = matches!(last_event.event, Some(execution_event::Event::Finished(_)));
-    let responses = responses_map.get(execution_id).map(|m| &m.0);
+    let responses = responses_map.get(execution_id);
     let mut last_event_at = compute_last_event_at(last_event, is_finished, responses);
 
     let execution_scheduled_at = {
@@ -373,29 +408,30 @@ fn compute_root_trace(
                             child_execution_id.to_string()
                         };
 
-                        let load_button = if !execution_ids_state.deref().contains(child_execution_id) {
+                        let load_button = if !contains(child_execution_id) {
                                 let onclick =
                                 Callback::from({
-                                    let execution_ids_state = execution_ids_state.clone();
+                                    let on_execution_load=on_execution_load.clone();
                                     let child_execution_id = child_execution_id.clone();
                                     move |_| {
                                         debug!("Adding {child_execution_id}");
-                                        let mut execution_ids = execution_ids_state.deref().clone();
-                                        execution_ids.insert(child_execution_id.clone());
-                                        execution_ids_state.set(execution_ids);
+                                        on_execution_load(child_execution_id.clone());
                                     }
                                 });
+
                             html!{
                                 <button {onclick} >{"Load"} </button>
                             }
                         } else {
                             Html::default()
-                        };
+                        }
+                        ;
                         if let Some(child_root) = compute_root_trace(
                             child_execution_id,
                             events_map,
                             responses_map,
-                            execution_ids_state,
+                            contains.clone(),
+                            on_execution_load.clone()
                         ) {
                             last_event_at = last_event_at.max(child_root.last_event_at);
                             Some(vec![TraceData::Root(child_root)])
