@@ -112,7 +112,6 @@ async fn main() -> Result<(), anyhow::Error> {
                 params,
                 follow,
                 json: json_output,
-                no_backtrace,
                 no_reconnect,
             }) => {
                 let client = get_execution_repository_client(api_url).await?;
@@ -121,26 +120,21 @@ async fn main() -> Result<(), anyhow::Error> {
                 let serde_json::Value::Array(params) = params else {
                     bail!("params should be a JSON array");
                 };
-                let opts = match (json_output, no_backtrace) {
-                    (true, false) => SubmitOutputOpts::Json,
-                    (false, no_backtrace) => SubmitOutputOpts::PlainFollow {
-                        no_backtrace,
-                        no_reconnect,
-                    },
-                    _ => unreachable!("this must have been handled by `conflicts_with`"),
+                let opts = if json_output {
+                    SubmitOutputOpts::Json
+                } else {
+                    SubmitOutputOpts::PlainFollow { no_reconnect }
                 };
                 command::execution::submit(client, ffqn, params, follow, opts).await
             }
             ClientSubcommand::Execution(args::Execution::Get {
                 execution_id,
                 follow,
-                no_backtrace,
                 no_reconnect,
             }) => {
                 let client = get_execution_repository_client(api_url).await?;
                 let opts = GetStatusOptions {
                     follow,
-                    no_backtrace,
                     no_reconnect,
                 };
                 command::execution::get_status(client, execution_id, opts).await

@@ -136,14 +136,11 @@ pub(crate) enum Execution {
         /// Follow the stream of events until the execution finishes
         #[arg(short, long)]
         follow: bool,
-        /// Do not show backtrace details while following the status stream.
-        #[arg(long, requires = "follow", conflicts_with = "json")]
-        no_backtrace: bool,
         /// Do not attempt to reconnect on connection error while following the status stream.
         #[arg(long, requires = "follow", conflicts_with = "json")]
         no_reconnect: bool,
         /// Print output as JSON
-        #[arg(long, conflicts_with = "no_backtrace")]
+        #[arg(long)]
         json: bool,
     },
     Get {
@@ -151,9 +148,6 @@ pub(crate) enum Execution {
         #[arg(short, long)]
         follow: bool,
         execution_id: ExecutionId,
-        /// Do not show backtrace details.
-        #[arg(long)]
-        no_backtrace: bool,
         /// Do not attempt to reconnect on connection error while following the status stream.
         #[arg(long, requires = "follow")]
         no_reconnect: bool,
