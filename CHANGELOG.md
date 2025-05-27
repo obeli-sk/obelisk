@@ -3,6 +3,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.5](https://github.com/obeli-sk/obelisk/compare/v0.22.4...v0.22.5)
+
+### ⛰️ Features
+
+- *(cli)* Remove backtrace printing - ([fd957a5](https://github.com/obeli-sk/obelisk/commit/fd957a5ef8613a696ad8491eba6767989c3a843f))
+
+### 🐛 Bug Fixes
+
+- Lower `verify_imports` error to a warning - ([e3a1909](https://github.com/obeli-sk/obelisk/commit/e3a1909a8db1ceb2d413b2bcdd93e3c78eace4d2))
+
+### 📚 Documentation
+
+- Update the roadmap - ([ad74fb1](https://github.com/obeli-sk/obelisk/commit/ad74fb1039efa71d4a308d039a76c99b1cf37879))
+- Describe `stub_wasi` - ([8eac345](https://github.com/obeli-sk/obelisk/commit/8eac34528120a22be3e12985f622d3fa3d61ef9c))
+
+### 🚜 Refactor
+
+- Drop "com" from `ProjectDir`'s qualifier - ([ee16178](https://github.com/obeli-sk/obelisk/commit/ee16178b4f93e454d92a610e83fec36b07fa6fe6))
+- Use `tokio::task::yield_now` on epoch interruption - ([c3b9799](https://github.com/obeli-sk/obelisk/commit/c3b979975946e25bec38b3feabd9e3b07d1b9244))
+
+
 ## [0.22.4](https://github.com/obeli-sk/obelisk/compare/v0.22.3...v0.22.4)
 
 Adds experimental support for creating workflows in TinyGo.
