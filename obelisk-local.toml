@@ -1,6 +1,14 @@
 api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
 webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
 
+[log.stdout]
+enabled = true
+
+[activities.directories]
+enabled = true
+parent_directory = "${TEMP_DIR}/obelisk"
+# cleanup.hours = 1 TODO
+
 [[http_server]]
 name = "external_webhook"
 listening_addr = "127.0.0.1:9090"
@@ -44,5 +52,10 @@ name = "test_programs_sleep_workflow"
 location.path = "target/wasm32-unknown-unknown/release/test_programs_sleep_workflow.wasm"
 backtrace.sources = {"${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs"}
 
-[log.stdout]
-enabled = true
+[[activity_wasm]]
+name = "test_programs_dir_activity"
+location.path = "target/wasm32-wasip2/release/test_programs_dir_activity.wasm"
+max_retries = 1
+forward_stdout = "stderr"
+forward_stderr = "stderr"
+directories  = { enabled = true, reuse_on_retry = true }

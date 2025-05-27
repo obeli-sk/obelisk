@@ -6,6 +6,7 @@ use concepts::ExecutionId;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
 use hyper::body::Body;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 use tracing::{Instrument, Span, debug, info_span};
@@ -13,6 +14,7 @@ use wasmtime::Engine;
 use wasmtime::component::Resource;
 use wasmtime::{Store, component::ResourceTable};
 use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{DirPerms, FilePerms};
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::types::{
@@ -105,15 +107,17 @@ impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
     }
 }
 
-#[must_use]
-pub fn store<C: ClockFn>(
+pub(crate) struct ActivityPreopenIoError(pub String);
+
+pub(crate) fn store<C: ClockFn>(
     engine: &Engine,
     execution_id: &ExecutionId,
     config: &ActivityConfig,
     worker_span: Span,
     clock_fn: C,
     http_client_traces: HttpClientTracesContainer,
-) -> Store<ActivityCtx<C>> {
+    preopen_dir: Option<&Path>,
+) -> Result<Store<ActivityCtx<C>>, ActivityPreopenIoError> {
     let mut wasi_ctx = WasiCtxBuilder::new();
     if let Some(stdout) = config.forward_stdout {
         let stdout = LogStream::new(
@@ -138,6 +142,14 @@ pub fn store<C: ClockFn>(
     for env_var in config.env_vars.iter() {
         wasi_ctx.env(&env_var.key, &env_var.val);
     }
+
+    if let Some(preopen_dir) = preopen_dir {
+        let res = wasi_ctx.preopened_dir(preopen_dir, ".", DirPerms::all(), FilePerms::all());
+        if let Err(err) = res {
+            return Err(ActivityPreopenIoError(err.to_string()));
+        }
+    }
+
     let ctx = ActivityCtx {
         table: ResourceTable::new(),
         wasi_ctx: wasi_ctx.build(),
@@ -146,7 +158,7 @@ pub fn store<C: ClockFn>(
         http_client_traces,
         clock_fn,
     };
-    Store::new(engine, ctx)
+    Ok(Store::new(engine, ctx))
 }
 
 impl<C: ClockFn> log_activities::obelisk::log::log::Host for ActivityCtx<C> {

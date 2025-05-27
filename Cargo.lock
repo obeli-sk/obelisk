@@ -4820,6 +4820,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-programs-dir-activity"
+version = "0.22.5"
+dependencies = [
+ "wit-bindgen 0.42.1",
+]
+
+[[package]]
+name = "test-programs-dir-activity-builder"
+version = "0.22.5"
+dependencies = [
+ "obelisk-component-builder",
+]
+
+[[package]]
 name = "test-programs-fibo-activity"
 version = "0.22.5"
 dependencies = [

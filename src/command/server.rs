@@ -190,6 +190,11 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .try_into()?;
         let span = Span::current();
         span.record("execution_id", tracing::field::display(&execution_id));
+        if !execution_id.is_top_level() {
+            return Err(tonic::Status::invalid_argument(
+                "argument `execution_id` must be a top-level Execution ID",
+            ));
+        }
 
         // Deserialize params JSON into `Params`
         let mut params = {
@@ -901,16 +906,10 @@ async fn verify_internal(
     let wasm_cache_dir = config
         .get_wasm_cache_directory(&config_holder.path_prefixes)
         .await?;
-    let codegen_cache = if config.codegen_cache.enabled {
-        Some(
-            config
-                .codegen_cache
-                .get_directory(&config_holder.path_prefixes)
-                .await?,
-        )
-    } else {
-        None
-    };
+    let codegen_cache = config
+        .codegen_cache
+        .get_directory(&config_holder.path_prefixes)
+        .await?;
     debug!("Using codegen cache? {codegen_cache:?}");
     let ignore_not_found = |err: std::io::Error| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -1115,6 +1114,12 @@ impl ServerVerified {
             });
         }
         let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
+        let parent_preopen_dir = config
+            .activities_global_config
+            .directories
+            .get_parent_directory(&path_prefixes)
+            .await
+            .context("error resolving `activities.directories.parent_directory`")?;
         let mut config = fetch_and_verify_all(
             config.wasm_activities,
             config.workflows,
@@ -1125,6 +1130,7 @@ impl ServerVerified {
             ignore_missing_env_vars,
             path_prefixes,
             global_backtrace_persist,
+            parent_preopen_dir,
         )
         .await?;
         debug!("Verified config: {config:#?}");
@@ -1332,6 +1338,7 @@ async fn fetch_and_verify_all(
     ignore_missing_env_vars: bool,
     path_prefixes: PathPrefixes,
     global_backtrace_persist: bool,
+    parent_preopen_dir: Option<Arc<Path>>,
 ) -> Result<ConfigVerified, anyhow::Error> {
     // Check uniqueness of server and webhook names.
     {
@@ -1394,12 +1401,14 @@ async fn fetch_and_verify_all(
             tokio::spawn({
                 let wasm_cache_dir = wasm_cache_dir.clone();
                 let metadata_dir = metadata_dir.clone();
+                let parent_preopen_dir = parent_preopen_dir.clone();
                 async move {
                     activity
                         .fetch_and_verify(
                             wasm_cache_dir.clone(),
                             metadata_dir.clone(),
                             ignore_missing_env_vars,
+                            parent_preopen_dir,
                         )
                         .await
                 }

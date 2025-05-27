@@ -67,6 +67,12 @@ pub enum WorkerError {
         version: Version,
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
+    #[error("{reason_kind}")]
+    ActivityPreopenedDirError {
+        reason_kind: &'static str,
+        reason_inner: String,
+        version: Version,
+    },
     // Used by activity worker, must not be returned when retries are exhausted.
     #[error("activity returned error")]
     ActivityReturnedError {

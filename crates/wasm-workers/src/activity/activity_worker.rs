@@ -12,6 +12,7 @@ use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
+use std::path::Path;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{info, trace};
 use utils::wasm_tools::{ExIm, WasmComponent};
@@ -26,6 +27,13 @@ pub struct ActivityConfig {
     pub forward_stderr: Option<StdOutput>,
     pub env_vars: Arc<[EnvVar]>,
     pub retry_on_err: bool,
+    pub directories_config: Option<ActivityDirectoriesConfig>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ActivityDirectoriesConfig {
+    pub parent_preopen_dir: Arc<Path>,
+    pub reuse_on_retry: bool,
 }
 
 #[derive(Clone)]
@@ -109,14 +117,55 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
         assert!(ctx.event_history.is_empty());
         let http_client_traces = HttpClientTracesContainer::default();
 
-        let mut store = activity_ctx::store(
+        let preopen_dir = if let Some(directories_config) = &self.config.directories_config {
+            let preopen_dir = directories_config
+                .parent_preopen_dir
+                .join(ctx.execution_id.to_string());
+            if !directories_config.reuse_on_retry {
+                // Attempt to `rm -rf` before (re)creating the directory.
+                match tokio::fs::remove_dir_all(&preopen_dir).await {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => {
+                        return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
+                            reason_kind: "cannot remove old preopened directory that is in the way",
+                            reason_inner: err.to_string(),
+                            version: ctx.version,
+                        });
+                    }
+                }
+            }
+            let res = tokio::fs::create_dir_all(&preopen_dir).await;
+            if let Err(err) = res {
+                return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
+                    reason_kind: "cannot create preopened directory",
+                    reason_inner: err.to_string(),
+                    version: ctx.version,
+                });
+            }
+            Some(preopen_dir)
+        } else {
+            None
+        };
+
+        let mut store = match activity_ctx::store(
             &self.engine,
             &ctx.execution_id,
             &self.config,
             ctx.worker_span.clone(),
             self.clock_fn.clone(),
             http_client_traces.clone(),
-        );
+            preopen_dir.as_deref(),
+        ) {
+            Ok(store) => store,
+            Err(err) => {
+                return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
+                    reason_kind: "not found although preopened directory was just created",
+                    reason_inner: err.0,
+                    version: ctx.version,
+                });
+            }
+        };
 
         // Configure epoch callback before running the initialization to avoid interruption
         store.epoch_deadline_callback(|_store_ctx| {
@@ -323,6 +372,7 @@ pub(crate) mod tests {
             forward_stderr: None,
             env_vars: Arc::from([]),
             retry_on_err: true,
+            directories_config: None,
         }
     }
 

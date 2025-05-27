@@ -22,7 +22,7 @@ use util::{
 };
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
-    activity::activity_worker::ActivityConfig,
+    activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig},
     envvar::EnvVar,
     workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
@@ -36,6 +36,7 @@ const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
 const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
 const CONFIG_DIR_PREFIX: &str = "${CONFIG_DIR}/";
 const OBELISK_TOML_DIR_PREFIX: &str = "${OBELISK_TOML_DIR}/";
+const TEMP_DIR_PREFIX: &str = "${TEMP_DIR}/";
 
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
@@ -60,6 +61,8 @@ pub(crate) struct ConfigToml {
     pub(crate) wasm_global_config: WasmGlobalConfigToml,
     #[serde(default)]
     wasm_cache_directory: Option<String>,
+    #[serde(default, rename = "activities")]
+    pub(crate) activities_global_config: ActivitiesGlobalConfigToml,
     #[serde(default)]
     pub(crate) codegen_cache: CodegenCache,
     #[serde(default, rename = "activity_wasm")]
@@ -177,11 +180,48 @@ impl Default for WasmGlobalBacktrace {
     }
 }
 
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivitiesGlobalConfigToml {
+    pub directories: ActivitiesDirectoriesGlobalConfigToml,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivitiesDirectoriesGlobalConfigToml {
+    #[serde(default = "default_activities_directories_enabled")]
+    enabled: bool,
+    #[serde(default = "default_activities_directories_parent_directory")]
+    parent_directory: String,
+}
+impl Default for ActivitiesDirectoriesGlobalConfigToml {
+    fn default() -> Self {
+        Self {
+            enabled: default_activities_directories_enabled(),
+            parent_directory: default_activities_directories_parent_directory(),
+        }
+    }
+}
+impl ActivitiesDirectoriesGlobalConfigToml {
+    pub(crate) async fn get_parent_directory(
+        &self,
+        path_prefixes: &PathPrefixes,
+    ) -> Result<Option<Arc<Path>>, anyhow::Error> {
+        if self.enabled {
+            replace_path_prefix_mkdir(&self.parent_directory, path_prefixes)
+                .await
+                .map(|path_buf| Some(Arc::from(path_buf)))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CodegenCache {
     #[serde(default = "default_codegen_enabled")]
-    pub enabled: bool,
+    enabled: bool,
     #[serde(default)]
     directory: Option<String>,
 }
@@ -189,7 +229,7 @@ pub(crate) struct CodegenCache {
 impl Default for CodegenCache {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: default_codegen_enabled(),
             directory: None,
         }
     }
@@ -199,15 +239,21 @@ impl CodegenCache {
     pub(crate) async fn get_directory(
         &self,
         path_prefixes: &PathPrefixes,
-    ) -> Result<PathBuf, anyhow::Error> {
-        let directory = self.directory.as_deref().unwrap_or_else(|| {
-            if path_prefixes.project_dirs.is_some() {
-                DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS
-            } else {
-                DEFAULT_CODEGEN_CACHE_DIRECTORY
-            }
-        });
-        replace_path_prefix_mkdir(directory, path_prefixes).await
+    ) -> Result<Option<PathBuf>, anyhow::Error> {
+        if self.enabled {
+            let directory = self.directory.as_deref().unwrap_or_else(|| {
+                if path_prefixes.project_dirs.is_some() {
+                    DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS
+                } else {
+                    DEFAULT_CODEGEN_CACHE_DIRECTORY
+                }
+            });
+            replace_path_prefix_mkdir(directory, path_prefixes)
+                .await
+                .map(Some)
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -321,6 +367,17 @@ pub(crate) struct ActivityComponentConfigToml {
     pub(crate) env_vars: Vec<EnvVarConfig>,
     #[serde(default = "default_retry_on_err")]
     pub(crate) retry_on_err: bool,
+    #[serde(default)]
+    pub(crate) directories: ActivityDirectoriesConfigToml,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivityDirectoriesConfigToml {
+    #[serde(default)]
+    pub(crate) enabled: bool,
+    #[serde(default)]
+    pub(crate) reuse_on_retry: bool,
 }
 
 #[derive(Debug)]
@@ -345,6 +402,7 @@ impl ActivityComponentConfigToml {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
+        parent_preopen_dir: Option<Arc<Path>>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
         let component_id = ComponentId::new(
             ComponentType::ActivityWasm,
@@ -358,12 +416,26 @@ impl ActivityComponentConfigToml {
             .await?;
 
         let env_vars = resolve_env_vars(self.env_vars, ignore_missing_env_vars)?;
+        let directories_config = match (parent_preopen_dir, self.directories.enabled) {
+            (Some(parent_preopen_dir), true) => Some(ActivityDirectoriesConfig {
+                parent_preopen_dir,
+                reuse_on_retry: self.directories.reuse_on_retry,
+            }),
+            (None, true) => {
+                bail!(
+                    "`directories.enabled` set to true for activity `{}` while the global setting `activities.directories.enabled` is false",
+                    common.name.0
+                );
+            }
+            (_, false) => None,
+        };
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
             forward_stdout: self.forward_stdout.into(),
             forward_stderr: self.forward_stderr.into(),
             env_vars,
             retry_on_err: self.retry_on_err,
+            directories_config,
         };
         Ok(ActivityWasmConfigVerified {
             content_digest: common.content_digest,
@@ -1024,7 +1096,7 @@ mod util {
 
     use super::{
         CACHE_DIR_PREFIX, CONFIG_DIR_PREFIX, DATA_DIR_PREFIX, HOME_DIR_PREFIX,
-        OBELISK_TOML_DIR_PREFIX,
+        OBELISK_TOML_DIR_PREFIX, TEMP_DIR_PREFIX,
     };
 
     pub(crate) fn replace_file_prefix_verify_exists(
@@ -1117,6 +1189,8 @@ mod util {
                 project_dirs.config_dir().join(suffix)
             } else if let Some(suffix) = dir.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
                 path_prefixes.obelisk_toml_dir.join(suffix)
+            } else if let Some(suffix) = dir.strip_prefix(TEMP_DIR_PREFIX) {
+                std::env::temp_dir().join(suffix)
             } else {
                 PathBuf::from(dir)
             }
@@ -1221,6 +1295,14 @@ fn default_sqlite_queue_capacity() -> usize {
 }
 fn default_sqlite_low_prio_threshold() -> usize {
     SqliteConfig::default().low_prio_threshold
+}
+
+fn default_activities_directories_enabled() -> bool {
+    false
+}
+
+fn default_activities_directories_parent_directory() -> String {
+    "${TEMP_DIR}/obelisk".to_string()
 }
 
 #[cfg(test)]

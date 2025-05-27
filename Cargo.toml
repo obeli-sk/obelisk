@@ -103,6 +103,8 @@ members = [
     "crates/executor",
     "crates/component-builder",
     "crates/testing/db-tests",
+    "crates/testing/test-programs/dir/activity",
+    "crates/testing/test-programs/dir/activity/builder",
     "crates/testing/test-programs/fibo/activity",
     "crates/testing/test-programs/fibo/activity/builder",
     "crates/testing/test-programs/fibo/webhook",

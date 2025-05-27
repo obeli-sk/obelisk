@@ -6,9 +6,16 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
 # sqlite.pragma = { "cache_size" = "3000" } # Customize PRAGMA statements.
 
-# wasm_cache_directory = "${CACHE_DIR}/wasm" # Path to directory where downloaded or transformed WASM files are stored. Supports path prefixes.
+## WASM Cache dir
+## Path to directory where downloaded or transformed WASM files are stored. Supports path prefixes.
+## By default "${CACHE_DIR}/wasm" or "./cache/wasm" if no valid home directory path could be retrieved from the operating system.
+# wasm_cache_directory = "${CACHE_DIR}/wasm"
 
 # wasm.backtrace.persist = true        # Persist backtraces on effect calls for all workflows and webhook endpoints.
+
+# [activities.directories]
+# enabled = true
+# parent_directory = "${TEMP_DIR}/obelisk" # Make sure the folder is not on a RAM-backed filesystem if you plan to write large files.
 
 # [codegen_cache]
 ## Defaults:
@@ -43,6 +50,10 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # forward_stderr="stderr" # forwards stderr to host's stderr
 ## Environment variables: Set to a specific value or forward from the host. Default is empty.
 # env_vars = ["ENV1", "ENV2=somevalue"]
+## Preopened directories
+## When enabled, `.` will be available to the activity with all permissions.
+## On host the folder is mapped to `activities.directories.parent_directory`/ExecutionID.
+# directories = { enabled = true, reuse-on-retry = false }
 
 ### Workflow components configuration
 # [[workflow]]
@@ -174,7 +185,8 @@ enabled = true
 ## Appendix: Supported path prefixes:
 # | Prefix               | Default path           | Details
 # | ~                    | ~                      | Current user's home directory
-# | ${DATA_DIR}          | ~/.local/share/obelisk | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dir
-# | ${CACHE_DIR}         | ~/.cache/obelisk       | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.cache_dir
-# | ${CONFIG_DIR}        | ~/.config/obelisk      | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.config_dir
+# | ${DATA_DIR}          | ~/.local/share/obelisk | https://docs.rs/directories/6.0.0/directories/struct.ProjectDirs.html#method.data_dir
+# | ${CACHE_DIR}         | ~/.cache/obelisk       | https://docs.rs/directories/6.0.0/directories/struct.ProjectDirs.html#method.cache_dir
+# | ${CONFIG_DIR}        | ~/.config/obelisk      | https://docs.rs/directories/6.0.0/directories/struct.ProjectDirs.html#method.config_dir
 # | ${OBELISK_TOML_DIR}  | N/A                    | Directory where the obelisk.toml file is located
+# | ${TEMP_DIR}          | /tmp                   | https://doc.rust-lang.org/std/env/fn.temp_dir.html
