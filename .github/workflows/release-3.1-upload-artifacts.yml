@@ -2,6 +2,8 @@ name: release-3.1-upload-artifacts
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 on:
   workflow_dispatch:
@@ -88,6 +90,11 @@ jobs:
 
       - name: Create a tar.gz archive
         run: tar czf archive.tar.gz --transform='s/^result\/bin\///' result/bin/obelisk
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'archive.tar.gz'
 
       - name: Upload the archive
         run: |
