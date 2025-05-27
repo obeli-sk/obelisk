@@ -3,6 +3,9 @@
   "title": "ConfigToml",
   "type": "object",
   "properties": {
+    "activities": {
+      "$ref": "#/$defs/ActivitiesGlobalConfigToml"
+    },
     "activity_wasm": {
       "type": "array",
       "items": {
@@ -74,9 +77,38 @@
     "api"
   ],
   "$defs": {
+    "ActivitiesDirectoriesGlobalConfigToml": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "parent_directory": {
+          "type": "string",
+          "default": "${TEMP_DIR}/obelisk"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActivitiesGlobalConfigToml": {
+      "type": "object",
+      "properties": {
+        "directories": {
+          "$ref": "#/$defs/ActivitiesDirectoriesGlobalConfigToml"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "directories"
+      ]
+    },
     "ActivityComponentConfigToml": {
       "type": "object",
       "properties": {
+        "directories": {
+          "$ref": "#/$defs/ActivityDirectoriesConfigToml"
+        },
         "env_vars": {
           "type": "array",
           "items": {
@@ -117,6 +149,20 @@
         "name",
         "location"
       ]
+    },
+    "ActivityDirectoriesConfigToml": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "reuse_on_retry": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
     },
     "ApiConfig": {
       "type": "object",
