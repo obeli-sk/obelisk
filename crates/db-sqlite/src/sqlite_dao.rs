@@ -424,12 +424,14 @@ enum ThreadCommand {
         sent_at: Instant,
         name: &'static str,
     },
-    Shutdown(oneshot::Sender<()>),
+    Shutdown,
+    Dummy,
 }
 
 #[derive(Clone)]
 pub struct SqlitePool<S: Sleep> {
-    shutdown: Arc<AtomicBool>,
+    shutdown_requested: Arc<AtomicBool>,
+    shutdown_finished: Arc<AtomicBool>,
     command_tx: tokio::sync::mpsc::Sender<ThreadCommand>,
     response_subscribers: ResponseSubscribers,
     ffqn_to_pending_subscription: Arc<Mutex<hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>>>,
@@ -443,35 +445,15 @@ impl<S: Sleep> DbPool<SqlitePool<S>> for SqlitePool<S> {
     }
 
     fn is_closing(&self) -> bool {
-        self.shutdown.load(Ordering::Relaxed)
+        self.shutdown_requested.load(Ordering::Acquire)
     }
 
     async fn close(&self) -> Result<(), DbError> {
-        let res = self
-            .shutdown
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
-        if res.is_err() {
-            return Err(DbError::Specific(SpecificError::GenericError(
-                StrVariant::Static("already closed"),
-            )));
+        self.shutdown_requested.store(true, Ordering::Release);
+        let _ = self.command_tx.send(ThreadCommand::Shutdown).await;
+        while !self.shutdown_finished.load(Ordering::Acquire) {
+            self.sleep.sleep(Duration::from_millis(1)).await;
         }
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let res = self
-            .command_tx
-            .send(ThreadCommand::Shutdown(shutdown_tx))
-            .await;
-        if let Err(err) = res {
-            error!("Cannot send the shutdown message - {err:?}");
-            return Err(DbError::Specific(SpecificError::GenericError(
-                StrVariant::Static("cannot send the shutdown message"),
-            )));
-        }
-        shutdown_rx.await.map_err(|err| {
-            error!("Cannot wait for shutdown - {err:?}");
-            DbError::Specific(SpecificError::GenericError(StrVariant::Static(
-                "cannot wait for shutdown",
-            )))
-        })?;
         Ok(())
     }
 }
@@ -584,7 +566,8 @@ impl<S: Sleep> SqlitePool<S> {
 
     fn connection_rpc(
         mut conn: Connection,
-        shutdown: &Arc<AtomicBool>,
+        shutdown_requested: &AtomicBool,
+        shutdown_finished: &AtomicBool,
         mut command_rx: mpsc::Receiver<ThreadCommand>,
         queue_capacity: usize,
         low_prio_threshold: usize,
@@ -607,26 +590,22 @@ impl<S: Sleep> SqlitePool<S> {
         loop {
             vec.clear();
             metric_dumping_counter += 1;
-            vec.push(
-                command_rx
-                    .blocking_recv()
-                    .expect("command channel must be open"),
-            );
+            if let Some(item) = command_rx.blocking_recv() {
+                vec.push(item);
+            } else {
+                debug!("command_rx was closed");
+                break;
+            }
             while let Ok(more) = command_rx.try_recv() {
                 vec.push(more);
             }
-            if shutdown.load(Ordering::SeqCst) {
-                // Ignore everything except the shutdown command
-                for item in &mut vec {
-                    if matches!(item, ThreadCommand::Shutdown(_)) {
-                        let item =
-                            std::mem::replace(item, ThreadCommand::Shutdown(oneshot::channel().0));
-                        let callback =
-                            assert_matches!(item, ThreadCommand::Shutdown(callback) => callback);
-                        callback.send(()).expect("shutdown callback must be open");
-                        return;
-                    }
-                }
+            // Did we receive Shutdown in the batch?
+            let shutdown_found = vec
+                .iter()
+                .any(|item| matches!(item, ThreadCommand::Shutdown));
+            if shutdown_found || shutdown_requested.load(Ordering::Acquire) {
+                debug!("Recveived shutdown before processing the batch");
+                break;
             }
 
             let mut execute = |expected: CommandPriority| {
@@ -634,8 +613,7 @@ impl<S: Sleep> SqlitePool<S> {
                 for item in &mut vec {
                     if matches!(item, ThreadCommand::Func { priority, .. } if *priority == expected )
                     {
-                        let item =
-                            std::mem::replace(item, ThreadCommand::Shutdown(oneshot::channel().0));
+                        let item = std::mem::replace(item, ThreadCommand::Dummy); // get owned item
                         let (func, sent_at, name) = assert_matches!(item, ThreadCommand::Func{func, sent_at, name, ..} => (func, sent_at, name));
                         let sent_at = sent_at.elapsed();
                         let started_at = Instant::now();
@@ -653,6 +631,11 @@ impl<S: Sleep> SqlitePool<S> {
                             })
                             .record(u64::from(started_at.subsec_micros()))
                             .unwrap();
+                    }
+                    if shutdown_requested.load(Ordering::Acquire) {
+                        // recheck after every function
+                        debug!("Recveived shutdown during processing of the batch");
+                        break;
                     }
                 }
                 processed
@@ -674,6 +657,8 @@ impl<S: Sleep> SqlitePool<S> {
                 println!("}}");
             }
         } // Loop until shutdown is set to true.
+        debug!("Closing command thread");
+        shutdown_finished.store(true, Ordering::Release);
     }
 
     #[instrument(level = Level::DEBUG, skip_all, name = "sqlite_new")]
@@ -683,7 +668,10 @@ impl<S: Sleep> SqlitePool<S> {
         sleep: S,
     ) -> Result<Self, DbError> {
         let path = path.as_ref().to_owned();
-        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
+        let shutdown_finished = Arc::new(AtomicBool::new(false));
+
         let (command_tx, command_rx) = tokio::sync::mpsc::channel(config.queue_capacity);
         info!("Sqlite database location: {path:?}");
         {
@@ -704,20 +692,23 @@ impl<S: Sleep> SqlitePool<S> {
                     )));
                 }
             };
-            let shutdown = shutdown.clone();
+            let shutdown_requested = shutdown_requested.clone();
+            let shutdown_finished = shutdown_finished.clone();
             // Start the RPC thread.
             std::thread::spawn(move || {
                 Self::connection_rpc(
                     conn,
-                    &shutdown,
+                    &shutdown_requested,
+                    &shutdown_finished,
                     command_rx,
                     config.queue_capacity,
                     config.low_prio_threshold,
                 );
             });
-        };
+        }
         Ok(Self {
-            shutdown,
+            shutdown_requested,
+            shutdown_finished,
             command_tx,
             response_subscribers: Arc::default(),
             ffqn_to_pending_subscription: Arc::default(),
