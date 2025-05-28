@@ -672,7 +672,7 @@ pub(crate) mod tests {
             assert!(stopwatch < LOCK_EXPIRY * 2);
 
             drop(db_connection);
-            timers_watcher_task.close().await;
+            drop(timers_watcher_task);
             exec_task.close().await;
             db_pool.close().await.unwrap();
         }

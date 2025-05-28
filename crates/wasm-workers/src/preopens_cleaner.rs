@@ -1,9 +1,9 @@
-use crate::AbortOnDropHandle;
 use concepts::{
     ExecutionId,
     storage::{DbConnection, DbError, DbPool, PendingState, PendingStateFinished, SpecificError},
     time::{ClockFn, Sleep},
 };
+use executor::AbortOnDropHandle;
 use std::{
     error::Error, ffi::OsStr, marker::PhantomData, path::Path, str::FromStr, sync::Arc,
     time::Duration,

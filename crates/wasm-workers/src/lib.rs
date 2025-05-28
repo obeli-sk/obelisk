@@ -1,6 +1,5 @@
 use concepts::StrVariant;
 use std::{error::Error, fmt::Debug};
-use tokio::task::AbortHandle;
 use utils::wasm_tools::{self};
 
 pub mod activity;
@@ -23,13 +22,6 @@ pub enum WasmFileError {
         context: StrVariant,
         err: Box<dyn Error + Send + Sync>,
     },
-}
-
-pub struct AbortOnDropHandle(pub AbortHandle);
-impl Drop for AbortOnDropHandle {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
 }
 
 pub mod envvar {

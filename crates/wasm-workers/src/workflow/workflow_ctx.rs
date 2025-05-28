@@ -1644,7 +1644,7 @@ pub(crate) mod tests {
         assert!(execution_log.pending_state.is_finished());
         drop(db_connection);
         workflow_exec_task.close().await;
-        timers_watcher_task.close().await;
+        drop(timers_watcher_task);
         (execution_id, execution_log)
     }
 

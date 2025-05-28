@@ -73,6 +73,7 @@ use db_sqlite::sqlite_dao::SqliteConfig;
 use db_sqlite::sqlite_dao::SqlitePool;
 use directories::BaseDirs;
 use directories::ProjectDirs;
+use executor::AbortOnDropHandle;
 use executor::executor::ExecutorTaskHandle;
 use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher;
@@ -107,7 +108,6 @@ use tracing::{debug, info, trace};
 use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
 use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
-use wasm_workers::AbortOnDropHandle;
 use wasm_workers::activity::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
@@ -1176,12 +1176,13 @@ type Sqlite = SqlitePool<TokioSleep>;
 struct ServerInit {
     db_pool: Sqlite,
     exec_join_handles: Vec<ExecutorTaskHandle>,
-    timers_watcher: expired_timers_watcher::TaskHandle, // aborted on drop
+    #[expect(dead_code)]
+    timers_watcher: AbortOnDropHandle,
     #[expect(dead_code)] // http servers will be aborted automatically
     http_servers_handles: Vec<AbortOnDropHandle>,
     #[expect(dead_code)] // Shuts itself down in drop
     epoch_ticker: EpochTicker,
-    #[expect(dead_code)] // aborted on drop
+    #[expect(dead_code)]
     preopens_cleaner: Option<AbortOnDropHandle>,
 }
 
@@ -1273,11 +1274,22 @@ impl ServerInit {
 
     async fn close(self) {
         info!("Server is shutting down");
-        self.timers_watcher.close().await;
-        for exec_join_handle in self.exec_join_handles {
+        let (db_pool, exec_join_handles) = {
+            let ServerInit {
+                db_pool,
+                exec_join_handles,
+                timers_watcher: _,
+                http_servers_handles: _,
+                epoch_ticker: _,
+                preopens_cleaner: _,
+            } = self;
+            (db_pool, exec_join_handles)
+        };
+        for exec_join_handle in exec_join_handles {
             exec_join_handle.close().await;
         }
-        let res = self.db_pool.close().await;
+        // Close most of the services. Note that a task responding to --follow might be still running.
+        let res = db_pool.close().await;
         if let Err(err) = res {
             error!("Cannot close the database - {err:?}");
         }

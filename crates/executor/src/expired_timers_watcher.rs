@@ -1,3 +1,4 @@
+use crate::AbortOnDropHandle;
 use crate::executor::Append;
 use crate::executor::ChildFinishedResponse;
 use chrono::{DateTime, Utc};
@@ -20,9 +21,8 @@ use std::{
     },
     time::Duration,
 };
-use tokio::task::AbortHandle;
 use tracing::Level;
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, error, info, instrument};
 
 #[derive(Debug, Clone)]
 pub struct TimersWatcherConfig<C: ClockFn> {
@@ -37,57 +37,28 @@ pub struct TickProgress {
     pub expired_async_timers: usize,
 }
 
-pub struct TaskHandle {
-    is_closing: Arc<AtomicBool>,
-    abort_handle: AbortHandle,
-}
-
-impl TaskHandle {
-    #[instrument(level = Level::DEBUG, skip_all, name = "expired_timers_watcher.close")]
-    pub async fn close(&self) {
-        trace!("Gracefully closing");
-        self.is_closing.store(true, Ordering::Relaxed);
-        while !self.abort_handle.is_finished() {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-        debug!("Gracefully closed expired_timers_watcher");
-    }
-}
-
-impl Drop for TaskHandle {
-    fn drop(&mut self) {
-        if self.abort_handle.is_finished() {
-            return;
-        }
-        warn!("Aborting the expired_timers_watcher");
-        self.abort_handle.abort();
-    }
-}
-
 pub fn spawn_new<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     db_pool: P,
     config: TimersWatcherConfig<C>,
-) -> TaskHandle {
+) -> AbortOnDropHandle {
     info!("Spawning expired_timers_watcher");
     let is_closing = Arc::new(AtomicBool::default());
     let tick_sleep = config.tick_sleep;
-    let abort_handle = tokio::spawn({
-        let is_closing = is_closing.clone();
-        async move {
-            let mut old_err = None;
-            while !is_closing.load(Ordering::Relaxed) {
-                let executed_at = config.clock_fn.now() - config.leeway;
-                let res = tick(&db_pool.connection(), executed_at).await;
-                log_err_if_new(res, &mut old_err);
-                tokio::time::sleep(tick_sleep).await;
+    AbortOnDropHandle(
+        tokio::spawn({
+            let is_closing = is_closing.clone();
+            async move {
+                let mut old_err = None;
+                while !is_closing.load(Ordering::Relaxed) {
+                    let executed_at = config.clock_fn.now() - config.leeway;
+                    let res = tick(&db_pool.connection(), executed_at).await;
+                    log_err_if_new(res, &mut old_err);
+                    tokio::time::sleep(tick_sleep).await;
+                }
             }
-        }
-    })
-    .abort_handle();
-    TaskHandle {
-        is_closing,
-        abort_handle,
-    }
+        })
+        .abort_handle(),
+    )
 }
 
 fn log_err_if_new(res: Result<TickProgress, DbError>, old_err: &mut Option<DbError>) {
