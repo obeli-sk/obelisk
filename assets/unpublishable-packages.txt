@@ -1,5 +1,7 @@
 db-mem
 db-tests
+test-programs-dir-activity
+test-programs-dir-activity-builder
 test-programs-fibo-activity
 test-programs-fibo-activity-builder
 test-programs-fibo-webhook
