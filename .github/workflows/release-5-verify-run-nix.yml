@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           # Use the ref if provided, otherwise obtain the parent workflow branch, defaults to main.
           ref: ${{ github.event.inputs.ref || github.event.workflow_run.head_branch }}
@@ -43,7 +43,7 @@ jobs:
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
-      - uses: nixbuild/nix-quick-install-action@v30
+      - uses: nixbuild/nix-quick-install-action@8505cd40ae3d4791ca658f2697c5767212e5ce71
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Populate the nix store without Obelisk # Workaround for slow garnix cache

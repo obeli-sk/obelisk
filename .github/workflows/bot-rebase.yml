@@ -12,7 +12,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
       - name: Rebase PR
@@ -20,10 +20,8 @@ jobs:
           PR_NUMBER=$(jq --raw-output .issue.number "$GITHUB_EVENT_PATH")
           BRANCH=$(gh pr view $PR_NUMBER --json headRefName -q .headRefName)
           BASE=$(gh pr view $PR_NUMBER --json baseRefName -q .baseRefName)
-          
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          
           git fetch origin $BRANCH:$BRANCH
           git checkout $BRANCH
           git rebase origin/$BASE
