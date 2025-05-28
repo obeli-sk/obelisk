@@ -68,12 +68,12 @@ pub fn spawn_new<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB>
     db_pool: P,
     config: TimersWatcherConfig<C>,
 ) -> TaskHandle {
+    info!("Spawning expired_timers_watcher");
     let is_closing = Arc::new(AtomicBool::default());
     let tick_sleep = config.tick_sleep;
     let abort_handle = tokio::spawn({
         let is_closing = is_closing.clone();
         async move {
-            debug!("Spawned expired_timers_watcher");
             let mut old_err = None;
             while !is_closing.load(Ordering::Relaxed) {
                 let executed_at = config.clock_fn.now() - config.leeway;

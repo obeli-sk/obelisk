@@ -1,13 +1,7 @@
 api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
 webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
-
-[log.stdout]
-enabled = true
-
-[activities.directories]
-enabled = true
-parent_directory = "${TEMP_DIR}/obelisk"
-# cleanup.hours = 1 TODO
+log.stdout.enabled = true
+activities.directories.enabled = true
 
 [[http_server]]
 name = "external_webhook"

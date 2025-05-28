@@ -1,11 +1,13 @@
 use concepts::StrVariant;
 use std::{error::Error, fmt::Debug};
+use tokio::task::AbortHandle;
 use utils::wasm_tools::{self};
 
 pub mod activity;
 mod component_logger;
 pub mod engines;
 pub mod epoch_ticker;
+pub mod preopens_cleaner;
 pub mod std_output_stream;
 pub mod webhook;
 pub mod workflow;
@@ -21,6 +23,13 @@ pub enum WasmFileError {
         context: StrVariant,
         err: Box<dyn Error + Send + Sync>,
     },
+}
+
+pub struct AbortOnDropHandle(pub AbortHandle);
+impl Drop for AbortOnDropHandle {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 pub mod envvar {

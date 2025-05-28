@@ -13,9 +13,13 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 
 # wasm.backtrace.persist = true        # Persist backtraces on effect calls for all workflows and webhook endpoints.
 
+## Preopened directories
 # [activities.directories]
-# enabled = true
-# parent_directory = "${TEMP_DIR}/obelisk" # Make sure the folder is not on a RAM-backed filesystem if you plan to write large files.
+# enabled = false                           # Disabled by default.
+# parent_directory = "${TEMP_DIR}/obelisk"  # Make sure the folder is not on a RAM-backed filesystem if you plan to write large files.
+# cleanup.period.hours = 1                  # Preopened directory will be deleted one hour after the execution finishes.
+# cleanup.run_every.minutes = 1             # Run the cleanup every minute by default.
+# cleanup.older_than.hours = 1              # Delete folders belonging to executions that finished one hour earlier by default.
 
 # [codegen_cache]
 ## Defaults:

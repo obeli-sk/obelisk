@@ -2,7 +2,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
-use tracing::debug;
+use tracing::{debug, info};
 use wasmtime::EngineWeak;
 
 pub struct EpochTicker {
@@ -12,7 +12,7 @@ pub struct EpochTicker {
 impl EpochTicker {
     #[must_use]
     pub fn spawn_new(engines: Vec<EngineWeak>, epoch: Duration) -> Self {
-        debug!("Spawning the epoch ticker");
+        info!("Spawning the epoch ticker");
         let shutdown = Arc::new(AtomicBool::new(false));
         std::thread::spawn({
             let shutdown = shutdown.clone();

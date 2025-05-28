@@ -6,6 +6,7 @@ use crate::config::ComponentLocation;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
+use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
 use crate::config::toml::ActivityComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ComponentCommon;
@@ -90,7 +91,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tokio::task::AbortHandle;
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
@@ -107,9 +107,11 @@ use tracing::{debug, info, trace};
 use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
 use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
+use wasm_workers::AbortOnDropHandle;
 use wasm_workers::activity::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
+use wasm_workers::preopens_cleaner::PreopensCleaner;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstance;
@@ -991,7 +993,7 @@ async fn run_internal(
     .instrument(span.clone())
     .await?;
     let component_source_map = std::mem::take(&mut verified.component_source_map);
-    let (init, component_registry_ro) = ServerInit::spawn_executors_and_webhooks(verified)
+    let (init, component_registry_ro) = ServerInit::spawn_tasks_and_threads(verified)
         .instrument(span)
         .await?;
     let grpc_server = Arc::new(GrpcServer::new(
@@ -1056,6 +1058,8 @@ struct ServerVerified {
     sqlite_config: SqliteConfig,
     db_file: PathBuf,
     component_source_map: ComponentSourceMap,
+    parent_preopen_dir: Option<Arc<Path>>,
+    activities_cleanup: ActivitiesDirectoriesCleanupConfigToml,
 }
 
 impl ServerVerified {
@@ -1120,6 +1124,7 @@ impl ServerVerified {
             .get_parent_directory(&path_prefixes)
             .await
             .context("error resolving `activities.directories.parent_directory`")?;
+        let activities_cleanup = config.activities_global_config.directories.cleanup;
         let mut config = fetch_and_verify_all(
             config.wasm_activities,
             config.workflows,
@@ -1130,7 +1135,7 @@ impl ServerVerified {
             ignore_missing_env_vars,
             path_prefixes,
             global_backtrace_persist,
-            parent_preopen_dir,
+            parent_preopen_dir.clone(),
         )
         .await?;
         debug!("Verified config: {config:#?}");
@@ -1162,6 +1167,8 @@ impl ServerVerified {
             sqlite_config,
             db_file: db_dir.join(SQLITE_FILE_NAME),
             component_source_map,
+            activities_cleanup,
+            parent_preopen_dir,
         })
     }
 }
@@ -1169,16 +1176,18 @@ type Sqlite = SqlitePool<TokioSleep>;
 struct ServerInit {
     db_pool: Sqlite,
     exec_join_handles: Vec<ExecutorTaskHandle>,
-    timers_watcher: expired_timers_watcher::TaskHandle,
+    timers_watcher: expired_timers_watcher::TaskHandle, // aborted on drop
     #[expect(dead_code)] // http servers will be aborted automatically
     http_servers_handles: Vec<AbortOnDropHandle>,
     #[expect(dead_code)] // Shuts itself down in drop
     epoch_ticker: EpochTicker,
+    #[expect(dead_code)] // aborted on drop
+    preopens_cleaner: Option<AbortOnDropHandle>,
 }
 
 impl ServerInit {
     #[instrument(skip_all)]
-    async fn spawn_executors_and_webhooks(
+    async fn spawn_tasks_and_threads(
         mut verified: ServerVerified,
     ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
         // Start components requiring a database
@@ -1198,6 +1207,19 @@ impl ServerInit {
                 leeway: Duration::from_millis(100), // TODO: Make configurable
             },
         );
+
+        let preopens_cleaner = if let Some(parent_preopen_dir) = verified.parent_preopen_dir {
+            Some(PreopensCleaner::spawn_task(
+                verified.activities_cleanup.older_than.into(),
+                parent_preopen_dir,
+                verified.activities_cleanup.run_every.into(),
+                TokioSleep,
+                Now,
+                db_pool.clone(),
+            ))
+        } else {
+            None
+        };
 
         // Associate webhooks with http servers
         let http_servers_to_webhooks = {
@@ -1243,6 +1265,7 @@ impl ServerInit {
                 timers_watcher,
                 http_servers_handles,
                 epoch_ticker,
+                preopens_cleaner,
             },
             verified.component_registry_ro,
         ))
@@ -2011,13 +2034,6 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
 
     fn all_exports(&self) -> &[PackageIfcFns] {
         &self.inner.export_hierarchy
-    }
-}
-
-struct AbortOnDropHandle(AbortHandle);
-impl Drop for AbortOnDropHandle {
-    fn drop(&mut self) {
-        self.0.abort();
     }
 }
 

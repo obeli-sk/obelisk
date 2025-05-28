@@ -183,7 +183,7 @@ impl Default for WasmGlobalBacktrace {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivitiesGlobalConfigToml {
-    pub directories: ActivitiesDirectoriesGlobalConfigToml,
+    pub(crate) directories: ActivitiesDirectoriesGlobalConfigToml,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -193,12 +193,15 @@ pub(crate) struct ActivitiesDirectoriesGlobalConfigToml {
     enabled: bool,
     #[serde(default = "default_activities_directories_parent_directory")]
     parent_directory: String,
+    #[serde(default)]
+    pub(crate) cleanup: ActivitiesDirectoriesCleanupConfigToml,
 }
 impl Default for ActivitiesDirectoriesGlobalConfigToml {
     fn default() -> Self {
         Self {
             enabled: default_activities_directories_enabled(),
             parent_directory: default_activities_directories_parent_directory(),
+            cleanup: ActivitiesDirectoriesCleanupConfigToml::default(),
         }
     }
 }
@@ -213,6 +216,23 @@ impl ActivitiesDirectoriesGlobalConfigToml {
                 .map(|path_buf| Some(Arc::from(path_buf)))
         } else {
             Ok(None)
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivitiesDirectoriesCleanupConfigToml {
+    #[serde(default = "default_cleanup_run_every")]
+    pub(crate) run_every: DurationConfig,
+    #[serde(default = "default_cleanup_older_than")]
+    pub(crate) older_than: DurationConfig,
+}
+impl Default for ActivitiesDirectoriesCleanupConfigToml {
+    fn default() -> Self {
+        Self {
+            run_every: default_cleanup_run_every(),
+            older_than: default_cleanup_older_than(),
         }
     }
 }
@@ -743,8 +763,10 @@ pub(crate) mod otlp {
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DurationConfig {
-    Seconds(u64),
     Milliseconds(u64),
+    Seconds(u64),
+    Minutes(u64),
+    Hours(u64),
 }
 
 impl From<DurationConfig> for Duration {
@@ -752,6 +774,8 @@ impl From<DurationConfig> for Duration {
         match value {
             DurationConfig::Milliseconds(millis) => Duration::from_millis(millis),
             DurationConfig::Seconds(secs) => Duration::from_secs(secs),
+            DurationConfig::Minutes(mins) => Duration::from_secs(mins * 60),
+            DurationConfig::Hours(hrs) => Duration::from_secs(hrs * 60 * 60),
         }
     }
 }
@@ -1303,6 +1327,13 @@ fn default_activities_directories_enabled() -> bool {
 
 fn default_activities_directories_parent_directory() -> String {
     "${TEMP_DIR}/obelisk".to_string()
+}
+
+fn default_cleanup_run_every() -> DurationConfig {
+    DurationConfig::Minutes(1)
+}
+fn default_cleanup_older_than() -> DurationConfig {
+    DurationConfig::Hours(1)
 }
 
 #[cfg(test)]
