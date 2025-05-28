@@ -77,9 +77,24 @@
     "api"
   ],
   "$defs": {
+    "ActivitiesDirectoriesCleanupConfigToml": {
+      "type": "object",
+      "properties": {
+        "older_than": {
+          "$ref": "#/$defs/DurationConfig"
+        },
+        "run_every": {
+          "$ref": "#/$defs/DurationConfig"
+        }
+      },
+      "additionalProperties": false
+    },
     "ActivitiesDirectoriesGlobalConfigToml": {
       "type": "object",
       "properties": {
+        "cleanup": {
+          "$ref": "#/$defs/ActivitiesDirectoriesCleanupConfigToml"
+        },
         "enabled": {
           "type": "boolean",
           "default": false
@@ -332,6 +347,20 @@
         {
           "type": "object",
           "properties": {
+            "milliseconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "milliseconds"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "seconds": {
               "type": "integer",
               "format": "uint64",
@@ -346,7 +375,7 @@
         {
           "type": "object",
           "properties": {
-            "milliseconds": {
+            "minutes": {
               "type": "integer",
               "format": "uint64",
               "minimum": 0
@@ -354,7 +383,21 @@
           },
           "additionalProperties": false,
           "required": [
-            "milliseconds"
+            "minutes"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hours": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "hours"
           ]
         }
       ]
