@@ -1,0 +1,5 @@
+package testing:process;
+
+interface process {
+    spawn: func() -> result<_, string>;
+}

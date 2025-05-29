@@ -6,7 +6,7 @@ use concepts::ExecutionId;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
 use hyper::body::Body;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 use tracing::{Instrument, Span, debug, info_span};
@@ -27,12 +27,13 @@ pub type HttpClientTracesContainer =
     Arc<Mutex<Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>>>;
 
 pub struct ActivityCtx<C: ClockFn> {
-    table: ResourceTable,
+    pub(crate) table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
     component_logger: ComponentLogger,
     clock_fn: C,
     http_client_traces: HttpClientTracesContainer,
+    pub(crate) preopened_dir: Option<PathBuf>,
 }
 
 impl<C: ClockFn> WasiView for ActivityCtx<C> {
@@ -116,7 +117,7 @@ pub(crate) fn store<C: ClockFn>(
     worker_span: Span,
     clock_fn: C,
     http_client_traces: HttpClientTracesContainer,
-    preopen_dir: Option<&Path>,
+    preopened_dir: Option<PathBuf>,
 ) -> Result<Store<ActivityCtx<C>>, ActivityPreopenIoError> {
     let mut wasi_ctx = WasiCtxBuilder::new();
     if let Some(stdout) = config.forward_stdout {
@@ -143,8 +144,8 @@ pub(crate) fn store<C: ClockFn>(
         wasi_ctx.env(&env_var.key, &env_var.val);
     }
 
-    if let Some(preopen_dir) = preopen_dir {
-        let res = wasi_ctx.preopened_dir(preopen_dir, ".", DirPerms::all(), FilePerms::all());
+    if let Some(preopened_dir) = &preopened_dir {
+        let res = wasi_ctx.preopened_dir(preopened_dir, ".", DirPerms::all(), FilePerms::all());
         if let Err(err) = res {
             return Err(ActivityPreopenIoError(err.to_string()));
         }
@@ -157,6 +158,7 @@ pub(crate) fn store<C: ClockFn>(
         component_logger: ComponentLogger { span: worker_span },
         http_client_traces,
         clock_fn,
+        preopened_dir,
     };
     Ok(Store::new(engine, ctx))
 }

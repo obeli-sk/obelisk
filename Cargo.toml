@@ -115,6 +115,8 @@ members = [
     "crates/testing/test-programs/http/activity/builder",
     "crates/testing/test-programs/http/workflow",
     "crates/testing/test-programs/http/workflow/builder",
+    "crates/testing/test-programs/process/activity",
+    "crates/testing/test-programs/process/activity/builder",
     "crates/testing/test-programs/sleep/activity",
     "crates/testing/test-programs/sleep/activity/builder",
     "crates/testing/test-programs/sleep/workflow",

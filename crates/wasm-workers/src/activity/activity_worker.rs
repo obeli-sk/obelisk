@@ -1,4 +1,5 @@
 use super::activity_ctx::{self, ActivityCtx};
+use super::activity_host_exports::process_support_outer::v1_0_0::obelisk::activity::process_support;
 use crate::WasmFileError;
 use crate::activity::activity_ctx::HttpClientTracesContainer;
 use crate::component_logger::log_activities;
@@ -72,7 +73,12 @@ impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
             |state: &mut ActivityCtx<C>| state,
         )
         .map_err(linking_err)?;
-
+        if config.directories_config.is_some() {
+            // FIXME: Add more conditions
+            // process-support
+            process_support::add_to_linker(&mut linker, |state: &mut ActivityCtx<C>| state)
+                .map_err(linking_err)?;
+        }
         // Attempt to pre-instantiate to catch missing imports
         let instance_pre = linker
             .instantiate_pre(&wasm_component.wasmtime_component)
@@ -117,13 +123,13 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
         assert!(ctx.event_history.is_empty());
         let http_client_traces = HttpClientTracesContainer::default();
 
-        let preopen_dir = if let Some(directories_config) = &self.config.directories_config {
-            let preopen_dir = directories_config
+        let preopened_dir = if let Some(directories_config) = &self.config.directories_config {
+            let preopened_dir = directories_config
                 .parent_preopen_dir
                 .join(ctx.execution_id.to_string());
             if !directories_config.reuse_on_retry {
                 // Attempt to `rm -rf` before (re)creating the directory.
-                match tokio::fs::remove_dir_all(&preopen_dir).await {
+                match tokio::fs::remove_dir_all(&preopened_dir).await {
                     Ok(()) => {}
                     Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
                     Err(err) => {
@@ -135,7 +141,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                     }
                 }
             }
-            let res = tokio::fs::create_dir_all(&preopen_dir).await;
+            let res = tokio::fs::create_dir_all(&preopened_dir).await;
             if let Err(err) = res {
                 return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
                     reason_kind: "cannot create preopened directory",
@@ -143,7 +149,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                     version: ctx.version,
                 });
             }
-            Some(preopen_dir)
+            Some(preopened_dir)
         } else {
             None
         };
@@ -155,7 +161,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
             ctx.worker_span.clone(),
             self.clock_fn.clone(),
             http_client_traces.clone(),
-            preopen_dir.as_deref(),
+            preopened_dir,
         ) {
             Ok(store) => store,
             Err(err) => {

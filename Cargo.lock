@@ -4908,6 +4908,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-programs-process-activity"
+version = "0.22.5"
+dependencies = [
+ "wit-bindgen 0.42.1",
+]
+
+[[package]]
+name = "test-programs-process-activity-builder"
+version = "0.22.5"
+dependencies = [
+ "obelisk-component-builder",
+]
+
+[[package]]
 name = "test-programs-sleep-activity"
 version = "0.22.5"
 dependencies = [
