@@ -389,7 +389,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> HostJoinSetId_1_1_0
     }
 
     async fn drop(&mut self, _resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
-        Ok(())
+        unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }
 }
 
