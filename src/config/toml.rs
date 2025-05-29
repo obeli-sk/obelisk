@@ -1333,7 +1333,7 @@ fn default_cleanup_run_every() -> DurationConfig {
     DurationConfig::Minutes(1)
 }
 fn default_cleanup_older_than() -> DurationConfig {
-    DurationConfig::Hours(1)
+    DurationConfig::Minutes(5)
 }
 
 #[cfg(test)]
