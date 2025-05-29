@@ -80,6 +80,10 @@
     "ActivitiesDirectoriesCleanupConfigToml": {
       "type": "object",
       "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
         "older_than": {
           "$ref": "#/$defs/DurationConfig"
         },
