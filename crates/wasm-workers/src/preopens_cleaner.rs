@@ -31,7 +31,7 @@ impl<S: Sleep + 'static, C: ClockFn + 'static, DB: DbConnection + 'static, P: Db
         clock_fn: C,
         db_pool: P,
     ) -> AbortOnDropHandle {
-        info!("Spawning preopens cleaner");
+        info!("Spawning preopened dir cleaner");
         let this = PreopensCleaner {
             delete_older_than,
             parent_preopen_dir,

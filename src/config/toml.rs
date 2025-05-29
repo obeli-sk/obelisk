@@ -183,7 +183,16 @@ impl Default for WasmGlobalBacktrace {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivitiesGlobalConfigToml {
-    pub(crate) directories: ActivitiesDirectoriesGlobalConfigToml,
+    directories: ActivitiesDirectoriesGlobalConfigToml,
+}
+impl ActivitiesGlobalConfigToml {
+    pub(crate) fn get_directories(&self) -> Option<&ActivitiesDirectoriesGlobalConfigToml> {
+        if self.directories.enabled {
+            Some(&self.directories)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -194,7 +203,7 @@ pub(crate) struct ActivitiesDirectoriesGlobalConfigToml {
     #[serde(default = "default_activities_directories_parent_directory")]
     parent_directory: String,
     #[serde(default)]
-    pub(crate) cleanup: ActivitiesDirectoriesCleanupConfigToml,
+    cleanup: ActivitiesDirectoriesCleanupConfigToml,
 }
 impl Default for ActivitiesDirectoriesGlobalConfigToml {
     fn default() -> Self {
@@ -209,30 +218,39 @@ impl ActivitiesDirectoriesGlobalConfigToml {
     pub(crate) async fn get_parent_directory(
         &self,
         path_prefixes: &PathPrefixes,
-    ) -> Result<Option<Arc<Path>>, anyhow::Error> {
-        if self.enabled {
-            replace_path_prefix_mkdir(&self.parent_directory, path_prefixes)
-                .await
-                .map(|path_buf| Some(Arc::from(path_buf)))
+    ) -> Result<Arc<Path>, anyhow::Error> {
+        assert!(self.enabled); // see `ActivitiesGlobalConfigToml::get_directories`
+        replace_path_prefix_mkdir(&self.parent_directory, path_prefixes)
+            .await
+            .map(|path_buf| Arc::from(path_buf))
+    }
+
+    pub(crate) fn get_cleanup(&self) -> Option<ActivitiesDirectoriesCleanupConfigToml> {
+        assert!(self.enabled); // see `ActivitiesGlobalConfigToml::get_directories`
+        if self.cleanup.enabled {
+            Some(self.cleanup)
         } else {
-            Ok(None)
+            None
         }
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivitiesDirectoriesCleanupConfigToml {
-    #[serde(default = "default_cleanup_run_every")]
+    #[serde(default = "default_dir_cleanup_enabled")]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_dir_cleanup_run_every")]
     pub(crate) run_every: DurationConfig,
-    #[serde(default = "default_cleanup_older_than")]
+    #[serde(default = "default_dir_cleanup_older_than")]
     pub(crate) older_than: DurationConfig,
 }
 impl Default for ActivitiesDirectoriesCleanupConfigToml {
     fn default() -> Self {
         Self {
-            run_every: default_cleanup_run_every(),
-            older_than: default_cleanup_older_than(),
+            enabled: default_dir_cleanup_enabled(),
+            run_every: default_dir_cleanup_run_every(),
+            older_than: default_dir_cleanup_older_than(),
         }
     }
 }
@@ -1329,11 +1347,14 @@ fn default_activities_directories_parent_directory() -> String {
     "${TEMP_DIR}/obelisk".to_string()
 }
 
-fn default_cleanup_run_every() -> DurationConfig {
+fn default_dir_cleanup_run_every() -> DurationConfig {
     DurationConfig::Minutes(1)
 }
-fn default_cleanup_older_than() -> DurationConfig {
+fn default_dir_cleanup_older_than() -> DurationConfig {
     DurationConfig::Minutes(5)
+}
+fn default_dir_cleanup_enabled() -> bool {
+    true
 }
 
 #[cfg(test)]

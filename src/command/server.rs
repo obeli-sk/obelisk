@@ -79,6 +79,7 @@ use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher;
 use executor::expired_timers_watcher::TimersWatcherConfig;
 use executor::worker::Worker;
+use futures_util::future::OptionFuture;
 use itertools::Either;
 use serde::Deserialize;
 use serde_json::json;
@@ -1059,7 +1060,7 @@ struct ServerVerified {
     db_file: PathBuf,
     component_source_map: ComponentSourceMap,
     parent_preopen_dir: Option<Arc<Path>>,
-    activities_cleanup: ActivitiesDirectoriesCleanupConfigToml,
+    activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
 }
 
 impl ServerVerified {
@@ -1118,13 +1119,19 @@ impl ServerVerified {
             });
         }
         let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
-        let parent_preopen_dir = config
+        let parent_preopen_dir = OptionFuture::from(
+            config
+                .activities_global_config
+                .get_directories()
+                .map(|dirs| dirs.get_parent_directory(&path_prefixes)),
+        )
+        .await
+        .transpose()
+        .context("error resolving `activities.directories.parent_directory`")?;
+        let activities_cleanup = config
             .activities_global_config
-            .directories
-            .get_parent_directory(&path_prefixes)
-            .await
-            .context("error resolving `activities.directories.parent_directory`")?;
-        let activities_cleanup = config.activities_global_config.directories.cleanup;
+            .get_directories()
+            .and_then(|dir_config| dir_config.get_cleanup());
         let mut config = fetch_and_verify_all(
             config.wasm_activities,
             config.workflows,
@@ -1209,11 +1216,13 @@ impl ServerInit {
             },
         );
 
-        let preopens_cleaner = if let Some(parent_preopen_dir) = verified.parent_preopen_dir {
+        let preopens_cleaner = if let (Some(parent_preopen_dir), Some(activities_cleanup)) =
+            (verified.parent_preopen_dir, verified.activities_cleanup)
+        {
             Some(PreopensCleaner::spawn_task(
-                verified.activities_cleanup.older_than.into(),
+                activities_cleanup.older_than.into(),
                 parent_preopen_dir,
-                verified.activities_cleanup.run_every.into(),
+                activities_cleanup.run_every.into(),
                 TokioSleep,
                 Now,
                 db_pool.clone(),

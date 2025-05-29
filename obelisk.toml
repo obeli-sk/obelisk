@@ -17,7 +17,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # [activities.directories]
 # enabled = false                           # Disabled by default.
 # parent_directory = "${TEMP_DIR}/obelisk"  # Make sure the folder is not on a RAM-backed filesystem if you plan to write large files.
-# cleanup.period.hours = 1                  # Preopened directory will be deleted one hour after the execution finishes.
+# cleanup.enabled = true                    # Periodic cleanup job can be disabled, it is enabled by default.
 # cleanup.run_every.minutes = 1             # Run the cleanup every minute by default.
 # cleanup.older_than.minutes = 5            # Delete folders belonging to executions that finished 5 minutes earlier by default.
 
