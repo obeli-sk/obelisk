@@ -7,6 +7,7 @@ use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
+use crate::config::toml::ActivitiesDirectoriesGlobalConfigToml;
 use crate::config::toml::ActivityComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ComponentCommon;
@@ -1131,7 +1132,7 @@ impl ServerVerified {
         let activities_cleanup = config
             .activities_global_config
             .get_directories()
-            .and_then(|dir_config| dir_config.get_cleanup());
+            .and_then(ActivitiesDirectoriesGlobalConfigToml::get_cleanup);
         let mut config = fetch_and_verify_all(
             config.wasm_activities,
             config.workflows,

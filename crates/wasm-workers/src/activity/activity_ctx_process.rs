@@ -82,7 +82,7 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
                 };
 
                 let child_process = HostChildProcess {
-                    id: child_handle.id() as u64,
+                    id: u64::from(child_handle.id()),
                     child: Arc::new(Mutex::new(child_handle)),
                     command_str: command.clone(),
                     stdin: child_stdin,
@@ -132,6 +132,7 @@ impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
         let child_process = self.table.get(&self_handle)?;
         let child_arc = Arc::clone(&child_process.child); // Clone Arc to move into spawn_blocking
 
+        #[cfg_attr(madsim, allow(deprecated))]
         let wait_result =
             tokio::task::spawn_blocking(move || child_arc.lock().unwrap().wait()).await;
 

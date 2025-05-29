@@ -222,7 +222,7 @@ impl ActivitiesDirectoriesGlobalConfigToml {
         assert!(self.enabled); // see `ActivitiesGlobalConfigToml::get_directories`
         replace_path_prefix_mkdir(&self.parent_directory, path_prefixes)
             .await
-            .map(|path_buf| Arc::from(path_buf))
+            .map(Arc::from)
     }
 
     pub(crate) fn get_cleanup(&self) -> Option<ActivitiesDirectoriesCleanupConfigToml> {
