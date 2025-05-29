@@ -13,9 +13,13 @@ use concepts::{
 use wasmtime::component::Linker;
 
 wasmtime::component::bindgen!({
-    path: "wasi/",
+    path: "host-wit-workflow-wasi/",
     async: { only_imports: [] },
-    world: "wasmtime:wasi/bindings",
+    world: "any:any/bindings",
+    inline: "package any:any;
+    world bindings {
+        include wasi:cli/imports@0.2.3;
+        }",
     trappable_imports: true,
     with: {
         "wasi:io": wasmtime_wasi_io::bindings::wasi::io,

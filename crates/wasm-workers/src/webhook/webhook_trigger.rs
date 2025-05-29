@@ -46,7 +46,7 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 // Generate `obelisk:types@1.1.0`
 pub(crate) mod types_v1_1_0 {
     wasmtime::component::bindgen!({
-        path: "host-wit/",
+        path: "host-wit-webhook/",
         async: true,
         inline: "package any:any;
                 world bindings {
