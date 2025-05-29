@@ -12,6 +12,8 @@ test-programs-http-get-activity
 test-programs-http-get-activity-builder
 test-programs-http-get-workflow
 test-programs-http-get-workflow-builder
+test-programs-process-activity
+test-programs-process-activity-builder
 test-programs-sleep-activity
 test-programs-sleep-activity-builder
 test-programs-sleep-workflow
