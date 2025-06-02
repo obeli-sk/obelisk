@@ -93,9 +93,10 @@ pub struct WorkflowWorker<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>>
 const WASI_NAMESPACE: &str = "wasi";
 
 impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
+    // If `config.stub_wasi` is set, this function must remove WASI exports and imports.
     #[tracing::instrument(skip_all, fields(%config.component_id))]
     pub fn new_with_config(
-        wasm_component: WasmComponent, // Must be stripped of WASI here
+        wasm_component: WasmComponent,
         config: WorkflowConfig,
         engine: Arc<Engine>,
         clock_fn: C,
@@ -161,7 +162,7 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
             .into_iter()
             .filter(|fn_meta| {
                 if config.stub_wasi {
-                    // Hide wasi exports
+                    // Hide wasi imports
                     fn_meta.ffqn.ifc_fqn.namespace() != WASI_NAMESPACE
                 } else {
                     true
