@@ -1,5 +1,7 @@
 package testing:process;
 
 interface process {
-    spawn: func() -> result<_, string>;
+    touch: func() -> result<_, string>;
+
+    stdio: func() -> result<_, string>;
 }

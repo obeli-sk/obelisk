@@ -1,5 +1,4 @@
 pub(crate) mod process_support_outer {
-    use std::sync::{Arc, Mutex};
 
     pub(crate) mod v1_0_0 {
         wasmtime::component::bindgen!({
@@ -13,23 +12,24 @@ pub(crate) mod process_support_outer {
             trappable_imports: true,
             with: {
                 "obelisk:activity/process-support/child-process": super::HostChildProcess,
+                "wasi:io": wasmtime_wasi_io::bindings::wasi::io,
             }
         });
     }
 
-    #[allow(dead_code)] // TODO: remove after stdio is implemented.
     #[derive(derive_more::Debug)]
     pub struct HostChildProcess {
         pub id: u64,
+        #[expect(dead_code)]
         pub command_str: String, // For logging/debugging purposes
         #[debug(skip)]
-        pub child: Arc<Mutex<std::process::Child>>,
+        pub child: tokio::process::Child,
         // Store the handles for piped streams before they are converted and taken.
         #[debug(skip)]
-        pub stdin: Option<std::process::ChildStdin>,
+        pub stdin: Option<tokio::process::ChildStdin>,
         #[debug(skip)]
-        pub stdout: Option<std::process::ChildStdout>,
+        pub stdout: Option<tokio::process::ChildStdout>,
         #[debug(skip)]
-        pub stderr: Option<std::process::ChildStderr>,
+        pub stderr: Option<tokio::process::ChildStderr>,
     }
 }

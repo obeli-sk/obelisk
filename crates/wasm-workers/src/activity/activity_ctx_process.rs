@@ -4,13 +4,11 @@ use super::{
 };
 use crate::activity::activity_host_exports::process_support_outer::HostChildProcess;
 use concepts::time::ClockFn;
-use std::{
-    path::PathBuf,
-    process::Stdio as StdProcessStdio,
-    sync::{Arc, Mutex},
-};
+use std::{path::PathBuf, process::Stdio as StdProcessStdio};
 use tracing::{debug, info, warn};
 use wasmtime::component::Resource;
+use wasmtime_wasi::p2::{DynInputStream, DynOutputStream, StdinStream, StdoutStream};
+use wasmtime_wasi_io::IoView as _;
 
 impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
     async fn spawn(
@@ -28,7 +26,7 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
             options.current_working_directory
         );
 
-        let mut cmd = std::process::Command::new(&command);
+        let mut cmd = tokio::process::Command::new(&command);
         cmd.args(&options.args);
 
         // Start with clean env, then add specified vars.
@@ -67,23 +65,23 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
         });
 
         match cmd.spawn() {
-            Ok(mut child_handle) => {
+            Ok(mut child) => {
                 let child_stdin = match options.stdin {
-                    process_support::Stdio::Pipe => child_handle.stdin.take(),
+                    process_support::Stdio::Pipe => child.stdin.take(),
                     process_support::Stdio::Discard => None,
                 };
                 let child_stdout = match options.stdout {
-                    process_support::Stdio::Pipe => child_handle.stdout.take(),
+                    process_support::Stdio::Pipe => child.stdout.take(),
                     process_support::Stdio::Discard => None,
                 };
                 let child_stderr = match options.stderr {
-                    process_support::Stdio::Pipe => child_handle.stderr.take(),
+                    process_support::Stdio::Pipe => child.stderr.take(),
                     process_support::Stdio::Discard => None,
                 };
 
                 let child_process = HostChildProcess {
-                    id: u64::from(child_handle.id()),
-                    child: Arc::new(Mutex::new(child_handle)),
+                    id: u64::from(child.id().expect("child has not been polled to completion")),
+                    child,
                     command_str: command.clone(),
                     stdin: child_stdin,
                     stdout: child_stdout,
@@ -91,7 +89,7 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
                 };
                 info!("Spawned {child_process:?}");
 
-                match self.table.push(child_process) {
+                match self.table().push(child_process) {
                     Ok(resource) => Ok(Ok(resource)),
                     Err(err) => {
                         warn!(
@@ -116,41 +114,75 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
     }
 }
 
+// Implement methods for the `child-process` resource
 impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
-    async fn id(
-        &mut self,
-        self_handle: Resource<process_support::ChildProcess>,
-    ) -> wasmtime::Result<u64> {
-        let child_process = self.table.get(&self_handle)?;
+    async fn id(&mut self, self_handle: Resource<HostChildProcess>) -> wasmtime::Result<u64> {
+        let child_process = self.table().get(&self_handle)?;
         Ok(child_process.id)
+    }
+
+    async fn take_stdin(
+        &mut self,
+        self_handle: Resource<HostChildProcess>,
+    ) -> wasmtime::Result<Option<Resource<DynOutputStream>>> {
+        let host_child_process = self.table().get_mut(&self_handle)?;
+        if let Some(child_stdin) = host_child_process.stdin.take() {
+            let child_stdin = wasmtime_wasi::p2::AsyncStdoutStream::new(
+                wasmtime_wasi::p2::pipe::AsyncWriteStream::new(1024, child_stdin),
+            )
+            .stream();
+            Ok(Some(self.table().push(child_stdin)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn take_stdout(
+        &mut self,
+        self_handle: Resource<HostChildProcess>,
+    ) -> wasmtime::Result<Option<Resource<DynInputStream>>> {
+        let host_child_process = self.table().get_mut(&self_handle)?;
+        if let Some(child_stdout) = host_child_process.stdout.take() {
+            let child_stdout = wasmtime_wasi::p2::AsyncStdinStream::new(
+                wasmtime_wasi::p2::pipe::AsyncReadStream::new(child_stdout),
+            )
+            .stream();
+            Ok(Some(self.table().push(child_stdout)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn take_stderr(
+        &mut self,
+        self_handle: Resource<HostChildProcess>,
+    ) -> wasmtime::Result<Option<Resource<DynInputStream>>> {
+        let host_child_process = self.table().get_mut(&self_handle)?;
+        if let Some(child_stdout) = host_child_process.stderr.take() {
+            let child_stdout = wasmtime_wasi::p2::AsyncStdinStream::new(
+                wasmtime_wasi::p2::pipe::AsyncReadStream::new(child_stdout),
+            )
+            .stream();
+            Ok(Some(self.table().push(child_stdout)?))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn wait(
         &mut self,
         self_handle: Resource<process_support::ChildProcess>,
     ) -> wasmtime::Result<Result<Option<i32>, process_support::ProcessError>> {
-        let child_process = self.table.get(&self_handle)?;
-        let child_arc = Arc::clone(&child_process.child); // Clone Arc to move into spawn_blocking
+        let child_process = self.table().get_mut(&self_handle)?;
 
         #[cfg_attr(madsim, allow(deprecated))]
-        let wait_result =
-            tokio::task::spawn_blocking(move || child_arc.lock().unwrap().wait()).await;
+        let wait_result = child_process.child.wait().await;
 
         match wait_result {
-            Ok(Ok(exit_status)) => {
-                // spawn_blocking Ok, wait Ok
-                Ok(Ok(exit_status.code()))
-            }
-            Ok(Err(wait_err)) => {
-                // spawn_blocking Ok, wait Err
+            Ok(exit_status) => Ok(Ok(exit_status.code())),
+            Err(wait_err) => {
                 warn!("Host error: Waiting on process {child_process:?} failed: {wait_err:?}");
                 Ok(Err(process_support::ProcessError::OsError))
-            }
-            Err(spawn_blocking_err) => {
-                warn!(
-                    "Host error: Tokio task join error for process wait {child_process:?}: {spawn_blocking_err:?}"
-                );
-                Ok(Err(process_support::ProcessError::InternalError))
             }
         }
     }
@@ -159,10 +191,9 @@ impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
         &mut self,
         self_handle: Resource<process_support::ChildProcess>,
     ) -> wasmtime::Result<Result<(), process_support::ProcessError>> {
-        let child_process = self.table.get(&self_handle)?;
-        let mut child_guard = child_process.child.lock().unwrap();
+        let child_process = self.table().get_mut(&self_handle)?;
 
-        match child_guard.kill() {
+        match child_process.child.kill().await {
             Ok(()) => Ok(Ok(())),
             Err(err) => {
                 warn!(
@@ -184,7 +215,7 @@ impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
         &mut self,
         self_handle: Resource<process_support::ChildProcess>,
     ) -> wasmtime::Result<()> {
-        let _child_process = self.table.delete(self_handle)?;
+        let _child_process = self.table().delete(self_handle)?;
         Ok(())
     }
 }

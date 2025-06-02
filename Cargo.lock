@@ -4924,7 +4924,10 @@ dependencies = [
 name = "test-programs-process-activity"
 version = "0.22.5"
 dependencies = [
+ "anyhow",
+ "wasi 0.14.2+wasi-0.2.4",
  "wit-bindgen 0.42.1",
+ "wstd",
 ]
 
 [[package]]

@@ -245,6 +245,7 @@ thiserror = "2.0"
 tokio = { version = "0.2.30", package = "madsim-tokio", features = [
     "fs",
     "macros",
+    "process",
     "rt-multi-thread",
     "rt",
     "signal",
@@ -301,6 +302,7 @@ wasmparser = "0.230.0"
 wit-component = "0.230.0"
 
 # testing components
+wasi = "0.14.2"
 wit-bindgen = "0.42.1"
 
 # otlp

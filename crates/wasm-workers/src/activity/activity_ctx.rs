@@ -27,7 +27,7 @@ pub type HttpClientTracesContainer =
     Arc<Mutex<Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>>>;
 
 pub struct ActivityCtx<C: ClockFn> {
-    pub(crate) table: ResourceTable,
+    table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
     component_logger: ComponentLogger,

@@ -61,15 +61,15 @@ interface process-support {
 
         // If stdin was set to `pipe`, this returns the stream to write to it.
         // Returns `none` if stdin is not piped or if called multiple times (stream moved).
-        //take-stdin: func() -> option<output-stream>;
+        take-stdin: func() -> option<output-stream>;
 
         // If stdout was set to `pipe`, this returns the stream to read from it.
         // Returns `none` if stdout is not piped or if called multiple times.
-        //take-stdout: func() -> option<input-stream>;
+        take-stdout: func() -> option<input-stream>;
 
         // If stderr was set to `pipe`, this returns the stream to read from it.
         // Returns `none` if stderr is not piped or if called multiple times.
-        //take-stderr: func() -> option<input-stream>;
+        take-stderr: func() -> option<input-stream>;
 
         // Waits for the process to exit and returns its exit code.
         // This is a blocking call.
