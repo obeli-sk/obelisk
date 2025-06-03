@@ -46,7 +46,7 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
             cmd.current_dir(
                 self.preopened_dir
                     .as_deref()
-                    .expect("process api must only be linked if preopened dir is enabled"),
+                    .expect("process api can only be linked if preopened dir is enabled"),
             );
         }
 

@@ -35,6 +35,12 @@ pub struct ActivityConfig {
 pub struct ActivityDirectoriesConfig {
     pub parent_preopen_dir: Arc<Path>,
     pub reuse_on_retry: bool,
+    pub process_provider: Option<ProcessProvider>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ProcessProvider {
+    Local,
 }
 
 #[derive(Clone)]
@@ -73,11 +79,16 @@ impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
             |state: &mut ActivityCtx<C>| state,
         )
         .map_err(linking_err)?;
-        if config.directories_config.is_some() {
-            // FIXME: Add more conditions
-            // process-support
-            process_support::add_to_linker(&mut linker, |state: &mut ActivityCtx<C>| state)
-                .map_err(linking_err)?;
+        match config
+            .directories_config
+            .as_ref()
+            .and_then(|dir| dir.process_provider.as_ref())
+        {
+            Some(ProcessProvider::Local) => {
+                process_support::add_to_linker(&mut linker, |state: &mut ActivityCtx<C>| state)
+                    .map_err(linking_err)?;
+            }
+            None => {}
         }
         // Attempt to pre-instantiate to catch missing imports
         let instance_pre = linker

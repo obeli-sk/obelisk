@@ -22,7 +22,7 @@ use util::{
 };
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
-    activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig},
+    activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig, ProcessProvider},
     envvar::EnvVar,
     workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
@@ -413,9 +413,27 @@ pub(crate) struct ActivityComponentConfigToml {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityDirectoriesConfigToml {
     #[serde(default)]
-    pub(crate) enabled: bool,
+    enabled: bool,
     #[serde(default)]
-    pub(crate) reuse_on_retry: bool,
+    reuse_on_retry: bool,
+    #[serde(default)]
+    process_provider: ActivityDirectoriesProcessProvider,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ActivityDirectoriesProcessProvider {
+    #[default]
+    None,
+    Local,
+}
+impl From<ActivityDirectoriesProcessProvider> for Option<ProcessProvider> {
+    fn from(value: ActivityDirectoriesProcessProvider) -> Self {
+        match value {
+            ActivityDirectoriesProcessProvider::None => None,
+            ActivityDirectoriesProcessProvider::Local => Some(ProcessProvider::Local),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -458,6 +476,7 @@ impl ActivityComponentConfigToml {
             (Some(parent_preopen_dir), true) => Some(ActivityDirectoriesConfig {
                 parent_preopen_dir,
                 reuse_on_retry: self.directories.reuse_on_retry,
+                process_provider: self.directories.process_provider.into(),
             }),
             (None, true) => {
                 bail!(

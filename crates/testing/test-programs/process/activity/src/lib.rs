@@ -107,7 +107,7 @@ async fn stdio() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-async fn kill() -> Result<(), anyhow::Error> {
+fn kill() -> Result<(), anyhow::Error> {
     let proc = obelisk::activity::process_support::spawn(
         "sleep",
         &SpawnOptions {
@@ -136,6 +136,6 @@ impl Guest for Component {
     }
 
     fn kill() -> Result<(), String> {
-        block_on(async move { self::kill().await.map_err(|err| err.to_string()) })
+        self::kill().map_err(|err| err.to_string())
     }
 }
