@@ -6,7 +6,7 @@ use wasmtime_wasi::p2::{DynInputStream, DynOutputStream, StdinStream as _, Stdou
 
 #[derive(derive_more::Debug)]
 pub enum HostChildProcess {
-    Local {
+    Native {
         id: u64,
         #[expect(dead_code)]
         command: String, // For logging/debugging purposes
@@ -23,7 +23,7 @@ pub enum HostChildProcess {
 }
 
 impl HostChildProcess {
-    pub(crate) fn spawn_local(
+    pub(crate) fn spawn_native(
         command: String,
         options: &process_support::SpawnOptions,
         preopened_dir: &Path,
@@ -85,7 +85,7 @@ impl HostChildProcess {
                     process_support::Stdio::Discard => None,
                 };
 
-                let child_process = HostChildProcess::Local {
+                let child_process = HostChildProcess::Native {
                     id: u64::from(child.id().expect("child has not been polled to completion")),
                     child,
                     command,
@@ -112,13 +112,13 @@ impl HostChildProcess {
 
     pub(crate) fn id(&self) -> u64 {
         match self {
-            Self::Local { id, .. } => *id,
+            Self::Native { id, .. } => *id,
         }
     }
 
     pub(crate) fn take_stdin(&mut self) -> Option<DynOutputStream> {
         match self {
-            Self::Local { stdin, .. } => stdin.take().map(|stream| {
+            Self::Native { stdin, .. } => stdin.take().map(|stream| {
                 wasmtime_wasi::p2::AsyncStdoutStream::new(
                     wasmtime_wasi::p2::pipe::AsyncWriteStream::new(1024, stream),
                 )
@@ -129,7 +129,7 @@ impl HostChildProcess {
 
     pub(crate) fn take_stdout(&mut self) -> Option<DynInputStream> {
         match self {
-            Self::Local { stdout, .. } => stdout.take().map(|stream| {
+            Self::Native { stdout, .. } => stdout.take().map(|stream| {
                 wasmtime_wasi::p2::AsyncStdinStream::new(
                     wasmtime_wasi::p2::pipe::AsyncReadStream::new(stream),
                 )
@@ -140,7 +140,7 @@ impl HostChildProcess {
 
     pub(crate) fn take_stderr(&mut self) -> Option<DynInputStream> {
         match self {
-            Self::Local { stderr, .. } => stderr.take().map(|stream| {
+            Self::Native { stderr, .. } => stderr.take().map(|stream| {
                 wasmtime_wasi::p2::AsyncStdinStream::new(
                     wasmtime_wasi::p2::pipe::AsyncReadStream::new(stream),
                 )
@@ -151,7 +151,7 @@ impl HostChildProcess {
 
     pub(crate) async fn wait(&mut self) -> Result<Option<i32>, process_support::ProcessError> {
         match self {
-            Self::Local { child, .. } => {
+            Self::Native { child, .. } => {
                 #[cfg_attr(madsim, allow(deprecated))]
                 let wait_result = child.wait().await;
                 match wait_result {
@@ -167,7 +167,7 @@ impl HostChildProcess {
 
     pub(crate) async fn kill(&mut self) -> Result<(), process_support::ProcessError> {
         match self {
-            Self::Local { child, .. } => match child.kill().await {
+            Self::Native { child, .. } => match child.kill().await {
                 Ok(()) => Ok(()),
                 Err(err) => {
                     warn!(

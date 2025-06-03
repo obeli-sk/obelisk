@@ -425,13 +425,13 @@ pub(crate) struct ActivityDirectoriesConfigToml {
 pub(crate) enum ActivityDirectoriesProcessProvider {
     #[default]
     None,
-    Local,
+    Native,
 }
 impl From<ActivityDirectoriesProcessProvider> for Option<ProcessProvider> {
     fn from(value: ActivityDirectoriesProcessProvider) -> Self {
         match value {
             ActivityDirectoriesProcessProvider::None => None,
-            ActivityDirectoriesProcessProvider::Local => Some(ProcessProvider::Local),
+            ActivityDirectoriesProcessProvider::Native => Some(ProcessProvider::Native),
         }
     }
 }

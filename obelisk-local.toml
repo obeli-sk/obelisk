@@ -60,4 +60,4 @@ location.path = "target/wasm32-wasip2/release/test_programs_process_activity.was
 max_retries = 1
 forward_stdout = "stderr"
 forward_stderr = "stderr"
-directories  = { enabled = true, reuse_on_retry = true, process_provider = "local"}
+directories  = { enabled = true, reuse_on_retry = true, process_provider = "native"}

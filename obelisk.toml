@@ -60,9 +60,9 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # directories.enabled = false # Disabled by default.
 ## If `reuse-on-retry` is enabled, the directory is not wiped clean on retries. Enable only if all disk IO is idempotent.
 # directories.reuse-on-retry = false
-## Activities that need process API must enable it explicitly. See `obelisk:activity/process-support@1.0.0` WIT interface.
-## Note that `local` process API provider does not attempt to do any cleanup after the activity is stopped.
-# directories.process_provider = "none" # Default is "none". Possible value: "none"|"local"
+## Activities that need process API must enable it explicitly. See `obelisk:activity/process@1.0.0` WIT interface.
+## Note that `native` process API provider does not attempt to do any cleanup after the activity is stopped.
+# directories.process_provider = "none" # Default is "none". Possible value: "none"|"native"
 
 ### Workflow components configuration
 # [[workflow]]

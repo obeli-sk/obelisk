@@ -39,8 +39,8 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
             .clone()
             .expect("process api can only be linked if preopened dir is enabled");
         match self.process_provider {
-            Some(ProcessProvider::Local) => {
-                match HostChildProcess::spawn_local(command, &options, &preopened_dir) {
+            Some(ProcessProvider::Native) => {
+                match HostChildProcess::spawn_native(command, &options, &preopened_dir) {
                     Ok(child_process) => Ok(Ok(self.table().push(child_process)?)),
                     Err(err) => Ok(Err(err)), // Forward the spawn-error
                 }

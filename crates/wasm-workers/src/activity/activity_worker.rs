@@ -40,7 +40,7 @@ pub struct ActivityDirectoriesConfig {
 
 #[derive(Clone, Copy, Debug)]
 pub enum ProcessProvider {
-    Local,
+    Native,
 }
 
 #[derive(Clone)]
@@ -84,7 +84,7 @@ impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
             .as_ref()
             .and_then(|dir| dir.process_provider.as_ref())
         {
-            Some(ProcessProvider::Local) => {
+            Some(ProcessProvider::Native) => {
                 process_support::add_to_linker(&mut linker, |state: &mut ActivityCtx<C>| state)
                     .map_err(linking_err)?;
             }
@@ -1347,7 +1347,7 @@ pub(crate) mod tests {
                     directories_config: Some(ActivityDirectoriesConfig {
                         parent_preopen_dir,
                         reuse_on_retry: false,
-                        process_provider: Some(ProcessProvider::Local),
+                        process_provider: Some(ProcessProvider::Native),
                     }),
                 },
             );
