@@ -103,7 +103,7 @@ impl HostChildProcess {
                     std::io::ErrorKind::PermissionDenied => {
                         process_support::SpawnError::PermissionDenied
                     }
-                    _ => process_support::SpawnError::InternalError,
+                    _ => process_support::SpawnError::GenericError,
                 };
                 Err(spawn_error)
             }

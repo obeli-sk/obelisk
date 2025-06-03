@@ -39,8 +39,8 @@ interface process-support {
         permission-denied,
         // The current working directory specified does not exist or is not accessible.
         cwd-not-found,
-        // A generic internal error occurred in the host.
-        internal-error,
+        // A generic error occurred during spawning.
+        generic-error,
     }
 
     enum process-error {
