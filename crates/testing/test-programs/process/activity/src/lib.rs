@@ -1,6 +1,6 @@
 use anyhow::{bail, ensure};
 use exports::testing::process::process::Guest;
-use obelisk::activity::process_support::{SpawnOptions, Stdio};
+use obelisk::activity::process as process_support;
 use wstd::io::{AsyncInputStream, AsyncOutputStream, Cursor};
 use wstd::runtime::block_on;
 
@@ -10,7 +10,7 @@ wit_bindgen::generate!({
        "wasi:io/error@0.2.3": wasi::io::error,
        "wasi:io/poll@0.2.3": wasi::io::poll,
        "wasi:io/streams@0.2.3": wasi::io::streams,
-       "obelisk:activity/process-support@1.0.0": generate,
+       "obelisk:activity/process@1.0.0": generate,
        "testing:process/process": generate,
    },
 });
@@ -20,15 +20,15 @@ export!(Component);
 
 fn touch() -> Result<(), anyhow::Error> {
     // Idempotently create a file so that the activity works with `reuse-on-retry`.
-    let proc = obelisk::activity::process_support::spawn(
+    let proc = process_support::spawn(
         "touch",
-        &SpawnOptions {
+        &process_support::SpawnOptions {
             args: vec!["touched".to_string()],
             environment: vec![],
             current_working_directory: None,
-            stdin: Stdio::Discard,
-            stdout: Stdio::Discard,
-            stderr: Stdio::Discard,
+            stdin: process_support::Stdio::Discard,
+            stdout: process_support::Stdio::Discard,
+            stderr: process_support::Stdio::Discard,
         },
     )?;
     println!("Waiting for {}", proc.id());
@@ -55,18 +55,18 @@ fn ls() -> Vec<String> {
 }
 
 async fn stdio() -> Result<(), anyhow::Error> {
-    let proc = obelisk::activity::process_support::spawn(
+    let proc = process_support::spawn(
         "bash",
-        &SpawnOptions {
+        &process_support::SpawnOptions {
             args: vec![
                 "-c".to_string(),
                 format!("echo -n stderr >&2; read input; echo -n \"hello $input\""),
             ],
             environment: vec![],
             current_working_directory: None,
-            stdin: Stdio::Pipe,
-            stdout: Stdio::Pipe,
-            stderr: Stdio::Pipe,
+            stdin: process_support::Stdio::Pipe,
+            stdout: process_support::Stdio::Pipe,
+            stderr: process_support::Stdio::Pipe,
         },
     )?;
     let stdin = proc.take_stdin().expect("first `take_stdin` must succeed");
@@ -108,15 +108,15 @@ async fn stdio() -> Result<(), anyhow::Error> {
 }
 
 fn kill() -> Result<(), anyhow::Error> {
-    let proc = obelisk::activity::process_support::spawn(
+    let proc = process_support::spawn(
         "sleep",
-        &SpawnOptions {
+        &process_support::SpawnOptions {
             args: vec!["10".to_string()],
             environment: vec![],
             current_working_directory: None,
-            stdin: Stdio::Pipe,
-            stdout: Stdio::Pipe,
-            stderr: Stdio::Pipe,
+            stdin: process_support::Stdio::Pipe,
+            stdout: process_support::Stdio::Pipe,
+            stderr: process_support::Stdio::Pipe,
         },
     )?;
     proc.kill()?;

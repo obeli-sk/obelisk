@@ -1,6 +1,6 @@
 package obelisk:activity@1.0.0;
 
-interface process-support {
+interface process {
     use wasi:io/streams@0.2.3.{input-stream, output-stream};
 
     // How to handle standard I/O for the spawned process
@@ -86,7 +86,7 @@ interface process-support {
         kill: func() -> result<_, process-error>;
     }
 
-    // Spawns a new local or remote process.
+    // Spawns a new process.
     //
     // - `command`: The executable to run (e.g., "/usr/bin/ls", "my_script.sh").
     // - `options`: Configuration for the spawned process.

@@ -1,5 +1,5 @@
 use super::activity_ctx::{self, ActivityCtx};
-use super::activity_host_exports::process_support_outer::v1_0_0::obelisk::activity::process_support;
+use super::activity_ctx_process::process_support_outer::v1_0_0::obelisk::activity::process as process_support;
 use crate::WasmFileError;
 use crate::activity::activity_ctx::HttpClientTracesContainer;
 use crate::component_logger::log_activities;

@@ -1,13 +1,29 @@
-use super::{
-    activity_ctx::ActivityCtx,
-    activity_host_exports::process_support_outer::v1_0_0::obelisk::activity::process_support,
-    activity_worker::ProcessProvider,
-};
+use super::{activity_ctx::ActivityCtx, activity_worker::ProcessProvider};
 use crate::activity::process::HostChildProcess;
 use concepts::time::ClockFn;
+use process_support_outer::v1_0_0::obelisk::activity::process as process_support;
 use wasmtime::component::Resource;
 use wasmtime_wasi::p2::{DynInputStream, DynOutputStream};
 use wasmtime_wasi_io::IoView as _;
+
+pub(crate) mod process_support_outer {
+    pub(crate) mod v1_0_0 {
+        wasmtime::component::bindgen!({
+            path: "host-wit-activity/",
+            async: true,
+            inline: "package any:any;
+                world bindings {
+                    import obelisk:activity/process@1.0.0;
+                }",
+            world: "any:any/bindings",
+            trappable_imports: true,
+            with: {
+                "obelisk:activity/process/child-process": crate::activity::process::HostChildProcess,
+                "wasi:io": wasmtime_wasi_io::bindings::wasi::io,
+            }
+        });
+    }
+}
 
 // NB: Only use `?` for translating `ResourceTableError` into anyhow!
 impl<C: ClockFn> process_support::Host for ActivityCtx<C> {

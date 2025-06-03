@@ -3,5 +3,5 @@ package any:any;
 world any {
     export testing:process/process;
 
-    import obelisk:activity/process-support@1.0.0;
+    import obelisk:activity/process@1.0.0;
 }

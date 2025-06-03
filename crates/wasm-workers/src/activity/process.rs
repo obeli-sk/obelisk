@@ -1,4 +1,4 @@
-use super::activity_host_exports::process_support_outer::v1_0_0::obelisk::activity::process_support;
+use crate::activity::activity_ctx_process::process_support_outer::v1_0_0::obelisk::activity::process as process_support;
 use std::path::{Path, PathBuf};
 use std::process::Stdio as StdProcessStdio;
 use tracing::{debug, info, warn};
