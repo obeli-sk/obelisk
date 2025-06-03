@@ -107,6 +107,25 @@ async fn stdio() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+async fn kill() -> Result<(), anyhow::Error> {
+    let proc = obelisk::activity::process_support::spawn(
+        "sleep",
+        &SpawnOptions {
+            args: vec!["10".to_string()],
+            environment: vec![],
+            current_working_directory: None,
+            stdin: Stdio::Pipe,
+            stdout: Stdio::Pipe,
+            stderr: Stdio::Pipe,
+        },
+    )?;
+    proc.kill()?;
+    let status = proc.wait()?;
+    println!("status: {status:?}");
+    ensure!(status.is_none());
+    Ok(())
+}
+
 impl Guest for Component {
     fn touch() -> Result<(), String> {
         self::touch().map_err(|err| err.to_string())
@@ -114,5 +133,9 @@ impl Guest for Component {
 
     fn stdio() -> Result<(), String> {
         block_on(async move { self::stdio().await.map_err(|err| err.to_string()) })
+    }
+
+    fn kill() -> Result<(), String> {
+        block_on(async move { self::kill().await.map_err(|err| err.to_string()) })
     }
 }

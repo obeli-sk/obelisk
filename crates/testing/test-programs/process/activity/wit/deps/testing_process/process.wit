@@ -4,4 +4,6 @@ interface process {
     touch: func() -> result<_, string>;
 
     stdio: func() -> result<_, string>;
+
+    kill: func() -> result<_, string>;
 }
