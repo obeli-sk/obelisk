@@ -161,6 +161,8 @@ pub(crate) mod tests {
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+            test_programs_dir_activity_builder::TEST_PROGRAMS_DIR_ACTIVITY,
+            test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
             ])]
         #[tokio::test]
         async fn fibo(wasm_path: &str) {

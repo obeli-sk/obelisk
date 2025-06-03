@@ -411,18 +411,29 @@ pub(crate) mod tests {
         )
     }
 
+    #[cfg_attr(madsim, allow(dead_code))]
     fn new_activity_worker(
         wasm_path: &str,
         engine: Arc<Engine>,
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
     ) -> (Arc<dyn Worker>, ComponentId) {
+        new_activity_worker_with_config(wasm_path, engine, clock_fn, sleep, activity_config)
+    }
+
+    fn new_activity_worker_with_config(
+        wasm_path: &str,
+        engine: Arc<Engine>,
+        clock_fn: impl ClockFn + 'static,
+        sleep: impl Sleep + 'static,
+        config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
+    ) -> (Arc<dyn Worker>, ComponentId) {
         let (wasm_component, component_id) = compile_activity_with_engine(wasm_path, &engine);
         (
             Arc::new(
                 ActivityWorker::new_with_config(
                     wasm_component,
-                    activity_config(component_id.clone()),
+                    config_fn(component_id.clone()),
                     engine,
                     clock_fn,
                     sleep,
@@ -439,9 +450,22 @@ pub(crate) mod tests {
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
     ) -> ExecutorTaskHandle {
+        spawn_activity_with_config(db_pool, wasm_path, clock_fn, sleep, activity_config)
+    }
+
+    pub(crate) fn spawn_activity_with_config<
+        DB: DbConnection + 'static,
+        P: DbPool<DB> + 'static,
+    >(
+        db_pool: P,
+        wasm_path: &'static str,
+        clock_fn: impl ClockFn + 'static,
+        sleep: impl Sleep + 'static,
+        config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
+    ) -> ExecutorTaskHandle {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
         let (worker, component_id) =
-            new_activity_worker(wasm_path, engine, clock_fn.clone(), sleep);
+            new_activity_worker_with_config(wasm_path, engine, clock_fn.clone(), sleep, config_fn);
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -1229,6 +1253,132 @@ pub(crate) mod tests {
             assert_eq!(Some(Box::new(TypeWrapper::String)), *err);
             drop(db_connection);
             drop(exec_task);
+            db_pool.close().await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn preopened_dir_sanity() {
+            test_utils::set_up();
+            let sim_clock = SimClock::default();
+            let (_guard, db_pool) = Database::Memory.set_up().await;
+            let db_connection = db_pool.connection();
+            let parent_preopen_tempdir = tempfile::tempdir().unwrap();
+            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
+            let exec_task = spawn_activity_with_config(
+                db_pool.clone(),
+                test_programs_dir_activity_builder::TEST_PROGRAMS_DIR_ACTIVITY,
+                sim_clock.clone(),
+                TokioSleep,
+                move |component_id| ActivityConfig {
+                    component_id,
+                    forward_stdout: None,
+                    forward_stderr: None,
+                    env_vars: Arc::default(),
+                    retry_on_err: true, // needed
+                    directories_config: Some(ActivityDirectoriesConfig {
+                        parent_preopen_dir,
+                        reuse_on_retry: true, // relies on continuing in the same folder
+                        process_provider: None,
+                    }),
+                },
+            );
+            // Create an execution.
+            let execution_id = ExecutionId::generate();
+            let created_at = sim_clock.now();
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id: execution_id.clone(),
+                    ffqn: FunctionFqn::new_static_tuple(
+                        test_programs_dir_activity_builder::exports::testing::dir::dir::IO,
+                    ),
+                    params: Params::empty(),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: created_at,
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 1, // should fail in first try
+                    component_id: ComponentId::dummy_activity(),
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+            // Check the result.
+            let res = db_connection
+                .wait_for_finished_result(&execution_id, None)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_matches!(res, SupportedFunctionReturnValue::InfallibleOrResultOk(_));
+            drop(db_connection);
+            exec_task.close().await;
+            db_pool.close().await.unwrap();
+        }
+
+        #[rstest::rstest(
+            ffqn => [FunctionFqn::new_static_tuple(
+                    test_programs_process_activity_builder::exports::testing::process::process::TOUCH,
+                ), FunctionFqn::new_static_tuple(
+                    test_programs_process_activity_builder::exports::testing::process::process::KILL,
+                ),
+                FunctionFqn::new_static_tuple(
+                    test_programs_process_activity_builder::exports::testing::process::process::STDIO,
+                )],
+        )]
+        #[tokio::test]
+        async fn process_sanity(ffqn: FunctionFqn) {
+            test_utils::set_up();
+            let sim_clock = SimClock::default();
+            let (_guard, db_pool) = Database::Memory.set_up().await;
+            let db_connection = db_pool.connection();
+            let parent_preopen_tempdir = tempfile::tempdir().unwrap();
+            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
+            let exec_task = spawn_activity_with_config(
+                db_pool.clone(),
+                test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
+                sim_clock.clone(),
+                TokioSleep,
+                move |component_id| ActivityConfig {
+                    component_id,
+                    forward_stdout: None,
+                    forward_stderr: None,
+                    env_vars: Arc::default(),
+                    retry_on_err: true,
+                    directories_config: Some(ActivityDirectoriesConfig {
+                        parent_preopen_dir,
+                        reuse_on_retry: false,
+                        process_provider: Some(ProcessProvider::Local),
+                    }),
+                },
+            );
+            // Create an execution.
+            let execution_id = ExecutionId::generate();
+            let created_at = sim_clock.now();
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id: execution_id.clone(),
+                    ffqn,
+                    params: Params::empty(),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: created_at,
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                    component_id: ComponentId::dummy_activity(),
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+            // Check the result.
+            let res = db_connection
+                .wait_for_finished_result(&execution_id, None)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_matches!(res, SupportedFunctionReturnValue::InfallibleOrResultOk(_));
+            drop(db_connection);
+            exec_task.close().await;
             db_pool.close().await.unwrap();
         }
     }
