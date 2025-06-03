@@ -190,7 +190,7 @@
       "type": "string",
       "enum": [
         "none",
-        "local"
+        "native"
       ]
     },
     "ApiConfig": {
