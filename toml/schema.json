@@ -176,12 +176,22 @@
           "type": "boolean",
           "default": false
         },
+        "process_provider": {
+          "$ref": "#/$defs/ActivityDirectoriesProcessProvider"
+        },
         "reuse_on_retry": {
           "type": "boolean",
           "default": false
         }
       },
       "additionalProperties": false
+    },
+    "ActivityDirectoriesProcessProvider": {
+      "type": "string",
+      "enum": [
+        "none",
+        "local"
+      ]
     },
     "ApiConfig": {
       "type": "object",
