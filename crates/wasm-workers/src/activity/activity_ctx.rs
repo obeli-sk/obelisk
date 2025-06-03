@@ -1,4 +1,4 @@
-use super::activity_worker::ActivityConfig;
+use super::activity_worker::{ActivityConfig, ProcessProvider};
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::std_output_stream::LogStream;
 use bytes::Bytes;
@@ -6,7 +6,7 @@ use concepts::ExecutionId;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
 use hyper::body::Body;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 use tracing::{Instrument, Span, debug, info_span};
@@ -33,7 +33,8 @@ pub struct ActivityCtx<C: ClockFn> {
     component_logger: ComponentLogger,
     clock_fn: C,
     http_client_traces: HttpClientTracesContainer,
-    pub(crate) preopened_dir: Option<PathBuf>,
+    pub(crate) preopened_dir: Option<Arc<Path>>,
+    pub(crate) process_provider: Option<ProcessProvider>,
 }
 
 impl<C: ClockFn> WasiView for ActivityCtx<C> {
@@ -158,7 +159,11 @@ pub(crate) fn store<C: ClockFn>(
         component_logger: ComponentLogger { span: worker_span },
         http_client_traces,
         clock_fn,
-        preopened_dir,
+        preopened_dir: preopened_dir.map(Arc::from),
+        process_provider: config
+            .directories_config
+            .as_ref()
+            .and_then(|dir| dir.process_provider),
     };
     Ok(Store::new(engine, ctx))
 }

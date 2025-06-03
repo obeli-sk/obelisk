@@ -38,7 +38,7 @@ pub struct ActivityDirectoriesConfig {
     pub process_provider: Option<ProcessProvider>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum ProcessProvider {
     Local,
 }
