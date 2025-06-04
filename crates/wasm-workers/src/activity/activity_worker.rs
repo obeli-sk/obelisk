@@ -1393,8 +1393,7 @@ pub(crate) mod tests {
             stdout.lines().any(|line| {
                 line.split_whitespace()
                     .next()
-                    .map(|field| field == pid.to_string())
-                    .unwrap_or(false)
+                    .is_some_and(|field| field == pid.to_string())
             })
         }
 

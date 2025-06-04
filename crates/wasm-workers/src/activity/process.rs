@@ -132,13 +132,20 @@ impl HostChildProcess {
 
     #[cfg(unix)]
     fn clean(&self) {
-        let pid = self.id;
+        let Ok(pid) = i32::try_from(self.id) else {
+            warn!(
+                "Failed to send SIGTERM to process group {} - cannot cast to i32",
+                self.id
+            );
+            return;
+        };
+        #[cfg_attr(madsim, allow(deprecated))]
         tokio::task::spawn_blocking(move || {
             trace!("Attempting to kill process group with PGID: {pid}");
             unsafe {
                 // Send SIGTERM to the entire process group
                 // The negative sign before pgid_to_kill is crucial
-                let result = libc::kill(-(pid as i32), libc::SIGTERM);
+                let result = libc::kill(-pid, libc::SIGTERM);
                 if result == 0 {
                     debug!("Successfully sent SIGTERM to process group {pid}",);
                 } else {
