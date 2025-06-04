@@ -160,9 +160,8 @@ impl HostChildProcess {
     #[cfg(not(unix))]
     fn clean(&self) {}
 
-    pub(crate) fn id(&self) -> u64 {
-        // FIXME: u32!
-        u64::from(self.id)
+    pub(crate) fn id(&self) -> u32 {
+        self.id
     }
 
     pub(crate) fn take_stdin(&mut self) -> Option<DynOutputStream> {

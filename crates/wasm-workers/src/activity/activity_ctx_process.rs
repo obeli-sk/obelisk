@@ -51,7 +51,7 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
 
 // Implement methods for the `child-process` resource
 impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
-    async fn id(&mut self, self_handle: Resource<HostChildProcess>) -> wasmtime::Result<u64> {
+    async fn id(&mut self, self_handle: Resource<HostChildProcess>) -> wasmtime::Result<u32> {
         let child_process = self.table().get(&self_handle)?;
         Ok(child_process.id())
     }
