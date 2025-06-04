@@ -6,4 +6,6 @@ interface process {
     stdio: func() -> result<_, string>;
 
     kill: func() -> result<_, string>;
+
+    exec-sleep: func() -> result<u32, string>;
 }

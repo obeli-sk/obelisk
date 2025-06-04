@@ -1,4 +1,4 @@
-use super::{activity_ctx::ActivityCtx, activity_worker::ProcessProvider};
+use super::activity_ctx::ActivityCtx;
 use crate::activity::process::HostChildProcess;
 use concepts::time::ClockFn;
 use process_support_outer::v1_0_0::obelisk::activity::process as process_support;
@@ -38,14 +38,13 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
             .preopened_dir
             .clone()
             .expect("process api can only be linked if preopened dir is enabled");
-        match self.process_provider {
-            Some(ProcessProvider::Native) => {
-                match HostChildProcess::spawn_native(command, &options, &preopened_dir) {
-                    Ok(child_process) => Ok(Ok(self.table().push(child_process)?)),
-                    Err(err) => Ok(Err(err)), // Forward the spawn-error
-                }
-            }
-            None => unreachable!("process api can only be linked if it is enabled"),
+        let provider = self
+            .process_provider
+            .expect("process api can only be linked if it is enabled");
+
+        match HostChildProcess::spawn(provider, command, &options, &preopened_dir) {
+            Ok(child_process) => Ok(Ok(self.table().push(child_process)?)),
+            Err(err) => Ok(Err(err)), // Forward the spawn-error
         }
     }
 }

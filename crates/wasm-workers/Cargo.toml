@@ -29,6 +29,7 @@ hyper-util.workspace = true
 hyper.workspace = true
 indexmap.workspace = true
 itertools.workspace = true
+libc.workspace = true
 rand.workspace = true
 route-recognizer.workspace = true
 serde_json.workspace = true
@@ -39,8 +40,8 @@ tokio.workspace = true
 tracing.workspace = true
 ulid.workspace = true
 wasmtime-wasi-http.workspace = true
-wasmtime-wasi.workspace = true
 wasmtime-wasi-io.workspace = true
+wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 
 [dev-dependencies]

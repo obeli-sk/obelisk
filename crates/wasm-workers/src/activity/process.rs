@@ -1,43 +1,57 @@
+use super::activity_worker::ProcessProvider;
 use crate::activity::activity_ctx_process::process_support_outer::v1_0_0::obelisk::activity::process as process_support;
 use std::path::{Path, PathBuf};
 use std::process::Stdio as StdProcessStdio;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use wasmtime_wasi::p2::{DynInputStream, DynOutputStream, StdinStream as _, StdoutStream as _};
 
 #[derive(derive_more::Debug)]
-pub enum HostChildProcess {
-    Native {
-        id: u64,
-        #[expect(dead_code)]
-        command: String, // For logging/debugging purposes
-        #[debug(skip)]
-        child: tokio::process::Child,
-        // Store the handles for piped streams before they are converted and taken.
-        #[debug(skip)]
-        stdin: Option<tokio::process::ChildStdin>,
-        #[debug(skip)]
-        stdout: Option<tokio::process::ChildStdout>,
-        #[debug(skip)]
-        stderr: Option<tokio::process::ChildStderr>,
-    },
+pub struct HostChildProcess {
+    #[expect(dead_code)] // For logging/debugging purposes
+    provider: ProcessProvider,
+    id: u32,
+    #[expect(dead_code)] // For logging/debugging purposes
+    command: String,
+    #[debug(skip)]
+    child: tokio::process::Child,
+    // Store the handles for piped streams before they are converted and taken.
+    #[debug(skip)]
+    stdin: Option<tokio::process::ChildStdin>,
+    #[debug(skip)]
+    stdout: Option<tokio::process::ChildStdout>,
+    #[debug(skip)]
+    stderr: Option<tokio::process::ChildStderr>,
+}
+
+impl Drop for HostChildProcess {
+    fn drop(&mut self) {
+        self.clean();
+    }
 }
 
 impl HostChildProcess {
-    pub(crate) fn spawn_native(
+    pub(crate) fn spawn(
+        provider: ProcessProvider,
         command: String,
         options: &process_support::SpawnOptions,
         preopened_dir: &Path,
     ) -> Result<process_support::ChildProcess, process_support::SpawnError> {
         debug!(
-            "Host attempting to spawn: command='{}', args={:?}, env_vars_count={}, cwd={:?}",
-            command,
+            "Host attempting to spawn: {provider:?} command='{command}', args={:?}, env_vars_count={}, cwd={:?}",
             options.args,
             options.environment.len(),
             options.current_working_directory
         );
-
-        let mut cmd = tokio::process::Command::new(&command);
-        cmd.args(&options.args);
+        let mut cmd = match provider {
+            ProcessProvider::Native => {
+                let mut cmd = tokio::process::Command::new(&command);
+                cmd.args(&options.args);
+                #[cfg(unix)]
+                cmd.process_group(0);
+                cmd.kill_on_drop(true);
+                cmd
+            }
+        };
 
         // Start with clean env, then add specified vars.
         cmd.env_clear();
@@ -85,8 +99,14 @@ impl HostChildProcess {
                     process_support::Stdio::Discard => None,
                 };
 
-                let child_process = HostChildProcess::Native {
-                    id: u64::from(child.id().expect("child has not been polled to completion")),
+                let child_process = HostChildProcess {
+                    provider,
+                    id: child
+                        .id()
+                        .ok_or_else(||{
+                        error!("pid is None - should not happen since child has not been polled to completion");
+                        process_support::SpawnError::GenericError
+                    })?,
                     child,
                     command,
                     stdin: child_stdin,
@@ -110,79 +130,89 @@ impl HostChildProcess {
         }
     }
 
+    #[cfg(unix)]
+    fn clean(&self) {
+        let pid = self.id;
+        tokio::task::spawn_blocking(move || {
+            trace!("Attempting to kill process group with PGID: {pid}");
+            unsafe {
+                // Send SIGTERM to the entire process group
+                // The negative sign before pgid_to_kill is crucial
+                let result = libc::kill(-(pid as i32), libc::SIGTERM);
+                if result == 0 {
+                    debug!("Successfully sent SIGTERM to process group {pid}",);
+                } else {
+                    warn!(
+                        "Failed to send SIGTERM to process group {pid}: {}",
+                        std::io::Error::last_os_error()
+                    );
+                }
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    fn clean(&self) {}
+
     pub(crate) fn id(&self) -> u64 {
-        match self {
-            Self::Native { id, .. } => *id,
-        }
+        // FIXME: u32!
+        u64::from(self.id)
     }
 
     pub(crate) fn take_stdin(&mut self) -> Option<DynOutputStream> {
-        match self {
-            Self::Native { stdin, .. } => stdin.take().map(|stream| {
-                wasmtime_wasi::p2::AsyncStdoutStream::new(
-                    wasmtime_wasi::p2::pipe::AsyncWriteStream::new(1024, stream),
-                )
-                .stream()
-            }),
-        }
+        self.stdin.take().map(|stream| {
+            wasmtime_wasi::p2::AsyncStdoutStream::new(
+                wasmtime_wasi::p2::pipe::AsyncWriteStream::new(1024, stream),
+            )
+            .stream()
+        })
     }
 
     pub(crate) fn take_stdout(&mut self) -> Option<DynInputStream> {
-        match self {
-            Self::Native { stdout, .. } => stdout.take().map(|stream| {
-                wasmtime_wasi::p2::AsyncStdinStream::new(
-                    wasmtime_wasi::p2::pipe::AsyncReadStream::new(stream),
-                )
-                .stream()
-            }),
-        }
+        self.stdout.take().map(|stream| {
+            wasmtime_wasi::p2::AsyncStdinStream::new(wasmtime_wasi::p2::pipe::AsyncReadStream::new(
+                stream,
+            ))
+            .stream()
+        })
     }
 
     pub(crate) fn take_stderr(&mut self) -> Option<DynInputStream> {
-        match self {
-            Self::Native { stderr, .. } => stderr.take().map(|stream| {
-                wasmtime_wasi::p2::AsyncStdinStream::new(
-                    wasmtime_wasi::p2::pipe::AsyncReadStream::new(stream),
-                )
-                .stream()
-            }),
-        }
+        self.stderr.take().map(|stream| {
+            wasmtime_wasi::p2::AsyncStdinStream::new(wasmtime_wasi::p2::pipe::AsyncReadStream::new(
+                stream,
+            ))
+            .stream()
+        })
     }
 
     pub(crate) async fn wait(&mut self) -> Result<Option<i32>, process_support::ProcessError> {
-        match self {
-            Self::Native { child, .. } => {
-                #[cfg_attr(madsim, allow(deprecated))]
-                let wait_result = child.wait().await;
-                match wait_result {
-                    Ok(exit_status) => Ok(exit_status.code()),
-                    Err(wait_err) => {
-                        warn!("Host error: Waiting on process {self:?} failed: {wait_err:?}");
-                        Err(process_support::ProcessError::OsError)
-                    }
-                }
+        #[cfg_attr(madsim, allow(deprecated))]
+        let wait_result = self.child.wait().await;
+        match wait_result {
+            Ok(exit_status) => Ok(exit_status.code()),
+            Err(wait_err) => {
+                warn!("Host error: Waiting on process {self:?} failed: {wait_err:?}");
+                Err(process_support::ProcessError::OsError)
             }
         }
     }
 
     pub(crate) async fn kill(&mut self) -> Result<(), process_support::ProcessError> {
-        match self {
-            Self::Native { child, .. } => match child.kill().await {
-                Ok(()) => Ok(()),
-                Err(err) => {
-                    warn!(
-                        "Host error: Killing process {self:?}: kind: {kind},  {err:?}",
-                        kind = err.kind()
-                    );
-                    let process_error = match err.kind() {
-                        std::io::ErrorKind::PermissionDenied => {
-                            process_support::ProcessError::PermissionDenied
-                        }
-                        _ => process_support::ProcessError::OsError,
-                    };
-                    Err(process_error)
-                }
-            },
+        match self.child.kill().await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                warn!(
+                    "Host error: Killing process {self:?}: kind: {kind},  {err:?}",
+                    kind = err.kind()
+                );
+                let process_error = match err.kind() {
+                    std::io::ErrorKind::PermissionDenied => {
+                        process_support::ProcessError::PermissionDenied
+                    }
+                    _ => process_support::ProcessError::OsError,
+                };
+                Err(process_error)
+            }
         }
     }
 }

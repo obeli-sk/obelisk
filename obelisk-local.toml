@@ -57,7 +57,9 @@ directories  = { enabled = true, reuse_on_retry = true }
 [[activity_wasm]]
 name = "test_programs_process_activity"
 location.path = "target/wasm32-wasip2/release/test_programs_process_activity.wasm"
-max_retries = 1
+max_retries = 0
 forward_stdout = "stderr"
 forward_stderr = "stderr"
-directories  = { enabled = true, reuse_on_retry = true, process_provider = "native"}
+directories  = { enabled = true, reuse_on_retry = false, process_provider = "native"}
+env_vars = ["PATH"] # Needed for spawning subprocesses.
+

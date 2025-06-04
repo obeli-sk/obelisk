@@ -1,6 +1,7 @@
 use anyhow::{bail, ensure};
 use exports::testing::process::process::Guest;
-use obelisk::activity::process as process_support;
+use obelisk::activity::process::{self as process_support};
+use wasi::io::streams::InputStream;
 use wstd::io::{AsyncInputStream, AsyncOutputStream, Cursor};
 use wstd::runtime::block_on;
 
@@ -88,23 +89,23 @@ async fn stdio() -> Result<(), anyhow::Error> {
     let exit_code = proc.wait()?;
     ensure!(exit_code == Some(0));
 
-    let to_str = |stream| async move {
-        let mut buffer = Cursor::new(Vec::new());
-        let stream = AsyncInputStream::new(stream);
-        wstd::io::copy(stream, &mut buffer).await?;
-        let output = buffer.into_inner();
-        let output = String::from_utf8_lossy(&output).into_owned();
-        Ok::<_, anyhow::Error>(output)
-    };
-
-    let stdout = to_str(stdout).await?;
+    let stdout = stream_to_string(stdout).await?;
     println!("Got {stdout}");
     ensure!(stdout == "hello wasi!");
 
-    let stderr = to_str(stderr).await?;
+    let stderr = stream_to_string(stderr).await?;
     ensure!(stderr == "stderr");
 
     Ok(())
+}
+
+async fn stream_to_string(stream: InputStream) -> Result<String, anyhow::Error> {
+    let mut buffer = Cursor::new(Vec::new());
+    let stream = AsyncInputStream::new(stream);
+    wstd::io::copy(stream, &mut buffer).await?;
+    let output = buffer.into_inner();
+    let output = String::from_utf8_lossy(&output).into_owned();
+    Ok(output)
 }
 
 fn kill() -> Result<(), anyhow::Error> {
@@ -126,6 +127,37 @@ fn kill() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+async fn exec_sleep() -> Result<u32, anyhow::Error> {
+    // Spawn bash that spawns sleep, detached from bash. If process groups are used, the sleep process should be killed.
+    let environment: Vec<_> = std::env::vars().collect();
+    ensure!(
+        environment.iter().any(|(key, _)| key == "PATH"),
+        "PATH must be forwarded from host"
+    );
+    let proc = process_support::spawn(
+        "bash",
+        &process_support::SpawnOptions {
+            args: vec![
+                "-c".to_string(),
+                "nohup sleep 100 > /dev/null 2>&1 & echo -n $!".to_string(),
+            ],
+            environment,
+            current_working_directory: None,
+            stdin: process_support::Stdio::Pipe,
+            stdout: process_support::Stdio::Pipe,
+            stderr: process_support::Stdio::Pipe,
+        },
+    )?;
+
+    let child_stdout = proc
+        .take_stdout()
+        .expect("first `take_stdout` must succeed");
+
+    let sleep_pid = stream_to_string(child_stdout).await?;
+    println!("Got pid: {sleep_pid}");
+    Ok(sleep_pid.parse()?)
+}
+
 impl Guest for Component {
     fn touch() -> Result<(), String> {
         self::touch().map_err(|err| err.to_string())
@@ -137,5 +169,9 @@ impl Guest for Component {
 
     fn kill() -> Result<(), String> {
         self::kill().map_err(|err| err.to_string())
+    }
+
+    fn exec_sleep() -> Result<u32, String> {
+        block_on(async move { self::exec_sleep().await.map_err(|err| err.to_string()) })
     }
 }

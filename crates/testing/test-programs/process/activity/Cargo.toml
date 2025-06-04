@@ -10,9 +10,9 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+wasi.workspace = true
 wit-bindgen.workspace = true
 wstd.workspace = true
-wasi.workspace = true
 
 [lib]
 crate-type = ["cdylib"]

@@ -1381,5 +1381,97 @@ pub(crate) mod tests {
             exec_task.close().await;
             db_pool.close().await.unwrap();
         }
+
+        #[cfg(unix)]
+        async fn is_process_running(pid: u32) -> bool {
+            let output = tokio::process::Command::new("ps")
+                .arg("a")
+                .output()
+                .await
+                .unwrap();
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            stdout.lines().any(|line| {
+                line.split_whitespace()
+                    .next()
+                    .map(|field| field == pid.to_string())
+                    .unwrap_or(false)
+            })
+        }
+
+        #[cfg(unix)]
+        #[tokio::test]
+        async fn process_group_cleanup() {
+            test_utils::set_up();
+            let sim_clock = SimClock::default();
+            let (_guard, db_pool) = Database::Memory.set_up().await;
+            let db_connection = db_pool.connection();
+            let parent_preopen_tempdir = tempfile::tempdir().unwrap();
+            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
+            let exec_task = spawn_activity_with_config(
+                db_pool.clone(),
+                test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
+                sim_clock.clone(),
+                TokioSleep,
+                move |component_id| ActivityConfig {
+                    component_id,
+                    forward_stdout: None,
+                    forward_stderr: None,
+                    env_vars: Arc::from([EnvVar {
+                        key: "PATH".to_string(),
+                        val: std::env::var("PATH").unwrap(),
+                    }]),
+                    retry_on_err: true,
+                    directories_config: Some(ActivityDirectoriesConfig {
+                        parent_preopen_dir,
+                        reuse_on_retry: false,
+                        process_provider: Some(ProcessProvider::Native),
+                    }),
+                },
+            );
+            // Create an execution.
+            let execution_id = ExecutionId::generate();
+            let created_at = sim_clock.now();
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id: execution_id.clone(),
+                    ffqn: FunctionFqn::new_static_tuple(
+                        test_programs_process_activity_builder::exports::testing::process::process::EXEC_SLEEP,
+                    ),
+                    params: Params::empty(),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: created_at,
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                    component_id: ComponentId::dummy_activity(),
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+            // Check the result.
+            let res = db_connection
+                .wait_for_finished_result(&execution_id, None)
+                .await
+                .unwrap()
+                .unwrap();
+            let sleep_pid = assert_matches!(res,
+                SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {value: WastVal::Result(Ok(Some(val))),
+                    r#type: _}) => val);
+            let sleep_pid = assert_matches!(*sleep_pid, WastVal::U32(val) => val);
+            debug!("Sleep pid: {sleep_pid}");
+
+            // Test that the process was killed
+            let mut attempt = 0;
+            while is_process_running(sleep_pid).await {
+                assert!(attempt < 5, "failed after 5 attemtps");
+                attempt += 1;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+
+            drop(db_connection);
+            exec_task.close().await;
+            db_pool.close().await.unwrap();
+        }
     }
 }
