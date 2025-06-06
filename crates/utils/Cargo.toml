@@ -47,5 +47,8 @@ test-programs-http-get-workflow-builder.workspace = true
 test-utils.workspace = true
 tokio.workspace = true
 
+[features]
+test = []
+
 [lints]
 workspace = true

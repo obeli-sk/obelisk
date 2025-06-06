@@ -61,6 +61,7 @@ test-programs-process-activity-builder.workspace = true
 test-programs-sleep-activity-builder.workspace = true
 test-programs-sleep-workflow-builder.workspace = true
 test-utils.workspace = true
+utils = { workspace = true, features = ["test"] }
 
 async-trait.workspace = true
 futures-util.workspace = true

@@ -1632,7 +1632,6 @@ mod tests {
     use super::super::event_history::{EventCall, EventHistory};
     use super::super::host_exports::execution_id_into_wast_val;
     use super::super::workflow_worker::JoinNextBlockingStrategy;
-    use crate::tests::fn_registry_dummy;
     use crate::workflow::event_history::ApplyError;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
@@ -1651,6 +1650,7 @@ mod tests {
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::{info, info_span};
+    use utils::testing_fn_registry::fn_registry_dummy;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::{WastVal, WastValWithType};
 

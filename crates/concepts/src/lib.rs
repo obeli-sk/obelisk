@@ -1,3 +1,8 @@
+#[cfg(feature = "rusqlite")]
+mod rusqlite_ext;
+pub mod storage;
+pub mod time;
+
 use ::serde::{Deserialize, Serialize};
 use arbitrary::Arbitrary;
 use assert_matches::assert_matches;
@@ -26,11 +31,6 @@ use val_json::{
     wast_val_ser::params,
 };
 use wasmtime::component::{Type, Val};
-
-#[cfg(feature = "rusqlite")]
-mod rusqlite_ext;
-pub mod storage;
-pub mod time;
 
 pub const NAMESPACE_OBELISK: &str = "obelisk";
 const NAMESPACE_WASI: &str = "wasi";

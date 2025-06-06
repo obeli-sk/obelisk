@@ -968,8 +968,7 @@ pub(crate) mod tests {
     use crate::workflow::workflow_ctx::ApplyError;
     use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
     use crate::{
-        tests::fn_registry_dummy, workflow::workflow_ctx::WorkflowCtx,
-        workflow::workflow_worker::JoinNextBlockingStrategy,
+        workflow::workflow_ctx::WorkflowCtx, workflow::workflow_worker::JoinNextBlockingStrategy,
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
@@ -993,6 +992,7 @@ pub(crate) mod tests {
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info, info_span};
+    use utils::testing_fn_registry::fn_registry_dummy;
     use wasmtime::component::Val;
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);

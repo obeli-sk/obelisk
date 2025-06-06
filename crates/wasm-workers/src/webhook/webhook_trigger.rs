@@ -1002,7 +1002,6 @@ pub(crate) mod tests {
         use super::*;
         use crate::activity::activity_worker::tests::{FIBO_10_OUTPUT, compile_activity};
         use crate::engines::{EngineConfig, Engines};
-        use crate::tests::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{self, WebhookEndpointCompiled};
         use crate::workflow::workflow_worker::tests::compile_workflow;
         use crate::{
@@ -1024,6 +1023,7 @@ pub(crate) mod tests {
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
         use tracing::info;
+        use utils::testing_fn_registry::TestingFnRegistry;
         use utils::wasm_tools::WasmComponent;
         use val_json::type_wrapper::TypeWrapper;
         use val_json::wast_val::{WastVal, WastValWithType};

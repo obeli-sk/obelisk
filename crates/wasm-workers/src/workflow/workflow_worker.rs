@@ -709,7 +709,6 @@ pub(crate) mod tests {
             FIBO_10_INPUT, FIBO_10_OUTPUT, compile_activity, spawn_activity_fibo, wasm_file_name,
         },
         engines::{EngineConfig, Engines},
-        tests::{TestingFnRegistry, fn_registry_dummy},
     };
     use assert_matches::assert_matches;
     use concepts::time::TokioSleep;
@@ -733,6 +732,7 @@ pub(crate) mod tests {
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::info_span;
+    use utils::testing_fn_registry::{TestingFnRegistry, fn_registry_dummy};
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
