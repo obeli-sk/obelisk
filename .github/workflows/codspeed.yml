@@ -1,0 +1,30 @@
+name: CodSpeed
+
+on:
+  push:
+    branches:
+      - "latest"
+  workflow_dispatch:
+
+
+jobs:
+  benchmarks:
+    name: Run benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nixbuild/nix-quick-install-action@8505cd40ae3d4791ca658f2697c5767212e5ce71
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Populate the nix store
+        run: nix develop --command echo
+
+      - name: Build the benchmark target(s)
+        run: nix develop --command cargo codspeed build
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v3
+        with:
+          token: ${{ secrets.CODSPEED_TOKEN }}
+          run: nix develop --command cargo codspeed run
