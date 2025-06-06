@@ -73,7 +73,8 @@ console-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 divan.workspace = true
-rstest.workspace = true
+parameterized.workspace = true
+parameterized-macro.workspace = true
 
 [[bin]]
 name = "obelisk"
@@ -222,6 +223,8 @@ oci-client = { version = "0.15.0", default-features = false, features = [
 oci-wasm = { version = "0.3.0", default-features = false, features = [ # Dependent on matching oci-client
     "rustls-tls",
 ] }
+parameterized = "2.0.0"
+parameterized-macro = "2.0.0"
 prost = "0.13.5"
 prost-wkt-types = "0.6"
 rand = "0.8"

@@ -875,6 +875,7 @@ pub(crate) async fn run(
 }
 
 #[expect(clippy::struct_excessive_bools)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct VerifyParams {
     pub(crate) clean_db: bool,
     pub(crate) clean_cache: bool,
@@ -2061,31 +2062,27 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
 
 #[cfg(all(test, not(madsim)))]
 mod tests {
-    use crate::command::server::VerifyParams;
+    use crate::{ConfigHolder, command::server::VerifyParams};
     use directories::BaseDirs;
-    use rstest::rstest;
+    use parameterized::parameterized;
     use std::path::PathBuf;
 
     fn get_workspace_dir() -> PathBuf {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
     }
 
-    #[tokio::test(flavor = "multi_thread")] // for WASM component compilation
-    #[rstest]
-    async fn server_verify(#[values("obelisk-local.toml", "obelisk.toml")] obelisk_toml: &str) {
+    #[parameterized(obelisk_toml = {
+    "obelisk-local.toml", "obelisk.toml"
+})]
+    #[parameterized_macro(tokio::test(flavor = "multi_thread"))] // for WASM component compilation
+    async fn server_verify(obelisk_toml: &str) {
         let obelisk_toml = get_workspace_dir().join(obelisk_toml);
-        crate::command::server::verify(
-            crate::project_dirs(),
-            BaseDirs::new(),
-            Some(obelisk_toml),
-            VerifyParams {
-                clean_db: false,
-                clean_cache: false,
-                clean_codegen_cache: false,
-                ignore_missing_env_vars: false,
-            },
-        )
-        .await
-        .unwrap();
+        let project_dirs = crate::project_dirs();
+        let base_dirs = BaseDirs::new();
+        let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(obelisk_toml)).unwrap();
+        let config = config_holder.load_config().await.unwrap();
+        crate::command::server::verify_internal(config, config_holder, VerifyParams::default())
+            .await
+            .unwrap();
     }
 }
