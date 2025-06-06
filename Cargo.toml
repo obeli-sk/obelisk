@@ -72,7 +72,6 @@ tracing-opentelemetry.workspace = true
 console-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
-divan.workspace = true
 parameterized.workspace = true
 parameterized-macro.workspace = true
 
@@ -89,10 +88,6 @@ otlp = [
     "dep:opentelemetry-semantic-conventions",
 ]
 default = ["otlp"]
-
-[[bench]]
-name = "fibo"
-harness = false
 
 [lints]
 workspace = true
