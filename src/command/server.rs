@@ -2081,8 +2081,12 @@ mod tests {
         let base_dirs = BaseDirs::new();
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(obelisk_toml)).unwrap();
         let config = config_holder.load_config().await.unwrap();
-        crate::command::server::verify_internal(config, config_holder, VerifyParams::default())
-            .await
-            .unwrap();
+        Box::pin(crate::command::server::verify_internal(
+            config,
+            config_holder,
+            VerifyParams::default(),
+        ))
+        .await
+        .unwrap();
     }
 }
