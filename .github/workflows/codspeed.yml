@@ -1,9 +1,6 @@
 name: CodSpeed
 
 on:
-  push:
-    branches:
-      - "latest"
   workflow_dispatch:
 
 
@@ -19,6 +16,9 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Populate the nix store
         run: nix develop --command echo
+
+      - name: Build the benchmark target(s)
+        run: nix develop --command cargo bench
 
       - name: Build the benchmark target(s)
         run: nix develop --command cargo codspeed build
