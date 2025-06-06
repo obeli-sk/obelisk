@@ -18,10 +18,7 @@ jobs:
         run: nix develop --command echo
 
       - name: Build the benchmark target(s)
-        run: nix develop --command cargo bench
-
-      - name: Build the benchmark target(s)
-        run: nix develop --command cargo codspeed build
+        run: nix develop --command cargo codspeed build --jobs 1
 
       - name: Run benchmarks
         uses: CodSpeedHQ/action@v3
