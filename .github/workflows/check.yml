@@ -30,7 +30,6 @@ jobs:
       - uses: nixbuild/nix-quick-install-action@8505cd40ae3d4791ca658f2697c5767212e5ce71
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Populate the nix store
         run: nix develop --command echo
 
@@ -47,6 +46,7 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Populate the nix store
         run: nix develop --command echo
+
       - run: nix develop --command ./scripts/dev-deps.sh
       - run: |
           if git diff --quiet; then
@@ -67,6 +67,7 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Populate the nix store
         run: nix develop --command echo
+
       - run: nix develop --command ./scripts/unpublishable-packages.sh
       - run: |
           if git diff --quiet; then
