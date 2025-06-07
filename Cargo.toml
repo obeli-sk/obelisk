@@ -98,6 +98,7 @@ tonic-build = { workspace = true, default-features = true }
 [workspace]
 resolver = "2"
 members = [
+    "crates/bench",
     "crates/concepts",
     "crates/db-mem",
     "crates/db-sqlite",

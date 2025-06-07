@@ -1,0 +1,37 @@
+[package]
+name = "bench"
+description = "Internal package of obeli-sk"
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+concepts = { workspace = true, features = ["test"] }
+db-sqlite = { workspace = true, features = ["tempfile"] }
+db-tests.workspace = true
+executor = { workspace = true, features = ["test"] }
+test-programs-fibo-activity-builder.workspace = true
+test-programs-fibo-workflow-builder.workspace = true
+test-utils.workspace = true
+utils = { workspace = true, features = ["test"] }
+wasm-workers = { workspace = true, features = ["test"] }
+
+assert_matches.workspace = true
+tokio.workspace = true
+wasmtime.workspace = true
+divan.workspace = true
+serde_json.workspace = true
+
+[[bench]]
+name = "fibo"
+harness = false
+
+[lints]
+workspace = true

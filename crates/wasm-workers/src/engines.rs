@@ -95,8 +95,9 @@ impl EngineConfig {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn on_demand_testing() -> Self {
+    #[cfg(any(test, feature = "test"))]
+    #[must_use]
+    pub fn on_demand_testing() -> Self {
         let workspace_dir = PathBuf::from(
             std::env::var("CARGO_WORKSPACE_DIR").expect("CARGO_WORKSPACE_DIR must be set"),
         );
@@ -160,14 +161,22 @@ impl Engines {
         Self::configure_common(wasmtime_config, config)
     }
 
-    pub(crate) fn get_activity_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+    #[cfg(any(test, feature = "test"))]
+    pub fn get_activity_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+        Self::get_activity_engine_internal(config)
+    }
+    fn get_activity_engine_internal(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         let mut wasmtime_config = wasmtime::Config::new();
         wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
         wasmtime_config.epoch_interruption(true);
         Self::configure_common(wasmtime_config, config)
     }
 
-    pub(crate) fn get_workflow_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+    #[cfg(any(test, feature = "test"))]
+    pub fn get_workflow_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+        Self::get_workflow_engine_internal(config)
+    }
+    fn get_workflow_engine_internal(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         let mut wasmtime_config = wasmtime::Config::new();
         wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
         wasmtime_config.epoch_interruption(true);
@@ -185,9 +194,9 @@ impl Engines {
             codegen_cache_dir,
         };
         Ok(Engines {
-            activity_engine: Self::get_activity_engine(engine_config.clone())?,
+            activity_engine: Self::get_activity_engine_internal(engine_config.clone())?,
             webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
-            workflow_engine: Self::get_workflow_engine(engine_config)?,
+            workflow_engine: Self::get_workflow_engine_internal(engine_config)?,
         })
     }
 
@@ -201,9 +210,9 @@ impl Engines {
             codegen_cache_dir,
         };
         Ok(Engines {
-            activity_engine: Self::get_activity_engine(engine_config.clone())?,
+            activity_engine: Self::get_activity_engine_internal(engine_config.clone())?,
             webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
-            workflow_engine: Self::get_workflow_engine(engine_config)?,
+            workflow_engine: Self::get_workflow_engine_internal(engine_config)?,
         })
     }
 

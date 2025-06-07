@@ -1,3 +1,4 @@
+bench
 db-mem
 db-tests
 test-programs-dir-activity

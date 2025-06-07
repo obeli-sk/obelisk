@@ -68,8 +68,11 @@ futures-util.workspace = true
 madsim.workspace = true
 reqwest.workspace = true
 rstest.workspace = true
-wiremock.workspace = true
 tempfile.workspace = true
+wiremock.workspace = true
+
+[features]
+test = []
 
 [lints]
 workspace = true
