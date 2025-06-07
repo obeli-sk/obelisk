@@ -1,5 +1,3 @@
-use super::grpc;
-use super::grpc::GenerateExecutionIdResponse;
 use crate::config::ComponentConfig;
 use crate::config::ComponentConfigImportable;
 use crate::config::ComponentLocation;
@@ -27,6 +25,8 @@ use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::grpc_util::TonicRespResult;
 use crate::grpc_util::TonicResult;
 use crate::grpc_util::extractor::accept_trace;
+use crate::grpc_util::grpc_gen;
+use crate::grpc_util::grpc_gen::GenerateExecutionIdResponse;
 use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
 use crate::grpc_util::grpc_mapping::TonicServerResultExt;
 use crate::grpc_util::grpc_mapping::db_error_to_status;
@@ -151,12 +151,12 @@ impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
 
 #[tonic::async_trait]
 impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
-    grpc::execution_repository_server::ExecutionRepository for GrpcServer<DB, P>
+    grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer<DB, P>
 {
     async fn generate_execution_id(
         &self,
-        _request: tonic::Request<grpc::GenerateExecutionIdRequest>,
-    ) -> TonicRespResult<grpc::GenerateExecutionIdResponse> {
+        _request: tonic::Request<grpc_gen::GenerateExecutionIdRequest>,
+    ) -> TonicRespResult<grpc_gen::GenerateExecutionIdResponse> {
         let execution_id = ExecutionId::generate();
         Ok(tonic::Response::new(GenerateExecutionIdResponse {
             execution_id: Some(execution_id.into()),
@@ -166,8 +166,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     #[instrument(skip_all, fields(execution_id, ffqn, params, component_id))]
     async fn submit(
         &self,
-        request: tonic::Request<grpc::SubmitRequest>,
-    ) -> TonicRespResult<grpc::SubmitResponse> {
+        request: tonic::Request<grpc_gen::SubmitRequest>,
+    ) -> TonicRespResult<grpc_gen::SubmitResponse> {
         struct JsonVals {
             vec: Vec<serde_json::Value>,
         }
@@ -184,7 +184,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         }
 
         let request = request.into_inner();
-        let grpc::FunctionName {
+        let grpc_gen::FunctionName {
             interface_name,
             function_name,
         } = request.function_name.argument_must_exist("function")?;
@@ -329,8 +329,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             })
             .await
             .to_status()?;
-        let resp = grpc::SubmitResponse {
-            execution_id: Some(grpc::ExecutionId {
+        let resp = grpc_gen::SubmitResponse {
+            execution_id: Some(grpc_gen::ExecutionId {
                 id: execution_id.to_string(),
             }),
         };
@@ -338,15 +338,15 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     }
 
     type GetStatusStream =
-        Pin<Box<dyn Stream<Item = Result<grpc::GetStatusResponse, tonic::Status>> + Send>>;
+        Pin<Box<dyn Stream<Item = Result<grpc_gen::GetStatusResponse, tonic::Status>> + Send>>;
 
     #[instrument(skip_all, fields(execution_id))]
     async fn get_status(
         &self,
-        request: tonic::Request<grpc::GetStatusRequest>,
+        request: tonic::Request<grpc_gen::GetStatusRequest>,
     ) -> TonicRespResult<Self::GetStatusStream> {
-        use grpc::ExecutionSummary;
-        use grpc::get_status_response::Message;
+        use grpc_gen::ExecutionSummary;
+        use grpc_gen::get_status_response::Message;
 
         let request = request.into_inner();
         let execution_id: ExecutionId = request
@@ -358,14 +358,15 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let current_pending_state = conn.get_pending_state(&execution_id).await.to_status()?;
         let (create_request, mut current_pending_state, grpc_pending_status) = {
             let create_request = conn.get_create_request(&execution_id).await.to_status()?;
-            let grpc_pending_status = grpc::ExecutionStatus::from(current_pending_state.clone());
+            let grpc_pending_status =
+                grpc_gen::ExecutionStatus::from(current_pending_state.clone());
             (create_request, current_pending_state, grpc_pending_status)
         };
-        let summary = grpc::GetStatusResponse {
+        let summary = grpc_gen::GetStatusResponse {
             message: Some(Message::Summary(ExecutionSummary {
                 created_at: Some(create_request.created_at.into()),
                 scheduled_at: Some(create_request.scheduled_at.into()),
-                execution_id: Some(grpc::ExecutionId::from(&execution_id)),
+                execution_id: Some(grpc_gen::ExecutionId::from(&execution_id)),
                 function_name: Some(create_request.ffqn.clone().into()),
                 current_status: Some(grpc_pending_status),
             })),
@@ -378,7 +379,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     .await
                     .to_status()?
                     .expect("checked using `current_pending_state.is_finished()` that the execution is finished");
-                let finished_message = grpc::GetStatusResponse {
+                let finished_message = grpc_gen::GetStatusResponse {
                     message: Some(Message::FinishedStatus(to_finished_status(
                         finished_result,
                         &create_request,
@@ -422,9 +423,9 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                             Ok(pending_state) => {
                                 if pending_state != current_pending_state {
                                     let grpc_pending_status =
-                                        grpc::ExecutionStatus::from(pending_state.clone());
+                                        grpc_gen::ExecutionStatus::from(pending_state.clone());
 
-                                    let message = grpc::GetStatusResponse {
+                                    let message = grpc_gen::GetStatusResponse {
                                         message: Some(Message::CurrentStatus(grpc_pending_status)),
                                     };
                                     let send_res = tx.send(TonicResult::Ok(message)).await;
@@ -449,7 +450,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                                                 return;
                                             }
                                         };
-                                        let message = grpc::GetStatusResponse {
+                                        let message = grpc_gen::GetStatusResponse {
                                             message: Some(Message::FinishedStatus(to_finished_status(
                                                 finished_result,
                                                 &create_request,
@@ -485,8 +486,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     #[instrument(skip_all, fields(ffqn))]
     async fn list_executions(
         &self,
-        request: tonic::Request<grpc::ListExecutionsRequest>,
-    ) -> TonicRespResult<grpc::ListExecutionsResponse> {
+        request: tonic::Request<grpc_gen::ListExecutionsRequest>,
+    ) -> TonicRespResult<grpc_gen::ListExecutionsResponse> {
         let request = request.into_inner();
         let ffqn = request
             .function_name
@@ -496,8 +497,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let pagination =
             request
                 .pagination
-                .unwrap_or(grpc::list_executions_request::Pagination::OlderThan(
-                    grpc::list_executions_request::OlderThan {
+                .unwrap_or(grpc_gen::list_executions_request::Pagination::OlderThan(
+                    grpc_gen::list_executions_request::OlderThan {
                         length: 20,
                         cursor: None,
                         including_cursor: false,
@@ -520,16 +521,16 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                      pending_state,
                      created_at,
                      scheduled_at,
-                 }| grpc::ExecutionSummary {
-                    execution_id: Some(grpc::ExecutionId::from(execution_id)),
+                 }| grpc_gen::ExecutionSummary {
+                    execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
                     function_name: Some(ffqn.into()),
-                    current_status: Some(grpc::ExecutionStatus::from(pending_state)),
+                    current_status: Some(grpc_gen::ExecutionStatus::from(pending_state)),
                     created_at: Some(created_at.into()),
                     scheduled_at: Some(scheduled_at.into()),
                 },
             )
             .collect();
-        Ok(tonic::Response::new(grpc::ListExecutionsResponse {
+        Ok(tonic::Response::new(grpc_gen::ListExecutionsResponse {
             executions,
         }))
     }
@@ -537,8 +538,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     #[instrument(skip_all, fields(execution_id))]
     async fn list_execution_events(
         &self,
-        request: tonic::Request<grpc::ListExecutionEventsRequest>,
-    ) -> std::result::Result<tonic::Response<grpc::ListExecutionEventsResponse>, tonic::Status>
+        request: tonic::Request<grpc_gen::ListExecutionEventsRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::ListExecutionEventsResponse>, tonic::Status>
     {
         let request = request.into_inner();
         let execution_id: ExecutionId = request
@@ -569,16 +570,16 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 )
             })
             .collect();
-        Ok(tonic::Response::new(grpc::ListExecutionEventsResponse {
-            events,
-        }))
+        Ok(tonic::Response::new(
+            grpc_gen::ListExecutionEventsResponse { events },
+        ))
     }
 
     #[instrument(skip_all, fields(execution_id))]
     async fn list_responses(
         &self,
-        request: tonic::Request<grpc::ListResponsesRequest>,
-    ) -> std::result::Result<tonic::Response<grpc::ListResponsesResponse>, tonic::Status> {
+        request: tonic::Request<grpc_gen::ListResponsesRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::ListResponsesResponse>, tonic::Status> {
         let request = request.into_inner();
         let execution_id: ExecutionId = request
             .execution_id
@@ -598,10 +599,10 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .await
             .to_status()?
             .into_iter()
-            .map(grpc::ResponseWithCursor::from)
+            .map(grpc_gen::ResponseWithCursor::from)
             .collect();
 
-        Ok(tonic::Response::new(grpc::ListResponsesResponse {
+        Ok(tonic::Response::new(grpc_gen::ListResponsesResponse {
             responses,
         }))
     }
@@ -609,9 +610,9 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     #[instrument(skip_all, fields(execution_id))]
     async fn list_execution_events_and_responses(
         &self,
-        request: tonic::Request<grpc::ListExecutionEventsAndResponsesRequest>,
+        request: tonic::Request<grpc_gen::ListExecutionEventsAndResponsesRequest>,
     ) -> std::result::Result<
-        tonic::Response<grpc::ListExecutionEventsAndResponsesResponse>,
+        tonic::Response<grpc_gen::ListExecutionEventsAndResponsesResponse>,
         tonic::Status,
     > {
         let request = request.into_inner();
@@ -654,19 +655,19 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .await
             .to_status()?
             .into_iter()
-            .map(grpc::ResponseWithCursor::from)
+            .map(grpc_gen::ResponseWithCursor::from)
             .collect();
 
         Ok(tonic::Response::new(
-            grpc::ListExecutionEventsAndResponsesResponse { events, responses },
+            grpc_gen::ListExecutionEventsAndResponsesResponse { events, responses },
         ))
     }
 
     #[instrument(skip_all, fields(execution_id))]
     async fn get_backtrace(
         &self,
-        request: tonic::Request<grpc::GetBacktraceRequest>,
-    ) -> Result<tonic::Response<grpc::GetBacktraceResponse>, tonic::Status> {
+        request: tonic::Request<grpc_gen::GetBacktraceRequest>,
+    ) -> Result<tonic::Response<grpc_gen::GetBacktraceResponse>, tonic::Status> {
         let request = request.into_inner();
         let execution_id: ExecutionId = request
             .execution_id
@@ -677,14 +678,14 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
 
         let conn = self.db_pool.connection();
         let filter = match request.filter {
-            Some(grpc::get_backtrace_request::Filter::Specific(
-                grpc::get_backtrace_request::Specific { version },
+            Some(grpc_gen::get_backtrace_request::Filter::Specific(
+                grpc_gen::get_backtrace_request::Specific { version },
             )) => BacktraceFilter::Specific(Version::new(version)),
-            Some(grpc::get_backtrace_request::Filter::Last(
-                grpc::get_backtrace_request::Last {},
+            Some(grpc_gen::get_backtrace_request::Filter::Last(
+                grpc_gen::get_backtrace_request::Last {},
             )) => BacktraceFilter::Last,
-            Some(grpc::get_backtrace_request::Filter::First(
-                grpc::get_backtrace_request::First {},
+            Some(grpc_gen::get_backtrace_request::Filter::First(
+                grpc_gen::get_backtrace_request::First {},
             ))
             | None => BacktraceFilter::First,
         };
@@ -693,8 +694,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .await
             .to_status()?;
 
-        Ok(tonic::Response::new(grpc::GetBacktraceResponse {
-            wasm_backtrace: Some(grpc::WasmBacktrace {
+        Ok(tonic::Response::new(grpc_gen::GetBacktraceResponse {
+            wasm_backtrace: Some(grpc_gen::WasmBacktrace {
                 version_min_including: backtrace_info.version_min_including.into(),
                 version_max_excluding: backtrace_info.version_max_excluding.into(),
                 frames: backtrace_info
@@ -711,15 +712,15 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     #[instrument(skip_all)]
     async fn get_backtrace_source(
         &self,
-        request: tonic::Request<grpc::GetBacktraceSourceRequest>,
-    ) -> Result<tonic::Response<grpc::GetBacktraceSourceResponse>, tonic::Status> {
+        request: tonic::Request<grpc_gen::GetBacktraceSourceRequest>,
+    ) -> Result<tonic::Response<grpc_gen::GetBacktraceSourceResponse>, tonic::Status> {
         let request = request.into_inner();
         let component_id =
             ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
         if let Some(inner_map) = self.component_source_map.get(&component_id) {
             if let Some(actual_path) = inner_map.get(&request.file) {
                 match tokio::fs::read_to_string(actual_path).await {
-                    Ok(content) => Ok(tonic::Response::new(grpc::GetBacktraceSourceResponse {
+                    Ok(content) => Ok(tonic::Response::new(grpc_gen::GetBacktraceSourceResponse {
                         content,
                     })),
                     Err(err) => {
@@ -745,9 +746,9 @@ fn to_finished_status(
     finished_result: FinishedExecutionResult,
     create_request: &CreateRequest,
     finished_at: DateTime<Utc>,
-) -> grpc::FinishedStatus {
+) -> grpc_gen::FinishedStatus {
     let result_detail = finished_result.into();
-    grpc::FinishedStatus {
+    grpc_gen::FinishedStatus {
         result_detail: Some(result_detail),
         created_at: Some(create_request.created_at.into()),
         scheduled_at: Some(create_request.scheduled_at.into()),
@@ -757,20 +758,20 @@ fn to_finished_status(
 
 #[tonic::async_trait]
 impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
-    grpc::function_repository_server::FunctionRepository for GrpcServer<DB, P>
+    grpc_gen::function_repository_server::FunctionRepository for GrpcServer<DB, P>
 {
     #[instrument(skip_all)]
     async fn list_components(
         &self,
-        request: tonic::Request<grpc::ListComponentsRequest>,
-    ) -> TonicRespResult<grpc::ListComponentsResponse> {
+        request: tonic::Request<grpc_gen::ListComponentsRequest>,
+    ) -> TonicRespResult<grpc_gen::ListComponentsResponse> {
         let request = request.into_inner();
         let components = self.component_registry_ro.list(request.extensions);
         let mut res_components = Vec::with_capacity(components.len());
         for component in components {
-            let res_component = grpc::Component {
+            let res_component = grpc_gen::Component {
                 name: component.component_id.name.to_string(),
-                r#type: grpc::ComponentType::from(component.component_id.component_type).into(),
+                r#type: grpc_gen::ComponentType::from(component.component_id.component_type).into(),
                 component_id: Some(component.component_id.into()),
                 digest: component.content_digest.to_string(),
                 exports: component
@@ -783,15 +784,15 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             };
             res_components.push(res_component);
         }
-        Ok(tonic::Response::new(grpc::ListComponentsResponse {
+        Ok(tonic::Response::new(grpc_gen::ListComponentsResponse {
             components: res_components,
         }))
     }
 
     async fn get_wit(
         &self,
-        request: tonic::Request<grpc::GetWitRequest>,
-    ) -> TonicRespResult<grpc::GetWitResponse> {
+        request: tonic::Request<grpc_gen::GetWitRequest>,
+    ) -> TonicRespResult<grpc_gen::GetWitResponse> {
         let request = request.into_inner();
         let component_id =
             ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
@@ -799,13 +800,13 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .component_registry_ro
             .get_wit(&component_id)
             .entity_must_exist()?;
-        Ok(tonic::Response::new(grpc::GetWitResponse {
+        Ok(tonic::Response::new(grpc_gen::GetWitResponse {
             content: wit.to_string(),
         }))
     }
 }
 
-fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc::FunctionDetail> {
+fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
     let mut vec = Vec::with_capacity(functions.len());
     for FunctionMetadata {
         ffqn,
@@ -815,13 +816,13 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc::FunctionDetail> {
         submittable,
     } in functions
     {
-        let fun = grpc::FunctionDetail {
+        let fun = grpc_gen::FunctionDetail {
             params: parameter_types
                 .0
                 .into_iter()
-                .map(|param| grpc::FunctionParameter {
+                .map(|param| grpc_gen::FunctionParameter {
                     name: param.name.to_string(),
-                    r#type: Some(grpc::WitType {
+                    r#type: Some(grpc_gen::WitType {
                         wit_type: param.wit_type.to_string(),
                         type_wrapper: serde_json::to_string(&param.type_wrapper)
                             .expect("`TypeWrapper` must be serializable"),
@@ -832,7 +833,7 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc::FunctionDetail> {
                 |ReturnType {
                      type_wrapper,
                      wit_type,
-                 }| grpc::WitType {
+                 }| grpc_gen::WitType {
                     wit_type: wit_type.to_string(),
                     type_wrapper: serde_json::to_string(&type_wrapper)
                         .expect("`TypeWrapper` must be serializable"),
@@ -841,9 +842,9 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc::FunctionDetail> {
             function_name: Some(ffqn.into()),
             extension: extension.map(|it| {
                 match it {
-                    FunctionExtension::Submit => grpc::FunctionExtension::Submit,
-                    FunctionExtension::AwaitNext => grpc::FunctionExtension::AwaitNext,
-                    FunctionExtension::Schedule => grpc::FunctionExtension::Schedule,
+                    FunctionExtension::Submit => grpc_gen::FunctionExtension::Submit,
+                    FunctionExtension::AwaitNext => grpc_gen::FunctionExtension::AwaitNext,
+                    FunctionExtension::Schedule => grpc_gen::FunctionExtension::Schedule,
                 }
                 .into()
             }),
@@ -1018,7 +1019,7 @@ async fn run_internal(
                 .map_request(accept_trace),
         )
         .add_service(
-            grpc::function_repository_server::FunctionRepositoryServer::from_arc(
+            grpc_gen::function_repository_server::FunctionRepositoryServer::from_arc(
                 grpc_server.clone(),
             )
             .send_compressed(CompressionEncoding::Zstd)
@@ -1027,7 +1028,7 @@ async fn run_internal(
             .accept_compressed(CompressionEncoding::Gzip),
         )
         .add_service(
-            grpc::execution_repository_server::ExecutionRepositoryServer::from_arc(
+            grpc_gen::execution_repository_server::ExecutionRepositoryServer::from_arc(
                 grpc_server.clone(),
             )
             .send_compressed(CompressionEncoding::Zstd)

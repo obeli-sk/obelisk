@@ -1,13 +1,13 @@
-use super::grpc;
-use super::grpc::execution_status::BlockedByJoinSet;
 use crate::ExecutionRepositoryClient;
-use crate::command::grpc::execution_status::Finished;
+use crate::grpc_util::grpc_gen;
+use crate::grpc_util::grpc_gen::execution_status::BlockedByJoinSet;
+use crate::grpc_util::grpc_gen::execution_status::Finished;
 use anyhow::Context;
 use chrono::DateTime;
 use concepts::JOIN_SET_ID_INFIX;
 use concepts::JoinSetKind;
 use concepts::{ExecutionId, FunctionFqn};
-use grpc::execution_status::Status;
+use grpc_gen::execution_status::Status;
 use itertools::Either;
 use serde_json::json;
 use std::str::FromStr;
@@ -29,7 +29,7 @@ pub(crate) async fn submit(
     opts: SubmitOutputOpts,
 ) -> anyhow::Result<()> {
     let resp = client
-        .submit(tonic::Request::new(grpc::SubmitRequest {
+        .submit(tonic::Request::new(grpc_gen::SubmitRequest {
             execution_id: Some(ExecutionId::generate().into()),
             params: Some(prost_wkt_types::Any {
                 type_url: format!("urn:obelisk:json:params:{ffqn}"),
@@ -69,8 +69,8 @@ pub(crate) async fn submit(
 }
 
 /// Return true if the status is Finished.
-fn print_status(response: grpc::GetStatusResponse) -> Result<bool, ExecutionError> {
-    use grpc::get_status_response::Message;
+fn print_status(response: grpc_gen::GetStatusResponse) -> Result<bool, ExecutionError> {
+    use grpc_gen::get_status_response::Message;
     let message = response.message.expect("message expected");
 
     let status_or_finished = match message {
@@ -90,21 +90,22 @@ fn print_status(response: grpc::GetStatusResponse) -> Result<bool, ExecutionErro
     }
 }
 
-fn format_pending_status(pending_status: grpc::ExecutionStatus) -> String {
+fn format_pending_status(pending_status: grpc_gen::ExecutionStatus) -> String {
     let status = pending_status.status.expect("status is sent by the server");
     match status {
         Status::Locked(_) => "Locked".to_string(),
-        Status::PendingAt(grpc::execution_status::PendingAt { scheduled_at }) => {
+        Status::PendingAt(grpc_gen::execution_status::PendingAt { scheduled_at }) => {
             let scheduled_at = scheduled_at.expect("sent by the server");
             format!("Pending at {scheduled_at}")
         }
         Status::BlockedByJoinSet(BlockedByJoinSet {
             closing,
-            join_set_id: Some(grpc::JoinSetId { name, kind }),
+            join_set_id: Some(grpc_gen::JoinSetId { name, kind }),
             lock_expires_at: _,
         }) => {
             let kind = JoinSetKind::from(
-                grpc::join_set_id::JoinSetKind::try_from(kind).expect("JoinSetKind must be valid"),
+                grpc_gen::join_set_id::JoinSetKind::try_from(kind)
+                    .expect("JoinSetKind must be valid"),
             );
             let closing = if closing { " (closing)" } else { "" };
             format!("BlockedByJoinSet {kind}{JOIN_SET_ID_INFIX}{name}{closing}")
@@ -131,7 +132,7 @@ enum ExecutionError {
     UnhandledChildExecutionError,
 }
 
-fn print_finished_status(finished_status: grpc::FinishedStatus) -> Result<(), ExecutionError> {
+fn print_finished_status(finished_status: grpc_gen::FinishedStatus) -> Result<(), ExecutionError> {
     let created_at = DateTime::from(
         finished_status
             .created_at
@@ -148,29 +149,31 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> Result<(), Ex
         .expect("`result_detail` is sent by the server")
         .value
     {
-        Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
+        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
             return_value: Some(return_value),
         })) => {
             let return_value = String::from_utf8_lossy(&return_value.value);
             (format!("OK: {return_value}"), Ok(()))
         }
-        Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok { return_value: None })) => {
-            ("OK: (no return value)".to_string(), Ok(()))
-        }
-        Some(grpc::result_detail::Value::FallibleError(grpc::result_detail::FallibleError {
-            return_value: Some(return_value),
-        })) => {
+        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
+            return_value: None,
+        })) => ("OK: (no return value)".to_string(), Ok(())),
+        Some(grpc_gen::result_detail::Value::FallibleError(
+            grpc_gen::result_detail::FallibleError {
+                return_value: Some(return_value),
+            },
+        )) => {
             let return_value = String::from_utf8_lossy(&return_value.value);
             (
                 format!("Err: {return_value}"),
                 Err(ExecutionError::FallibleError),
             )
         }
-        Some(grpc::result_detail::Value::Timeout(_)) => {
+        Some(grpc_gen::result_detail::Value::Timeout(_)) => {
             ("Timeout".to_string(), Err(ExecutionError::Timeout))
         }
-        Some(grpc::result_detail::Value::ExecutionFailure(
-            grpc::result_detail::ExecutionFailure {
+        Some(grpc_gen::result_detail::Value::ExecutionFailure(
+            grpc_gen::result_detail::ExecutionFailure {
                 reason,
                 detail: Some(detail),
             },
@@ -178,8 +181,8 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> Result<(), Ex
             format!("Execution failure: {reason}\ndetail: {detail}"),
             Err(ExecutionError::ExecutionFailure),
         ),
-        Some(grpc::result_detail::Value::ExecutionFailure(
-            grpc::result_detail::ExecutionFailure {
+        Some(grpc_gen::result_detail::Value::ExecutionFailure(
+            grpc_gen::result_detail::ExecutionFailure {
                 reason,
                 detail: None,
             },
@@ -187,8 +190,8 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> Result<(), Ex
             format!("Execution failure: {reason}"),
             Err(ExecutionError::ExecutionFailure),
         ),
-        Some(grpc::result_detail::Value::UnhandledChildExecutionError(
-            grpc::result_detail::UnhandledChildExecutionError {
+        Some(grpc_gen::result_detail::Value::UnhandledChildExecutionError(
+            grpc_gen::result_detail::UnhandledChildExecutionError {
                 child_execution_id,
                 root_cause_id,
             },
@@ -213,7 +216,9 @@ fn print_finished_status(finished_status: grpc::FinishedStatus) -> Result<(), Ex
     res
 }
 
-fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> Result<(), ExecutionError> {
+fn print_finished_status_json(
+    finished_status: grpc_gen::FinishedStatus,
+) -> Result<(), ExecutionError> {
     let created_at = finished_status
         .created_at
         .expect("`created_at` is sent by the server");
@@ -229,19 +234,21 @@ fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> Result<(
         .expect("`result_detail` is sent by the server")
         .value
     {
-        Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
+        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
             return_value: Some(return_value),
         })) => {
             let return_value: serde_json::Value = serde_json::from_slice(&return_value.value)
                 .expect("return_value must be JSON encoded");
             (json!({"ok": return_value}), Ok(()))
         }
-        Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok { return_value: None })) => {
-            (json!({"ok": null}), Ok(()))
-        }
-        Some(grpc::result_detail::Value::FallibleError(grpc::result_detail::FallibleError {
-            return_value: Some(return_value),
-        })) => {
+        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
+            return_value: None,
+        })) => (json!({"ok": null}), Ok(())),
+        Some(grpc_gen::result_detail::Value::FallibleError(
+            grpc_gen::result_detail::FallibleError {
+                return_value: Some(return_value),
+            },
+        )) => {
             let return_value: serde_json::Value = serde_json::from_slice(&return_value.value)
                 .expect("return_value must be JSON encoded");
             (
@@ -249,17 +256,17 @@ fn print_finished_status_json(finished_status: grpc::FinishedStatus) -> Result<(
                 Err(ExecutionError::FallibleError),
             )
         }
-        Some(grpc::result_detail::Value::Timeout(_)) => {
+        Some(grpc_gen::result_detail::Value::Timeout(_)) => {
             (json!({"timeout": null}), Err(ExecutionError::Timeout))
         }
-        Some(grpc::result_detail::Value::ExecutionFailure(
-            grpc::result_detail::ExecutionFailure { reason, detail },
+        Some(grpc_gen::result_detail::Value::ExecutionFailure(
+            grpc_gen::result_detail::ExecutionFailure { reason, detail },
         )) => (
             json!({"execution_failure": {"reason": reason, "detail": detail}}),
             Err(ExecutionError::ExecutionFailure),
         ),
-        Some(grpc::result_detail::Value::UnhandledChildExecutionError(
-            grpc::result_detail::UnhandledChildExecutionError {
+        Some(grpc_gen::result_detail::Value::UnhandledChildExecutionError(
+            grpc_gen::result_detail::UnhandledChildExecutionError {
                 child_execution_id,
                 root_cause_id,
             },
@@ -284,8 +291,8 @@ pub(crate) async fn get_status_json(
     mut json_output_started: bool, // true if `[{..}` was printed alraedy.
 ) -> anyhow::Result<()> {
     let mut stream = client
-        .get_status(tonic::Request::new(grpc::GetStatusRequest {
-            execution_id: Some(grpc::ExecutionId::from(execution_id.clone())),
+        .get_status(tonic::Request::new(grpc_gen::GetStatusRequest {
+            execution_id: Some(grpc_gen::ExecutionId::from(execution_id.clone())),
             follow,
             send_finished_status: true,
         }))
@@ -310,8 +317,8 @@ pub(crate) async fn get_status_json(
     res.map_err(anyhow::Error::from)
 }
 
-fn print_status_json(response: grpc::GetStatusResponse) -> Result<(), ExecutionError> {
-    use grpc::get_status_response::Message;
+fn print_status_json(response: grpc_gen::GetStatusResponse) -> Result<(), ExecutionError> {
+    use grpc_gen::get_status_response::Message;
     let message = response.message.expect("message expected");
 
     match message {
@@ -367,8 +374,8 @@ async fn poll_get_status_stream(
     opts: GetStatusOptions,
 ) -> anyhow::Result<()> {
     let mut stream = client
-        .get_status(tonic::Request::new(grpc::GetStatusRequest {
-            execution_id: Some(grpc::ExecutionId::from(execution_id.clone())),
+        .get_status(tonic::Request::new(grpc_gen::GetStatusRequest {
+            execution_id: Some(grpc_gen::ExecutionId::from(execution_id.clone())),
             follow: opts.follow,
             send_finished_status: true,
         }))

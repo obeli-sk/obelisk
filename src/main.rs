@@ -15,7 +15,7 @@ use command::{
 };
 use config::config_holder::ConfigHolder;
 use directories::{BaseDirs, ProjectDirs};
-use grpc_util::{injector::TracingInjector, to_channel};
+use grpc_util::{grpc_gen, injector::TracingInjector, to_channel};
 use std::path::PathBuf;
 use tonic::{codec::CompressionEncoding, transport::Channel};
 
@@ -156,16 +156,15 @@ fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("", "obelisk", "obelisk")
 }
 
-type ExecutionRepositoryClient =
-    command::grpc::execution_repository_client::ExecutionRepositoryClient<
-        tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
-    >;
+type ExecutionRepositoryClient = grpc_gen::execution_repository_client::ExecutionRepositoryClient<
+    tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
+>;
 
 async fn get_execution_repository_client(
     url: String,
 ) -> Result<ExecutionRepositoryClient, anyhow::Error> {
     Ok(
-        command::grpc::execution_repository_client::ExecutionRepositoryClient::with_interceptor(
+        grpc_gen::execution_repository_client::ExecutionRepositoryClient::with_interceptor(
             to_channel(url).await?,
             TracingInjector,
         )
@@ -174,12 +173,12 @@ async fn get_execution_repository_client(
         .accept_compressed(CompressionEncoding::Gzip),
     )
 }
-type FunctionRepositoryClient = command::grpc::function_repository_client::FunctionRepositoryClient<
+type FunctionRepositoryClient = grpc_gen::function_repository_client::FunctionRepositoryClient<
     tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
 >;
 async fn get_fn_repository_client(url: String) -> Result<FunctionRepositoryClient, anyhow::Error> {
     Ok(
-        command::grpc::function_repository_client::FunctionRepositoryClient::with_interceptor(
+        grpc_gen::function_repository_client::FunctionRepositoryClient::with_interceptor(
             to_channel(url).await?,
             TracingInjector,
         )

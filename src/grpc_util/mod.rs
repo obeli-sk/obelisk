@@ -1,9 +1,10 @@
+pub(crate) mod grpc_gen;
+pub(crate) mod grpc_mapping;
+
 use anyhow::{Context, anyhow};
 use futures_util::TryFutureExt;
 use http::{Uri, uri::Scheme};
 use tonic::transport::{Channel, ClientTlsConfig};
-
-pub(crate) mod grpc_mapping;
 
 pub(crate) type TonicResult<T> = Result<T, tonic::Status>;
 
