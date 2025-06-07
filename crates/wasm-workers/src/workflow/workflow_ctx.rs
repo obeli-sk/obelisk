@@ -573,7 +573,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         Ok(())
     }
 
-    #[expect(clippy::too_many_lines)]
     pub(crate) fn add_to_linker_workflow_support<
         ClosingStrategyType: wasmtime::component::Lift + 'static,
         DurationEnumType: wasmtime::component::Lift + Into<Duration> + 'static,
@@ -1093,7 +1092,6 @@ pub(crate) mod tests {
     impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
         for WorkflowWorkerMock<C, DB, P>
     {
-        #[expect(clippy::too_many_lines)]
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             info!("Starting");
             let seed = ctx.execution_id.random_seed();
@@ -1270,7 +1268,6 @@ pub(crate) mod tests {
     const FFQN_CHILD_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn-child");
 
     #[tokio::test]
-    #[expect(clippy::too_many_lines)]
     #[expect(clippy::search_is_some)]
     async fn check_determinism_closing_multiple_join_sets() {
         const SUBMITS: usize = 10;
@@ -1519,7 +1516,6 @@ pub(crate) mod tests {
         fn_registry_dummy(ffqns.as_slice())
     }
 
-    #[expect(clippy::too_many_lines)]
     async fn execute_steps<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         steps: Vec<WorkflowStep>,
         db_pool: &P,

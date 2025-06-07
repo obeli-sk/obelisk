@@ -60,7 +60,6 @@ fn obelisk_types_with_nesting() -> String {
     nesting
 }
 
-#[expect(clippy::too_many_lines)]
 fn add_ext_exports(wit: &str, exim: &ExIm) -> Result<String, anyhow::Error> {
     const TYPES_NESTED_PACKAGE_FIRST_LINE: &str =
         formatcp!("package {OBELISK_TYPES_PACKAGE_NAME} {{");

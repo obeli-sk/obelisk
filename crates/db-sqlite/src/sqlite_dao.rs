@@ -988,7 +988,7 @@ impl<S: Sleep> SqlitePool<S> {
     fn update_state(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        pending_state: PendingState,
+        pending_state: &PendingState,
         expected_current_version: &Version,
         next_version: &Version,
         ffqn_when_creating: Option<FunctionFqn>, // or fetched lazily
@@ -1261,7 +1261,6 @@ impl<S: Sleep> SqlitePool<S> {
         .map_err(convert_err)?
     }
 
-    #[expect(clippy::too_many_lines)]
     fn list_executions(
         read_tx: &Transaction,
         ffqn: Option<FunctionFqn>,
@@ -1405,7 +1404,7 @@ impl<S: Sleep> SqlitePool<S> {
         component_id: ComponentId,
         execution_id: &ExecutionId,
         run_id: RunId,
-        appending_version: Version,
+        appending_version: &Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockedExecution, DbError> {
@@ -1418,7 +1417,7 @@ impl<S: Sleep> SqlitePool<S> {
         pending_state
             .can_append_lock(created_at, executor_id, run_id, lock_expires_at)
             .map_err(DbError::Specific)?;
-        Self::check_expected_next_and_appending_version(&expected_version, &appending_version)?;
+        Self::check_expected_next_and_appending_version(&expected_version, appending_version)?;
 
         // Append to `execution_log` table.
         let event = ExecutionEventInner::Locked {
@@ -1460,7 +1459,7 @@ impl<S: Sleep> SqlitePool<S> {
         let temporary_event_count = Self::update_state(
             tx,
             execution_id,
-            pending_state,
+            &pending_state,
             &Version(next_version.0 - 1),
             &next_version,
             Some(ffqn),
@@ -1575,7 +1574,7 @@ impl<S: Sleep> SqlitePool<S> {
         tx: &Transaction,
         execution_id: &ExecutionId,
         req: &AppendRequest,
-        appending_version: Version,
+        appending_version: &Version,
     ) -> Result<(AppendResponse, Option<PendingAt>), DbError> {
         assert!(!matches!(req.event, ExecutionEventInner::Created { .. }));
         if let ExecutionEventInner::Locked {
@@ -1608,7 +1607,7 @@ impl<S: Sleep> SqlitePool<S> {
 
         Self::check_expected_next_and_appending_version(
             &combined_state.next_version,
-            &appending_version,
+            appending_version,
         )?;
         let event_ser = serde_json::to_string(&req.event)
             .map_err(|err| {
@@ -1740,7 +1739,7 @@ impl<S: Sleep> SqlitePool<S> {
                 Self::update_state(
                     tx,
                     execution_id,
-                    pending_state,
+                    &pending_state,
                     &expected_current_version,
                     &next_version,
                     None,
@@ -1817,7 +1816,7 @@ impl<S: Sleep> SqlitePool<S> {
                 Self::update_state(
                     tx,
                     execution_id,
-                    pending_state,
+                    &pending_state,
                     &next_version, // not changing the version
                     &next_version,
                     None,
@@ -2297,7 +2296,7 @@ impl<S: Sleep> SqlitePool<S> {
     ) -> Result<(Version, Vec<PendingAt>), DbError> {
         let mut pending_at = None;
         for append_request in batch {
-            (version, pending_at) = Self::append(tx, execution_id, &append_request, version)?;
+            (version, pending_at) = Self::append(tx, execution_id, &append_request, &version)?;
         }
         let mut pending_ats = Vec::new();
         if let Some(pending_at) = pending_at {
@@ -2362,7 +2361,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                             component_id.clone(),
                             &execution_id,
                             RunId::generate(),
-                            version,
+                            &version,
                             executor_id,
                             lock_expires_at,
                         ) {
@@ -2402,7 +2401,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                     component_id,
                     &execution_id,
                     run_id,
-                    version,
+                    &version,
                     executor_id,
                     lock_expires_at,
                 )?;
@@ -2429,7 +2428,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
         }
         let (version, pending_at) = self
             .transaction_write(
-                move |tx| Self::append(tx, &execution_id, &req, version),
+                move |tx| Self::append(tx, &execution_id, &req, &version),
                 "append",
             )
             .await?;
@@ -2462,7 +2461,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                     let mut pending_at = None;
                     for append_request in batch {
                         (version, pending_at) =
-                            Self::append(tx, &execution_id, &append_request, version)?;
+                            Self::append(tx, &execution_id, &append_request, &version)?;
                     }
                     Ok((version, pending_at))
                 },
@@ -2552,7 +2551,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                     let mut pending_at_child = None;
                     for append_request in batch {
                         (version, pending_at_child) =
-                            Self::append(tx, &execution_id, &append_request, version)?;
+                            Self::append(tx, &execution_id, &append_request, &version)?;
                     }
 
                     let (response_subscriber, pending_at_parent) = Self::append_response(

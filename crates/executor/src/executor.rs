@@ -329,7 +329,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
     // FIXME: On a slow execution: race between `expired_timers_watcher` this if retry_exp_backoff is 0.
     /// Map the `WorkerError` to an temporary or a permanent failure.
-    #[expect(clippy::too_many_lines)]
     fn worker_result_to_execution_event(
         execution_id: ExecutionId,
         worker_result: WorkerResult,
@@ -992,7 +991,6 @@ mod tests {
         execution_log
     }
 
-    #[expect(clippy::too_many_lines)]
     #[tokio::test]
     async fn activity_trap_should_trigger_an_execution_retry() {
         set_up();
@@ -1242,7 +1240,6 @@ mod tests {
         .await;
     }
 
-    #[expect(clippy::too_many_lines)]
     async fn child_execution_permanently_failed_should_notify_parent(
         worker_result: WorkerResult,
         expected_child_err: FinishedExecutionError,
@@ -1449,7 +1446,6 @@ mod tests {
         }
     }
 
-    #[expect(clippy::too_many_lines)]
     #[tokio::test]
     async fn hanging_lock_should_be_cleaned_and_execution_retried() {
         set_up();

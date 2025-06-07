@@ -136,7 +136,6 @@ struct WastValDeserialize<'a>(&'a TypeWrapper);
 impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
     type Value = WastVal;
 
-    #[expect(clippy::too_many_lines)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,

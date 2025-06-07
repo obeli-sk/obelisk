@@ -523,7 +523,6 @@ impl<C: ClockFn> EventHistory<C> {
     }
 
     // TODO: Check params, scheduled_at etc to catch non-deterministic errors.
-    #[expect(clippy::too_many_lines)]
     fn process_event_by_key(
         &mut self,
         key: &EventHistoryKey,

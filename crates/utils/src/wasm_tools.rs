@@ -362,7 +362,6 @@ impl ExIm {
         })
     }
 
-    #[expect(clippy::too_many_lines)]
     fn enrich_exports_with_extensions(exports_hierarchy: &mut Vec<PackageIfcFns>) {
         // initialize values for reuse
         let execution_id_type_wrapper =

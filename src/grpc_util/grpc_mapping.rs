@@ -374,7 +374,6 @@ impl From<FinishedExecutionResult> for grpc::ResultDetail {
     }
 }
 
-#[allow(clippy::too_many_lines)]
 pub(crate) fn from_execution_event_to_grpc(
     event: ExecutionEvent,
     version: VersionType,

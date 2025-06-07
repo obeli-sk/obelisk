@@ -22,7 +22,6 @@ use tonic::{codec::CompressionEncoding, transport::Channel};
 pub type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[tokio::main]
-#[expect(clippy::too_many_lines)]
 async fn main() -> Result<(), anyhow::Error> {
     match Args::parse().command {
         Subcommand::Server(Server::Run {

@@ -128,7 +128,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
         self.exim.get_exports(false)
     }
 
-    #[expect(clippy::too_many_lines)]
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Params: {params:?}", params = ctx.params);
         assert!(ctx.event_history.is_empty());
@@ -825,7 +824,6 @@ pub(crate) mod tests {
             assert_eq!(version, actual_version);
         }
 
-        #[expect(clippy::too_many_lines)]
         #[tokio::test]
         async fn http_get_simple() {
             use std::ops::Deref;
@@ -948,7 +946,6 @@ pub(crate) mod tests {
             db_pool.close().await.unwrap();
         }
 
-        #[expect(clippy::too_many_lines)]
         #[tokio::test]
         async fn http_get_activity_trap_should_be_turned_into_finished_execution_error_permanent_failure()
          {
