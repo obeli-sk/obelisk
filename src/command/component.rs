@@ -1,6 +1,6 @@
-use super::grpc;
 use crate::FunctionMetadataVerbosity;
 use crate::FunctionRepositoryClient;
+use crate::grpc_util::grpc_gen;
 use anyhow::Context;
 use concepts::{FunctionFqn, FunctionMetadata};
 use std::path::PathBuf;
@@ -56,7 +56,7 @@ pub(crate) async fn list_components(
     extensions: bool,
 ) -> anyhow::Result<()> {
     let components = client
-        .list_components(tonic::Request::new(super::grpc::ListComponentsRequest {
+        .list_components(tonic::Request::new(grpc_gen::ListComponentsRequest {
             function_name: None,
             component_id: None,
             extensions,
@@ -81,7 +81,7 @@ pub(crate) async fn list_components(
     Ok(())
 }
 
-fn print_fn_details(vec: Vec<grpc::FunctionDetail>) -> Result<(), anyhow::Error> {
+fn print_fn_details(vec: Vec<grpc_gen::FunctionDetail>) -> Result<(), anyhow::Error> {
     for fn_detail in vec {
         let func = fn_detail.function_name.context("function must exist")?;
         let func = if let Ok(func) = FunctionFqn::try_from(func.clone())
@@ -111,6 +111,6 @@ fn print_fn_details(vec: Vec<grpc::FunctionDetail>) -> Result<(), anyhow::Error>
     Ok(())
 }
 
-fn print_wit_type(wit_type: &grpc::WitType) {
+fn print_wit_type(wit_type: &grpc_gen::WitType) {
     print!("{}", wit_type.wit_type);
 }
