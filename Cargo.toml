@@ -349,6 +349,7 @@ clippy.from_iter_instead_of_collect = "allow"
 clippy.if_not_else = "allow"
 # Keep paths surrounded with quotes
 clippy.unnecessary_debug_formatting = "allow"
+clippy.too_many_lines = "allow"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(madsim)'] }

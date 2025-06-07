@@ -4,7 +4,6 @@ pub(crate) mod generate;
 pub(crate) mod server;
 
 // TODO: move to parent module
-#[allow(clippy::too_many_lines)]
 #[allow(clippy::default_trait_access)]
 #[allow(clippy::struct_field_names)]
 #[allow(clippy::similar_names)]

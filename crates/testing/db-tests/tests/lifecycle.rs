@@ -181,7 +181,6 @@ async fn test_get_expired_delay_sqlite() {
     db_pool.close().await.unwrap();
 }
 
-#[expect(clippy::too_many_lines)]
 async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let exec1 = ExecutorId::generate();
@@ -687,7 +686,6 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
     }
 }
 
-#[expect(clippy::too_many_lines)]
 pub async fn append_batch_respond_to_parent(
     db_connection: &impl DbConnection,
     sim_clock: SimClock,

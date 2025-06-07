@@ -1610,10 +1610,11 @@ async fn compile_and_verify(
             let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
             for handle in results_of_results {
                 match handle?? {
-                    Either::Left((worker_compiled, component)) => {
+
+                    Either::Left((worker, component)) => {
                         // Activity or Workflow
                         component_registry.insert(component)?;
-                        workers_compiled.push(worker_compiled);
+                        workers_compiled.push(worker);
                     },
                     Either::Right((webhook_name, (webhook_compiled, routes, content_digest))) => {
                         let component = ComponentConfig {
