@@ -17,10 +17,10 @@ jobs:
         run: nix develop --command echo
 
       - name: Build the benchmark target(s)
-        run: nix develop --command cargo codspeed build --jobs 1
+        run: nix develop --command cargo codspeed build -p bench --jobs 1
 
       - name: Run benchmarks
         uses: CodSpeedHQ/action@v3
         with:
           token: ${{ secrets.CODSPEED_TOKEN }}
-          run: nix develop --command cargo codspeed run
+          run: nix develop --command cargo codspeed run -p bench
