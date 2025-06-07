@@ -261,12 +261,12 @@ tokio = { version = "0.2.30", package = "madsim-tokio", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.17"
-toml = { version = "0.8.22", features = ["preserve_order"] }
+toml = { version = "0.8.23", features = ["preserve_order"] }
 tonic = { version = "0.13.1", default-features = false }
 tonic-build = { version = "0.13.1", default-features = false }
 tonic-web = "0.13.1"
 tower = "0.5.2"
-tower-http = { version = "0.6.4", features = ["trace", "cors"] }
+tower-http = { version = "0.6.6", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
