@@ -33,7 +33,7 @@ fn main() {
 
 const TICK_SLEEP: Duration = Duration::from_millis(1);
 
-pub(crate) async fn compile_activity(wasm_path: &'static str) -> (WasmComponent, ComponentId) {
+pub(crate) fn compile_activity(wasm_path: &'static str) -> (WasmComponent, ComponentId) {
     let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
     compile_activity_with_engine(wasm_path, &engine)
 }
@@ -132,7 +132,7 @@ pub(crate) fn spawn_activity_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 's
     )
 }
 
-pub(crate) async fn compile_workflow(wasm_path: &'static str) -> (WasmComponent, ComponentId) {
+pub(crate) fn compile_workflow(wasm_path: &'static str) -> (WasmComponent, ComponentId) {
     let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
     compile_workflow_with_engine(wasm_path, &engine)
 }
@@ -240,8 +240,8 @@ async fn fibo_workflow(fibo_n: u8, iterations: u32) {
 
     let (_guard, db_pool) = Database::Sqlite.set_up().await;
     let fn_registry = TestingFnRegistry::new_from_components(vec![
-        compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY).await,
-        compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW).await,
+        compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
+        compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW),
     ]);
     let workflow_exec_task = spawn_workflow_fibo(
         db_pool.clone(),
