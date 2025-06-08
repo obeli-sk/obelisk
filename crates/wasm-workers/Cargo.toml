@@ -71,8 +71,5 @@ rstest.workspace = true
 tempfile.workspace = true
 wiremock.workspace = true
 
-[features]
-test = []
-
 [lints]
 workspace = true

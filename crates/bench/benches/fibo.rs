@@ -15,13 +15,13 @@ use divan::{self};
 use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
 use executor::worker::Worker;
 use serde_json::json;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use utils::testing_fn_registry::TestingFnRegistry;
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorker};
-use wasm_workers::engines::{EngineConfig, Engines};
+use wasm_workers::engines::{Engines, PoolingOptions};
 use wasm_workers::workflow::workflow_worker::{
     JoinNextBlockingStrategy, WorkflowConfig, WorkflowWorkerCompiled,
 };
@@ -32,11 +32,6 @@ fn main() {
 }
 
 const TICK_SLEEP: Duration = Duration::from_millis(1);
-
-pub(crate) fn compile_activity(wasm_path: &'static str) -> (WasmComponent, ComponentId) {
-    let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
-    compile_activity_with_engine(wasm_path, &engine)
-}
 
 pub(crate) fn compile_activity_with_engine(
     wasm_path: &'static str,
@@ -66,8 +61,16 @@ pub(crate) fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static
     wasm_path: &'static str,
     clock_fn: impl ClockFn + 'static,
     sleep: impl Sleep + 'static,
+    activity_engine: Arc<Engine>,
 ) -> ExecutorTaskHandle {
-    spawn_activity_with_config(db_pool, wasm_path, clock_fn, sleep, activity_config)
+    spawn_activity_with_config(
+        db_pool,
+        wasm_path,
+        clock_fn,
+        sleep,
+        activity_config,
+        activity_engine,
+    )
 }
 
 pub(crate) fn spawn_activity_with_config<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -76,10 +79,15 @@ pub(crate) fn spawn_activity_with_config<DB: DbConnection + 'static, P: DbPool<D
     clock_fn: impl ClockFn + 'static,
     sleep: impl Sleep + 'static,
     config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
+    activity_engine: Arc<Engine>,
 ) -> ExecutorTaskHandle {
-    let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
-    let (worker, component_id) =
-        new_activity_worker_with_config(wasm_path, engine, clock_fn.clone(), sleep, config_fn);
+    let (worker, component_id) = new_activity_worker_with_config(
+        wasm_path,
+        activity_engine,
+        clock_fn.clone(),
+        sleep,
+        config_fn,
+    );
     let exec_config = ExecConfig {
         batch_size: 1,
         lock_expiry: Duration::from_secs(1),
@@ -123,18 +131,15 @@ pub(crate) fn spawn_activity_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 's
     db_pool: P,
     clock_fn: impl ClockFn + 'static,
     sleep: impl Sleep + 'static,
+    activity_engine: Arc<Engine>,
 ) -> ExecutorTaskHandle {
     spawn_activity(
         db_pool,
         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
         clock_fn,
         sleep,
+        activity_engine,
     )
-}
-
-pub(crate) fn compile_workflow(wasm_path: &'static str) -> (WasmComponent, ComponentId) {
-    let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
-    compile_workflow_with_engine(wasm_path, &engine)
 }
 
 pub(crate) fn compile_workflow_with_engine(
@@ -155,8 +160,8 @@ fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     clock_fn: impl ClockFn + 'static,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     fn_registry: Arc<dyn FunctionRegistry>,
+    workflow_engine: Arc<Engine>,
 ) -> ExecutorTaskHandle {
-    let workflow_engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
     let component_id =
         ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
     let worker = Arc::new(
@@ -205,6 +210,7 @@ pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 's
     clock_fn: impl ClockFn + 'static,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     fn_registry: Arc<dyn FunctionRegistry>,
+    workflow_engine: Arc<Engine>,
 ) -> ExecutorTaskHandle {
     spawn_workflow(
         db_pool,
@@ -212,6 +218,7 @@ pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 's
         clock_fn,
         join_next_blocking_strategy,
         fn_registry,
+        workflow_engine,
     )
 }
 
@@ -223,31 +230,59 @@ pub(crate) fn wasm_file_name(input: impl AsRef<Path>) -> StrVariant {
 }
 
 #[divan::bench(args = [100, 200, 400, 800, 1600])]
-fn empty_bench(bencher: divan::Bencher, args: u32) {
+fn fiboa(bencher: divan::Bencher, args: u32) {
     let rt = &tokio::runtime::Runtime::new().unwrap();
-
-    bencher.bench(|| rt.block_on(async { fibo_workflow(1, args).await }));
+    let workspace_dir = PathBuf::from(
+        std::env::var("CARGO_WORKSPACE_DIR")
+            .as_deref()
+            .unwrap_or("."),
+    )
+    .canonicalize()
+    .unwrap();
+    let codegen_cache = workspace_dir.join("test-codegen-cache");
+    let engines =
+        Arc::new(Engines::pooling(PoolingOptions::default(), Some(codegen_cache)).unwrap());
+    // compile before benching
+    compile_activity_with_engine(
+        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+        &engines.activity_engine,
+    );
+    compile_workflow_with_engine(
+        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+        &engines.workflow_engine,
+    );
+    bencher.bench(|| {
+        let engines = engines.clone();
+        rt.block_on(async move { fibo_workflow(1, args, engines).await });
+    });
 }
 
 const FIBO_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
     test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA,
 ); // fiboa: func(n: u8, iterations: u32) -> u64;
 
-async fn fibo_workflow(fibo_n: u8, iterations: u32) {
+async fn fibo_workflow(fibo_n: u8, iterations: u32, engines: Arc<Engines>) {
     let join_next_blocking_strategy = JoinNextBlockingStrategy::Await {
         non_blocking_event_batching: 10,
     };
 
     let (_guard, db_pool) = Database::Sqlite.set_up().await;
     let fn_registry = TestingFnRegistry::new_from_components(vec![
-        compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
-        compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW),
+        compile_activity_with_engine(
+            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+            &engines.activity_engine,
+        ),
+        compile_workflow_with_engine(
+            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+            &engines.workflow_engine,
+        ),
     ]);
     let workflow_exec_task = spawn_workflow_fibo(
         db_pool.clone(),
         Now,
         join_next_blocking_strategy,
         fn_registry,
+        engines.workflow_engine.clone(),
     );
     // Create an execution.
     let execution_id = ExecutionId::generate();
@@ -287,7 +322,12 @@ async fn fibo_workflow(fibo_n: u8, iterations: u32) {
     .await
     .unwrap();
 
-    let activity_exec_task = spawn_activity_fibo(db_pool.clone(), Now, TokioSleep);
+    let activity_exec_task = spawn_activity_fibo(
+        db_pool.clone(),
+        Now,
+        TokioSleep,
+        engines.activity_engine.clone(),
+    );
 
     let res = db_connection
         .wait_for_finished_result(&execution_id, None)

@@ -21,7 +21,7 @@ test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-utils.workspace = true
 utils = { workspace = true, features = ["test"] }
-wasm-workers = { workspace = true, features = ["test"] }
+wasm-workers.workspace = true
 
 assert_matches.workspace = true
 tokio.workspace = true
