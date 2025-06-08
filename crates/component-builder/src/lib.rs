@@ -102,6 +102,7 @@ fn get_target_dir() -> PathBuf {
 /// Get the `OUT_DIR` as a `PathBuf`.
 ///
 /// The folder structure typically looks like this: `target/debug/build/<crate_name>-<hash>/out`.
+#[cfg(feature = "genrs")]
 fn get_out_dir() -> PathBuf {
     PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR environment variable not set"))
 }
