@@ -95,18 +95,26 @@ impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
         }
     }
 
+    async fn subscribe_wait(
+        &mut self,
+        self_handle: Resource<process_support::ChildProcess>,
+    ) -> wasmtime::Result<wasmtime::component::Resource<wasmtime_wasi::p2::DynPollable>> {
+        assert!(!self_handle.owned()); // will be considered a child resource by `subscribe` (see docs).
+        wasmtime_wasi::p2::subscribe(self.table(), self_handle)
+    }
+
     async fn wait(
         &mut self,
         self_handle: Resource<process_support::ChildProcess>,
-    ) -> wasmtime::Result<Result<Option<i32>, process_support::ProcessError>> {
+    ) -> wasmtime::Result<Result<Option<i32>, process_support::WaitError>> {
         let child_process = self.table().get_mut(&self_handle)?;
-        Ok(child_process.wait().await)
+        Ok(child_process.try_wait())
     }
 
     async fn kill(
         &mut self,
         self_handle: Resource<process_support::ChildProcess>,
-    ) -> wasmtime::Result<Result<(), process_support::ProcessError>> {
+    ) -> wasmtime::Result<Result<(), process_support::KillError>> {
         let child_process = self.table().get_mut(&self_handle)?;
         Ok(child_process.kill().await)
     }

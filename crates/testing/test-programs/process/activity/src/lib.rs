@@ -33,8 +33,11 @@ fn touch() -> Result<(), anyhow::Error> {
         },
     )?;
     println!("Waiting for {}", proc.id());
-    let exit_code = proc.wait()?;
-    ensure!(exit_code == Some(0));
+    let sub = proc.subscribe_wait();
+    sub.block();
+    println!("Done waiting for {}", proc.id());
+    let exit_status = proc.wait()?;
+    ensure!(exit_status == Some(0));
 
     let entries = ls();
     if entries != vec!["./touched"] {
@@ -86,8 +89,11 @@ async fn stdio() -> Result<(), anyhow::Error> {
     }
 
     println!("Waiting for {}", proc.id());
-    let exit_code = proc.wait()?;
-    ensure!(exit_code == Some(0));
+    let sub = proc.subscribe_wait();
+    sub.block();
+    println!("Done waiting for {}", proc.id());
+    let exit_status = proc.wait()?;
+    ensure!(exit_status == Some(0));
 
     let stdout = stream_to_string(stdout).await?;
     println!("Got {stdout}");
@@ -121,9 +127,12 @@ fn kill() -> Result<(), anyhow::Error> {
         },
     )?;
     proc.kill()?;
-    let status = proc.wait()?;
-    println!("status: {status:?}");
-    ensure!(status.is_none());
+    println!("Waiting for {}", proc.id());
+    let sub = proc.subscribe_wait();
+    sub.block();
+    println!("Done waiting for {}", proc.id());
+    let exit_status = proc.wait()?;
+    ensure!(exit_status.is_none());
     Ok(())
 }
 

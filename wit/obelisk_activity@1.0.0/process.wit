@@ -2,6 +2,7 @@ package obelisk:activity@1.0.0;
 
 interface process {
     use wasi:io/streams@0.2.3.{input-stream, output-stream};
+    use wasi:io/poll@0.2.3.{pollable};
 
     // How to handle standard I/O for the spawned process
     enum stdio {
@@ -43,13 +44,17 @@ interface process {
         generic-error,
     }
 
-    enum process-error {
+    enum wait-error {
+        // When `wait` returns `error(would-block)`, this pollable can be used to wait for
+        // the process termination, after which the method can be retried.
+        would-block,
         // An OS-level error occurred while interacting with the process.
         os-error,
-        // Permission was denied during a process operation (e.g. killing a process)
-        permission-denied,
-        // A generic internal error occurred in the host.
-        internal-error,
+    }
+
+    enum kill-error {
+        // An OS-level error occurred while interacting with the process.
+        os-error,
     }
 
     // Represents a handle to a spawned child process
@@ -71,19 +76,26 @@ interface process {
         // Returns `none` if stderr is not piped or if called multiple times.
         take-stderr: func() -> option<input-stream>;
 
+        // Returns a pollable that becomes ready when the process terminates.
+        // This function can be called multiple times; it will return a pollable
+        // that resolves when the same process-exit event occurs.
+        subscribe-wait: func() -> pollable;
+
         // Waits for the process to exit and returns its exit code.
         // This is a blocking call.
         // Returns:
         //  - ok(some(s32)): The exit code of the process.
         //  - ok(none): E.g. if the process was terminated by a signal.
-        //  - error(process-error): If waiting failed or process terminated abnormally (e.g. by signal).
-        wait: func() -> result<option<s32>, process-error>;
+        //  - error(would-block): Returned if process is still running, `subscribe-wait` can be used to wait for
+        //   process termination, after which this method can be retried.
+        //  - error(os-error): If waiting failed or process terminated abnormally (e.g. by signal).
+        wait: func() -> result<option<s32>, wait-error>;
 
         // Attempts to terminate the process.
         // The exact behavior (e.g., signal used) is host-dependent.
         // Returns `ok` if the request to terminate was successfully sent,
         // `error` otherwise. Does not guarantee the process has exited.
-        kill: func() -> result<_, process-error>;
+        kill: func() -> result<_, kill-error>;
     }
 
     // Spawns a new process.

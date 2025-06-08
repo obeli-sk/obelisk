@@ -151,7 +151,7 @@ impl HostChildProcess {
                 } else {
                     let last_error = std::io::Error::last_os_error();
                     if let Some(3) = last_error.raw_os_error() {
-                        trace!("Ignoring no such process error: {last_error:?}")
+                        trace!("Ignoring no such process error: {last_error:?}");
                     } else {
                         warn!("Failed to send SIGTERM to process group {pid}: {last_error:?}",);
                     }
@@ -193,19 +193,20 @@ impl HostChildProcess {
         })
     }
 
-    pub(crate) async fn wait(&mut self) -> Result<Option<i32>, process_support::ProcessError> {
+    pub(crate) fn try_wait(&mut self) -> Result<Option<i32>, process_support::WaitError> {
         #[cfg_attr(madsim, allow(deprecated))]
-        let wait_result = self.child.wait().await;
+        let wait_result = self.child.try_wait();
         match wait_result {
-            Ok(exit_status) => Ok(exit_status.code()),
+            Ok(Some(exit_status)) => Ok(exit_status.code()),
+            Ok(None) => Err(process_support::WaitError::WouldBlock),
             Err(wait_err) => {
                 warn!("Host error: Waiting on process {self:?} failed: {wait_err:?}");
-                Err(process_support::ProcessError::OsError)
+                Err(process_support::WaitError::OsError)
             }
         }
     }
 
-    pub(crate) async fn kill(&mut self) -> Result<(), process_support::ProcessError> {
+    pub(crate) async fn kill(&mut self) -> Result<(), process_support::KillError> {
         match self.child.kill().await {
             Ok(()) => Ok(()),
             Err(err) => {
@@ -213,14 +214,15 @@ impl HostChildProcess {
                     "Host error: Killing process {self:?}: kind: {kind},  {err:?}",
                     kind = err.kind()
                 );
-                let process_error = match err.kind() {
-                    std::io::ErrorKind::PermissionDenied => {
-                        process_support::ProcessError::PermissionDenied
-                    }
-                    _ => process_support::ProcessError::OsError,
-                };
-                Err(process_error)
+                Err(process_support::KillError::OsError)
             }
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl wasmtime_wasi::p2::Pollable for HostChildProcess {
+    async fn ready(&mut self) {
+        let _ = self.child.wait().await;
     }
 }

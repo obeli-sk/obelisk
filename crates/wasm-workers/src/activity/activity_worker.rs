@@ -294,7 +294,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         }
                         // else: log and pass the retval as is to be stored.
                         worker_span.in_scope(|| {
-                            info!("Execution returned `result::err`, not able to retry");
+                            info!("Execution returned `error()`, not able to retry");
                         });
                     }
                 }
@@ -1337,8 +1337,8 @@ pub(crate) mod tests {
                 TokioSleep,
                 move |component_id| ActivityConfig {
                     component_id,
-                    forward_stdout: None,
-                    forward_stderr: None,
+                    forward_stdout: Some(StdOutput::Stderr),
+                    forward_stderr: Some(StdOutput::Stderr),
                     env_vars: Arc::default(),
                     retry_on_err: true,
                     directories_config: Some(ActivityDirectoriesConfig {
