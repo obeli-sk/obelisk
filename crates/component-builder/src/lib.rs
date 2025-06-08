@@ -19,10 +19,10 @@ impl BuildConfig {
             custom_dst_target_dir: None,
         }
     }
-    pub fn target_dir(target_dir: impl Into<PathBuf>) -> Self {
+    pub fn target_subdir(target_dir: impl Into<PathBuf>) -> Self {
         Self {
             profile: None,
-            custom_dst_target_dir: Some(target_dir.into()),
+            custom_dst_target_dir: Some(get_target_dir().join(target_dir.into())),
         }
     }
     pub fn new(
@@ -83,10 +83,8 @@ fn is_transformation_to_wasm_component_needed(target_tripple: &str) -> bool {
     target_tripple == WASM_CORE_MODULE
 }
 
-/// Get the path to the target directory.
+/// Get the path to the target directory using `CARGO_WORKSPACE_DIR` environment variable.
 ///
-/// Attempts to use the `CARGO_WORKSPACE_DIR` environment variable first.
-/// If not set, falls back to deriving it from the `OUT_DIR` environment variable.
 /// To set the environment variable automatically, modify `.cargo/config.toml`:
 /// ```toml
 /// [env]
@@ -96,15 +94,10 @@ fn is_transformation_to_wasm_component_needed(target_tripple: &str) -> bool {
 fn get_target_dir() -> PathBuf {
     // Try to get `CARGO_WORKSPACE_DIR` from the environment
     if let Ok(workspace_dir) = std::env::var("CARGO_WORKSPACE_DIR") {
-        return Path::new(&workspace_dir).join("target");
+        Path::new(&workspace_dir).join("target")
+    } else {
+        unreachable!("CARGO_WORKSPACE_DIR must be set")
     }
-    let out_path = get_out_dir();
-    // Navigate up to the `target` directory
-    out_path
-        .ancestors()
-        .nth(4) // `out` = 0th, `<crate_name>-<hash>` = 1st, `build` = 2nd, `debug` = 3rd, `target` = 4th
-        .expect("Unable to determine target directory")
-        .to_path_buf()
 }
 /// Get the `OUT_DIR` as a `PathBuf`.
 ///
