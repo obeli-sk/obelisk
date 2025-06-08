@@ -1,4 +1,4 @@
-use anyhow::{bail, ensure};
+use anyhow::{Context as _, bail, ensure};
 use exports::testing::process::process::Guest;
 use obelisk::activity::process::{self as process_support};
 use wasi::io::streams::InputStream;
@@ -127,13 +127,13 @@ fn kill() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+fn environment() -> Result<Vec<(String, String)>, anyhow::Error> {
+    let path = std::env::var("PATH").context("`PATH` not found")?;
+    Ok(vec![("PATH".to_string(), path)])
+}
+
 async fn exec_sleep() -> Result<u32, anyhow::Error> {
     // Spawn bash that spawns sleep, detached from bash. If process groups are used, the sleep process should be killed.
-    let environment: Vec<_> = std::env::vars().collect();
-    ensure!(
-        environment.iter().any(|(key, _)| key == "PATH"),
-        "PATH must be forwarded from host"
-    );
     let proc = process_support::spawn(
         "bash",
         &process_support::SpawnOptions {
@@ -141,7 +141,7 @@ async fn exec_sleep() -> Result<u32, anyhow::Error> {
                 "-c".to_string(),
                 "nohup sleep 100 > /dev/null 2>&1 & echo -n $!".to_string(),
             ],
-            environment,
+            environment: environment()?,
             current_working_directory: None,
             stdin: process_support::Stdio::Pipe,
             stdout: process_support::Stdio::Pipe,
