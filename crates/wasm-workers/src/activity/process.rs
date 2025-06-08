@@ -149,10 +149,12 @@ impl HostChildProcess {
                 if result == 0 {
                     debug!("Successfully sent SIGTERM to process group {pid}",);
                 } else {
-                    warn!(
-                        "Failed to send SIGTERM to process group {pid}: {}",
-                        std::io::Error::last_os_error()
-                    );
+                    let last_error = std::io::Error::last_os_error();
+                    if let Some(3) = last_error.raw_os_error() {
+                        trace!("Ignoring no such process error: {last_error:?}")
+                    } else {
+                        warn!("Failed to send SIGTERM to process group {pid}: {last_error:?}",);
+                    }
                 }
             }
         });
