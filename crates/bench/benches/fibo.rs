@@ -21,7 +21,7 @@ use std::time::Duration;
 use utils::testing_fn_registry::TestingFnRegistry;
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorker};
-use wasm_workers::engines::{Engines, PoolingOptions};
+use wasm_workers::engines::Engines;
 use wasm_workers::workflow::workflow_worker::{
     JoinNextBlockingStrategy, WorkflowConfig, WorkflowWorkerCompiled,
 };
@@ -240,8 +240,7 @@ fn fiboa(bencher: divan::Bencher, args: u32) {
     .canonicalize()
     .unwrap();
     let codegen_cache = workspace_dir.join("test-codegen-cache");
-    let engines =
-        Arc::new(Engines::pooling(PoolingOptions::default(), Some(codegen_cache)).unwrap());
+    let engines = Arc::new(Engines::on_demand(Some(codegen_cache)).unwrap());
     // compile before benching
     compile_activity_with_engine(
         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
