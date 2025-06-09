@@ -1162,7 +1162,7 @@ impl ServerVerified {
             }
             map
         };
-        let (compiled_components, component_registry_ro) = compile_and_verify(
+        let (compiled_components, component_registry_ro, _) = compile_and_verify(
             &engines,
             config.wasm_activities,
             config.workflows,
@@ -1552,8 +1552,14 @@ async fn compile_and_verify(
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
     global_backtrace_persist: bool,
-) -> Result<(LinkedComponents, ComponentConfigRegistryRO), anyhow::Error> {
-    let mut component_registry = ComponentConfigRegistry::default();
+) -> Result<
+    (
+        LinkedComponents,
+        ComponentConfigRegistryRO,
+        Option<String>, /* supressed_errros */
+    ),
+    anyhow::Error,
+> {
     let pre_spawns: Vec<tokio::task::JoinHandle<Result<_, anyhow::Error>>> = wasm_activities
         .into_iter()
         .map(|activity| {
@@ -1608,6 +1614,7 @@ async fn compile_and_verify(
     let pre_spawns = futures_util::future::join_all(pre_spawns);
     tokio::select! {
         results_of_results = pre_spawns => {
+            let mut component_registry = ComponentConfigRegistry::default();
             let mut workers_compiled = Vec::with_capacity(results_of_results.len());
             let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
             for handle in results_of_results {
@@ -1633,7 +1640,7 @@ async fn compile_and_verify(
                     },
                 }
             }
-            let component_registry_ro = component_registry.verify_imports();
+            let (component_registry_ro, supressed_errros) = component_registry.verify_imports();
             let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
             let workers_linked = workers_compiled.into_iter().map(|worker| worker.link(&fn_registry)).collect::<Result<Vec<_>,_>>()?;
             let webhooks_by_names = webhooks_compiled_by_names
@@ -1643,7 +1650,7 @@ async fn compile_and_verify(
             Ok((LinkedComponents {
                 workers_linked,
                 webhooks_by_names,
-            }, component_registry_ro))
+            }, component_registry_ro, supressed_errros))
         },
         sigint = tokio::signal::ctrl_c() => {
             sigint.expect("failed to listen for SIGINT event");
@@ -1895,20 +1902,31 @@ impl ComponentConfigRegistry {
     /// This is a best effort to give function-level error messages.
     /// WASI imports and host functions are not validated at the moment, those errors
     /// are caught by wasmtime while pre-instantiation with a message containing the missing interface.
-    pub fn verify_imports(self) -> ComponentConfigRegistryRO {
+    pub fn verify_imports(
+        self,
+    ) -> (
+        ComponentConfigRegistryRO,
+        Option<String>, /* supressed_errros */
+    ) {
         let mut errors = Vec::new();
         for (component_id, examined_component) in &self.inner.ids_to_components {
             self.verify_imports_component(component_id, &examined_component.imports, &mut errors);
         }
-        if !errors.is_empty() {
+        let errors = if !errors.is_empty() {
             let errors = errors.join("\n");
             // TODO: Promote to an error when version resolution is implemented
             // https://github.com/bytecodealliance/wasmtime/blob/8dbd5db30d05e96594e2516cdbd7cc213f1c2fa4/crates/environ/src/component/names.rs#L102-L104
             tracing::warn!("component resolution error: \n{errors}");
-        }
-        ComponentConfigRegistryRO {
-            inner: Arc::new(self.inner),
-        }
+            Some(errors)
+        } else {
+            None
+        };
+        (
+            ComponentConfigRegistryRO {
+                inner: Arc::new(self.inner),
+            },
+            errors,
+        )
     }
 
     fn additional_import_whitelist(import: &FunctionMetadata, component_id: &ComponentId) -> bool {
