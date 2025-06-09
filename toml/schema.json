@@ -43,16 +43,6 @@
     "wasm": {
       "$ref": "#/$defs/WasmGlobalConfigToml"
     },
-    "wasm_cache_directory": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "default": null
-    },
-    "wasmtime_allocator_config": {
-      "$ref": "#/$defs/WasmtimeAllocatorConfig"
-    },
     "wasmtime_pooling_config": {
       "$ref": "#/$defs/WasmtimePoolingAllocatorConfig"
     },
@@ -652,8 +642,18 @@
     "WasmGlobalConfigToml": {
       "type": "object",
       "properties": {
+        "allocator_config": {
+          "$ref": "#/$defs/WasmtimeAllocatorConfig"
+        },
         "backtrace": {
           "$ref": "#/$defs/WasmGlobalBacktrace"
+        },
+        "cache_directory": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
       "additionalProperties": false

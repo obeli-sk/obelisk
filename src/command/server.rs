@@ -910,6 +910,7 @@ async fn verify_internal(
         .get_sqlite_dir(&config_holder.path_prefixes)
         .await?;
     let wasm_cache_dir = config
+        .wasm_global_config
         .get_wasm_cache_directory(&config_holder.path_prefixes)
         .await?;
     let codegen_cache = config
@@ -1078,7 +1079,7 @@ impl ServerVerified {
         path_prefixes: PathPrefixes,
     ) -> Result<Self, anyhow::Error> {
         let engines = {
-            match config.wasmtime_allocator_config {
+            match config.wasm_global_config.allocator_config {
                 WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_dir,

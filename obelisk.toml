@@ -9,9 +9,10 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## WASM Cache dir
 ## Path to directory where downloaded or transformed WASM files are stored. Supports path prefixes.
 ## By default "${CACHE_DIR}/wasm" or "./cache/wasm" if no valid home directory path could be retrieved from the operating system.
-# wasm_cache_directory = "${CACHE_DIR}/wasm"
+# wasm.cache_directory = "${CACHE_DIR}/wasm"
 
 # wasm.backtrace.persist = true        # Persist backtraces on effect calls for all workflows and webhook endpoints.
+# wasm.allocator_config = "auto"       # One of "auto"|"on_demand"|"pooling"
 
 ## Global Preopened Directories Config
 # [activities.directories]

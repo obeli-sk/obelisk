@@ -59,8 +59,6 @@ pub(crate) struct ConfigToml {
     pub(crate) webui: WebUIConfig,
     #[serde(default, rename = "wasm")]
     pub(crate) wasm_global_config: WasmGlobalConfigToml,
-    #[serde(default)]
-    wasm_cache_directory: Option<String>,
     #[serde(default, rename = "activities")]
     pub(crate) activities_global_config: ActivitiesGlobalConfigToml,
     #[serde(default)]
@@ -69,8 +67,6 @@ pub(crate) struct ConfigToml {
     pub(crate) wasm_activities: Vec<ActivityComponentConfigToml>,
     #[serde(default, rename = "workflow")]
     pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
-    #[serde(default)]
-    pub(crate) wasmtime_allocator_config: WasmtimeAllocatorConfig,
     #[serde(default)]
     pub(crate) wasmtime_pooling_config: WasmtimePoolingAllocatorConfig,
     #[cfg(feature = "otlp")]
@@ -82,22 +78,6 @@ pub(crate) struct ConfigToml {
     pub(crate) http_servers: Vec<HttpServer>,
     #[serde(default, rename = "webhook_endpoint")]
     pub(crate) webhooks: Vec<WebhookComponentConfigToml>,
-}
-
-impl ConfigToml {
-    pub(crate) async fn get_wasm_cache_directory(
-        &self,
-        path_prefixes: &PathPrefixes,
-    ) -> Result<PathBuf, anyhow::Error> {
-        let wasm_directory = self.wasm_cache_directory.as_deref().unwrap_or_else(|| {
-            if path_prefixes.project_dirs.is_some() {
-                DEFAULT_WASM_DIRECTORY_IF_PROJECT_DIRS
-            } else {
-                DEFAULT_WASM_DIRECTORY
-            }
-        });
-        replace_path_prefix_mkdir(wasm_directory, path_prefixes).await
-    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -163,6 +143,26 @@ pub(crate) struct WebUIConfig {
 pub(crate) struct WasmGlobalConfigToml {
     #[serde(default)]
     pub(crate) backtrace: WasmGlobalBacktrace,
+    #[serde(default)]
+    cache_directory: Option<String>,
+    #[serde(default)]
+    pub(crate) allocator_config: WasmtimeAllocatorConfig,
+}
+
+impl WasmGlobalConfigToml {
+    pub(crate) async fn get_wasm_cache_directory(
+        &self,
+        path_prefixes: &PathPrefixes,
+    ) -> Result<PathBuf, anyhow::Error> {
+        let wasm_directory = self.cache_directory.as_deref().unwrap_or_else(|| {
+            if path_prefixes.project_dirs.is_some() {
+                DEFAULT_WASM_DIRECTORY_IF_PROJECT_DIRS
+            } else {
+                DEFAULT_WASM_DIRECTORY
+            }
+        });
+        replace_path_prefix_mkdir(wasm_directory, path_prefixes).await
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
