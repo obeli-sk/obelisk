@@ -878,7 +878,6 @@ pub(crate) async fn run(
 #[expect(clippy::struct_excessive_bools)]
 #[derive(Debug, Default, Clone)]
 pub(crate) struct VerifyParams {
-    pub(crate) clean_db: bool,
     pub(crate) clean_cache: bool,
     pub(crate) clean_codegen_cache: bool,
     pub(crate) ignore_missing_env_vars: bool,
@@ -897,6 +896,14 @@ pub(crate) async fn verify(
     Ok(())
 }
 
+fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        Ok(())
+    } else {
+        Err(err)
+    }
+}
+
 #[instrument(skip_all, name = "verify")]
 async fn verify_internal(
     config: ConfigToml,
@@ -905,10 +912,7 @@ async fn verify_internal(
 ) -> Result<ServerVerified, anyhow::Error> {
     info!("Verifying server configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
-    let db_dir = config
-        .sqlite
-        .get_sqlite_dir(&config_holder.path_prefixes)
-        .await?;
+
     let wasm_cache_dir = config
         .wasm_global_config
         .get_wasm_cache_directory(&config_holder.path_prefixes)
@@ -918,22 +922,6 @@ async fn verify_internal(
         .get_directory(&config_holder.path_prefixes)
         .await?;
     debug!("Using codegen cache? {codegen_cache:?}");
-    let ignore_not_found = |err: std::io::Error| {
-        if err.kind() == std::io::ErrorKind::NotFound {
-            Ok(())
-        } else {
-            Err(err)
-        }
-    };
-    if params.clean_db {
-        tokio::fs::remove_dir_all(&db_dir)
-            .await
-            .or_else(ignore_not_found)
-            .with_context(|| format!("cannot delete database directory `{db_dir:?}`"))?;
-        tokio::fs::create_dir_all(&db_dir)
-            .await
-            .with_context(|| format!("cannot create database directory {db_dir:?}"))?;
-    }
     if params.clean_cache {
         tokio::fs::remove_dir_all(&wasm_cache_dir)
             .await
@@ -969,7 +957,6 @@ async fn verify_internal(
         codegen_cache,
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
-        db_dir,
         params.ignore_missing_env_vars,
         config_holder.path_prefixes,
     )
@@ -985,11 +972,27 @@ async fn run_internal(
 ) -> anyhow::Result<()> {
     let span = info_span!("init");
     let api_listening_addr = config.api.listening_addr;
+
+    let db_dir = config
+        .sqlite
+        .get_sqlite_dir(&config_holder.path_prefixes)
+        .await?;
+    let sqlite_config = config.sqlite.as_sqlite_config();
+    let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
+    if params.clean_db {
+        tokio::fs::remove_dir_all(&db_dir)
+            .await
+            .or_else(ignore_not_found)
+            .with_context(|| format!("cannot delete database directory `{db_dir:?}`"))?;
+        tokio::fs::create_dir_all(&db_dir)
+            .await
+            .with_context(|| format!("cannot create database directory {db_dir:?}"))?;
+    }
+
     let mut verified = Box::pin(verify_internal(
         config,
         config_holder,
         VerifyParams {
-            clean_db: params.clean_db,
             clean_cache: params.clean_cache,
             clean_codegen_cache: params.clean_codegen_cache,
             ignore_missing_env_vars: false,
@@ -998,9 +1001,10 @@ async fn run_internal(
     .instrument(span.clone())
     .await?;
     let component_source_map = std::mem::take(&mut verified.component_source_map);
-    let (init, component_registry_ro) = ServerInit::spawn_tasks_and_threads(verified)
-        .instrument(span)
-        .await?;
+    let (init, component_registry_ro) =
+        ServerInit::spawn_tasks_and_threads(verified, &sqlite_file, sqlite_config)
+            .instrument(span)
+            .await?;
     let grpc_server = Arc::new(GrpcServer::new(
         init.db_pool.clone(),
         component_registry_ro,
@@ -1060,8 +1064,6 @@ struct ServerVerified {
     compiled_components: LinkedComponents,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     engines: Engines,
-    sqlite_config: SqliteConfig,
-    db_file: PathBuf,
     component_source_map: ComponentSourceMap,
     parent_preopen_dir: Option<Arc<Path>>,
     activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
@@ -1074,7 +1076,6 @@ impl ServerVerified {
         codegen_cache_dir: Option<PathBuf>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        db_dir: PathBuf,
         ignore_missing_env_vars: bool,
         path_prefixes: PathPrefixes,
     ) -> Result<Self, anyhow::Error> {
@@ -1090,7 +1091,6 @@ impl ServerVerified {
                 }
             }
         };
-        let sqlite_config = config.sqlite.into_sqlite_config();
         let mut http_servers = config.http_servers;
         let mut webhooks = config.webhooks;
         if let Some(webui_listening_addr) = config.webui.listening_addr {
@@ -1175,8 +1175,6 @@ impl ServerVerified {
             component_registry_ro,
             http_servers_to_webhook_names: config.http_servers_to_webhook_names,
             engines,
-            sqlite_config,
-            db_file: db_dir.join(SQLITE_FILE_NAME),
             component_source_map,
             activities_cleanup,
             parent_preopen_dir,
@@ -1201,15 +1199,17 @@ impl ServerInit {
     #[instrument(skip_all)]
     async fn spawn_tasks_and_threads(
         mut verified: ServerVerified,
+        sqlite_file: &Path,
+        sqlite_config: SqliteConfig,
     ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
         // Start components requiring a database
         let epoch_ticker = EpochTicker::spawn_new(
             verified.engines.weak_refs(),
             Duration::from_millis(EPOCH_MILLIS),
         );
-        let db_pool = SqlitePool::new(&verified.db_file, verified.sqlite_config, TokioSleep)
+        let db_pool = SqlitePool::new(sqlite_file, sqlite_config, TokioSleep)
             .await
-            .with_context(|| format!("cannot open sqlite file `{:?}`", verified.db_file))?;
+            .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?;
 
         let timers_watcher = expired_timers_watcher::spawn_new(
             db_pool.clone(),

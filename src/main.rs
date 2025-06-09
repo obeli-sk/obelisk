@@ -49,7 +49,6 @@ async fn main() -> Result<(), anyhow::Error> {
             Ok(())
         }
         Subcommand::Server(Server::Verify {
-            clean_db,
             clean_cache,
             clean_codegen_cache,
             config,
@@ -60,7 +59,6 @@ async fn main() -> Result<(), anyhow::Error> {
                 BaseDirs::new(),
                 config,
                 VerifyParams {
-                    clean_db,
                     clean_cache,
                     clean_codegen_cache,
                     ignore_missing_env_vars,

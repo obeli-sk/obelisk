@@ -58,9 +58,6 @@ pub(crate) enum Server {
     GenerateConfig,
     /// Read the configuration, compile the components, verify their imports and exit
     Verify {
-        /// Clean the sqlite database
-        #[arg(long)]
-        clean_db: bool,
         /// Clean the codegen and OCI cache directories
         #[arg(long)]
         clean_cache: bool,

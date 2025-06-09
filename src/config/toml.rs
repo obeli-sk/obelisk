@@ -123,11 +123,11 @@ impl SqliteConfigToml {
         replace_path_prefix_mkdir(sqlite_file, path_prefixes).await
     }
 
-    pub(crate) fn into_sqlite_config(self) -> SqliteConfig {
+    pub(crate) fn as_sqlite_config(&self) -> SqliteConfig {
         SqliteConfig {
             queue_capacity: self.queue_capacity,
             low_prio_threshold: self.low_prio_threshold,
-            pragma_override: Some(self.pragma.into_iter().collect()),
+            pragma_override: Some(self.pragma.clone().into_iter().collect()),
         }
     }
 }
