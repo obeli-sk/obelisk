@@ -962,7 +962,14 @@ async fn verify_internal(
     )
     .await?;
     let compiled_and_linked = ServerCompiledLinked::new(server_verified).await?;
-    info!("Server configuration was verified");
+    info!(
+        "Server configuration was verified{}",
+        if compiled_and_linked.supressed_errors.is_some() {
+            " with supressed errors"
+        } else {
+            ""
+        }
+    );
     Ok((compiled_and_linked, component_source_map))
 }
 
@@ -1180,11 +1187,12 @@ struct ServerCompiledLinked {
     parent_preopen_dir: Option<Arc<Path>>,
     activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
+    supressed_errors: Option<String>,
 }
 
 impl ServerCompiledLinked {
     async fn new(server_verified: ServerVerified) -> Result<Self, anyhow::Error> {
-        let (compiled_components, component_registry_ro, _) = compile_and_verify(
+        let (compiled_components, component_registry_ro, supressed_errors) = compile_and_verify(
             &server_verified.engines,
             server_verified.config.wasm_activities,
             server_verified.config.workflows,
@@ -1199,6 +1207,7 @@ impl ServerCompiledLinked {
             parent_preopen_dir: server_verified.parent_preopen_dir,
             activities_cleanup: server_verified.activities_cleanup,
             http_servers_to_webhook_names: server_verified.config.http_servers_to_webhook_names,
+            supressed_errors,
         })
     }
 }
@@ -1582,7 +1591,7 @@ async fn compile_and_verify(
     (
         LinkedComponents,
         ComponentConfigRegistryRO,
-        Option<String>, /* supressed_errros */
+        Option<String>, /* supressed_errors */
     ),
     anyhow::Error,
 > {
@@ -1666,7 +1675,7 @@ async fn compile_and_verify(
                     },
                 }
             }
-            let (component_registry_ro, supressed_errros) = component_registry.verify_imports();
+            let (component_registry_ro, supressed_errors) = component_registry.verify_imports();
             let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
             let workers_linked = workers_compiled.into_iter().map(|worker| worker.link(&fn_registry)).collect::<Result<Vec<_>,_>>()?;
             let webhooks_by_names = webhooks_compiled_by_names
@@ -1676,7 +1685,7 @@ async fn compile_and_verify(
             Ok((LinkedComponents {
                 workers_linked,
                 webhooks_by_names,
-            }, component_registry_ro, supressed_errros))
+            }, component_registry_ro, supressed_errors))
         },
         sigint = tokio::signal::ctrl_c() => {
             sigint.expect("failed to listen for SIGINT event");
@@ -1932,7 +1941,7 @@ impl ComponentConfigRegistry {
         self,
     ) -> (
         ComponentConfigRegistryRO,
-        Option<String>, /* supressed_errros */
+        Option<String>, /* supressed_errors */
     ) {
         let mut errors = Vec::new();
         for (component_id, examined_component) in &self.inner.ids_to_components {
@@ -1955,7 +1964,7 @@ impl ComponentConfigRegistry {
         )
     }
 
-    fn additional_import_whitelist(import: &FunctionMetadata, component_id: &ComponentId) -> bool {
+    fn additional_import_allowlist(import: &FunctionMetadata, component_id: &ComponentId) -> bool {
         match component_id.component_type {
             ComponentType::ActivityWasm => {
                 // wasi + log
@@ -2032,7 +2041,7 @@ impl ComponentConfigRegistry {
                     );
                     errors.push(format!("return types do not match: {component_id} imports {imported_fn_metadata} , {exported_component_id} exports {exported_fn_metadata}"));
                 }
-            } else if !Self::additional_import_whitelist(imported_fn_metadata, component_id) {
+            } else if !Self::additional_import_allowlist(imported_fn_metadata, component_id) {
                 errors.push(format!(
                     "function imported by {component_id} not found: {imported_fn_metadata}"
                 ));
@@ -2112,10 +2121,13 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
 
 #[cfg(all(test, not(madsim)))]
 mod tests {
-    use crate::{ConfigHolder, command::server::VerifyParams};
+    use crate::{
+        ConfigHolder,
+        command::server::{ServerCompiledLinked, ServerVerified, VerifyParams},
+    };
     use directories::BaseDirs;
     use parameterized::parameterized;
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
     fn get_workspace_dir() -> PathBuf {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
@@ -2125,18 +2137,35 @@ mod tests {
     "obelisk-local.toml", "obelisk.toml"
 })]
     #[parameterized_macro(tokio::test(flavor = "multi_thread"))] // for WASM component compilation
-    async fn server_verify(obelisk_toml: &str) {
+    async fn server_verify(obelisk_toml: &str) -> Result<(), anyhow::Error> {
         let obelisk_toml = get_workspace_dir().join(obelisk_toml);
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
-        let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(obelisk_toml)).unwrap();
-        let config = config_holder.load_config().await.unwrap();
-        Box::pin(crate::command::server::verify_internal(
+        let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(obelisk_toml))?;
+        let config = config_holder.load_config().await?;
+
+        let wasm_cache_dir = config
+            .wasm_global_config
+            .get_wasm_cache_directory(&config_holder.path_prefixes)
+            .await?;
+        let codegen_cache = config
+            .codegen_cache
+            .get_directory(&config_holder.path_prefixes)
+            .await?;
+        tokio::fs::create_dir_all(&wasm_cache_dir).await?;
+        let metadata_dir = wasm_cache_dir.join("metadata");
+        tokio::fs::create_dir_all(&metadata_dir).await?;
+        let (server_verified, _component_source_map) = ServerVerified::new(
             config,
-            config_holder,
-            VerifyParams::default(),
-        ))
-        .await
-        .unwrap();
+            codegen_cache,
+            Arc::from(wasm_cache_dir),
+            Arc::from(metadata_dir),
+            VerifyParams::default().ignore_missing_env_vars,
+            config_holder.path_prefixes,
+        )
+        .await?;
+        let compiled_and_linked = ServerCompiledLinked::new(server_verified).await?;
+        assert_eq!(compiled_and_linked.supressed_errors, None);
+        Ok(())
     }
 }
