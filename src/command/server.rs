@@ -1961,7 +1961,10 @@ impl ComponentConfigRegistry {
                 // wasi + log
                 match import.ffqn.ifc_fqn.namespace() {
                     "wasi" => true,
-                    "obelisk" => import.ffqn.ifc_fqn.deref() == "obelisk:log/log@1.0.0",
+                    "obelisk" => {
+                        import.ffqn.ifc_fqn.deref() == "obelisk:log/log@1.0.0"
+                            || import.ffqn.ifc_fqn.deref() == "obelisk:activity/process@1.0.0"
+                    }
                     _ => false,
                 }
             }
