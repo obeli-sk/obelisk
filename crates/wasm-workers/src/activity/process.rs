@@ -223,6 +223,7 @@ impl HostChildProcess {
 #[async_trait::async_trait]
 impl wasmtime_wasi::p2::Pollable for HostChildProcess {
     async fn ready(&mut self) {
-        let _ = self.child.wait().await;
+        let exit_status = self.child.wait().await;
+        debug!("Exit status: {exit_status:?}");
     }
 }
