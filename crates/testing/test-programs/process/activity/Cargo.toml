@@ -10,7 +10,7 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-wasi.workspace = true
+futures-concurrency.workspace = true
 wit-bindgen.workspace = true
 wstd.workspace = true
 

@@ -8,4 +8,7 @@ interface process {
     kill: func() -> result<_, string>;
 
     exec-sleep: func() -> result<u32, string>;
+
+    subscribe-wait: func() -> result<_, string>;
+
 }

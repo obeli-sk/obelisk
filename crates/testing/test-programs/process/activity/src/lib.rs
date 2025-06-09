@@ -1,16 +1,19 @@
+use std::time::Duration;
+
 use anyhow::{Context as _, bail, ensure};
 use exports::testing::process::process::Guest;
+use futures_concurrency::future::Join as _;
 use obelisk::activity::process::{self as process_support};
-use wasi::io::streams::InputStream;
-use wstd::io::{AsyncInputStream, AsyncOutputStream, Cursor};
+use wstd::io::{AsyncInputStream, AsyncOutputStream, AsyncPollable, Cursor};
 use wstd::runtime::block_on;
+use wstd::wasi::io::streams::InputStream;
 
 wit_bindgen::generate!({
      world: "any:any/any",
        with: {
-       "wasi:io/error@0.2.3": wasi::io::error,
-       "wasi:io/poll@0.2.3": wasi::io::poll,
-       "wasi:io/streams@0.2.3": wasi::io::streams,
+       "wasi:io/error@0.2.3": wstd::wasi::io::error,
+       "wasi:io/poll@0.2.3": wstd::wasi::io::poll,
+       "wasi:io/streams@0.2.3": wstd::wasi::io::streams,
        "obelisk:activity/process@1.0.0": generate,
        "testing:process/process": generate,
    },
@@ -136,11 +139,6 @@ fn kill() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn environment() -> Result<Vec<(String, String)>, anyhow::Error> {
-    let path = std::env::var("PATH").context("`PATH` not found")?;
-    Ok(vec![("PATH".to_string(), path)])
-}
-
 async fn exec_sleep() -> Result<u32, anyhow::Error> {
     // Spawn bash that spawns sleep, detached from bash. If process groups are used, the sleep process should be killed.
     let proc = process_support::spawn(
@@ -167,6 +165,62 @@ async fn exec_sleep() -> Result<u32, anyhow::Error> {
     Ok(sleep_pid.parse()?)
 }
 
+async fn subscribe_wait() -> Result<(), anyhow::Error> {
+    const SCRIPT: &str = r"
+i=0
+while true; do
+  echo $i
+  ((i++))
+  sleep 0.1
+done
+    ";
+    let proc = process_support::spawn(
+        "bash",
+        &process_support::SpawnOptions {
+            args: vec!["-c".to_string(), SCRIPT.to_string()],
+            environment: environment()?,
+            current_working_directory: None,
+            stdin: process_support::Stdio::Discard,
+            stdout: process_support::Stdio::Pipe,
+            stderr: process_support::Stdio::Pipe,
+        },
+    )?;
+    let child_stdout = AsyncInputStream::new(
+        proc.take_stdout()
+            .expect("first `take_stdout` must succeed"),
+    );
+    let current_stdout = AsyncOutputStream::new(wstd::wasi::cli::stdout::get_stdout());
+
+    let child_stderr = AsyncInputStream::new(
+        proc.take_stderr()
+            .expect("first `take_stderr` must succeed"),
+    );
+    let current_stderr = AsyncOutputStream::new(wstd::wasi::cli::stderr::get_stderr());
+    println!("Waiting");
+
+    let stdout_fut = wstd::io::copy(child_stdout, current_stdout);
+    let stderr_fut = wstd::io::copy(child_stderr, current_stderr);
+    let wait_fut = AsyncPollable::new(proc.subscribe_wait()).wait_for();
+    let kill_fut = async {
+        wstd::task::sleep(Duration::from_millis(500).into()).await;
+        println!("Killing");
+        proc.kill()?;
+        Ok::<_, anyhow::Error>(())
+    };
+
+    let (stdout, stderr, _wait, _kill) = (stdout_fut, stderr_fut, wait_fut, kill_fut).join().await;
+    let exit_code = proc.wait()?;
+    println!("Done waiting for {} - {exit_code:?}", proc.id());
+    stdout?;
+    stderr?;
+    Ok(())
+}
+
+fn environment() -> Result<Vec<(String, String)>, anyhow::Error> {
+    let path = std::env::var("PATH").context("`PATH` not found")?;
+    Ok(vec![("PATH".to_string(), path)])
+}
+
 impl Guest for Component {
     fn touch() -> Result<(), String> {
         self::touch().map_err(|err| err.to_string())
@@ -182,5 +236,9 @@ impl Guest for Component {
 
     fn exec_sleep() -> Result<u32, String> {
         block_on(async move { self::exec_sleep().await.map_err(|err| err.to_string()) })
+    }
+
+    fn subscribe_wait() -> Result<(), String> {
+        block_on(async move { self::subscribe_wait().await.map_err(|err| err.to_string()) })
     }
 }
