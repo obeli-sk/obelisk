@@ -875,7 +875,6 @@ pub(crate) async fn run(
     Ok(())
 }
 
-#[expect(clippy::struct_excessive_bools)]
 #[derive(Debug, Default, Clone)]
 pub(crate) struct VerifyParams {
     pub(crate) clean_cache: bool,
@@ -1172,8 +1171,8 @@ impl ServerVerified {
             Self {
                 config,
                 engines,
-                activities_cleanup,
                 parent_preopen_dir,
+                activities_cleanup,
             },
             component_source_map,
         ))
