@@ -909,7 +909,7 @@ async fn verify_internal(
     config: ConfigToml,
     config_holder: ConfigHolder,
     params: VerifyParams,
-) -> Result<ServerVerified, anyhow::Error> {
+) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
     info!("Verifying server configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
 
@@ -952,7 +952,7 @@ async fn verify_internal(
         .await
         .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
 
-    let server_verified = ServerVerified::new(
+    let (server_verified, component_source_map) = ServerVerified::new(
         config,
         codegen_cache,
         Arc::from(wasm_cache_dir),
@@ -961,8 +961,9 @@ async fn verify_internal(
         config_holder.path_prefixes,
     )
     .await?;
+    let compiled_and_linked = ServerCompiledLinked::new(server_verified).await?;
     info!("Server configuration was verified");
-    Ok(server_verified)
+    Ok((compiled_and_linked, component_source_map))
 }
 
 async fn run_internal(
@@ -989,7 +990,7 @@ async fn run_internal(
             .with_context(|| format!("cannot create database directory {db_dir:?}"))?;
     }
 
-    let mut verified = Box::pin(verify_internal(
+    let (compiled_and_linked, component_source_map) = Box::pin(verify_internal(
         config,
         config_holder,
         VerifyParams {
@@ -1000,9 +1001,9 @@ async fn run_internal(
     ))
     .instrument(span.clone())
     .await?;
-    let component_source_map = std::mem::take(&mut verified.component_source_map);
+
     let (init, component_registry_ro) =
-        ServerInit::spawn_tasks_and_threads(verified, &sqlite_file, sqlite_config)
+        ServerInit::spawn_tasks_and_threads(compiled_and_linked, &sqlite_file, sqlite_config)
             .instrument(span)
             .await?;
     let grpc_server = Arc::new(GrpcServer::new(
@@ -1060,11 +1061,8 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 }
 
 struct ServerVerified {
-    component_registry_ro: ComponentConfigRegistryRO,
-    compiled_components: LinkedComponents,
-    http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
+    config: ConfigVerified,
     engines: Engines,
-    component_source_map: ComponentSourceMap,
     parent_preopen_dir: Option<Arc<Path>>,
     activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
 }
@@ -1078,7 +1076,7 @@ impl ServerVerified {
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         path_prefixes: PathPrefixes,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> Result<(Self, ComponentSourceMap), anyhow::Error> {
         let engines = {
             match config.wasm_global_config.allocator_config {
                 WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
@@ -1136,7 +1134,7 @@ impl ServerVerified {
             .activities_global_config
             .get_directories()
             .and_then(ActivitiesDirectoriesGlobalConfigToml::get_cleanup);
-        let mut config = fetch_and_verify_all(
+        let mut config = ConfigVerified::fetch_and_verify_all(
             config.wasm_activities,
             config.workflows,
             http_servers,
@@ -1162,25 +1160,49 @@ impl ServerVerified {
             }
             map
         };
+
+        Ok((
+            Self {
+                config,
+                engines,
+                activities_cleanup,
+                parent_preopen_dir,
+            },
+            component_source_map,
+        ))
+    }
+}
+
+struct ServerCompiledLinked {
+    engines: Engines,
+    component_registry_ro: ComponentConfigRegistryRO,
+    compiled_components: LinkedComponents,
+    parent_preopen_dir: Option<Arc<Path>>,
+    activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
+    http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
+}
+
+impl ServerCompiledLinked {
+    async fn new(server_verified: ServerVerified) -> Result<Self, anyhow::Error> {
         let (compiled_components, component_registry_ro, _) = compile_and_verify(
-            &engines,
-            config.wasm_activities,
-            config.workflows,
-            config.webhooks_by_names,
-            global_backtrace_persist,
+            &server_verified.engines,
+            server_verified.config.wasm_activities,
+            server_verified.config.workflows,
+            server_verified.config.webhooks_by_names,
+            server_verified.config.global_backtrace_persist,
         )
         .await?;
         Ok(Self {
             compiled_components,
             component_registry_ro,
-            http_servers_to_webhook_names: config.http_servers_to_webhook_names,
-            engines,
-            component_source_map,
-            activities_cleanup,
-            parent_preopen_dir,
+            engines: server_verified.engines,
+            parent_preopen_dir: server_verified.parent_preopen_dir,
+            activities_cleanup: server_verified.activities_cleanup,
+            http_servers_to_webhook_names: server_verified.config.http_servers_to_webhook_names,
         })
     }
 }
+
 type Sqlite = SqlitePool<TokioSleep>;
 struct ServerInit {
     db_pool: Sqlite,
@@ -1198,13 +1220,13 @@ struct ServerInit {
 impl ServerInit {
     #[instrument(skip_all)]
     async fn spawn_tasks_and_threads(
-        mut verified: ServerVerified,
+        mut server_compiled_linked: ServerCompiledLinked,
         sqlite_file: &Path,
         sqlite_config: SqliteConfig,
     ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
         // Start components requiring a database
         let epoch_ticker = EpochTicker::spawn_new(
-            verified.engines.weak_refs(),
+            server_compiled_linked.engines.weak_refs(),
             Duration::from_millis(EPOCH_MILLIS),
         );
         let db_pool = SqlitePool::new(sqlite_file, sqlite_config, TokioSleep)
@@ -1220,9 +1242,10 @@ impl ServerInit {
             },
         );
 
-        let preopens_cleaner = if let (Some(parent_preopen_dir), Some(activities_cleanup)) =
-            (verified.parent_preopen_dir, verified.activities_cleanup)
-        {
+        let preopens_cleaner = if let (Some(parent_preopen_dir), Some(activities_cleanup)) = (
+            server_compiled_linked.parent_preopen_dir,
+            server_compiled_linked.activities_cleanup,
+        ) {
             Some(PreopensCleaner::spawn_task(
                 activities_cleanup.older_than.into(),
                 parent_preopen_dir,
@@ -1237,14 +1260,14 @@ impl ServerInit {
 
         // Associate webhooks with http servers
         let http_servers_to_webhooks = {
-            verified
+            server_compiled_linked
                 .http_servers_to_webhook_names
                 .into_iter()
                 .map(|(http_server, webhook_names)| {
                     let instances_and_routes = webhook_names
                         .into_iter()
                         .map(|name| {
-                            verified
+                            server_compiled_linked
                                 .compiled_components
                                 .webhooks_by_names
                                 .remove(&name)
@@ -1257,7 +1280,7 @@ impl ServerInit {
         };
 
         // Spawn executors
-        let exec_join_handles = verified
+        let exec_join_handles = server_compiled_linked
             .compiled_components
             .workers_linked
             .into_iter()
@@ -1267,9 +1290,9 @@ impl ServerInit {
         // Start TCP listeners
         let http_servers_handles: Vec<AbortOnDropHandle> = start_webhooks(
             http_servers_to_webhooks,
-            &verified.engines,
+            &server_compiled_linked.engines,
             db_pool.clone(),
-            Arc::from(verified.component_registry_ro.clone()),
+            Arc::from(server_compiled_linked.component_registry_ro.clone()),
         )
         .await?;
         Ok((
@@ -1281,7 +1304,7 @@ impl ServerInit {
                 epoch_ticker,
                 preopens_cleaner,
             },
-            verified.component_registry_ro,
+            server_compiled_linked.component_registry_ro,
         ))
     }
 
@@ -1372,169 +1395,172 @@ struct ConfigVerified {
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
+    global_backtrace_persist: bool,
 }
 
-#[instrument(skip_all)]
-#[expect(clippy::too_many_arguments)]
-async fn fetch_and_verify_all(
-    wasm_activities: Vec<ActivityComponentConfigToml>,
-    workflows: Vec<WorkflowComponentConfigToml>,
-    http_servers: Vec<webhook::HttpServer>,
-    webhooks: Vec<webhook::WebhookComponentConfigToml>,
-    wasm_cache_dir: Arc<Path>,
-    metadata_dir: Arc<Path>,
-    ignore_missing_env_vars: bool,
-    path_prefixes: PathPrefixes,
-    global_backtrace_persist: bool,
-    parent_preopen_dir: Option<Arc<Path>>,
-) -> Result<ConfigVerified, anyhow::Error> {
-    // Check uniqueness of server and webhook names.
-    {
-        if http_servers.len()
-            > http_servers
-                .iter()
-                .map(|it| &it.name)
-                .collect::<hashbrown::HashSet<_>>()
-                .len()
+impl ConfigVerified {
+    #[instrument(skip_all)]
+    #[expect(clippy::too_many_arguments)]
+    async fn fetch_and_verify_all(
+        wasm_activities: Vec<ActivityComponentConfigToml>,
+        workflows: Vec<WorkflowComponentConfigToml>,
+        http_servers: Vec<webhook::HttpServer>,
+        webhooks: Vec<webhook::WebhookComponentConfigToml>,
+        wasm_cache_dir: Arc<Path>,
+        metadata_dir: Arc<Path>,
+        ignore_missing_env_vars: bool,
+        path_prefixes: PathPrefixes,
+        global_backtrace_persist: bool,
+        parent_preopen_dir: Option<Arc<Path>>,
+    ) -> Result<ConfigVerified, anyhow::Error> {
+        // Check uniqueness of server and webhook names.
         {
-            bail!("Each `http_server` must have a unique name");
-        }
-        if webhooks.len()
-            > webhooks
-                .iter()
-                .map(|it| &it.common.name)
-                .collect::<hashbrown::HashSet<_>>()
-                .len()
-        {
-            bail!("Each `webhook` must have a unique name");
-        }
-    }
-    let http_servers_to_webhook_names = {
-        let mut remaining_server_names_to_webhook_names = {
-            let mut map: hashbrown::HashMap<ConfigName, Vec<ConfigName>> =
-                hashbrown::HashMap::default();
-            for webhook in &webhooks {
-                map.entry(webhook.http_server.clone())
-                    .or_default()
-                    .push(webhook.common.name.clone());
+            if http_servers.len()
+                > http_servers
+                    .iter()
+                    .map(|it| &it.name)
+                    .collect::<hashbrown::HashSet<_>>()
+                    .len()
+            {
+                bail!("Each `http_server` must have a unique name");
             }
-            map
-        };
+            if webhooks.len()
+                > webhooks
+                    .iter()
+                    .map(|it| &it.common.name)
+                    .collect::<hashbrown::HashSet<_>>()
+                    .len()
+            {
+                bail!("Each `webhook` must have a unique name");
+            }
+        }
         let http_servers_to_webhook_names = {
-            let mut vec = Vec::new();
-            for http_server in http_servers {
-                let webhooks = remaining_server_names_to_webhook_names
-                    .remove(&http_server.name)
-                    .unwrap_or_default();
-                vec.push((http_server, webhooks));
+            let mut remaining_server_names_to_webhook_names = {
+                let mut map: hashbrown::HashMap<ConfigName, Vec<ConfigName>> =
+                    hashbrown::HashMap::default();
+                for webhook in &webhooks {
+                    map.entry(webhook.http_server.clone())
+                        .or_default()
+                        .push(webhook.common.name.clone());
+                }
+                map
+            };
+            let http_servers_to_webhook_names = {
+                let mut vec = Vec::new();
+                for http_server in http_servers {
+                    let webhooks = remaining_server_names_to_webhook_names
+                        .remove(&http_server.name)
+                        .unwrap_or_default();
+                    vec.push((http_server, webhooks));
+                }
+                vec
+            };
+            // Each webhook must be associated with an `http_server`.
+            if !remaining_server_names_to_webhook_names.is_empty() {
+                bail!(
+                    "No matching `http_server` found for some `webhook` configurations: {:?}",
+                    remaining_server_names_to_webhook_names
+                        .keys()
+                        .collect::<Vec<_>>()
+                );
             }
-            vec
+            http_servers_to_webhook_names
         };
-        // Each webhook must be associated with an `http_server`.
-        if !remaining_server_names_to_webhook_names.is_empty() {
-            bail!(
-                "No matching `http_server` found for some `webhook` configurations: {:?}",
-                remaining_server_names_to_webhook_names
-                    .keys()
-                    .collect::<Vec<_>>()
-            );
-        }
-        http_servers_to_webhook_names
-    };
-    // Download WASM files from OCI registries if needed.
-    // TODO: Switch to `JoinSet` when madsim supports it.
-    let activities = wasm_activities
-        .into_iter()
-        .map(|activity| {
-            tokio::spawn({
-                let wasm_cache_dir = wasm_cache_dir.clone();
-                let metadata_dir = metadata_dir.clone();
-                let parent_preopen_dir = parent_preopen_dir.clone();
-                async move {
-                    activity
-                        .fetch_and_verify(
-                            wasm_cache_dir.clone(),
-                            metadata_dir.clone(),
-                            ignore_missing_env_vars,
-                            parent_preopen_dir,
-                        )
-                        .await
-                }
-                .in_current_span()
+        // Download WASM files from OCI registries if needed.
+        // TODO: Switch to `JoinSet` when madsim supports it.
+        let activities = wasm_activities
+            .into_iter()
+            .map(|activity| {
+                tokio::spawn({
+                    let wasm_cache_dir = wasm_cache_dir.clone();
+                    let metadata_dir = metadata_dir.clone();
+                    let parent_preopen_dir = parent_preopen_dir.clone();
+                    async move {
+                        activity
+                            .fetch_and_verify(
+                                wasm_cache_dir.clone(),
+                                metadata_dir.clone(),
+                                ignore_missing_env_vars,
+                                parent_preopen_dir,
+                            )
+                            .await
+                    }
+                    .in_current_span()
+                })
             })
-        })
-        .collect::<Vec<_>>();
-    let path_prefixes = Arc::new(path_prefixes);
-    let workflows = workflows
-        .into_iter()
-        .map(|workflow| {
-            let path_prefixes = path_prefixes.clone();
-            tokio::spawn(
-                workflow
-                    .fetch_and_verify(
-                        wasm_cache_dir.clone(),
-                        metadata_dir.clone(),
-                        path_prefixes,
-                        global_backtrace_persist,
-                    )
-                    .in_current_span(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let webhooks_by_names = webhooks
-        .into_iter()
-        .map(|webhook| {
-            tokio::spawn({
-                let wasm_cache_dir = wasm_cache_dir.clone();
-                let metadata_dir = metadata_dir.clone();
+            .collect::<Vec<_>>();
+        let path_prefixes = Arc::new(path_prefixes);
+        let workflows = workflows
+            .into_iter()
+            .map(|workflow| {
                 let path_prefixes = path_prefixes.clone();
-                async move {
-                    let name = webhook.common.name.clone();
-                    let webhook = webhook
+                tokio::spawn(
+                    workflow
                         .fetch_and_verify(
                             wasm_cache_dir.clone(),
                             metadata_dir.clone(),
-                            ignore_missing_env_vars,
                             path_prefixes,
+                            global_backtrace_persist,
                         )
-                        .await?;
-                    Ok::<_, anyhow::Error>((name, webhook))
-                }
-                .in_current_span()
+                        .in_current_span(),
+                )
             })
-        })
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>();
+        let webhooks_by_names = webhooks
+            .into_iter()
+            .map(|webhook| {
+                tokio::spawn({
+                    let wasm_cache_dir = wasm_cache_dir.clone();
+                    let metadata_dir = metadata_dir.clone();
+                    let path_prefixes = path_prefixes.clone();
+                    async move {
+                        let name = webhook.common.name.clone();
+                        let webhook = webhook
+                            .fetch_and_verify(
+                                wasm_cache_dir.clone(),
+                                metadata_dir.clone(),
+                                ignore_missing_env_vars,
+                                path_prefixes,
+                            )
+                            .await?;
+                        Ok::<_, anyhow::Error>((name, webhook))
+                    }
+                    .in_current_span()
+                })
+            })
+            .collect::<Vec<_>>();
 
-    // Abort/cancel safety:
-    // If an error happens or Ctrl-C is pressed the whole process will shut down.
-    // Downloading metadata and content must be robust enough to handle it.
-    // We do not need to abort the tasks here.
-    let all = futures_util::future::join3(
-        futures_util::future::join_all(activities),
-        futures_util::future::join_all(workflows),
-        futures_util::future::join_all(webhooks_by_names),
-    );
-    tokio::select! {
-        (activity_results, workflow_results, webhook_results) = all => {
-            let mut wasm_activities = Vec::with_capacity(activity_results.len());
-            for a in activity_results {
-                wasm_activities.push(a??);
+        // Abort/cancel safety:
+        // If an error happens or Ctrl-C is pressed the whole process will shut down.
+        // Downloading metadata and content must be robust enough to handle it.
+        // We do not need to abort the tasks here.
+        let all = futures_util::future::join3(
+            futures_util::future::join_all(activities),
+            futures_util::future::join_all(workflows),
+            futures_util::future::join_all(webhooks_by_names),
+        );
+        tokio::select! {
+            (activity_results, workflow_results, webhook_results) = all => {
+                let mut wasm_activities = Vec::with_capacity(activity_results.len());
+                for a in activity_results {
+                    wasm_activities.push(a??);
+                }
+                let mut workflows = Vec::with_capacity(workflow_results.len());
+                for w in workflow_results {
+                    workflows.push(w??);
+                }
+                let mut webhooks_by_names = hashbrown::HashMap::new();
+                for webhook in webhook_results {
+                    let (k, v) = webhook??;
+                    webhooks_by_names.insert(k, v);
+                }
+                Ok(ConfigVerified {wasm_activities, workflows, webhooks_by_names, http_servers_to_webhook_names, global_backtrace_persist})
+            },
+            sigint = tokio::signal::ctrl_c() => {
+                sigint.expect("failed to listen for SIGINT event");
+                warn!("Received SIGINT, canceling while resolving the WASM files");
+                anyhow::bail!("canceling while resolving the WASM files")
             }
-            let mut workflows = Vec::with_capacity(workflow_results.len());
-            for w in workflow_results {
-                workflows.push(w??);
-            }
-            let mut webhooks_by_names = hashbrown::HashMap::new();
-            for webhook in webhook_results {
-                let (k, v) = webhook??;
-                webhooks_by_names.insert(k, v);
-            }
-            Ok(ConfigVerified {wasm_activities, workflows, webhooks_by_names, http_servers_to_webhook_names})
-        },
-        sigint = tokio::signal::ctrl_c() => {
-            sigint.expect("failed to listen for SIGINT event");
-            warn!("Received SIGINT, canceling while resolving the WASM files");
-            anyhow::bail!("canceling while resolving the WASM files")
         }
     }
 }
