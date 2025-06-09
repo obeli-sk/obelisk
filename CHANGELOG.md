@@ -3,6 +3,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.23.0](https://github.com/obeli-sk/obelisk/compare/v0.22.5...v0.23.0)
+
+Adds support for process spawning and disk IO in activities. Introduces WIT for local process control, and refactors TOML configuration. Includes a breaking change in cache/allocator config.
+
+### ⛰️ Features
+
+- *(activity)* Use process groups - ([659d8d5](https://github.com/obeli-sk/obelisk/commit/659d8d5fdee7b43cf5a64d3828a260f67fbedaa5))
+- *(activity)* Implement stdio for child processes - ([372c2f7](https://github.com/obeli-sk/obelisk/commit/372c2f794c4c5197e6af69ed13fce18239ef1ea5))
+- *(activity)* Allow spawning of local processes - ([a5a84f7](https://github.com/obeli-sk/obelisk/commit/a5a84f7832f456b7817b11c7e395245b160bae46))
+- *(activity)* Allow disabling the preopened directories cleaner - ([6d840d1](https://github.com/obeli-sk/obelisk/commit/6d840d12e799277530f8e0e2f160ad3cb37eef9f))
+- *(toml)* Allow enabling local process spawning - ([443619b](https://github.com/obeli-sk/obelisk/commit/443619bff3cfde0493f63067928e7e2a6ab94856))
+- *(toml,activity)* Add periodic preopen dir cleanup - ([d449831](https://github.com/obeli-sk/obelisk/commit/d449831356eeb89853437a925d8c734c7ba01702))
+- *(wit)* Add `subscribe-wait` - ([47c6ad5](https://github.com/obeli-sk/obelisk/commit/47c6ad52fa9e1dc64e98fab5647afde1055d5095))
+- Add preopened dir support to activities - ([d868e71](https://github.com/obeli-sk/obelisk/commit/d868e71a1189d1724b4e4d1ee72233207b3bad80))
+
+### 🚜 Refactor
+
+- *(toml)* [**breaking**] Move cache and allocator config to `wasm` - ([1c58141](https://github.com/obeli-sk/obelisk/commit/1c581413a9870ad53596e8cce114a84186300b39))
+- *(toml)* Change default `cleanup.older_than` to 5 mins - ([ea342f2](https://github.com/obeli-sk/obelisk/commit/ea342f2d7ec30fe68da44bf35c5d99774c2b4d71))
+- *(wit)* Change type of `child-process.id` to `u32` - ([ece7de7](https://github.com/obeli-sk/obelisk/commit/ece7de7e24753418a09ecea0b0fb97a3dfb0abb1))
+b967706217968d3f1381e34ef58a240b506f957c))
+- Allow sqlite shutdown during batch processing - ([01e11a1](https://github.com/obeli-sk/obelisk/commit
+
 ## [0.22.5](https://github.com/obeli-sk/obelisk/compare/v0.22.4...v0.22.5)
 
 ### ⛰️ Features
