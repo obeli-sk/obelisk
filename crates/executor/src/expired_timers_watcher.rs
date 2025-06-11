@@ -22,7 +22,7 @@ use std::{
     time::Duration,
 };
 use tracing::Level;
-use tracing::error;
+use tracing::warn;
 use tracing::{debug, info, instrument};
 
 #[derive(Debug, Clone)]
@@ -69,7 +69,7 @@ fn log_err_if_new(res: Result<TickProgress, DbError>, old_err: &mut Option<DbErr
         }
         (Err(err), Some(old)) if err == *old => {}
         (Err(err), _) => {
-            error!("Tick failed: {err:?}");
+            warn!("Tick failed: {err:?}");
             *old_err = Some(err);
         }
     }
