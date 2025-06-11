@@ -41,7 +41,7 @@ impl<S: Sleep + 'static, C: ClockFn + 'static, DB: DbConnection + 'static, P: Db
             db_pool,
             phantom_data: PhantomData,
         };
-        AbortOnDropHandle(
+        AbortOnDropHandle::new(
             tokio::task::spawn(async move {
                 loop {
                     this.sleep.sleep(this.sleep_duration).await;

@@ -22,7 +22,8 @@ use std::{
     time::Duration,
 };
 use tracing::Level;
-use tracing::{debug, error, info, instrument};
+use tracing::error;
+use tracing::{debug, info, instrument};
 
 #[derive(Debug, Clone)]
 pub struct TimersWatcherConfig<C: ClockFn> {
@@ -44,7 +45,7 @@ pub fn spawn_new<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB>
     info!("Spawning expired_timers_watcher");
     let is_closing = Arc::new(AtomicBool::default());
     let tick_sleep = config.tick_sleep;
-    AbortOnDropHandle(
+    AbortOnDropHandle::new(
         tokio::spawn({
             let is_closing = is_closing.clone();
             async move {

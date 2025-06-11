@@ -1327,6 +1327,7 @@ impl ServerInit {
                 epoch_ticker: _,
                 preopens_cleaner: _,
             } = self;
+            // drop AbortOnDropHandles
             (db_pool, exec_join_handles)
         };
         for exec_join_handle in exec_join_handles {
@@ -1379,7 +1380,7 @@ async fn start_webhooks(
             "HTTP server `{}` is listening on http://{server_addr}",
             http_server.name,
         );
-        let server = AbortOnDropHandle(
+        let server = AbortOnDropHandle::new(
             tokio::spawn(webhook_trigger::server(
                 StrVariant::from(http_server.name),
                 tcp_listener,
