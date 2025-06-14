@@ -10,6 +10,13 @@ interface serde {
     }
 
     rec: func(my-record: my-record) -> my-record;
+
+    variant my-variant {
+        var1(option<bool>)
+    }
+
+    var: func(my-variant: my-variant) -> my-variant;
+
 }
 
 world any {

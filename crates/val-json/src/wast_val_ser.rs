@@ -457,7 +457,6 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                         }
                     }
                     TypeWrapper::Variant(variants) => {
-                        // TODO: missing optional handling
                         if let Some(variant_name) = map.next_key::<String>()? {
                             if let Some(found) = variants.get(variant_name.as_str()) {
                                 if let Some(variant_field_type) = found {
