@@ -119,6 +119,8 @@ members = [
     "crates/testing/test-programs/http/workflow/builder",
     "crates/testing/test-programs/process/activity",
     "crates/testing/test-programs/process/activity/builder",
+    "crates/testing/test-programs/serde/activity",
+    "crates/testing/test-programs/serde/activity/builder",
     "crates/testing/test-programs/sleep/activity",
     "crates/testing/test-programs/sleep/activity/builder",
     "crates/testing/test-programs/sleep/workflow",
@@ -156,6 +158,7 @@ test-programs-fibo-workflow-builder = { path = "crates/testing/test-programs/fib
 test-programs-http-get-activity-builder = { path = "crates/testing/test-programs/http/activity/builder" }
 test-programs-http-get-workflow-builder = { path = "crates/testing/test-programs/http/workflow/builder" }
 test-programs-process-activity-builder = { path = "crates/testing/test-programs/process/activity/builder" }
+test-programs-serde-activity-builder = { path = "crates/testing/test-programs/serde/activity/builder" }
 test-programs-sleep-activity-builder = { path = "crates/testing/test-programs/sleep/activity/builder" }
 test-programs-sleep-workflow-builder = { path = "crates/testing/test-programs/sleep/workflow/builder" }
 test-utils = { path = "crates/testing/test-utils" }

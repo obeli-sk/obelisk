@@ -3294,6 +3294,7 @@ dependencies = [
  "test-programs-http-get-activity-builder",
  "test-programs-http-get-workflow-builder",
  "test-programs-process-activity-builder",
+ "test-programs-serde-activity-builder",
  "test-programs-sleep-activity-builder",
  "test-programs-sleep-workflow-builder",
  "test-utils",
@@ -5076,6 +5077,20 @@ dependencies = [
 
 [[package]]
 name = "test-programs-process-activity-builder"
+version = "0.23.0"
+dependencies = [
+ "obelisk-component-builder",
+]
+
+[[package]]
+name = "test-programs-serde-activity"
+version = "0.23.0"
+dependencies = [
+ "wit-bindgen 0.42.1",
+]
+
+[[package]]
+name = "test-programs-serde-activity-builder"
 version = "0.23.0"
 dependencies = [
  "obelisk-component-builder",

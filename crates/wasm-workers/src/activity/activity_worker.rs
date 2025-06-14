@@ -1469,5 +1469,64 @@ pub(crate) mod tests {
             exec_task.close().await;
             db_pool.close().await.unwrap();
         }
+
+        #[rstest::rstest(
+            param => [
+                r#"{"image": "foo", "a": false, "b":false}"#,
+                r#"{"b": false, "a":false, "image": "foo"}"#,
+                ])]
+        #[tokio::test]
+        async fn record_field_ordering(param: &str) {
+            test_utils::set_up();
+            let sim_clock = SimClock::default();
+            let (_guard, db_pool) = Database::Memory.set_up().await;
+            let db_connection = db_pool.connection();
+            let exec_task = spawn_activity_with_config(
+                db_pool.clone(),
+                test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
+                sim_clock.clone(),
+                TokioSleep,
+                move |component_id| ActivityConfig {
+                    component_id,
+                    forward_stdout: Some(StdOutput::Stderr),
+                    forward_stderr: Some(StdOutput::Stderr),
+                    env_vars: Arc::default(),
+                    retry_on_err: false,
+                    directories_config: None,
+                },
+            );
+            // Create an execution.
+            let ffqn = FunctionFqn::new_static_tuple(
+                test_programs_serde_activity_builder::exports::testing::serde::serde::REC,
+            );
+            let execution_id = ExecutionId::generate();
+            let created_at = sim_clock.now();
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id: execution_id.clone(),
+                    ffqn,
+                    params: Params::from_json_values(vec![serde_json::from_str(param).unwrap()]),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: created_at,
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                    component_id: ComponentId::dummy_activity(),
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+            // Check the result.
+            let res = db_connection
+                .wait_for_finished_result(&execution_id, None)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_matches!(res, SupportedFunctionReturnValue::InfallibleOrResultOk(_));
+            drop(db_connection);
+            exec_task.close().await;
+            db_pool.close().await.unwrap();
+        }
     }
 }

@@ -1,0 +1,16 @@
+package testing:serde;
+
+interface serde {
+
+    record my-record {
+        a: bool,
+        image: string,
+        b: bool,
+    }
+
+    rec: func(my-record: my-record) -> my-record;
+}
+
+world any {
+    export serde;
+}
