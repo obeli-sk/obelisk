@@ -420,20 +420,31 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                         }
                     }
                     TypeWrapper::Record(record) => {
-                        let mut dst_map = IndexMap::new();
+                        let mut input_map = hashbrown::HashMap::new();
                         while let Some(field_name) = map.next_key::<String>()? {
                             if let Some(field_type) = record.get(field_name.as_str()) {
                                 let value = map.next_value_seed(WastValDeserialize(field_type))?;
-                                dst_map.insert(field_name, value);
+                                input_map.insert(field_name, value);
                             } else {
                                 return Err(Error::custom(format!(
                                     "unexpected field name `{field_name}`"
                                 )));
                             }
                         }
+                        // Ordering must be based on seed, not actual JSON input.
+                        let mut dst_map = IndexMap::new();
+                        for requested_field_name in record.keys() {
+                            if let Some((requested_field_name, value)) =
+                                input_map.remove_entry(requested_field_name.as_ref())
+                            {
+                                dst_map.insert(requested_field_name, value);
+                            } // TODO: missing optional handling
+                        }
+
                         Ok(WastVal::Record(dst_map))
                     }
                     TypeWrapper::Variant(variants) => {
+                        // TODO: missing optional handling
                         if let Some(variant_name) = map.next_key::<String>()? {
                             if let Some(found) = variants.get(variant_name.as_str()) {
                                 if let Some(variant_field_type) = found {
