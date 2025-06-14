@@ -433,6 +433,7 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                         }
                         // Ordering must be based on seed, not actual JSON input.
                         let mut dst_map = IndexMap::new();
+                        let mut missing = vec![];
                         for (requested_field_name, requested_ty) in record {
                             if let Some((requested_field_name, value)) =
                                 input_map.remove_entry(requested_field_name.as_ref())
@@ -443,10 +444,17 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                                     requested_field_name.clone().into_string(),
                                     WastVal::Option(None),
                                 );
+                            } else {
+                                missing.push(requested_field_name);
                             }
                         }
-
-                        Ok(WastVal::Record(dst_map))
+                        if missing.is_empty() {
+                            Ok(WastVal::Record(dst_map))
+                        } else {
+                            Err(Error::custom(format!(
+                                "cannot deserialize record: missing fields `{missing:?}`"
+                            )))
+                        }
                     }
                     TypeWrapper::Variant(variants) => {
                         // TODO: missing optional handling
