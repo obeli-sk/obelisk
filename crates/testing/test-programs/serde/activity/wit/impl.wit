@@ -6,6 +6,7 @@ interface serde {
         a: bool,
         image: string,
         b: bool,
+        opt: option<bool>,
     }
 
     rec: func(my-record: my-record) -> my-record;

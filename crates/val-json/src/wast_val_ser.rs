@@ -433,12 +433,17 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                         }
                         // Ordering must be based on seed, not actual JSON input.
                         let mut dst_map = IndexMap::new();
-                        for requested_field_name in record.keys() {
+                        for (requested_field_name, requested_ty) in record {
                             if let Some((requested_field_name, value)) =
                                 input_map.remove_entry(requested_field_name.as_ref())
                             {
                                 dst_map.insert(requested_field_name, value);
-                            } // TODO: missing optional handling
+                            } else if matches!(requested_ty, TypeWrapper::Option(_)) {
+                                dst_map.insert(
+                                    requested_field_name.clone().into_string(),
+                                    WastVal::Option(None),
+                                );
+                            }
                         }
 
                         Ok(WastVal::Record(dst_map))
