@@ -3,6 +3,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.23.1](https://github.com/obeli-sk/obelisk/compare/v0.23.0...v0.23.1)
+
+### ⛰️ Features
+
+- Allow missing JSON fields for optional record fields - ([f5c5049](https://github.com/obeli-sk/obelisk/commit/f5c5049ff69ff7690942beee47ac3c4daafcff8c))
+
+### 🐛 Bug Fixes
+
+- Fix order of record field deserialization - ([7c5109c](https://github.com/obeli-sk/obelisk/commit/7c5109c5eb8762fada62faaddeed72ed20abbd29))
+- Report missing record fields on deser - ([c54a366](https://github.com/obeli-sk/obelisk/commit/c54a36640d7f698df2408393055c9ba9ef5ed9d5))
+
+### 🚜 Refactor
+
+- Add `AbortOnDropHandle::new` - ([3574253](https://github.com/obeli-sk/obelisk/commit/3574253f98b043bcc2ee36a8eaa006922351571c))
+
+
 ## [0.23.0](https://github.com/obeli-sk/obelisk/compare/v0.22.5...v0.23.0)
 
 Adds support for process spawning and disk IO in activities. Introduces WIT for local process control, and refactors TOML configuration. Includes a breaking change in cache/allocator config.
