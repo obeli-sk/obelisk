@@ -670,7 +670,7 @@
       "type": "object",
       "properties": {
         "memory_protection_keys": {
-          "description": "Enable memory protection keys for the pooling allocator; this can\n optimize the size of memory slots.",
+          "description": "Enable memory protection keys for the pooling allocator; this can\noptimize the size of memory slots.",
           "type": [
             "boolean",
             "null"
@@ -678,7 +678,7 @@
           "default": null
         },
         "pooling_max_memory_size": {
-          "description": "The maximum runtime size of each linear memory in the pooling\n allocator, in bytes.",
+          "description": "The maximum runtime size of each linear memory in the pooling\nallocator, in bytes.",
           "type": [
             "integer",
             "null"
@@ -688,7 +688,7 @@
           "minimum": 0
         },
         "pooling_memory_keep_resident": {
-          "description": "How many bytes to keep resident between instantiations for the\n pooling allocator in linear memories.",
+          "description": "How many bytes to keep resident between instantiations for the\npooling allocator in linear memories.",
           "type": [
             "integer",
             "null"
@@ -698,7 +698,7 @@
           "minimum": 0
         },
         "pooling_table_keep_resident": {
-          "description": "How many bytes to keep resident between instantiations for the\n pooling allocator in tables.",
+          "description": "How many bytes to keep resident between instantiations for the\npooling allocator in tables.",
           "type": [
             "integer",
             "null"
@@ -708,7 +708,7 @@
           "minimum": 0
         },
         "pooling_total_component_instances": {
-          "description": "The maximum number of WebAssembly components which can be created\n with the pooling allocator.",
+          "description": "The maximum number of WebAssembly components which can be created\nwith the pooling allocator.",
           "type": [
             "integer",
             "null"
@@ -718,7 +718,7 @@
           "minimum": 0
         },
         "pooling_total_core_instances": {
-          "description": "The maximum number of WebAssembly instances which can be created\n with the pooling allocator.",
+          "description": "The maximum number of WebAssembly instances which can be created\nwith the pooling allocator.",
           "type": [
             "integer",
             "null"
@@ -728,7 +728,7 @@
           "minimum": 0
         },
         "pooling_total_memories": {
-          "description": "The maximum number of WebAssembly memories which can be created with\n the pooling allocator.",
+          "description": "The maximum number of WebAssembly memories which can be created with\nthe pooling allocator.",
           "type": [
             "integer",
             "null"
@@ -738,7 +738,7 @@
           "minimum": 0
         },
         "pooling_total_stacks": {
-          "description": "The maximum number of WebAssembly stacks which can be created with\n the pooling allocator.",
+          "description": "The maximum number of WebAssembly stacks which can be created with\nthe pooling allocator.",
           "type": [
             "integer",
             "null"
@@ -748,7 +748,7 @@
           "minimum": 0
         },
         "pooling_total_tables": {
-          "description": "The maximum number of WebAssembly tables which can be created with\n the pooling allocator.",
+          "description": "The maximum number of WebAssembly tables which can be created with\nthe pooling allocator.",
           "type": [
             "integer",
             "null"

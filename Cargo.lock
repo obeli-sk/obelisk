@@ -3363,7 +3363,7 @@ dependencies = [
  "parameterized-macro",
  "prost",
  "prost-wkt-types",
- "schemars 1.0.0-alpha.17",
+ "schemars 1.0.1",
  "serde",
  "serde_json",
  "serde_with",
@@ -4532,9 +4532,9 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "1.0.0-alpha.17"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88ef2a6523400a2228db974a8ddc9e1d3deaa04f51bddd7832ef8d7e531bafcc"
+checksum = "fe8c9d1c68d67dd9f97ecbc6f932b60eb289c5dbddd8aa1405484a8fd2fcd984"
 dependencies = [
  "dyn-clone",
  "ref-cast",
@@ -4545,9 +4545,9 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "1.0.0-alpha.17"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6d4e1945a3c9e58edaa708449b026519f7f4197185e1b5dbc689615c1ad724d"
+checksum = "6ca9fcb757952f8e8629b9ab066fc62da523c46c2b247b1708a3be06dd82530b"
 dependencies = [
  "proc-macro2",
  "quote",
