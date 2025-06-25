@@ -23,12 +23,12 @@ push() {
 # Make sure all components are fresh
 cargo check --workspace
 
-push "target/wasm32-wasip2/release/test_programs_fibo_activity.wasm"
-push "target/wasm32-unknown-unknown/release/test_programs_fibo_workflow.wasm"
-push "target/wasm32-wasip2/release/test_programs_fibo_webhook.wasm"
-push "target/wasm32-wasip2/release/test_programs_http_get_activity.wasm"
-push "target/wasm32-unknown-unknown/release/test_programs_http_get_workflow.wasm"
-push "target/wasm32-wasip2/release/test_programs_sleep_activity.wasm"
-push "target/wasm32-unknown-unknown/release/test_programs_sleep_workflow.wasm"
+push "target/release_testprograms/wasm32-wasip2/release/test_programs_fibo_activity.wasm"
+push "target/release_testprograms/wasm32-unknown-unknown/release/test_programs_fibo_workflow.wasm"
+push "target/release_testprograms/wasm32-wasip2/release/test_programs_fibo_webhook.wasm"
+push "target/release_testprograms/wasm32-wasip2/release/test_programs_http_get_activity.wasm"
+push "target/release_testprograms/wasm32-unknown-unknown/release/test_programs_http_get_workflow.wasm"
+push "target/release_testprograms/wasm32-wasip2/release/test_programs_sleep_activity.wasm"
+push "target/release_testprograms/wasm32-unknown-unknown/release/test_programs_sleep_workflow.wasm"
 
 echo "All components pushed and TOML file updated successfully."
