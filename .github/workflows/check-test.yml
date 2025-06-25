@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: nixbuild/nix-quick-install-action@b0bad79cb80c0f39cf505f3ec8392378fb6f01fe
+      - uses: nixbuild/nix-quick-install-action@63ca48f939ee3b8d835f4126562537df0fee5b91
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -61,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: nixbuild/nix-quick-install-action@b0bad79cb80c0f39cf505f3ec8392378fb6f01fe
+      - uses: nixbuild/nix-quick-install-action@63ca48f939ee3b8d835f4126562537df0fee5b91
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
