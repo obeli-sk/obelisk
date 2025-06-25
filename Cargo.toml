@@ -215,7 +215,7 @@ insta = { version = "1.43.1", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
 libc = "0.2.174"
-madsim = "0.2.31"
+madsim = "0.2.32"
 oci-client = { version = "0.15.0", default-features = false, features = [
     "rustls-tls",
 ] }
