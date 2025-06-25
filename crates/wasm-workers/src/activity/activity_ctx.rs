@@ -37,6 +37,10 @@ pub struct ActivityCtx<C: ClockFn> {
     pub(crate) process_provider: Option<ProcessProvider>,
 }
 
+impl<C: ClockFn> wasmtime::component::HasData for ActivityCtx<C> {
+    type Data<'a> = &'a mut ActivityCtx<C>;
+}
+
 impl<C: ClockFn> WasiView for ActivityCtx<C> {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi_ctx

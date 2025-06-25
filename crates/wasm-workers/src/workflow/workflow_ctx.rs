@@ -341,6 +341,10 @@ impl<'a> ImportedFnCall<'a> {
     }
 }
 
+impl<C: ClockFn> wasmtime::component::HasData for WorkflowCtx<C> {
+    type Data<'a> = &'a mut WorkflowCtx<C>;
+}
+
 impl<C: ClockFn> IoView for WorkflowCtx<C> {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.resource_table
@@ -550,10 +554,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
             err: err.into(),
         };
 
-        log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
-            .map_err(linking_err)?;
+        log_activities::obelisk::log::log::add_to_linker::<_, WorkflowCtx<C>>(
+            linker,
+            |state: &mut Self| state,
+        )
+        .map_err(linking_err)?;
         // link obelisk:types@1.0.0
-        host_exports::v1_1_0::obelisk::types::execution::add_to_linker(
+        host_exports::v1_1_0::obelisk::types::execution::add_to_linker::<_, WorkflowCtx<C>>(
             linker,
             |state: &mut Self| state,
         )

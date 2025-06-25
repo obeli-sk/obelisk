@@ -74,18 +74,15 @@ impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
         // wasi-http
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(linking_err)?;
         // obelisk:log
-        log_activities::obelisk::log::log::add_to_linker(
-            &mut linker,
-            |state: &mut ActivityCtx<C>| state,
-        )
-        .map_err(linking_err)?;
+        log_activities::obelisk::log::log::add_to_linker::<_, ActivityCtx<C>>(&mut linker, |x| x)
+            .map_err(linking_err)?;
         match config
             .directories_config
             .as_ref()
             .and_then(|dir| dir.process_provider.as_ref())
         {
             Some(ProcessProvider::Native) => {
-                process_support::add_to_linker(&mut linker, |state: &mut ActivityCtx<C>| state)
+                process_support::add_to_linker::<_, ActivityCtx<C>>(&mut linker, |x| x)
                     .map_err(linking_err)?;
             }
             None => {}

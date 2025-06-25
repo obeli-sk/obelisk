@@ -402,6 +402,10 @@ enum WebhookEndpointFunctionError {
     UncategorizedError(&'static str),
 }
 
+impl<C: ClockFn> wasmtime::component::HasData for WebhookEndpointCtx<C> {
+    type Data<'a> = &'a mut WebhookEndpointCtx<C>;
+}
+
 impl<C: ClockFn> WebhookEndpointCtx<C> {
     // Create new execution if this is the first call of the request/response cycle
     async fn get_version(&mut self) -> Result<Version, DbError> {
@@ -680,17 +684,20 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
 
     fn add_to_linker(linker: &mut Linker<WebhookEndpointCtx<C>>) -> Result<(), WasmFileError> {
         // link obelisk:log@1.0.0
-        log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
+        log_activities::obelisk::log::log::add_to_linker::<_, WebhookEndpointCtx<C>>(linker, |x| x)
             .map_err(|err| WasmFileError::LinkingError {
                 context: StrVariant::Static("linking log activities"),
                 err: err.into(),
             })?;
         // link obelisk:types@1.1.0
-        types_v1_1_0::obelisk::types::execution::add_to_linker(linker, |state: &mut Self| state)
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking obelisk:types/execution@1.1.0"),
-                err: err.into(),
-            })?;
+        types_v1_1_0::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<C>>(
+            linker,
+            |x| x,
+        )
+        .map_err(|err| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking obelisk:types/execution@1.1.0"),
+            err: err.into(),
+        })?;
         Ok(())
     }
 

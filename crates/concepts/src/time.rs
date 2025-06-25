@@ -3,7 +3,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use std::time::Duration;
 
-pub trait ClockFn: Send + Sync + Clone {
+pub trait ClockFn: Send + Sync + Clone + 'static {
     fn now(&self) -> DateTime<Utc>;
 }
 
