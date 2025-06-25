@@ -131,7 +131,7 @@ fn build_internal(
     let package = meta
         .packages
         .iter()
-        .find(|p| p.name == pkg_name)
+        .find(|p| p.name.as_str() == pkg_name)
         .unwrap_or_else(|| panic!("package `{pkg_name}` must exist"));
 
     add_dependency(&package.manifest_path); // Cargo.toml

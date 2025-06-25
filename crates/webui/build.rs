@@ -25,7 +25,7 @@ fn get_css_path(filename: &str, webui_package_name: &str) -> Utf8PathBuf {
     let package = meta
         .packages
         .iter()
-        .find(|p| p.name == webui_package_name)
+        .find(|p| p.name.as_str() == webui_package_name)
         .unwrap_or_else(|| panic!("package `{webui_package_name}` must exist"));
     package.manifest_path.parent().unwrap().join(filename)
 }

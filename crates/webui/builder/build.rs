@@ -14,7 +14,7 @@ fn main() {
     let package = meta
         .packages
         .iter()
-        .find(|p| p.name == webui_package_name)
+        .find(|p| p.name.as_str() == webui_package_name)
         .unwrap_or_else(|| panic!("package `{webui_package_name}` must exist"));
     let parent_package_path = package.manifest_path.parent().unwrap();
     run_trunk_build(parent_package_path.as_std_path());
