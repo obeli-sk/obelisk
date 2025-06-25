@@ -1,35 +1,29 @@
 use concepts::{
     ExecutionId,
-    storage::{DbConnection, DbError, DbPool, PendingState, PendingStateFinished, SpecificError},
+    storage::{DbError, DbPool, PendingState, PendingStateFinished, SpecificError},
     time::{ClockFn, Sleep},
 };
 use executor::AbortOnDropHandle;
-use std::{
-    error::Error, ffi::OsStr, marker::PhantomData, path::Path, str::FromStr, sync::Arc,
-    time::Duration,
-};
+use std::{error::Error, ffi::OsStr, path::Path, str::FromStr, sync::Arc, time::Duration};
 use tracing::{debug, info, trace, warn};
 
-pub struct PreopensCleaner<S: Sleep, C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+pub struct PreopensCleaner<S: Sleep, C: ClockFn> {
     delete_older_than: Duration,
     parent_preopen_dir: Arc<Path>,
     sleep_duration: Duration,
     sleep: S,
     clock_fn: C,
-    db_pool: P,
-    phantom_data: PhantomData<DB>,
+    db_pool: Arc<dyn DbPool>,
 }
 
-impl<S: Sleep + 'static, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
-    PreopensCleaner<S, C, DB, P>
-{
+impl<S: Sleep + 'static, C: ClockFn + 'static> PreopensCleaner<S, C> {
     pub fn spawn_task(
         delete_older_than: Duration,
         parent_preopen_dir: Arc<Path>,
         sleep_duration: Duration,
         sleep: S,
         clock_fn: C,
-        db_pool: P,
+        db_pool: Arc<dyn DbPool>,
     ) -> AbortOnDropHandle {
         info!("Spawning preopened dir cleaner");
         let this = PreopensCleaner {
@@ -39,7 +33,6 @@ impl<S: Sleep + 'static, C: ClockFn + 'static, DB: DbConnection + 'static, P: Db
             sleep,
             clock_fn,
             db_pool,
-            phantom_data: PhantomData,
         };
         AbortOnDropHandle::new(
             tokio::task::spawn(async move {

@@ -58,7 +58,6 @@ use concepts::StrVariant;
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
-use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionWithState;
@@ -85,7 +84,6 @@ use itertools::Either;
 use serde::Deserialize;
 use serde_json::json;
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
@@ -126,17 +124,17 @@ const GET_STATUS_POLLING_SLEEP: Duration = Duration::from_secs(1);
 
 type ComponentSourceMap = hashbrown::HashMap<ComponentId, hashbrown::HashMap<String, PathBuf>>;
 
-#[derive(Debug)]
-struct GrpcServer<DB: DbConnection, P: DbPool<DB>> {
-    db_pool: P,
+#[derive(derive_more::Debug)]
+struct GrpcServer {
+    #[debug(skip)]
+    db_pool: Arc<dyn DbPool>,
     component_registry_ro: ComponentConfigRegistryRO,
     component_source_map: ComponentSourceMap,
-    phantom_data: PhantomData<DB>,
 }
 
-impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
+impl GrpcServer {
     fn new(
-        db_pool: P,
+        db_pool: Arc<dyn DbPool>,
         component_registry_ro: ComponentConfigRegistryRO,
         component_source_map: ComponentSourceMap,
     ) -> Self {
@@ -144,15 +142,12 @@ impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
             db_pool,
             component_registry_ro,
             component_source_map,
-            phantom_data: PhantomData,
         }
     }
 }
 
 #[tonic::async_trait]
-impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
-    grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer<DB, P>
-{
+impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
     async fn generate_execution_id(
         &self,
         _request: tonic::Request<grpc_gen::GenerateExecutionIdRequest>,
@@ -757,9 +752,7 @@ fn to_finished_status(
 }
 
 #[tonic::async_trait]
-impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
-    grpc_gen::function_repository_server::FunctionRepository for GrpcServer<DB, P>
-{
+impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
     #[instrument(skip_all)]
     async fn list_components(
         &self,
@@ -1211,9 +1204,8 @@ impl ServerCompiledLinked {
     }
 }
 
-type Sqlite = SqlitePool<TokioSleep>;
 struct ServerInit {
-    db_pool: Sqlite,
+    db_pool: Arc<dyn DbPool>,
     exec_join_handles: Vec<ExecutorTaskHandle>,
     #[expect(dead_code)]
     timers_watcher: AbortOnDropHandle,
@@ -1237,9 +1229,11 @@ impl ServerInit {
             server_compiled_linked.engines.weak_refs(),
             Duration::from_millis(EPOCH_MILLIS),
         );
-        let db_pool = SqlitePool::new(sqlite_file, sqlite_config, TokioSleep)
-            .await
-            .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?;
+        let db_pool = Arc::new(
+            SqlitePool::new(sqlite_file, sqlite_config, TokioSleep)
+                .await
+                .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
+        );
 
         let timers_watcher = expired_timers_watcher::spawn_new(
             db_pool.clone(),
@@ -1341,15 +1335,12 @@ impl ServerInit {
     }
 }
 
-type WebhookInstancesAndRoutes = (
-    WebhookEndpointInstance<Now, Sqlite, Sqlite>,
-    Vec<WebhookRouteVerified>,
-);
+type WebhookInstancesAndRoutes = (WebhookEndpointInstance<Now>, Vec<WebhookRouteVerified>);
 
 async fn start_webhooks(
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstancesAndRoutes>)>,
     engines: &Engines,
-    db_pool: Sqlite,
+    db_pool: Arc<dyn DbPool>,
     fn_registry: Arc<dyn FunctionRegistry>,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
     let mut abort_handles = Vec::with_capacity(http_servers_to_webhooks.len());
@@ -1855,12 +1846,12 @@ impl WorkerCompiled {
 }
 
 struct WorkerLinked {
-    worker: Either<Arc<dyn Worker>, WorkflowWorkerLinked<Now, TokioSleep, Sqlite, Sqlite>>,
+    worker: Either<Arc<dyn Worker>, WorkflowWorkerLinked<Now, TokioSleep>>,
     exec_config: ExecConfig,
     executor_id: ExecutorId,
 }
 impl WorkerLinked {
-    fn spawn(self, db_pool: Sqlite) -> ExecutorTaskHandle {
+    fn spawn(self, db_pool: Arc<dyn DbPool>) -> ExecutorTaskHandle {
         let worker = match self.worker {
             Either::Left(activity) => activity,
             Either::Right(workflow_linked) => {

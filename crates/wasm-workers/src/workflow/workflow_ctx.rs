@@ -6,9 +6,7 @@ use crate::component_logger::{ComponentLogger, log_activities};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
-use concepts::storage::{
-    self, DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version, WasmBacktrace,
-};
+use concepts::storage::{self, DbError, DbPool, HistoryEventScheduledAt, Version, WasmBacktrace};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
@@ -22,7 +20,6 @@ use host_exports::v1_1_0::obelisk::workflow::workflow_support::ClosingStrategy a
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, error, instrument, trace};
@@ -123,19 +120,18 @@ impl From<ApplyError> for WorkflowFunctionError {
     }
 }
 
-pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+pub(crate) struct WorkflowCtx<C: ClockFn> {
     pub(crate) execution_id: ExecutionId,
     event_history: EventHistory<C>,
     rng: StdRng,
     pub(crate) clock_fn: C,
-    pub(crate) db_pool: P,
+    pub(crate) db_pool: Arc<dyn DbPool>,
     pub(crate) version: Version,
     fn_registry: Arc<dyn FunctionRegistry>,
     component_logger: ComponentLogger,
     pub(crate) resource_table: wasmtime::component::ResourceTable,
     backtrace: Option<WasmBacktrace>, // Temporary storage of current backtrace
     backtrace_persist: bool,
-    phantom_data: PhantomData<DB>,
     wasi_ctx: WasiCtx,
 }
 
@@ -166,9 +162,9 @@ pub(crate) enum ImportedFnCall<'a> {
 }
 
 impl<'a> ImportedFnCall<'a> {
-    fn extract_join_set_id<'ctx, C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
+    fn extract_join_set_id<'ctx, C: ClockFn>(
         called_ffqn: &FunctionFqn,
-        store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C, DB, P>>,
+        store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
         params: &'a [Val],
     ) -> Result<(JoinSetId, &'a [Val]), String> {
         let Some((join_set_id, params)) = params.split_first() else {
@@ -198,9 +194,9 @@ impl<'a> ImportedFnCall<'a> {
     }
 
     #[instrument(skip_all, fields(ffqn = %called_ffqn, otel.name = format!("imported_fn_call {called_ffqn}")), name = "imported_fn_call")]
-    pub(crate) fn new<'ctx, C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
+    pub(crate) fn new<'ctx, C: ClockFn>(
         called_ffqn: FunctionFqn,
-        store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C, DB, P>>,
+        store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
         params: &'a [Val],
         backtrace_persist: bool,
     ) -> Result<ImportedFnCall<'a>, WorkflowFunctionError> {
@@ -345,18 +341,18 @@ impl<'a> ImportedFnCall<'a> {
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> IoView for WorkflowCtx<C, DB, P> {
+impl<C: ClockFn> IoView for WorkflowCtx<C> {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.resource_table
     }
 }
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiView for WorkflowCtx<C, DB, P> {
+impl<C: ClockFn> WasiView for WorkflowCtx<C> {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi_ctx
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
+impl<C: ClockFn> WorkflowCtx<C> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
@@ -366,7 +362,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         seed: u64,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        db_pool: P,
+        db_pool: Arc<dyn DbPool>,
         version: Version,
         execution_deadline: DateTime<Utc>,
         fn_registry: Arc<dyn FunctionRegistry>,
@@ -401,13 +397,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             resource_table: wasmtime::component::ResourceTable::default(),
             backtrace: None,
             backtrace_persist,
-            phantom_data: PhantomData,
             wasi_ctx: wasi_ctx_builder.build(),
         }
     }
 
     pub(crate) async fn flush(&mut self) -> Result<(), DbError> {
-        self.event_history.flush(&self.db_pool.connection()).await
+        self.event_history
+            .flush(self.db_pool.connection().as_ref())
+            .await
     }
 
     #[instrument(level = tracing::Level::DEBUG, skip_all, fields(ffqn = %imported_fn_call.ffqn()))]
@@ -423,7 +420,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             .event_history
             .apply(
                 event_call,
-                &self.db_pool.connection(),
+                self.db_pool.connection().as_ref(),
                 &mut self.version,
                 self.fn_registry.as_ref(),
             )
@@ -460,7 +457,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     expires_at_if_new: self.clock_fn.now() + duration, // FIXME: this can overflow when Duration is converted into TimeDelta
                     wasm_backtrace: self.backtrace.take(),
                 },
-                &self.db_pool.connection(),
+                self.db_pool.connection().as_ref(),
                 &mut self.version,
                 self.fn_registry.as_ref(),
             )
@@ -511,7 +508,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                         closing_strategy,
                         wasm_backtrace: self.backtrace.take(),
                     },
-                    &self.db_pool.connection(),
+                    self.db_pool.connection().as_ref(),
                     &mut self.version,
                     self.fn_registry.as_ref(),
                 )
@@ -531,7 +528,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     // NB: Caller must not forget to clear `host.backtrace` afterwards.
     fn get_host_maybe_capture_backtrace<'a>(
         caller: &'a mut wasmtime::StoreContextMut<'_, Self>,
-    ) -> &'a mut WorkflowCtx<C, DB, P> {
+    ) -> &'a mut WorkflowCtx<C> {
         let backtrace = if caller.data().backtrace_persist {
             let backtrace = wasmtime::WasmBacktrace::capture(&caller);
             WasmBacktrace::maybe_from(&backtrace)
@@ -590,7 +587,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         inst_workflow_support
             .func_wrap_async(
                 "random-u64",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (min, max_exclusive): (u64, u64)| {
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
@@ -608,7 +605,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         inst_workflow_support
             .func_wrap_async(
                 "random-u64-inclusive",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (min, max_inclusive): (u64, u64)| {
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
@@ -626,7 +623,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         inst_workflow_support
             .func_wrap_async(
                 "random-string",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (min_length, max_length_exclusive): (u16, u16)| {
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
@@ -644,7 +641,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         inst_workflow_support
             .func_wrap_async(
                 "sleep",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (duration,): (DurationEnumType,)| {
                     let duration: Duration = duration.into();
                     wasmtime::component::__internal::Box::new(async move {
@@ -663,7 +660,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         inst_workflow_support
             .func_wrap_async(
                 "new-join-set-named",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (name, _closing_strategy): (String, ClosingStrategyType)| {
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
@@ -681,7 +678,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         inst_workflow_support
             .func_wrap_async(
                 "new-join-set-generated",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (_closing_strategy,): (ClosingStrategyType,)| {
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
@@ -702,7 +699,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     pub(crate) async fn close_opened_join_sets(&mut self) -> Result<(), ApplyError> {
         self.event_history
             .close_opened_join_sets(
-                &self.db_pool.connection(),
+                self.db_pool.connection().as_ref(),
                 &mut self.version,
                 self.fn_registry.as_ref(),
             )
@@ -782,10 +779,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 
 mod workflow_support {
     use super::host_exports::{self};
-    use super::{
-        ClockFn, DbConnection, DbPool, Duration, EventCall, WorkflowCtx, WorkflowFunctionError,
-        assert_matches,
-    };
+    use super::{ClockFn, Duration, EventCall, WorkflowCtx, WorkflowFunctionError, assert_matches};
     use crate::workflow::event_history::ChildReturnValue;
     use concepts::{
         CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind,
@@ -797,7 +791,7 @@ mod workflow_support {
     use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
 
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> HostJoinSetId_1_1_0 for WorkflowCtx<C, DB, P> {
+    impl<C: ClockFn> HostJoinSetId_1_1_0 for WorkflowCtx<C> {
         async fn id(
             &mut self,
             resource: wasmtime::component::Resource<JoinSetId>,
@@ -811,10 +805,10 @@ mod workflow_support {
         }
     }
 
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ExecutionHost_1_1_0 for WorkflowCtx<C, DB, P> {}
+    impl<C: ClockFn> ExecutionHost_1_1_0 for WorkflowCtx<C> {}
 
     // Functions dynamically linked for Workflow Support 1.0.0 and 1.1.0
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
+    impl<C: ClockFn> WorkflowCtx<C> {
         pub(crate) async fn random_u64(
             &mut self,
             min: u64,
@@ -847,7 +841,7 @@ mod workflow_support {
                         kind: PersistKind::RandomU64 { min, max_inclusive },
                         wasm_backtrace: self.backtrace.take(),
                     },
-                    &self.db_pool.connection(),
+                    self.db_pool.connection().as_ref(),
                     &mut self.version,
                     self.fn_registry.as_ref(),
                 )
@@ -894,7 +888,7 @@ mod workflow_support {
                         },
                         wasm_backtrace: self.backtrace.take(),
                     },
-                    &self.db_pool.connection(),
+                    self.db_pool.connection().as_ref(),
                     &mut self.version,
                     self.fn_registry.as_ref(),
                 )
@@ -936,9 +930,7 @@ mod workflow_support {
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::log::Host
-    for WorkflowCtx<C, DB, P>
-{
+impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
     fn trace(&mut self, message: String) {
         self.component_logger.trace(&message);
     }
@@ -973,8 +965,8 @@ pub(crate) mod tests {
     use async_trait::async_trait;
     use concepts::prefixed_ulid::{ExecutionIdDerived, RunId};
     use concepts::storage::{
-        AppendRequest, CreateRequest, DbConnection, DbPool, HistoryEvent, JoinSetRequest,
-        JoinSetResponse, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
+        AppendRequest, CreateRequest, DbPool, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        PendingState, PendingStateFinished, PendingStateFinishedResultKind,
         wait_for_pending_state_fn,
     };
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
@@ -988,7 +980,7 @@ pub(crate) mod tests {
         expired_timers_watcher,
         worker::{Worker, WorkerContext, WorkerResult},
     };
-    use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
+    use std::{fmt::Debug, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info, info_span};
     use utils::testing_fn_registry::fn_registry_dummy;
@@ -1046,29 +1038,27 @@ pub(crate) mod tests {
     }
 
     #[derive(Clone, derive_more::Debug)]
-    struct WorkflowWorkerMock<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+    struct WorkflowWorkerMock<C: ClockFn> {
         #[expect(dead_code)]
         ffqn: FunctionFqn, // For debugging
         steps: Vec<WorkflowStep>,
         #[debug(skip)]
         clock_fn: C,
         #[debug(skip)]
-        db_pool: P,
+        db_pool: Arc<dyn DbPool>,
         #[debug(skip)]
         fn_registry: Arc<dyn FunctionRegistry>,
-        #[debug(skip)]
-        phantom_data: PhantomData<DB>,
         #[debug(skip)]
         exports: [FunctionMetadata; 1],
     }
 
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerMock<C, DB, P> {
+    impl<C: ClockFn> WorkflowWorkerMock<C> {
         fn new(
             ffqn: FunctionFqn,
             fn_registry: Arc<dyn FunctionRegistry>,
             steps: Vec<WorkflowStep>,
             clock_fn: C,
-            db_pool: P,
+            db_pool: Arc<dyn DbPool>,
         ) -> Self {
             Self {
                 exports: [FunctionMetadata {
@@ -1083,15 +1073,12 @@ pub(crate) mod tests {
                 clock_fn,
                 db_pool,
                 fn_registry,
-                phantom_data: PhantomData,
             }
         }
     }
 
     #[async_trait]
-    impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
-        for WorkflowWorkerMock<C, DB, P>
-    {
+    impl<C: ClockFn + 'static> Worker for WorkflowWorkerMock<C> {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             info!("Starting");
             let seed = ctx.execution_id.random_seed();
@@ -1242,7 +1229,7 @@ pub(crate) mod tests {
 
         let closure = || async move {
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let res = execute_steps(generate_steps(), &db_pool).await;
+            let res = execute_steps(generate_steps(), db_pool.clone()).await;
             db_pool.close().await.unwrap();
             res
         };
@@ -1261,7 +1248,7 @@ pub(crate) mod tests {
                 target_ffqn: FFQN_CHILD_MOCK,
             },
         ];
-        execute_steps(steps, &db_pool).await;
+        execute_steps(steps, db_pool.clone()).await;
         db_pool.close().await.unwrap();
     }
 
@@ -1516,9 +1503,9 @@ pub(crate) mod tests {
         fn_registry_dummy(ffqns.as_slice())
     }
 
-    async fn execute_steps<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    async fn execute_steps(
         steps: Vec<WorkflowStep>,
-        db_pool: &P,
+        db_pool: Arc<dyn DbPool>,
     ) -> (ExecutionId, ExecutionLog) {
         let created_at = Now.now();
         info!(now = %created_at, "Steps: {steps:?}");
@@ -1593,7 +1580,7 @@ pub(crate) mod tests {
 
         let mut processed = Vec::new();
         while let Some((join_set_id, join_set_req)) = wait_for_pending_state_fn(
-            &db_connection,
+            db_connection.as_ref(),
             &execution_id,
             |execution_log| match &execution_log.pending_state {
                 PendingState::BlockedByJoinSet { join_set_id, .. } => Some(Some((
@@ -1644,9 +1631,9 @@ pub(crate) mod tests {
         (execution_id, execution_log)
     }
 
-    async fn exec_child<DB: DbConnection + 'static>(
+    async fn exec_child(
         child_execution_id: ExecutionIdDerived,
-        db_pool: impl DbPool<DB> + 'static,
+        db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
     ) {
         info!("Executing child {child_execution_id}");

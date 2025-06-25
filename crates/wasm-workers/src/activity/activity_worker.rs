@@ -356,7 +356,7 @@ pub(crate) mod tests {
     use concepts::{
         ComponentType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
         prefixed_ulid::ExecutorId,
-        storage::{CreateRequest, DbConnection, DbPool},
+        storage::{CreateRequest, DbPool},
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -443,8 +443,8 @@ pub(crate) mod tests {
         )
     }
 
-    pub(crate) fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-        db_pool: P,
+    pub(crate) fn spawn_activity(
+        db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
@@ -452,11 +452,8 @@ pub(crate) mod tests {
         spawn_activity_with_config(db_pool, wasm_path, clock_fn, sleep, activity_config)
     }
 
-    pub(crate) fn spawn_activity_with_config<
-        DB: DbConnection + 'static,
-        P: DbPool<DB> + 'static,
-    >(
-        db_pool: P,
+    pub(crate) fn spawn_activity_with_config(
+        db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
@@ -481,8 +478,8 @@ pub(crate) mod tests {
         )
     }
 
-    pub(crate) fn spawn_activity_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-        db_pool: P,
+    pub(crate) fn spawn_activity_fibo(
+        db_pool: Arc<dyn DbPool>,
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
     ) -> ExecutorTaskHandle {

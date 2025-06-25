@@ -1,11 +1,11 @@
 use assert_matches::assert_matches;
 use concepts::prefixed_ulid::{DelayId, RunId};
+use concepts::storage::JoinSetResponseEvent;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
     JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, PendingState, PersistKind,
     SpecificError, Version,
 };
-use concepts::storage::{DbPool, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::{ClosingStrategy, JoinSetId};
@@ -26,7 +26,7 @@ async fn test_lifecycle_mem() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
-    lifecycle(&db_connection, sim_clock).await;
+    lifecycle(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -38,7 +38,7 @@ async fn test_lifecycle_sqlite() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
-    lifecycle(&db_connection, sim_clock).await;
+    lifecycle(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -49,7 +49,7 @@ async fn test_expired_lock_should_be_found_mem() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
-    expired_lock_should_be_found(&db_connection, sim_clock).await;
+    expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -61,7 +61,7 @@ async fn test_expired_lock_should_be_found_sqlite() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
-    expired_lock_should_be_found(&db_connection, sim_clock).await;
+    expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -72,7 +72,7 @@ async fn test_append_batch_respond_to_parent_mem() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
-    append_batch_respond_to_parent(&db_connection, sim_clock).await;
+    append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -84,7 +84,7 @@ async fn test_append_batch_respond_to_parent_sqlite() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
-    append_batch_respond_to_parent(&db_connection, sim_clock).await;
+    append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -95,7 +95,7 @@ async fn test_lock_pending_should_sort_by_scheduled_at_mem() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
-    lock_pending_should_sort_by_scheduled_at(&db_connection, sim_clock).await;
+    lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -107,7 +107,7 @@ async fn test_lock_pending_should_sort_by_scheduled_at_sqlite() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
-    lock_pending_should_sort_by_scheduled_at(&db_connection, sim_clock).await;
+    lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -118,7 +118,7 @@ async fn test_lock_mem() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
-    lock(&db_connection, sim_clock).await;
+    lock(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -130,7 +130,7 @@ async fn test_lock_sqlite() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
-    lock(&db_connection, sim_clock).await;
+    lock(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -141,7 +141,7 @@ async fn test_get_expired_lock_mem() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
-    get_expired_lock(&db_connection, sim_clock).await;
+    get_expired_lock(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -153,7 +153,7 @@ async fn test_get_expired_lock_sqlite() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
-    get_expired_lock(&db_connection, sim_clock).await;
+    get_expired_lock(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -164,7 +164,7 @@ async fn test_get_expired_delay_mem() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
-    get_expired_delay(&db_connection, sim_clock).await;
+    get_expired_delay(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -176,12 +176,12 @@ async fn test_get_expired_delay_sqlite() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
-    get_expired_delay(&db_connection, sim_clock).await;
+    get_expired_delay(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
 
-async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
+async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let exec1 = ExecutorId::generate();
     let exec2 = ExecutorId::generate();
@@ -533,14 +533,14 @@ async fn lock_pending_while_expired_lock_should_return_nothing(
 
     let (_guard, db_pool) = database.set_up().await;
     let db_connection = db_pool.connection();
-    lock_pending_while_expired_lock_should_return_nothing_inner(&db_connection).await;
+    lock_pending_while_expired_lock_should_return_nothing_inner(db_connection.as_ref()).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
 
 #[cfg(not(madsim))]
 async fn lock_pending_while_expired_lock_should_return_nothing_inner(
-    db_connection: &impl DbConnection,
+    db_connection: &dyn DbConnection,
 ) {
     const LOCK_EXPIRY: Duration = Duration::from_millis(500);
     let sim_clock = SimClock::default();
@@ -612,7 +612,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
     }
 }
 
-pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim_clock: SimClock) {
+pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     const MAX_RETRIES: u32 = 1;
     const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(100);
 
@@ -686,10 +686,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
     }
 }
 
-pub async fn append_batch_respond_to_parent(
-    db_connection: &impl DbConnection,
-    sim_clock: SimClock,
-) {
+pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let parent_id = ExecutionId::generate();
 
     // Create parent
@@ -921,7 +918,7 @@ pub async fn append_batch_respond_to_parent(
 }
 
 pub async fn lock_pending_should_sort_by_scheduled_at(
-    db_connection: &impl DbConnection,
+    db_connection: &dyn DbConnection,
     sim_clock: SimClock,
 ) {
     let created_at = sim_clock.now();
@@ -1000,7 +997,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
     assert_eq!(vec![older_id, newer_id, newest_id], locked_ids);
 }
 
-pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
+pub async fn lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let executor_id = ExecutorId::generate();
     // Create
@@ -1059,7 +1056,7 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
         .unwrap();
 }
 
-pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
+pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let executor_id = ExecutorId::generate();
     // Create
@@ -1121,7 +1118,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
     assert_eq!(expected, actual);
 }
 
-pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: SimClock) {
+pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let executor_id = ExecutorId::generate();
     // Create

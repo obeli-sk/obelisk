@@ -7,8 +7,8 @@ use crate::workflow::host_exports::{
 };
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
-    AppendRequest, BacktraceInfo, ClientError, CreateRequest, DbConnection, DbError, DbPool,
-    ExecutionEventInner, HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
+    AppendRequest, BacktraceInfo, ClientError, CreateRequest, DbError, DbPool, ExecutionEventInner,
+    HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
 };
 use concepts::time::ClockFn;
 use concepts::{
@@ -23,7 +23,6 @@ use hyper::server::conn::http1;
 use hyper::{Method, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
 use route_recognizer::{Match, Router};
-use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::Path;
 use std::time::Duration;
@@ -114,11 +113,11 @@ impl WebhookEndpointCompiled {
     }
 
     #[instrument(skip_all, fields(component_id = %self.component_id), err)]
-    pub fn link<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
+    pub fn link<C: ClockFn>(
         self,
         engine: &Engine,
         fn_registry: &dyn FunctionRegistry,
-    ) -> Result<WebhookEndpointInstance<C, DB, P>, WasmFileError> {
+    ) -> Result<WebhookEndpointInstance<C>, WasmFileError> {
         let mut linker = Linker::new(engine);
         // Link wasi
         wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(|err| {
@@ -157,7 +156,7 @@ impl WebhookEndpointCompiled {
                         let ffqn = ffqn.clone();
                         move |mut store_ctx: wasmtime::StoreContextMut<
                             '_,
-                            WebhookEndpointCtx<C, DB, P>,
+                            WebhookEndpointCtx<C>,
                         >,
                               params: &[Val],
                               results: &mut [Val]| {
@@ -222,9 +221,9 @@ impl WebhookEndpointCompiled {
 }
 
 #[derive(Clone, derive_more::Debug)]
-pub struct WebhookEndpointInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+pub struct WebhookEndpointInstance<C: ClockFn> {
     #[debug(skip)]
-    proxy_pre: Arc<ProxyPre<WebhookEndpointCtx<C, DB, P>>>,
+    proxy_pre: Arc<ProxyPre<WebhookEndpointCtx<C>>>,
     pub component_id: ComponentId,
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
@@ -232,7 +231,7 @@ pub struct WebhookEndpointInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> 
     exim: ExIm,
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointInstance<C, DB, P> {
+impl<C: ClockFn> WebhookEndpointInstance<C> {
     #[must_use]
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         &self.exim.imports_flat
@@ -287,12 +286,12 @@ impl<T> Default for MethodAwareRouter<T> {
 }
 
 #[expect(clippy::too_many_arguments)]
-pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+pub async fn server<C: ClockFn + 'static>(
     http_server: StrVariant,
     listener: TcpListener,
     engine: Arc<Engine>,
-    router: MethodAwareRouter<WebhookEndpointInstance<C, DB, P>>,
-    db_pool: P,
+    router: MethodAwareRouter<WebhookEndpointInstance<C>>,
+    db_pool: Arc<dyn DbPool>,
     clock_fn: C,
     fn_registry: Arc<dyn FunctionRegistry>,
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
@@ -334,7 +333,6 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                                     fn_registry: fn_registry.clone(),
                                     execution_id,
                                     router: router.clone(),
-                                    phantom_data: PhantomData,
                                 }
                                 .handle_request(req)
                                 }.instrument(connection_span.clone())),
@@ -363,10 +361,10 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
     }
 }
 
-struct WebhookEndpointCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+struct WebhookEndpointCtx<C: ClockFn> {
     component_id: ComponentId,
     clock_fn: C,
-    db_pool: P,
+    db_pool: Arc<dyn DbPool>,
     fn_registry: Arc<dyn FunctionRegistry>,
     table: ResourceTable,
     wasi_ctx: WasiCtx,
@@ -375,12 +373,9 @@ struct WebhookEndpointCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     next_join_set_idx: u64,
     version: Option<Version>,
     component_logger: ComponentLogger,
-    phantom_data: PhantomData<DB>,
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> HostJoinSetId_1_1_0
-    for WebhookEndpointCtx<C, DB, P>
-{
+impl<C: ClockFn> HostJoinSetId_1_1_0 for WebhookEndpointCtx<C> {
     async fn id(
         &mut self,
         _resource: wasmtime::component::Resource<JoinSetId>,
@@ -393,10 +388,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> HostJoinSetId_1_1_0
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ExecutionHost_1_1_0
-    for WebhookEndpointCtx<C, DB, P>
-{
-}
+impl<C: ClockFn> ExecutionHost_1_1_0 for WebhookEndpointCtx<C> {}
 
 #[derive(thiserror::Error, Debug, Clone)]
 enum WebhookEndpointFunctionError {
@@ -410,7 +402,7 @@ enum WebhookEndpointFunctionError {
     UncategorizedError(&'static str),
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
+impl<C: ClockFn> WebhookEndpointCtx<C> {
     // Create new execution if this is the first call of the request/response cycle
     async fn get_version(&mut self) -> Result<Version, DbError> {
         if let Some(found) = &self.version {
@@ -686,9 +678,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
         Ok(())
     }
 
-    fn add_to_linker(
-        linker: &mut Linker<WebhookEndpointCtx<C, DB, P>>,
-    ) -> Result<(), WasmFileError> {
+    fn add_to_linker(linker: &mut Linker<WebhookEndpointCtx<C>>) -> Result<(), WasmFileError> {
         // link obelisk:log@1.0.0
         log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
             .map_err(|err| WasmFileError::LinkingError {
@@ -710,7 +700,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
         component_id: ComponentId,
         engine: &Engine,
         clock_fn: C,
-        db_pool: P,
+        db_pool: Arc<dyn DbPool>,
         fn_registry: Arc<dyn FunctionRegistry>,
         params: impl Iterator<Item = (&'a str, &'a str)>,
         execution_id: ExecutionIdTopLevel,
@@ -718,7 +708,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
         forward_stderr: Option<StdOutput>,
         env_vars: &[EnvVar],
         request_span: Span,
-    ) -> Store<WebhookEndpointCtx<C, DB, P>> {
+    ) -> Store<WebhookEndpointCtx<C>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
         if let Some(stdout) = forward_stdout {
             let stdout = LogStream::new(format!("[{component_id} {execution_id} stdout]"), stdout);
@@ -748,7 +738,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
             next_join_set_idx: JOIN_SET_START_IDX,
             execution_id,
             component_logger: ComponentLogger { span: request_span },
-            phantom_data: PhantomData,
         };
         let mut store = Store::new(engine, ctx);
         // Configure epoch callback before running the initialization to avoid interruption
@@ -785,9 +774,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookEndpointCtx<C, DB, P> {
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::log::Host
-    for WebhookEndpointCtx<C, DB, P>
-{
+impl<C: ClockFn> log_activities::obelisk::log::log::Host for WebhookEndpointCtx<C> {
     fn trace(&mut self, message: String) {
         self.component_logger.trace(&message);
     }
@@ -809,31 +796,30 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiView for WebhookEndpointCtx<C, DB, P> {
+impl<C: ClockFn> WasiView for WebhookEndpointCtx<C> {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi_ctx
     }
 }
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> IoView for WebhookEndpointCtx<C, DB, P> {
+impl<C: ClockFn> IoView for WebhookEndpointCtx<C> {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiHttpView for WebhookEndpointCtx<C, DB, P> {
+impl<C: ClockFn> WasiHttpView for WebhookEndpointCtx<C> {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http_ctx
     }
 }
 
-struct RequestHandler<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
+struct RequestHandler<C: ClockFn + 'static> {
     engine: Arc<Engine>,
     clock_fn: C,
-    db_pool: P,
+    db_pool: Arc<dyn DbPool>,
     fn_registry: Arc<dyn FunctionRegistry>,
     execution_id: ExecutionIdTopLevel,
-    router: Arc<MethodAwareRouter<WebhookEndpointInstance<C, DB, P>>>,
-    phantom_data: PhantomData<DB>,
+    router: Arc<MethodAwareRouter<WebhookEndpointInstance<C>>>,
 }
 
 fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
@@ -847,9 +833,7 @@ fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBod
         .unwrap()
 }
 
-impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
-    RequestHandler<C, DB, P>
-{
+impl<C: ClockFn + 'static> RequestHandler<C> {
     #[instrument(skip_all, name="incoming webhook request", fields(execution_id = %self.execution_id))]
     async fn handle_request(
         self,
@@ -1011,11 +995,8 @@ pub(crate) mod tests {
         use assert_matches::assert_matches;
         use concepts::time::TokioSleep;
         use concepts::{ComponentId, ComponentType, StrVariant, SupportedFunctionReturnValue};
-        use concepts::{
-            ExecutionId,
-            storage::{DbConnection, DbPool},
-        };
-        use db_tests::{Database, DbGuard, DbPoolEnum};
+        use concepts::{ExecutionId, storage::DbPool};
+        use db_tests::{Database, DbGuard};
         use executor::executor::ExecutorTaskHandle;
         use std::net::SocketAddr;
         use std::str::FromStr;
@@ -1049,7 +1030,7 @@ pub(crate) mod tests {
             _server: AbortOnDrop,
             #[expect(dead_code)]
             guard: DbGuard,
-            db_pool: DbPoolEnum,
+            db_pool: Arc<dyn DbPool>,
             server_addr: SocketAddr,
             activity_exec_task: ExecutorTaskHandle,
             workflow_exec_task: ExecutorTaskHandle,

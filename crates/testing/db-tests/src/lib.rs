@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use concepts::FunctionFqn;
+use concepts::storage::DbPool;
 use db_mem::inmemory_dao::InMemoryPool;
 use tempfile::NamedTempFile;
 
@@ -20,13 +23,19 @@ pub enum DbGuard {
 }
 
 impl Database {
-    pub async fn set_up(self) -> (DbGuard, DbPoolEnum) {
+    pub async fn set_up(self) -> (DbGuard, Arc<dyn DbPool>) {
         match self {
-            Database::Memory => (DbGuard::Memory, DbPoolEnum::Memory(InMemoryPool::new())),
+            Database::Memory => (
+                DbGuard::Memory,
+                Arc::new(DbPoolEnum::Memory(InMemoryPool::new())),
+            ),
             Database::Sqlite => {
                 use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
                 let (db_pool, guard) = sqlite_pool().await;
-                (DbGuard::Sqlite(guard), DbPoolEnum::Sqlite(db_pool))
+                (
+                    DbGuard::Sqlite(guard),
+                    Arc::new(DbPoolEnum::Sqlite(db_pool)),
+                )
             }
         }
     }

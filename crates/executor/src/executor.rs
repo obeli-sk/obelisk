@@ -14,7 +14,6 @@ use concepts::{
 };
 use concepts::{JoinSetId, PermanentFailureKind};
 use std::fmt::Display;
-use std::marker::PhantomData;
 use std::{
     sync::{
         Arc,
@@ -34,13 +33,12 @@ pub struct ExecConfig {
     pub task_limiter: Option<Arc<tokio::sync::Semaphore>>,
 }
 
-pub struct ExecTask<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+pub struct ExecTask<C: ClockFn> {
     worker: Arc<dyn Worker>,
     config: ExecConfig,
     clock_fn: C, // Used for obtaining current time when the execution finishes.
-    db_pool: P,
+    db_pool: Arc<dyn DbPool>,
     executor_id: ExecutorId,
-    phantom_data: PhantomData<DB>,
     ffqns: Arc<[FunctionFqn]>,
 }
 
@@ -108,13 +106,13 @@ fn extract_exported_ffqns_noext(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
         .collect::<Arc<_>>()
 }
 
-impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecTask<C, DB, P> {
+impl<C: ClockFn + 'static> ExecTask<C> {
     #[cfg(feature = "test")]
     pub fn new(
         worker: Arc<dyn Worker>,
         config: ExecConfig,
         clock_fn: C,
-        db_pool: P,
+        db_pool: Arc<dyn DbPool>,
         ffqns: Arc<[FunctionFqn]>,
     ) -> Self {
         Self {
@@ -122,7 +120,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             config,
             executor_id: ExecutorId::generate(),
             db_pool,
-            phantom_data: PhantomData,
             ffqns,
             clock_fn,
         }
@@ -132,7 +129,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         worker: Arc<dyn Worker>,
         config: ExecConfig,
         clock_fn: C,
-        db_pool: P,
+        db_pool: Arc<dyn DbPool>,
         executor_id: ExecutorId,
     ) -> ExecutorTaskHandle {
         let is_closing = Arc::new(AtomicBool::default());
@@ -146,7 +143,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 config,
                 executor_id,
                 db_pool,
-                phantom_data: PhantomData,
                 ffqns: ffqns.clone(),
                 clock_fn: clock_fn.clone(),
             };
@@ -245,7 +241,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     async move {
                         let res = Self::run_worker(
                             worker,
-                            &db_pool,
+                            db_pool.as_ref(),
                             execution_deadline,
                             clock_fn,
                             locked_execution,
@@ -267,7 +263,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
     async fn run_worker(
         worker: Arc<dyn Worker>,
-        db_pool: &P,
+        db_pool: &dyn DbPool,
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
         locked_execution: LockedExecution,
@@ -321,7 +317,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             Some(append) => {
                 let db_connection = db_pool.connection();
                 trace!("Appending {append:?}");
-                append.clone().append(&db_connection).await
+                append.append(db_connection.as_ref()).await
             }
             None => Ok(()),
         }
@@ -614,7 +610,7 @@ pub(crate) struct Append {
 }
 
 impl Append {
-    pub(crate) async fn append(self, db_connection: &impl DbConnection) -> Result<(), DbError> {
+    pub(crate) async fn append(self, db_connection: &dyn DbConnection) -> Result<(), DbError> {
         if let Some(child_finished) = self.child_finished {
             assert_matches!(
                 &self.primary_event,
@@ -748,9 +744,7 @@ mod tests {
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::storage::{CreateRequest, JoinSetRequest};
-    use concepts::storage::{
-        DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
-    };
+    use concepts::storage::{ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState};
     use concepts::time::Now;
     use concepts::{
         ClosingStrategy, FunctionMetadata, JoinSetKind, ParameterTypes, Params, StrVariant,
@@ -765,15 +759,10 @@ mod tests {
 
     pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
 
-    async fn tick_fn<
-        W: Worker + Debug,
-        C: ClockFn + 'static,
-        DB: DbConnection + 'static,
-        P: DbPool<DB> + 'static,
-    >(
+    async fn tick_fn<W: Worker + Debug, C: ClockFn + 'static>(
         config: ExecConfig,
         clock_fn: C,
-        db_pool: P,
+        db_pool: Arc<dyn DbPool>,
         worker: Arc<W>,
         executed_at: DateTime<Utc>,
     ) -> ExecutionProgress {
@@ -809,12 +798,8 @@ mod tests {
         db_pool.close().await.unwrap();
     }
 
-    async fn execute_simple_lifecycle_tick_based<
-        DB: DbConnection + 'static,
-        P: DbPool<DB> + 'static,
-        C: ClockFn + 'static,
-    >(
-        pool: P,
+    async fn execute_simple_lifecycle_tick_based<C: ClockFn + 'static>(
+        pool: Arc<dyn DbPool>,
         clock_fn: C,
     ) {
         set_up();
@@ -930,14 +915,12 @@ mod tests {
     async fn create_and_tick<
         W: Worker,
         C: ClockFn,
-        DB: DbConnection,
-        P: DbPool<DB>,
-        T: FnMut(ExecConfig, C, P, Arc<W>, DateTime<Utc>) -> F,
+        T: FnMut(ExecConfig, C, Arc<dyn DbPool>, Arc<W>, DateTime<Utc>) -> F,
         F: Future<Output = ExecutionProgress>,
     >(
         config: CreateAndTickConfig,
         clock_fn: C,
-        db_pool: P,
+        db_pool: Arc<dyn DbPool>,
         exec_config: ExecConfig,
         worker: Arc<W>,
         mut tick: T,
@@ -1369,7 +1352,7 @@ mod tests {
         if matches!(expected_child_err, FinishedExecutionError::PermanentTimeout) {
             // In case of timeout, let the timers watcher handle it
             sim_clock.move_time_forward(LOCK_EXPIRY).await;
-            expired_timers_watcher::tick(&db_pool.connection(), sim_clock.now())
+            expired_timers_watcher::tick(db_pool.connection().as_ref(), sim_clock.now())
                 .await
                 .unwrap();
         }
@@ -1512,11 +1495,13 @@ mod tests {
             assert!(cleanup_progress.executions.is_empty());
         }
         {
-            let expired_locks =
-                expired_timers_watcher::tick(&db_pool.connection(), now_after_first_lock_expiry)
-                    .await
-                    .unwrap()
-                    .expired_locks;
+            let expired_locks = expired_timers_watcher::tick(
+                db_pool.connection().as_ref(),
+                now_after_first_lock_expiry,
+            )
+            .await
+            .unwrap()
+            .expired_locks;
             assert_eq!(1, expired_locks);
         }
         assert!(
@@ -1561,11 +1546,13 @@ mod tests {
             assert!(cleanup_progress.executions.is_empty());
         }
         {
-            let expired_locks =
-                expired_timers_watcher::tick(&db_pool.connection(), now_after_second_lock_expiry)
-                    .await
-                    .unwrap()
-                    .expired_locks;
+            let expired_locks = expired_timers_watcher::tick(
+                db_pool.connection().as_ref(),
+                now_after_second_lock_expiry,
+            )
+            .await
+            .unwrap()
+            .expired_locks;
             assert_eq!(1, expired_locks);
         }
         assert!(

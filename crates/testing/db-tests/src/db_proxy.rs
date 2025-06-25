@@ -24,12 +24,13 @@ pub enum DbPoolEnum {
 }
 
 #[async_trait]
-impl DbPool<DbConnectionProxy> for DbPoolEnum {
-    fn connection(&self) -> DbConnectionProxy {
-        match self {
-            DbPoolEnum::Memory(pool) => DbConnectionProxy(Arc::new(pool.connection())),
-            DbPoolEnum::Sqlite(pool) => DbConnectionProxy(Arc::new(pool.connection())),
-        }
+impl DbPool for DbPoolEnum {
+    fn connection(&self) -> Box<dyn DbConnection> {
+        let inner_conn = match self {
+            DbPoolEnum::Memory(pool) => pool.connection(),
+            DbPoolEnum::Sqlite(pool) => pool.connection(),
+        };
+        Box::new(DbConnectionProxy(inner_conn))
     }
 
     fn is_closing(&self) -> bool {
@@ -47,8 +48,7 @@ impl DbPool<DbConnectionProxy> for DbPoolEnum {
     }
 }
 
-#[derive(Clone)]
-pub struct DbConnectionProxy(Arc<dyn DbConnection>);
+pub struct DbConnectionProxy(Box<dyn DbConnection>);
 #[async_trait]
 impl DbConnection for DbConnectionProxy {
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {

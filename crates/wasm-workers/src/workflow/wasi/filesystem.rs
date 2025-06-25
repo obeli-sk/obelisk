@@ -1,14 +1,11 @@
 use super::wasi::filesystem::{preopens, types};
 use crate::workflow::workflow_ctx::WorkflowCtx;
-use concepts::{
-    storage::{DbConnection, DbPool},
-    time::ClockFn,
-};
+use concepts::time::ClockFn;
 use wasmtime::Result;
 use wasmtime::component::Resource;
 use wasmtime_wasi_io::streams::{DynInputStream, DynOutputStream};
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> preopens::Host for WorkflowCtx<C, DB, P> {
+impl<C: ClockFn> preopens::Host for WorkflowCtx<C> {
     fn get_directories(&mut self) -> Result<Vec<(Resource<types::Descriptor>, String)>> {
         // Never construct a Descriptor, so all of the methods in the rest of Filesystem should be
         // unreachable.
@@ -16,7 +13,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> preopens::Host for WorkflowCtx
     }
 }
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> types::HostDescriptor for WorkflowCtx<C, DB, P> {
+impl<C: ClockFn> types::HostDescriptor for WorkflowCtx<C> {
     fn read_via_stream(
         &mut self,
         _: Resource<types::Descriptor>,
@@ -220,9 +217,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> types::HostDescriptor for Work
         unreachable!("no filesystem")
     }
 }
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> types::HostDirectoryEntryStream
-    for WorkflowCtx<C, DB, P>
-{
+impl<C: ClockFn> types::HostDirectoryEntryStream for WorkflowCtx<C> {
     fn read_directory_entry(
         &mut self,
         _: Resource<types::DirectoryEntryStream>,
@@ -233,7 +228,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> types::HostDirectoryEntryStrea
         unreachable!("no filesystem")
     }
 }
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> types::Host for WorkflowCtx<C, DB, P> {
+impl<C: ClockFn> types::Host for WorkflowCtx<C> {
     fn filesystem_error_code(
         &mut self,
         _: Resource<wasmtime_wasi_io::streams::Error>,

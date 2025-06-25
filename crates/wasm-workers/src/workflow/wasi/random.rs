@@ -1,11 +1,8 @@
 use super::wasi::random::random;
 use crate::workflow::workflow_ctx::WorkflowCtx;
-use concepts::{
-    storage::{DbConnection, DbPool},
-    time::ClockFn,
-};
+use concepts::time::ClockFn;
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> random::Host for WorkflowCtx<C, DB, P> {
+impl<C: ClockFn> random::Host for WorkflowCtx<C> {
     fn get_random_bytes(&mut self, len: u64) -> wasmtime::Result<Vec<u8>> {
         let vec = vec![0; usize::try_from(len).unwrap()];
         Ok(vec)

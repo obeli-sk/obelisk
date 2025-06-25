@@ -5,11 +5,7 @@ mod random;
 
 use super::workflow_ctx::WorkflowCtx;
 use crate::WasmFileError;
-use concepts::{
-    StrVariant,
-    storage::{DbConnection, DbPool},
-    time::ClockFn,
-};
+use concepts::{StrVariant, time::ClockFn};
 use wasmtime::component::Linker;
 
 wasmtime::component::bindgen!({
@@ -26,12 +22,12 @@ wasmtime::component::bindgen!({
     }
 });
 
-pub(crate) fn add_to_linker_async<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
-    linker: &mut Linker<WorkflowCtx<C, DB, P>>,
+pub(crate) fn add_to_linker_async<C: ClockFn>(
+    linker: &mut Linker<WorkflowCtx<C>>,
 ) -> Result<(), WasmFileError> {
-    fn type_annotate<F, C: ClockFn, DB: DbConnection, P: DbPool<DB>>(val: F) -> F
+    fn type_annotate<F, C: ClockFn>(val: F) -> F
     where
-        F: Fn(&mut WorkflowCtx<C, DB, P>) -> &mut WorkflowCtx<C, DB, P>,
+        F: Fn(&mut WorkflowCtx<C>) -> &mut WorkflowCtx<C>,
     {
         val
     }

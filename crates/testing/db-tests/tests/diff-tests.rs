@@ -2,7 +2,6 @@ use concepts::ComponentId;
 use concepts::ExecutionId;
 use concepts::Params;
 use concepts::storage::DbConnection;
-use concepts::storage::DbPool;
 use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
 use concepts::storage::{AppendRequest, CreateRequest};
@@ -61,7 +60,7 @@ async fn diff_proptest() {
     let (_mem_guard, db_mem_pool) = Database::Memory.set_up().await;
     let mem_conn = db_mem_pool.connection();
     let mem_log = create_and_append(
-        &mem_conn,
+        mem_conn.as_ref(),
         execution_id.clone(),
         create_req.clone(),
         &append_requests,
@@ -70,8 +69,13 @@ async fn diff_proptest() {
     db_mem_pool.close().await.unwrap();
     let (_sqlite_guard, sqlite_pool) = Database::Sqlite.set_up().await;
     let sqlite_conn = sqlite_pool.connection();
-    let sqlite_log =
-        create_and_append(&sqlite_conn, execution_id, create_req, &append_requests).await;
+    let sqlite_log = create_and_append(
+        sqlite_conn.as_ref(),
+        execution_id,
+        create_req,
+        &append_requests,
+    )
+    .await;
     sqlite_pool.close().await.unwrap();
     println!(
         "Expected (mem):\n{expected}\nActual (sqlite):\n{actual}",
@@ -91,7 +95,7 @@ async fn diff_proptest() {
 }
 
 async fn create_and_append(
-    db_connection: &impl DbConnection,
+    db_connection: &dyn DbConnection,
     execution_id: ExecutionId,
     create_req: CreateRequest,
     append_requests: &[AppendRequest],
@@ -119,7 +123,6 @@ mod nomadsim {
     use concepts::Params;
     use concepts::prefixed_ulid::ExecutorId;
     use concepts::storage::DbConnection;
-    use concepts::storage::DbPool;
     use concepts::storage::ExecutionEventInner;
     use concepts::storage::Version;
     use concepts::storage::{AppendRequest, CreateRequest};
@@ -153,7 +156,7 @@ mod nomadsim {
         "#;
 
     async fn persist_finished_event(
-        db_connection: &impl DbConnection,
+        db_connection: &dyn DbConnection,
     ) -> (ExecutionId, Version, ExecutionEventInner) {
         const LOCK_EXPIRY: Duration = Duration::from_millis(500);
         let component_id = ComponentId::dummy_activity();
@@ -232,7 +235,8 @@ mod nomadsim {
         let (_guard, db_pool) = database.set_up().await;
         let db_connection = db_pool.connection();
 
-        let (execution_id, version, expected_inner) = persist_finished_event(&db_connection).await;
+        let (execution_id, version, expected_inner) =
+            persist_finished_event(db_connection.as_ref()).await;
         let found_inner = db_connection
             .get_execution_event(&execution_id, &version)
             .await
@@ -252,7 +256,8 @@ mod nomadsim {
         let (_guard, db_pool) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection();
 
-        let (execution_id, version, expected_inner) = persist_finished_event(&db_connection).await;
+        let (execution_id, version, expected_inner) =
+            persist_finished_event(db_connection.as_ref()).await;
         let found_inner = db_connection
             .list_execution_events(&execution_id, &version, 1, false)
             .await

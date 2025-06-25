@@ -429,7 +429,10 @@ enum ThreadCommand {
 }
 
 #[derive(Clone)]
-pub struct SqlitePool<S: Sleep> {
+pub struct SqlitePool<S: Sleep>(SqlitePoolInner<S>);
+
+#[derive(Clone)]
+struct SqlitePoolInner<S: Sleep> {
     shutdown_requested: Arc<AtomicBool>,
     shutdown_finished: Arc<AtomicBool>,
     command_tx: tokio::sync::mpsc::Sender<ThreadCommand>,
@@ -439,20 +442,20 @@ pub struct SqlitePool<S: Sleep> {
 }
 
 #[async_trait]
-impl<S: Sleep> DbPool<SqlitePool<S>> for SqlitePool<S> {
-    fn connection(&self) -> SqlitePool<S> {
-        self.clone()
+impl<S: Sleep + 'static> DbPool for SqlitePool<S> {
+    fn connection(&self) -> Box<dyn DbConnection> {
+        Box::new(self.clone())
     }
 
     fn is_closing(&self) -> bool {
-        self.shutdown_requested.load(Ordering::Acquire)
+        self.0.shutdown_requested.load(Ordering::Acquire)
     }
 
     async fn close(&self) -> Result<(), DbError> {
-        self.shutdown_requested.store(true, Ordering::Release);
-        let _ = self.command_tx.send(ThreadCommand::Shutdown).await;
-        while !self.shutdown_finished.load(Ordering::Acquire) {
-            self.sleep.sleep(Duration::from_millis(1)).await;
+        self.0.shutdown_requested.store(true, Ordering::Release);
+        let _ = self.0.command_tx.send(ThreadCommand::Shutdown).await;
+        while !self.0.shutdown_finished.load(Ordering::Acquire) {
+            self.0.sleep.sleep(Duration::from_millis(1)).await;
         }
         Ok(())
     }
@@ -706,14 +709,14 @@ impl<S: Sleep> SqlitePool<S> {
                 );
             });
         }
-        Ok(Self {
+        Ok(SqlitePool(SqlitePoolInner {
             shutdown_requested,
             shutdown_finished,
             command_tx,
             response_subscribers: Arc::default(),
             ffqn_to_pending_subscription: Arc::default(),
             sleep,
-        })
+        }))
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(name))]
@@ -748,7 +751,8 @@ impl<S: Sleep> SqlitePool<S> {
         let (tx, rx) = oneshot::channel();
         let parent_span = Span::current();
 
-        self.command_tx
+        self.0
+            .command_tx
             .send(ThreadCommand::Func {
                 priority: if write {
                     CommandPriority::High
@@ -790,7 +794,8 @@ impl<S: Sleep> SqlitePool<S> {
     {
         let (tx, rx) = oneshot::channel();
         let span = tracing::trace_span!("tx_function");
-        self.command_tx
+        self.0
+            .command_tx
             .send(ThreadCommand::Func {
                 priority: CommandPriority::Low,
                 func: Box::new(move |conn| {
@@ -2252,7 +2257,7 @@ impl<S: Sleep> SqlitePool<S> {
         Self::notify_pending_locked(
             pending_at,
             current_time,
-            &self.ffqn_to_pending_subscription.lock().unwrap(),
+            &self.0.ffqn_to_pending_subscription.lock().unwrap(),
         );
     }
 
@@ -2262,7 +2267,7 @@ impl<S: Sleep> SqlitePool<S> {
         pending_ats: impl Iterator<Item = PendingAt>,
         current_time: DateTime<Utc>,
     ) {
-        let ffqn_to_pending_subscription = self.ffqn_to_pending_subscription.lock().unwrap();
+        let ffqn_to_pending_subscription = self.0.ffqn_to_pending_subscription.lock().unwrap();
         for pending_at in pending_ats {
             Self::notify_pending_locked(pending_at, current_time, &ffqn_to_pending_subscription);
         }
@@ -2542,7 +2547,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
         }) {
             panic!("Cannot append `Created` event - use `create` instead");
         }
-        let response_subscribers = self.response_subscribers.clone();
+        let response_subscribers = self.0.response_subscribers.clone();
         let (version, response_subscriber, pending_ats) = {
             let event = parent_response_event.clone();
             self.transaction_write(
@@ -2623,7 +2628,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
         debug!("next_responses");
         let execution_id = execution_id.clone();
-        let response_subscribers = self.response_subscribers.clone();
+        let response_subscribers = self.0.response_subscribers.clone();
         let resp_or_receiver = self
             .transaction_write(
                 move |tx| {
@@ -2660,7 +2665,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
         response_event: JoinSetResponseEvent,
     ) -> Result<(), DbError> {
         debug!("append_response");
-        let response_subscribers = self.response_subscribers.clone();
+        let response_subscribers = self.0.response_subscribers.clone();
         let event = JoinSetResponseEventOuter {
             created_at,
             event: response_event,
@@ -2820,11 +2825,11 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
         ffqns: Arc<[FunctionFqn]>,
         max_wait: Duration,
     ) {
-        let sleep_fut = self.sleep.sleep(max_wait);
+        let sleep_fut = self.0.sleep.sleep(max_wait);
         let (sender, mut receiver) = mpsc::channel(1);
         {
             let mut ffqn_to_pending_subscription =
-                self.ffqn_to_pending_subscription.lock().unwrap();
+                self.0.ffqn_to_pending_subscription.lock().unwrap();
             for ffqn in ffqns.as_ref() {
                 ffqn_to_pending_subscription.insert(ffqn.clone(), sender.clone());
             }

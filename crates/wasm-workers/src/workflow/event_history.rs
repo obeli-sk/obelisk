@@ -225,10 +225,10 @@ impl<C: ClockFn> EventHistory<C> {
     /// Apply the event and wait if new, replay if already in the event history, or
     /// apply with an interrupt.
     #[instrument(skip_all, fields(otel.name = format!("apply {event_call}"), ?event_call))]
-    pub(crate) async fn apply<DB: DbConnection>(
+    pub(crate) async fn apply(
         &mut self,
         event_call: EventCall,
-        db_connection: &DB,
+        db_connection: &dyn DbConnection,
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<ChildReturnValue, ApplyError> {
@@ -338,9 +338,9 @@ impl<C: ClockFn> EventHistory<C> {
     /// MUST NOT add items to `NonBlockingCache`, as only `EventCall::BlockingChildAwaitNext` and their
     /// processed responses are appended.
     #[instrument(skip_all)]
-    pub(crate) async fn close_opened_join_sets<DB: DbConnection>(
+    pub(crate) async fn close_opened_join_sets(
         &mut self,
-        db_connection: &DB,
+        db_connection: &dyn DbConnection,
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<(), ApplyError> {
@@ -822,17 +822,14 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
-    pub(crate) async fn flush<DB: DbConnection>(
-        &mut self,
-        db_connection: &DB,
-    ) -> Result<(), DbError> {
+    pub(crate) async fn flush(&mut self, db_connection: &dyn DbConnection) -> Result<(), DbError> {
         self.flush_non_blocking_event_cache(db_connection, self.clock_fn.now())
             .await
     }
 
-    async fn flush_non_blocking_event_cache_if_full<DB: DbConnection>(
+    async fn flush_non_blocking_event_cache_if_full(
         &mut self,
-        db_connection: &DB,
+        db_connection: &dyn DbConnection,
         current_time: DateTime<Utc>,
     ) -> Result<(), DbError> {
         match &self.non_blocking_event_batch {
@@ -845,9 +842,9 @@ impl<C: ClockFn> EventHistory<C> {
     }
 
     #[instrument(level = tracing::Level::DEBUG, skip(self, db_connection))]
-    async fn flush_non_blocking_event_cache<DB: DbConnection>(
+    async fn flush_non_blocking_event_cache(
         &mut self,
-        db_connection: &DB,
+        db_connection: &dyn DbConnection,
         current_time: DateTime<Utc>,
     ) -> Result<(), DbError> {
         match &mut self.non_blocking_event_batch {
@@ -908,10 +905,10 @@ impl<C: ClockFn> EventHistory<C> {
     }
 
     #[instrument(level = Level::DEBUG, skip_all, fields(%version))]
-    async fn append_to_db<DB: DbConnection>(
+    async fn append_to_db(
         &mut self,
         event_call: EventCall,
-        db_connection: &DB,
+        db_connection: &dyn DbConnection,
         fn_registry: &dyn FunctionRegistry,
         called_at: DateTime<Utc>,
         lock_expires_at: DateTime<Utc>,
@@ -1368,9 +1365,9 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
-    async fn persist_backtrace_blocking<DB: DbConnection>(
+    async fn persist_backtrace_blocking(
         &mut self,
-        db_connection: &DB,
+        db_connection: &dyn DbConnection,
         version: &Version,
         next_version: &Version,
         wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -1656,7 +1653,7 @@ mod tests {
     pub const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
 
     async fn load_event_history<C: ClockFn>(
-        db_connection: &impl DbConnection,
+        db_connection: &dyn DbConnection,
         execution_id: ExecutionId,
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
@@ -1714,7 +1711,7 @@ mod tests {
             .unwrap();
 
         let (event_history, version) = load_event_history(
-            &db_connection,
+            db_connection.as_ref(),
             execution_id.clone(),
             sim_clock.now(),
             sim_clock.clone(),
@@ -1740,7 +1737,7 @@ mod tests {
                             closing_strategy: ClosingStrategy::Complete,
                             wasm_backtrace: None,
                         },
-                        &db_pool.connection(),
+                        db_pool.connection().as_ref(),
                         &mut version,
                         fn_registry.as_ref(),
                     )
@@ -1756,7 +1753,7 @@ mod tests {
                             params: Params::empty(),
                             wasm_backtrace: None,
                         },
-                        &db_pool.connection(),
+                        db_pool.connection().as_ref(),
                         &mut version,
                         fn_registry.as_ref(),
                     )
@@ -1769,7 +1766,7 @@ mod tests {
                             closing: false,
                             wasm_backtrace: None,
                         },
-                        &db_pool.connection(),
+                        db_pool.connection().as_ref(),
                         &mut version,
                         fn_registry.as_ref(),
                     )
@@ -1807,7 +1804,7 @@ mod tests {
 
         info!("Second run");
         let (event_history, version) = load_event_history(
-            &db_connection,
+            db_connection.as_ref(),
             execution_id,
             sim_clock.now(),
             sim_clock.clone(),
@@ -1834,10 +1831,10 @@ mod tests {
                 value: WastVal::U8(1),
             });
 
-        async fn start_async<DB: DbConnection, C: ClockFn>(
+        async fn start_async<C: ClockFn>(
             event_history: &mut EventHistory<C>,
             version: &mut Version,
-            db_pool: &impl DbPool<DB>,
+            db_pool: &dyn DbPool,
             join_set_id: JoinSetId,
             child_execution_id: ExecutionIdDerived,
             fn_registry: &dyn FunctionRegistry,
@@ -1849,7 +1846,7 @@ mod tests {
                         closing_strategy: ClosingStrategy::Complete,
                         wasm_backtrace: None,
                     },
-                    &db_pool.connection(),
+                    db_pool.connection().as_ref(),
                     version,
                     fn_registry,
                 )
@@ -1864,7 +1861,7 @@ mod tests {
                         params: Params::empty(),
                         wasm_backtrace: None,
                     },
-                    &db_pool.connection(),
+                    db_pool.connection().as_ref(),
                     version,
                     fn_registry,
                 )
@@ -1898,7 +1895,7 @@ mod tests {
             .unwrap();
 
         let (mut event_history, mut version) = load_event_history(
-            &db_connection,
+            db_connection.as_ref(),
             execution_id.clone(),
             sim_clock.now(),
             sim_clock.clone(),
@@ -1913,7 +1910,7 @@ mod tests {
         start_async(
             &mut event_history,
             &mut version,
-            &db_pool,
+            db_pool.as_ref(),
             join_set_id.clone(),
             child_execution_id.clone(),
             fn_registry.as_ref(),
@@ -1940,7 +1937,7 @@ mod tests {
         info!("Second run");
 
         let (mut event_history, mut version) = load_event_history(
-            &db_connection,
+            db_connection.as_ref(),
             execution_id,
             sim_clock.now(),
             sim_clock.clone(),
@@ -1951,7 +1948,7 @@ mod tests {
         start_async(
             &mut event_history,
             &mut version,
-            &db_pool,
+            db_pool.as_ref(),
             join_set_id.clone(),
             child_execution_id.clone(),
             fn_registry.as_ref(),
@@ -1965,7 +1962,7 @@ mod tests {
                     closing: false,
                     wasm_backtrace: None,
                 },
-                &db_pool.connection(),
+                db_pool.connection().as_ref(),
                 &mut version,
                 fn_registry.as_ref(),
             )
@@ -2000,10 +1997,10 @@ mod tests {
                 value: WastVal::U8(2),
             });
 
-        async fn blocking_join_first<DB: DbConnection, C: ClockFn>(
+        async fn blocking_join_first<C: ClockFn>(
             event_history: &mut EventHistory<C>,
             version: &mut Version,
-            db_pool: &impl DbPool<DB>,
+            db_pool: &dyn DbPool,
             fn_registry: &dyn FunctionRegistry,
             join_set_id: JoinSetId,
             child_execution_id_a: ExecutionIdDerived,
@@ -2016,7 +2013,7 @@ mod tests {
                         closing_strategy: ClosingStrategy::Complete,
                         wasm_backtrace: None,
                     },
-                    &db_pool.connection(),
+                    db_pool.connection().as_ref(),
                     version,
                     fn_registry,
                 )
@@ -2031,7 +2028,7 @@ mod tests {
                         params: Params::empty(),
                         wasm_backtrace: None,
                     },
-                    &db_pool.connection(),
+                    db_pool.connection().as_ref(),
                     version,
                     fn_registry,
                 )
@@ -2046,7 +2043,7 @@ mod tests {
                         params: Params::empty(),
                         wasm_backtrace: None,
                     },
-                    &db_pool.connection(),
+                    db_pool.connection().as_ref(),
                     version,
                     fn_registry,
                 )
@@ -2059,7 +2056,7 @@ mod tests {
                         closing: false,
                         wasm_backtrace: None,
                     },
-                    &db_pool.connection(),
+                    db_pool.connection().as_ref(),
                     version,
                     fn_registry,
                 )
@@ -2094,7 +2091,7 @@ mod tests {
             .unwrap();
 
         let (mut event_history, mut version) = load_event_history(
-            &db_connection,
+            db_connection.as_ref(),
             execution_id.clone(),
             sim_clock.now(),
             sim_clock.clone(),
@@ -2112,7 +2109,7 @@ mod tests {
             blocking_join_first(
                 &mut event_history,
                 &mut version,
-                &db_pool,
+                db_pool.as_ref(),
                 fn_registry.as_ref(),
                 join_set_id.clone(),
                 child_execution_id_a.clone(),
@@ -2157,7 +2154,7 @@ mod tests {
         info!("Second run");
 
         let (mut event_history, mut version) = load_event_history(
-            &db_connection,
+            db_connection.as_ref(),
             execution_id,
             sim_clock.now(),
             sim_clock.clone(),
@@ -2168,7 +2165,7 @@ mod tests {
         let res = blocking_join_first(
             &mut event_history,
             &mut version,
-            &db_pool,
+            db_pool.as_ref(),
             fn_registry.as_ref(),
             join_set_id.clone(),
             child_execution_id_a.clone(),
@@ -2190,7 +2187,7 @@ mod tests {
                     closing: false,
                     wasm_backtrace: None,
                 },
-                &db_pool.connection(),
+                db_pool.connection().as_ref(),
                 &mut version,
                 fn_registry.as_ref(),
             )

@@ -490,9 +490,9 @@ impl InMemoryPool {
 }
 
 #[async_trait]
-impl DbPool<InMemoryDbConnection> for InMemoryPool {
-    fn connection(&self) -> InMemoryDbConnection {
-        InMemoryDbConnection(self.0.clone())
+impl DbPool for InMemoryPool {
+    fn connection(&self) -> Box<dyn DbConnection> {
+        Box::new(InMemoryDbConnection(self.0.clone()))
     }
 
     fn is_closing(&self) -> bool {

@@ -8,7 +8,7 @@ use concepts::{
 use concepts::{
     ComponentType,
     prefixed_ulid::ExecutorId,
-    storage::{CreateRequest, DbConnection, PendingState, wait_for_pending_state_fn},
+    storage::{CreateRequest, PendingState, wait_for_pending_state_fn},
 };
 use db_tests::Database;
 use divan::{self};
@@ -56,8 +56,8 @@ fn activity_config(component_id: ComponentId) -> ActivityConfig {
     }
 }
 
-pub(crate) fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    db_pool: P,
+pub(crate) fn spawn_activity(
+    db_pool: Arc<dyn DbPool>,
     wasm_path: &'static str,
     clock_fn: impl ClockFn + 'static,
     sleep: impl Sleep + 'static,
@@ -73,8 +73,8 @@ pub(crate) fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static
     )
 }
 
-pub(crate) fn spawn_activity_with_config<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    db_pool: P,
+pub(crate) fn spawn_activity_with_config(
+    db_pool: Arc<dyn DbPool>,
     wasm_path: &'static str,
     clock_fn: impl ClockFn + 'static,
     sleep: impl Sleep + 'static,
@@ -127,8 +127,8 @@ fn new_activity_worker_with_config(
     )
 }
 
-pub(crate) fn spawn_activity_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    db_pool: P,
+pub(crate) fn spawn_activity_fibo(
+    db_pool: Arc<dyn DbPool>,
     clock_fn: impl ClockFn + 'static,
     sleep: impl Sleep + 'static,
     activity_engine: Arc<Engine>,
@@ -154,8 +154,8 @@ pub(crate) fn compile_workflow_with_engine(
     )
 }
 
-fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    db_pool: P,
+fn spawn_workflow(
+    db_pool: Arc<dyn DbPool>,
     wasm_path: &'static str,
     clock_fn: impl ClockFn + 'static,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -205,8 +205,8 @@ fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     )
 }
 
-pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    db_pool: P,
+pub(crate) fn spawn_workflow_fibo(
+    db_pool: Arc<dyn DbPool>,
     clock_fn: impl ClockFn + 'static,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     fn_registry: Arc<dyn FunctionRegistry>,
@@ -307,7 +307,7 @@ async fn fibo_workflow(fibo_n: u8, iterations: u32, engines: Arc<Engines>) {
         .unwrap();
 
     wait_for_pending_state_fn(
-        &db_connection,
+        db_connection.as_ref(),
         &execution_id,
         |exe_history| {
             matches!(

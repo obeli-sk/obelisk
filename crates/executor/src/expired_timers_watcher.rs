@@ -38,8 +38,8 @@ pub struct TickProgress {
     pub expired_async_timers: usize,
 }
 
-pub fn spawn_new<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    db_pool: P,
+pub fn spawn_new<C: ClockFn + 'static>(
+    db_pool: Arc<dyn DbPool>,
     config: TimersWatcherConfig<C>,
 ) -> AbortOnDropHandle {
     info!("Spawning expired_timers_watcher");
@@ -52,7 +52,7 @@ pub fn spawn_new<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB>
                 let mut old_err = None;
                 while !is_closing.load(Ordering::Relaxed) {
                     let executed_at = config.clock_fn.now() - config.leeway;
-                    let res = tick(&db_pool.connection(), executed_at).await;
+                    let res = tick(db_pool.connection().as_ref(), executed_at).await;
                     log_err_if_new(res, &mut old_err);
                     tokio::time::sleep(tick_sleep).await;
                 }
@@ -76,16 +76,16 @@ fn log_err_if_new(res: Result<TickProgress, DbError>, old_err: &mut Option<DbErr
 }
 
 #[cfg(feature = "test")]
-pub async fn tick_test<DB: DbConnection + 'static>(
-    db_connection: &DB,
+pub async fn tick_test(
+    db_connection: &dyn DbConnection,
     executed_at: DateTime<Utc>,
 ) -> Result<TickProgress, DbError> {
     tick(db_connection, executed_at).await
 }
 
 #[instrument(level = Level::TRACE, skip_all)]
-pub(crate) async fn tick<DB: DbConnection + 'static>(
-    db_connection: &DB,
+pub(crate) async fn tick(
+    db_connection: &dyn DbConnection,
     executed_at: DateTime<Utc>,
 ) -> Result<TickProgress, DbError> {
     let mut expired_locks = 0;

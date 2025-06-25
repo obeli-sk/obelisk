@@ -4,7 +4,7 @@ use crate::WasmFileError;
 use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::storage::{DbConnection, DbPool};
+use concepts::storage::DbPool;
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{
     ComponentId, FunctionFqn, FunctionMetadata, PackageIfcFns, ResultParsingError, StrVariant,
@@ -57,7 +57,6 @@ pub struct WorkflowWorkerCompiled<C: ClockFn, S: Sleep> {
     engine: Arc<Engine>,
     clock_fn: C,
     sleep: S,
-    // wasm_component: WasmComponent,
     wasmtime_component: wasmtime::component::Component,
     exported_functions_ext: Vec<FunctionMetadata>,
     exports_hierarchy_ext: Vec<PackageIfcFns>,
@@ -66,28 +65,28 @@ pub struct WorkflowWorkerCompiled<C: ClockFn, S: Sleep> {
     imported_functions: Vec<FunctionMetadata>,
 }
 
-pub struct WorkflowWorkerLinked<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>> {
+pub struct WorkflowWorkerLinked<C: ClockFn, S: Sleep> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
     clock_fn: C,
     sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     fn_registry: Arc<dyn FunctionRegistry>,
-    instance_pre: InstancePre<WorkflowCtx<C, DB, P>>,
+    instance_pre: InstancePre<WorkflowCtx<C>>,
     exported_functions_noext: Vec<FunctionMetadata>,
 }
 
 #[derive(Clone)]
-pub struct WorkflowWorker<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>> {
+pub struct WorkflowWorker<C: ClockFn, S: Sleep> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
     exported_functions_noext: Vec<FunctionMetadata>,
-    db_pool: P,
+    db_pool: Arc<dyn DbPool>,
     clock_fn: C,
     sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     fn_registry: Arc<dyn FunctionRegistry>,
-    instance_pre: InstancePre<WorkflowCtx<C, DB, P>>,
+    instance_pre: InstancePre<WorkflowCtx<C>>,
 }
 
 const WASI_NAMESPACE: &str = "wasi";
@@ -185,10 +184,10 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
     }
 
     #[instrument(skip_all, fields(component_id = %self.config.component_id))]
-    pub fn link<DB: DbConnection, P: DbPool<DB>>(
+    pub fn link(
         self,
         fn_registry: Arc<dyn FunctionRegistry>,
-    ) -> Result<WorkflowWorkerLinked<C, S, DB, P>, WasmFileError> {
+    ) -> Result<WorkflowWorkerLinked<C, S>, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
 
         // Link obelisk:workflow-support and obelisk:log
@@ -214,10 +213,7 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
                     trace!("Adding mock for imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(function_name.deref(), {
                         let ffqn = ffqn.clone();
-                        move |mut store_ctx: wasmtime::StoreContextMut<
-                            '_,
-                            WorkflowCtx<C, DB, P>,
-                        >,
+                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                               params: &[Val],
                               results: &mut [Val]| {
                             let imported_fn_call = match ImportedFnCall::new(
@@ -294,8 +290,8 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
     }
 }
 
-impl<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerLinked<C, S, DB, P> {
-    pub fn into_worker(self, db_pool: P) -> WorkflowWorker<C, S, DB, P> {
+impl<C: ClockFn, S: Sleep> WorkflowWorkerLinked<C, S> {
+    pub fn into_worker(self, db_pool: Arc<dyn DbPool>) -> WorkflowWorker<C, S> {
         WorkflowWorker {
             config: self.config,
             engine: self.engine,
@@ -310,42 +306,32 @@ impl<C: ClockFn, S: Sleep, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerLinked
     }
 }
 
-enum RunError<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
-    ResultParsingError(ResultParsingError, WorkflowCtx<C, DB, P>),
+enum RunError<C: ClockFn + 'static> {
+    ResultParsingError(ResultParsingError, WorkflowCtx<C>),
     /// Error from the wasmtime runtime that can be downcast to `WorkflowFunctionError`
-    WorkerPartialResult(WorkerPartialResult, WorkflowCtx<C, DB, P>),
+    WorkerPartialResult(WorkerPartialResult, WorkflowCtx<C>),
     /// Error that happened while running the function, which cannot be downcast to `WorkflowFunctionError`
     Trap {
         reason: String,
         detail: String,
-        workflow_ctx: WorkflowCtx<C, DB, P>,
+        workflow_ctx: WorkflowCtx<C>,
         kind: TrapKind,
     },
 }
 
-enum WorkerResultRefactored<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
-    Ok(SupportedFunctionReturnValue, WorkflowCtx<C, DB, P>),
-    FatalError(FatalError, WorkflowCtx<C, DB, P>),
+enum WorkerResultRefactored<C: ClockFn> {
+    Ok(SupportedFunctionReturnValue, WorkflowCtx<C>),
+    FatalError(FatalError, WorkflowCtx<C>),
     Retriable(WorkerResult),
 }
 
-type CallFuncResult<C, DB, P> =
-    Result<(SupportedFunctionReturnValue, WorkflowCtx<C, DB, P>), RunError<C, DB, P>>;
+type CallFuncResult<C> = Result<(SupportedFunctionReturnValue, WorkflowCtx<C>), RunError<C>>;
 
-impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
-    WorkflowWorker<C, S, DB, P>
-{
+impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
     async fn prepare_func(
         &self,
         ctx: WorkerContext,
-    ) -> Result<
-        (
-            Store<WorkflowCtx<C, DB, P>>,
-            wasmtime::component::Func,
-            Arc<[Val]>,
-        ),
-        WorkerError,
-    > {
+    ) -> Result<(Store<WorkflowCtx<C>>, wasmtime::component::Func, Arc<[Val]>), WorkerError> {
         let version_at_start = ctx.version.clone();
         let seed = ctx.execution_id.random_seed();
         let workflow_ctx = WorkflowCtx::new(
@@ -416,10 +402,10 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
     }
 
     async fn call_func(
-        mut store: Store<WorkflowCtx<C, DB, P>>,
+        mut store: Store<WorkflowCtx<C>>,
         func: wasmtime::component::Func,
         params: Arc<[Val]>,
-    ) -> CallFuncResult<C, DB, P> {
+    ) -> CallFuncResult<C> {
         let result_types = func.results(&mut store);
         let mut results = vec![Val::Bool(false); result_types.len()];
         let func_call_result = func.call_async(&mut store, &params, &mut results).await;
@@ -471,7 +457,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
 
     async fn race_func_with_timeout(
         &self,
-        store: Store<WorkflowCtx<C, DB, P>>,
+        store: Store<WorkflowCtx<C>>,
         func: wasmtime::component::Func,
         params: Arc<[Val]>,
         worker_span: Span,
@@ -503,7 +489,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
 
     #[expect(clippy::too_many_arguments)]
     async fn race_func_internal(
-        store: Store<WorkflowCtx<C, DB, P>>,
+        store: Store<WorkflowCtx<C>>,
         func: wasmtime::component::Func,
         params: Arc<[Val]>,
         worker_span: &Span,
@@ -546,13 +532,13 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
     }
 
     async fn convert_result(
-        res: CallFuncResult<C, DB, P>,
+        res: CallFuncResult<C>,
         worker_span: &Span,
         stopwatch: tokio::time::Instant,
         deadline_duration: Duration,
         execution_deadline: DateTime<Utc>,
         retry_on_trap: bool,
-    ) -> WorkerResultRefactored<C, DB, P> {
+    ) -> WorkerResultRefactored<C> {
         match res {
             Ok((supported_result, mut workflow_ctx)) => {
                 worker_span.in_scope(||
@@ -646,7 +632,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
         }
     }
 
-    async fn close_join_sets(workflow_ctx: &mut WorkflowCtx<C, DB, P>) -> Result<(), WorkerResult> {
+    async fn close_join_sets(workflow_ctx: &mut WorkflowCtx<C>) -> Result<(), WorkerResult> {
         workflow_ctx
             .close_opened_join_sets()
             .await
@@ -675,9 +661,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: Db
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static, S: Sleep + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
-    Worker for WorkflowWorker<C, S, DB, P>
-{
+impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for WorkflowWorker<C, S> {
     fn exported_functions(&self) -> &[FunctionMetadata] {
         &self.exported_functions_noext
     }
@@ -716,8 +700,8 @@ pub(crate) mod tests {
         ComponentType,
         prefixed_ulid::{ExecutorId, RunId},
         storage::{
-            CreateRequest, DbConnection, PendingState, PendingStateFinished,
-            PendingStateFinishedResultKind, Version, wait_for_pending_state_fn,
+            CreateRequest, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
+            Version, wait_for_pending_state_fn,
         },
     };
     use concepts::{ExecutionId, Params};
@@ -777,8 +761,8 @@ pub(crate) mod tests {
         )
     }
 
-    fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-        db_pool: P,
+    fn spawn_workflow(
+        db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -830,8 +814,8 @@ pub(crate) mod tests {
         )
     }
 
-    pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-        db_pool: P,
+    pub(crate) fn spawn_workflow_fibo(
+        db_pool: Arc<dyn DbPool>,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
@@ -880,11 +864,8 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    async fn fibo_workflow_should_schedule_fibo_activity<
-        DB: DbConnection + 'static,
-        P: DbPool<DB> + 'static,
-    >(
-        db_pool: P,
+    async fn fibo_workflow_should_schedule_fibo_activity(
+        db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
@@ -926,7 +907,7 @@ pub(crate) mod tests {
             .unwrap();
         info!("Should end as BlockedByJoinSet");
         wait_for_pending_state_fn(
-            &db_connection,
+            db_connection.as_ref(),
             &execution_id,
             |exe_history| {
                 matches!(
@@ -973,19 +954,14 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    pub(crate) fn compile_workflow_worker<
-        C: ClockFn,
-        S: Sleep,
-        DB: DbConnection + 'static,
-        P: DbPool<DB> + 'static,
-    >(
+    pub(crate) fn compile_workflow_worker<C: ClockFn, S: Sleep>(
         wasm_path: &str,
-        db_pool: P,
+        db_pool: Arc<dyn DbPool>,
         clock_fn: C,
         sleep: S,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
-    ) -> Arc<WorkflowWorker<C, S, DB, P>> {
+    ) -> Arc<WorkflowWorker<C, S>> {
         let workflow_engine =
             Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
         Arc::new(
@@ -1168,7 +1144,7 @@ pub(crate) mod tests {
         }
         // expired_timers_watcher should see the AsyncDelay and send the response.
         {
-            let timer = expired_timers_watcher::tick_test(&db_connection, sim_clock.now())
+            let timer = expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
                 .await
                 .unwrap();
             assert_eq!(1, timer.expired_async_timers);
