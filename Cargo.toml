@@ -233,7 +233,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 route-recognizer = "0.3.1"
 rstest = "0.25"
-rusqlite = { version = "0.35.0", features = [
+rusqlite = { version = "0.36.0", features = [
     "bundled",
     "chrono",
     "serde_json",
