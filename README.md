@@ -3,7 +3,8 @@
     <img src="assets/images/logo-small.png" alt="Logo" style="vertical-align: middle; height: 40px;"> Obelisk
   </a>
 </h1>
-A deterministic workflow engine built on the WASM Component Model.
+
+A [deterministic](https://obeli.sk/faq/) workflow engine built on the WASM Component Model.
 
 > [!WARNING]
 > **Pre-release**: Expect changes in CLI, gRPC, WIT, and database schema.
@@ -22,7 +23,7 @@ and webhook endpoints, persisting steps in execution log using SQLite.
 - **Control Interfaces**:
   - **CLI**: Manage executions via the `obelisk` command.
   - **gRPC API**: Programmatic interaction.
-  - **Web UI**: View executions and submit function executions.
+  - **Web UI**: View and submit function executions, execution logs, WIT definitions, and a time-traveling debugger showing backtraces and sources of recorded events.
 
 ## Core Principles
 - **Replayable Workflows**: Deterministic execution ensures reliable recovery, debugging, and auditing.
