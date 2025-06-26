@@ -7,7 +7,6 @@ use crate::FunctionFqn;
 use crate::JoinSetId;
 use crate::Params;
 use crate::StrVariant;
-use crate::SupportedFunctionReturnValue;
 use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
@@ -189,7 +188,8 @@ pub struct JoinSetResponseEvent {
     pub event: JoinSetResponse,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, arbitrary::Arbitrary, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type")]
 pub enum JoinSetResponse {
     DelayFinished {
@@ -197,9 +197,9 @@ pub enum JoinSetResponse {
     },
     ChildExecutionFinished {
         child_execution_id: ExecutionIdDerived,
-        #[arbitrary(value = Version(2))]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Version(2)))]
         finished_version: Version,
-        #[arbitrary(value = Ok(SupportedFunctionReturnValue::None))]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(crate::SupportedFunctionReturnValue::None)))]
         result: FinishedExecutionResult,
     },
 }
@@ -261,16 +261,9 @@ pub const DUMMY_TEMPORARILY_FAILED: ExecutionEventInner = ExecutionEventInner::T
 };
 
 #[derive(
-    Clone,
-    Debug,
-    derive_more::Display,
-    PartialEq,
-    Eq,
-    arbitrary::Arbitrary,
-    Serialize,
-    Deserialize,
-    IntoStaticStr,
+    Clone, Debug, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, IntoStaticStr,
 )]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[allow(clippy::large_enum_variant)]
 pub enum ExecutionEventInner {
     /// Created by an external system or a scheduler when requesting a child execution or
@@ -279,15 +272,15 @@ pub enum ExecutionEventInner {
     #[display("Created({ffqn}, `{scheduled_at}`)")]
     Created {
         ffqn: FunctionFqn,
-        #[arbitrary(default)]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(default))]
         params: Params,
         parent: Option<(ExecutionId, JoinSetId)>,
         scheduled_at: DateTime<Utc>,
         retry_exp_backoff: Duration,
         max_retries: u32,
-        #[arbitrary(value = ComponentId::dummy_activity())]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
         component_id: ComponentId,
-        #[arbitrary(default)]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(default))]
         metadata: ExecutionMetadata,
         scheduled_by: Option<ExecutionId>,
     },
@@ -296,7 +289,7 @@ pub enum ExecutionEventInner {
     // after expiry immediately followed by WaitingForExecutor by a scheduler.
     #[display("Locked(`{lock_expires_at}`, {component_id})")]
     Locked {
-        #[arbitrary(value = ComponentId::dummy_activity())]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
         component_id: ComponentId,
         executor_id: ExecutorId,
         run_id: RunId,
@@ -309,7 +302,7 @@ pub enum ExecutionEventInner {
     #[display("Unlocked(`{backoff_expires_at}`)")]
     Unlocked {
         backoff_expires_at: DateTime<Utc>,
-        #[arbitrary(value = StrVariant::Static("reason"))]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
         reason: StrVariant,
     },
     // Created by the executor holding the lock.
@@ -317,12 +310,12 @@ pub enum ExecutionEventInner {
     #[display("TemporarilyFailed(`{backoff_expires_at}`)")]
     TemporarilyFailed {
         backoff_expires_at: DateTime<Utc>,
-        #[arbitrary(value = StrVariant::Static("reason"))]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
         reason_full: StrVariant,
-        #[arbitrary(value = StrVariant::Static("reason inner"))]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason inner")))]
         reason_inner: StrVariant,
         detail: Option<String>,
-        #[arbitrary(value = None)]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
     // Created by the executor holding last lock.
@@ -330,7 +323,7 @@ pub enum ExecutionEventInner {
     #[display("TemporarilyTimedOut(`{backoff_expires_at}`)")]
     TemporarilyTimedOut {
         backoff_expires_at: DateTime<Utc>,
-        #[arbitrary(value = None)]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
     // Created by the executor holding last lock.
@@ -338,9 +331,9 @@ pub enum ExecutionEventInner {
     // also when
     #[display("Finished")]
     Finished {
-        #[arbitrary(value = Ok(SupportedFunctionReturnValue::None))]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(crate::SupportedFunctionReturnValue::None)))]
         result: FinishedExecutionResult,
-        #[arbitrary(value = None)]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
 
@@ -380,17 +373,8 @@ impl ExecutionEventInner {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    arbitrary::Arbitrary,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type")]
 pub enum PersistKind {
     #[display("RandomU64({min}, {max_inclusive})")]
@@ -413,15 +397,9 @@ pub fn from_bytes_to_u64(bytes: [u8; 8]) -> u64 {
 }
 
 #[derive(
-    derive_more::Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    arbitrary::Arbitrary,
-    Serialize,
-    Deserialize,
+    derive_more::Debug, Clone, PartialEq, Eq, derive_more::Display, Serialize, Deserialize,
 )]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type")]
 /// Must be created by the executor in [`PendingState::Locked`].
 pub enum HistoryEvent {
@@ -462,17 +440,8 @@ pub enum HistoryEvent {
     },
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    arbitrary::Arbitrary,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 pub enum HistoryEventScheduledAt {
     Now,
     At(DateTime<Utc>),
@@ -556,9 +525,8 @@ impl TryFrom<&WastVal> for HistoryEventScheduledAt {
     }
 }
 
-#[derive(
-    Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
-)]
+#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type")]
 pub enum JoinSetRequest {
     // Must be created by the executor in `PendingState::Locked`.

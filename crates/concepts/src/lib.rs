@@ -4,7 +4,6 @@ pub mod storage;
 pub mod time;
 
 use ::serde::{Deserialize, Serialize};
-use arbitrary::Arbitrary;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 pub use indexmap;
@@ -485,6 +484,7 @@ impl Debug for FunctionFqn {
     }
 }
 
+#[cfg(any(test, feature = "test"))]
 impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         let illegal = [':', '@', '.'];
@@ -864,7 +864,6 @@ impl Params {
 }
 
 pub mod prefixed_ulid {
-    use arbitrary::Arbitrary;
     use serde_with::{DeserializeFromStr, SerializeDisplay};
     use std::{
         fmt::{Debug, Display},
@@ -1013,7 +1012,8 @@ pub mod prefixed_ulid {
     pub type RunId = PrefixedUlid<prefix::Run>;
     pub type DelayId = PrefixedUlid<prefix::Delay>;
 
-    impl<'a, T> Arbitrary<'a> for PrefixedUlid<T> {
+    #[cfg(any(test, feature = "test"))]
+    impl<'a, T> arbitrary::Arbitrary<'a> for PrefixedUlid<T> {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
             Ok(Self::new(ulid::Ulid::from_parts(
                 u.arbitrary()?,
@@ -1108,13 +1108,16 @@ pub mod prefixed_ulid {
             }
         }
     }
-    impl<'a> Arbitrary<'a> for ExecutionIdDerived {
+
+    #[cfg(any(test, feature = "test"))]
+    impl<'a> arbitrary::Arbitrary<'a> for ExecutionIdDerived {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
             let top_level = ExecutionId::TopLevel(ExecutionIdTopLevel::arbitrary(u)?);
             let join_set_id = JoinSetId::arbitrary(u)?;
             Ok(top_level.next_level(&join_set_id))
         }
     }
+
     #[derive(Debug, thiserror::Error)]
     pub enum ExecutionIdDerivedParseError {
         #[error(transparent)]
@@ -1257,7 +1260,8 @@ pub mod prefixed_ulid {
         }
     }
 
-    impl<'a> Arbitrary<'a> for ExecutionId {
+    #[cfg(any(test, feature = "test"))]
+    impl<'a> arbitrary::Arbitrary<'a> for ExecutionId {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
             Ok(ExecutionId::TopLevel(PrefixedUlid::arbitrary(u)?))
         }
@@ -1281,17 +1285,8 @@ pub struct JoinSetId {
     pub name: StrVariant,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    arbitrary::Arbitrary,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
 pub enum ClosingStrategy {
     Complete,
@@ -1305,8 +1300,6 @@ impl JoinSetId {
         })
     }
 }
-const CHARSET_JOIN_SET_NAME: &str =
-    const_format::concatcp!(CHARSET_ALPHANUMERIC, CHARSET_EXTRA_JSON_SET);
 
 pub const CHARSET_ALPHANUMERIC: &str =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -1322,8 +1315,8 @@ pub const CHARSET_ALPHANUMERIC: &str =
     Serialize,
     Deserialize,
     strum::EnumIter,
-    Arbitrary,
 )]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[display("{}", self.as_code())]
 pub enum JoinSetKind {
     OneOff,
@@ -1378,7 +1371,11 @@ pub enum JoinSetIdParseError {
     InvalidName(#[from] InvalidNameError<JoinSetId>),
 }
 
-impl<'a> Arbitrary<'a> for JoinSetId {
+#[cfg(any(test, feature = "test"))]
+const CHARSET_JOIN_SET_NAME: &str =
+    const_format::concatcp!(CHARSET_ALPHANUMERIC, CHARSET_EXTRA_JSON_SET);
+#[cfg(any(test, feature = "test"))]
+impl<'a> arbitrary::Arbitrary<'a> for JoinSetId {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         let name: String = {
             let length_inclusive = u.int_in_range(0..=10).unwrap();
