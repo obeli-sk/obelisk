@@ -117,21 +117,8 @@ package wasi:http@0.2.2 {
   interface types {
     use wasi:io/streams@0.2.3.{input-stream, output-stream};
 
-    resource fields {
-      from-list: static func(entries: list<tuple<field-name, field-value>>) -> result<fields, header-error>;
-      entries: func() -> list<tuple<field-name, field-value>>;
-    }
-
-    type field-key = string;
-
-    type field-name = field-key;
-
-    type field-value = list<u8>;
-
-    variant header-error {
-      invalid-syntax,
-      forbidden,
-      immutable,
+    resource incoming-body {
+      %stream: func() -> result<input-stream>;
     }
 
     resource incoming-request {
@@ -162,14 +149,23 @@ package wasi:http@0.2.2 {
       other(string),
     }
 
-    type headers = fields;
-
-    resource incoming-body {
-      %stream: func() -> result<input-stream>;
+    resource fields {
+      from-list: static func(entries: list<tuple<field-name, field-value>>) -> result<fields, header-error>;
+      entries: func() -> list<tuple<field-name, field-value>>;
     }
 
-    resource response-outparam {
-      set: static func(param: response-outparam, response: result<outgoing-response, error-code>);
+    type headers = fields;
+
+    type field-key = string;
+
+    type field-name = field-key;
+
+    type field-value = list<u8>;
+
+    variant header-error {
+      invalid-syntax,
+      forbidden,
+      immutable,
     }
 
     resource outgoing-response {
@@ -177,6 +173,15 @@ package wasi:http@0.2.2 {
       set-status-code: func(status-code: status-code) -> result;
       body: func() -> result<outgoing-body>;
     }
+
+    type status-code = u16;
+
+    resource outgoing-body {
+      write: func() -> result<output-stream>;
+      finish: static func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
+    }
+
+    type trailers = fields;
 
     record DNS-error-payload {
       rcode: option<string>,
@@ -235,14 +240,9 @@ package wasi:http@0.2.2 {
       internal-error(option<string>),
     }
 
-    type status-code = u16;
-
-    resource outgoing-body {
-      write: func() -> result<output-stream>;
-      finish: static func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
+    resource response-outparam {
+      set: static func(param: response-outparam, response: result<outgoing-response, error-code>);
     }
-
-    type trailers = fields;
   }
   interface incoming-handler {
     use types.{incoming-request, response-outparam};
@@ -289,9 +289,8 @@ package wasi:clocks@0.2.3 {
 
 package wasi:filesystem@0.2.3 {
   interface types {
-    use wasi:io/streams@0.2.3.{output-stream};
+    use wasi:io/streams@0.2.3.{error, output-stream};
     use wasi:clocks/wall-clock@0.2.3.{datetime};
-    use wasi:io/streams@0.2.3.{error};
 
     resource descriptor {
       write-via-stream: func(offset: filesize) -> result<output-stream, error-code>;
@@ -299,8 +298,6 @@ package wasi:filesystem@0.2.3 {
       get-type: func() -> result<descriptor-type, error-code>;
       stat: func() -> result<descriptor-stat, error-code>;
     }
-
-    type filesize = u64;
 
     enum error-code {
       access,
@@ -341,6 +338,8 @@ package wasi:filesystem@0.2.3 {
       text-file-busy,
       cross-device,
     }
+
+    type filesize = u64;
 
     enum descriptor-type {
       unknown,

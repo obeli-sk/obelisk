@@ -76,12 +76,12 @@ package wasi:io@0.2.3 {
       blocking-flush: func() -> result<_, stream-error>;
     }
 
+    resource input-stream;
+
     variant stream-error {
       last-operation-failed(error),
       closed,
     }
-
-    resource input-stream;
   }
 }
 
@@ -123,9 +123,8 @@ package wasi:clocks@0.2.3 {
 
 package wasi:filesystem@0.2.3 {
   interface types {
-    use wasi:io/streams@0.2.3.{output-stream};
+    use wasi:io/streams@0.2.3.{error, output-stream};
     use wasi:clocks/wall-clock@0.2.3.{datetime};
-    use wasi:io/streams@0.2.3.{error};
 
     resource descriptor {
       write-via-stream: func(offset: filesize) -> result<output-stream, error-code>;
@@ -133,8 +132,6 @@ package wasi:filesystem@0.2.3 {
       get-type: func() -> result<descriptor-type, error-code>;
       stat: func() -> result<descriptor-stat, error-code>;
     }
-
-    type filesize = u64;
 
     enum error-code {
       access,
@@ -175,6 +172,8 @@ package wasi:filesystem@0.2.3 {
       text-file-busy,
       cross-device,
     }
+
+    type filesize = u64;
 
     enum descriptor-type {
       unknown,
