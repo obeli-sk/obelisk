@@ -12,7 +12,7 @@ export!(Component);
 
 pub fn black_box<T>(dummy: T) -> T {
     unsafe {
-        let ret = std::ptr::read_volatile(&dummy);
+        let ret = std::ptr::read_volatile(&raw const dummy);
         std::mem::forget(dummy);
         ret
     }

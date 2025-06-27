@@ -17,7 +17,7 @@ fn render_json_value(
         Value::Null => "null".to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
-        Value::String(s) => format!("\"{}\"", s),
+        Value::String(s) => format!("\"{s}\""),
         Value::Array(arr) => format!("[{} items]", arr.len()),
         Value::Object(obj) => format!("{{{}}} items", obj.len()),
     };
@@ -35,7 +35,7 @@ fn render_json_value(
 
     // Prepare the label with optional key prefix
     let display_label = match key {
-        Some(k) => format!("{}: {}", k, label),
+        Some(k) => format!("{k}: {label}"),
         None => label,
     };
 

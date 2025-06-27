@@ -69,7 +69,7 @@ impl TemporarilyFailedEventProps {
         tree.insert(
             Node::new(NodeData {
                 icon: Icon::Time,
-                label: format!("Backoff Expires At: {}", backoff_expires_at).into_html(),
+                label: format!("Backoff Expires At: {backoff_expires_at}").into_html(),
                 has_caret: false,
                 ..Default::default()
             }),

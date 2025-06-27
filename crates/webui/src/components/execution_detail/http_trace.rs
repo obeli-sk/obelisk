@@ -71,7 +71,7 @@ fn attach_http_traces(
         tree.insert(
             Node::new(NodeData {
                 icon: Icon::Time,
-                label: format!("Sent at: {}", sent_at).into_html(),
+                label: format!("Sent at: {sent_at}").into_html(),
                 ..Default::default()
             }),
             InsertBehavior::UnderNode(&trace_node),
@@ -81,7 +81,7 @@ fn attach_http_traces(
             tree.insert(
                 Node::new(NodeData {
                     icon: Icon::Time,
-                    label: format!("Finished at: {}", finished_at).into_html(),
+                    label: format!("Finished at: {finished_at}").into_html(),
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&trace_node),
@@ -94,7 +94,7 @@ fn attach_http_traces(
                 tree.insert(
                     Node::new(NodeData {
                         icon: Icon::Tag,
-                        label: format!("Status: {}", status).into_html(),
+                        label: format!("Status: {status}").into_html(),
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(&trace_node),
@@ -105,7 +105,7 @@ fn attach_http_traces(
                 tree.insert(
                     Node::new(NodeData {
                         icon: Icon::Error,
-                        label: format!("Error: {}", error).into_html(),
+                        label: format!("Error: {error}").into_html(),
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(&trace_node),
