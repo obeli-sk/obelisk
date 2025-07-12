@@ -6,13 +6,12 @@ on:
 jobs:
   benchmarks:
     name: Run benchmarks
-    runs-on: ubuntu-latest
+    runs-on: codspeed-macro
     steps:
       - uses: actions/checkout@v4
 
       - uses: nixbuild/nix-quick-install-action@63ca48f939ee3b8d835f4126562537df0fee5b91
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Populate the nix store
         run: nix develop --command echo
 
