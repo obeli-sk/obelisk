@@ -14,6 +14,7 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::runtime::Handle;
 use utils::testing_fn_registry::TestingFnRegistry;
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorker};
@@ -24,6 +25,7 @@ use wasm_workers::workflow::workflow_worker::{
 use wasmtime::Engine;
 
 fn main() {
+    let _rt = tokio::runtime::Runtime::new().unwrap();
     divan::main();
 }
 
@@ -236,7 +238,7 @@ fn fiboa_memory(bencher: divan::Bencher, args: u32) {
 }
 
 fn fiboa_db(bencher: divan::Bencher, iterations: u32, database: Database) {
-    let rt = &tokio::runtime::Runtime::new().unwrap();
+    let tokio = Handle::current();
     let workspace_dir = PathBuf::from(
         std::env::var("CARGO_WORKSPACE_DIR")
             .as_deref()
@@ -258,7 +260,7 @@ fn fiboa_db(bencher: divan::Bencher, iterations: u32, database: Database) {
         ),
     ]);
 
-    let (_guard, db_pool) = rt.block_on(async move { database.set_up().await });
+    let (_guard, db_pool) = tokio.block_on(async move { database.set_up().await });
 
     let workflow_exec_task = spawn_workflow_fibo(
         db_pool.clone(),
@@ -277,13 +279,13 @@ fn fiboa_db(bencher: divan::Bencher, iterations: u32, database: Database) {
 
     bencher.bench(|| {
         let db_pool = db_pool.clone();
-        rt.block_on(async move { fibo_workflow(1, iterations, db_pool).await });
+        tokio.block_on(async move { fibo_workflow(1, iterations, db_pool).await });
     });
 
-    rt.block_on(async move { workflow_exec_task.close().await });
-    rt.block_on(async move { activity_exec_task.close().await });
+    tokio.block_on(async move { workflow_exec_task.close().await });
+    tokio.block_on(async move { activity_exec_task.close().await });
 
-    rt.block_on(async move { db_pool.close().await.unwrap() });
+    tokio.block_on(async move { db_pool.close().await.unwrap() });
 }
 
 const FIBO_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(

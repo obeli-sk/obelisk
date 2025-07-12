@@ -24,3 +24,5 @@ jobs:
         with:
           token: ${{ secrets.CODSPEED_TOKEN }}
           run: nix develop --command cargo codspeed run -p bench
+          env:
+            RUST_BACKTRACE: 1
