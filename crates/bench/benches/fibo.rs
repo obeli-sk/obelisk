@@ -229,7 +229,7 @@ pub(crate) fn wasm_file_name(input: impl AsRef<Path>) -> StrVariant {
     StrVariant::from(input)
 }
 
-#[divan::bench(args = [100, 200, 400, 800, 1600])]
+#[divan::bench(args = [100, 200, 400, 800])]
 fn fiboa(bencher: divan::Bencher, args: u32) {
     let rt = &tokio::runtime::Runtime::new().unwrap();
     let workspace_dir = PathBuf::from(
