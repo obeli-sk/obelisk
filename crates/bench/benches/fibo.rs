@@ -231,7 +231,16 @@ pub(crate) fn wasm_file_name(input: impl AsRef<Path>) -> StrVariant {
 }
 
 #[divan::bench(args = [100, 200, 400, 800])]
-fn fiboa(bencher: divan::Bencher, args: u32) {
+fn fiboa_sqlite(bencher: divan::Bencher, args: u32) {
+    fiboa_db(bencher, args, Database::Sqlite);
+}
+
+#[divan::bench(args = [100, 200, 400, 800])]
+fn fiboa_memory(bencher: divan::Bencher, args: u32) {
+    fiboa_db(bencher, args, Database::Memory);
+}
+
+fn fiboa_db(bencher: divan::Bencher, iterations: u32, database: Database) {
     let rt = &tokio::runtime::Runtime::new().unwrap();
     let workspace_dir = PathBuf::from(
         std::env::var("CARGO_WORKSPACE_DIR")
@@ -254,7 +263,7 @@ fn fiboa(bencher: divan::Bencher, args: u32) {
         ),
     ]);
 
-    let (_guard, db_pool) = rt.block_on(async move { Database::Sqlite.set_up().await });
+    let (_guard, db_pool) = rt.block_on(async move { database.set_up().await });
 
     let workflow_exec_task = spawn_workflow_fibo(
         db_pool.clone(),
@@ -273,7 +282,7 @@ fn fiboa(bencher: divan::Bencher, args: u32) {
 
     bencher.bench(|| {
         let db_pool = db_pool.clone();
-        rt.block_on(async move { fibo_workflow(1, args, db_pool).await });
+        rt.block_on(async move { fibo_workflow(1, iterations, db_pool).await });
     });
 
     rt.block_on(async move { workflow_exec_task.close().await });
