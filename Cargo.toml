@@ -172,14 +172,14 @@ axum = { version = "0.8.4", features = ["http2"] }
 directories = "6.0"
 arbitrary = { version = "1.4.1", features = ["derive"] }
 assert_matches = "1.5.0"
-async-channel = "2.3.1"
+async-channel = "2.5.0"
 async-trait = "0.1"
 bytes = "1.10"
 cargo_metadata = "0.20"
 cfg-if = "1.0.1"
 chrono = { version = "0.4.41", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.40", features = ["derive"] }
-config = { version = "0.15.11", default-features = false, features = [
+clap = { version = "4.5.41", features = ["derive"] }
+config = { version = "0.15.13", default-features = false, features = [
     "toml",
     "preserve_order",
     "async",
@@ -238,10 +238,10 @@ rusqlite = { version = "0.36.0", features = [
     "chrono",
     "serde_json",
 ] }
-schemars = "1.0.3"
+schemars = "1.0.4"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
-serde_with = "3.13.0"
+serde_with = "3.14.0"
 sha2 = "0.10.9"
 strum = { version = "0.27.1", features = ["derive"] }
 syntect = { version = "5.2.0", default-features = false, features = [
