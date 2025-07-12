@@ -17,7 +17,6 @@ val-json.workspace = true
 
 arbitrary.workspace = true
 assert_matches.workspace = true
-async-channel.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 chrono.workspace = true

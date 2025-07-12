@@ -3229,7 +3229,6 @@ dependencies = [
  "anyhow",
  "arbitrary",
  "assert_matches",
- "async-channel",
  "async-trait",
  "chrono",
  "db-mem",
@@ -3314,7 +3313,6 @@ version = "0.23.1"
 dependencies = [
  "arbitrary",
  "assert_matches",
- "async-channel",
  "async-trait",
  "bytes",
  "chrono",

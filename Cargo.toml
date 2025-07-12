@@ -172,7 +172,6 @@ axum = { version = "0.8.4", features = ["http2"] }
 directories = "6.0"
 arbitrary = { version = "1.4.1", features = ["derive"] }
 assert_matches = "1.5.0"
-async-channel = "2.5.0"
 async-trait = "0.1"
 bytes = "1.10"
 cargo_metadata = "0.20"
