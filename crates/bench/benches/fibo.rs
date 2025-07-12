@@ -5,11 +5,7 @@ use concepts::{
     ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params, StrVariant,
     SupportedFunctionReturnValue,
 };
-use concepts::{
-    ComponentType,
-    prefixed_ulid::ExecutorId,
-    storage::{CreateRequest, PendingState, wait_for_pending_state_fn},
-};
+use concepts::{ComponentType, prefixed_ulid::ExecutorId, storage::CreateRequest};
 use db_tests::Database;
 use divan::{self};
 use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -23,8 +19,7 @@ use utils::wasm_tools::WasmComponent;
 use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorker};
 use wasm_workers::engines::Engines;
 use wasm_workers::workflow::workflow_worker::{
-    DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
-    WorkflowWorkerCompiled,
+    JoinNextBlockingStrategy, WorkflowConfig, WorkflowWorkerCompiled,
 };
 use wasmtime::Engine;
 
