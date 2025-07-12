@@ -27,7 +27,8 @@ use wasm_workers::workflow::workflow_worker::{
 use wasmtime::Engine;
 
 fn main() {
-    let _rt = tokio::runtime::Runtime::new().unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
     divan::main();
 }
 
