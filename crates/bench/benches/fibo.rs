@@ -1,3 +1,5 @@
+#![cfg(not(madsim))]
+
 use assert_matches::assert_matches;
 use concepts::storage::DbPool;
 use concepts::time::{ClockFn, Now, Sleep, TokioSleep};
