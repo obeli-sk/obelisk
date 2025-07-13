@@ -4,7 +4,7 @@ A [yew](https://yew.rs) based UI for Obelisk.
 ## Developing locally
 Run the Obelisk server. Execute `trunk` in development mode:
 ```sh
-trunk --config Trunk-dev.toml serve
+nix develop .#web --command trunk serve --config crates/webui/Trunk-dev.toml
 ```
 Navigate to [localhost:8081](http://127.0.0.1:8081)
 

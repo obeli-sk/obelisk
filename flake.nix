@@ -223,6 +223,7 @@
               ];
           };
           devShells.web = pkgs.mkShell {
+            # Contains the forked wasm-bindgen-cli
             nativeBuildInputs = with pkgs;
               [
                 (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)

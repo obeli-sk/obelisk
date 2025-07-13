@@ -15,9 +15,6 @@ can track the join set created.
 `obelisk new` - show templates, blank workflow should have obelisk types and workflow support
 `obelisk add --oci path` - add WIT files + extensions
 
-## feat: Create an SDK for workflows and other (logging - maybe a proc macro)
-Convert delays into Duration
-
 ## feat: Inspect remote or cached components
 `obelisk client component inspect/wit` should accept: path, componentId, oci location
 
