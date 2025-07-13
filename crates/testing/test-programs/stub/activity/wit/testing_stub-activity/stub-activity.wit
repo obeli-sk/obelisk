@@ -1,0 +1,5 @@
+package testing:stub-activity;
+
+interface activity {
+    foo: func(arg: string) -> string;
+}

@@ -1,0 +1,8 @@
+package any:any;
+
+world any {
+    export testing:stub-workflow/workflow;
+    import testing:stub-activity-obelisk-ext/activity; // for submitting the execution
+    import testing:stub-activity-obelisk-stub/activity; // for submitting the execution result
+    import obelisk:workflow/workflow-support@1.1.0;
+}

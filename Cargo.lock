@@ -5231,6 +5231,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-programs-stub-workflow"
+version = "0.23.1"
+dependencies = [
+ "wit-bindgen 0.43.0",
+]
+
+[[package]]
+name = "test-programs-stub-workflow-builder"
+version = "0.23.1"
+dependencies = [
+ "obelisk-component-builder",
+]
+
+[[package]]
 name = "test-utils"
 version = "0.23.1"
 dependencies = [

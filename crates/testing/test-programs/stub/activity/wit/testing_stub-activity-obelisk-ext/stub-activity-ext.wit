@@ -1,0 +1,8 @@
+package testing:stub-activity-obelisk-ext;
+
+interface activity {
+    use obelisk:types/execution@1.1.0.{join-set-id, execution-error, execution-id};
+
+    foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
+    foo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, string>, tuple<execution-id, execution-error>>;
+}

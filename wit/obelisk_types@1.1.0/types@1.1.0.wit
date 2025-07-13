@@ -39,7 +39,15 @@ interface execution {
     }
 
     variant execution-error {
+        // FIXME: keep only one variant `unknown`
         activity-trap(string),
         permanent-timeout,
+    }
+
+    variant stub-error {
+        not-found,
+        ffqn-mismatch,
+        // stubbed execution must not contain any execution log entries except for the `Created` event.
+        conflict,
     }
 }

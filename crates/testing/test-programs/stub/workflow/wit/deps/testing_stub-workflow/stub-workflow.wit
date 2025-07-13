@@ -1,0 +1,5 @@
+package testing:stub-workflow;
+
+interface workflow {
+    foo: func(arg: string) -> string;
+}
