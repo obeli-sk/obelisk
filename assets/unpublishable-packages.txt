@@ -21,6 +21,8 @@ test-programs-sleep-activity
 test-programs-sleep-activity-builder
 test-programs-sleep-workflow
 test-programs-sleep-workflow-builder
+test-programs-stub-workflow
+test-programs-stub-workflow-builder
 test-utils
 webui
 webui-builder
