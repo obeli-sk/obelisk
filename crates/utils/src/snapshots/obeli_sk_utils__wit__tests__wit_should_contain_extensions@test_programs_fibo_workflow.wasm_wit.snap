@@ -52,8 +52,16 @@ package obelisk:types@1.1.0 {
     }
 
     variant execution-error {
+      /// FIXME: keep only one variant `unknown`
       activity-trap(string),
       permanent-timeout,
+    }
+
+    variant stub-error {
+      not-found,
+      ffqn-mismatch,
+      /// stubbed execution must not contain any execution log entries except for the `Created` event.
+      conflict,
     }
   }
 }
