@@ -407,6 +407,8 @@ pub(crate) struct ActivityComponentConfigToml {
     pub(crate) retry_on_err: bool,
     #[serde(default)]
     pub(crate) directories: ActivityDirectoriesConfigToml,
+    #[serde(default)]
+    pub(crate) stub: bool,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -461,7 +463,11 @@ impl ActivityComponentConfigToml {
         parent_preopen_dir: Option<Arc<Path>>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
         let component_id = ComponentId::new(
-            ComponentType::ActivityWasm,
+            if self.stub {
+                ComponentType::ActivityStub
+            } else {
+                ComponentType::ActivityWasm
+            },
             StrVariant::from(self.common.name.clone()),
         )?;
         tracing::Span::current().record("component_id", tracing::field::display(&component_id));

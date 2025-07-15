@@ -755,8 +755,7 @@ pub(crate) mod tests {
         let component_id =
             ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         (
-            WasmComponent::new(wasm_path, engine, Some(component_id.component_type.into()))
-                .unwrap(),
+            WasmComponent::new(wasm_path, engine, component_id.component_type.into()).unwrap(),
             component_id,
         )
     }
@@ -777,7 +776,7 @@ pub(crate) mod tests {
                 WasmComponent::new(
                     wasm_path,
                     &workflow_engine,
-                    Some(component_id.component_type.into()),
+                    component_id.component_type.into(),
                 )
                 .unwrap(),
                 WorkflowConfig {
@@ -966,12 +965,8 @@ pub(crate) mod tests {
             Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
         Arc::new(
             WorkflowWorkerCompiled::new_with_config(
-                WasmComponent::new(
-                    wasm_path,
-                    &workflow_engine,
-                    Some(ComponentType::Workflow.into()),
-                )
-                .unwrap(),
+                WasmComponent::new(wasm_path, &workflow_engine, ComponentType::Workflow.into())
+                    .unwrap(),
                 WorkflowConfig {
                     component_id: ComponentId::dummy_workflow(),
                     join_next_blocking_strategy,

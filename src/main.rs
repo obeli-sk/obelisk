@@ -69,12 +69,14 @@ async fn main() -> Result<(), anyhow::Error> {
         Subcommand::Client(Client { api_url, command }) => match command {
             ClientSubcommand::Component(args::Component::Inspect {
                 path,
+                component_type,
                 imports,
                 extensions,
                 convert_core_module,
             }) => {
                 command::component::inspect(
                     path,
+                    component_type,
                     if imports {
                         FunctionMetadataVerbosity::ExportsAndImports
                     } else {

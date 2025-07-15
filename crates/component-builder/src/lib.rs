@@ -206,7 +206,7 @@ fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType
     .unwrap();
 
     let component =
-        utils::wasm_tools::WasmComponent::new(wasm_path, &engine, Some(component_type.into()))
+        utils::wasm_tools::WasmComponent::new(wasm_path, &engine, component_type.into())
             .expect("cannot decode wasm component");
     generated_code += "pub mod exports {\n";
     let mut outer_map: IndexMap<String, Value> = IndexMap::new();

@@ -105,6 +105,7 @@ use tracing::info_span;
 use tracing::instrument;
 use tracing::warn;
 use tracing::{debug, info, trace};
+use utils::wasm_tools::ComponentExportsType;
 use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
 use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
@@ -114,6 +115,7 @@ use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::preopens_cleaner::PreopensCleaner;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
+use wasm_workers::webhook::webhook_trigger::WebhookEndpointCompiled;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstance;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
@@ -1571,6 +1573,22 @@ struct LinkedComponents {
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookInstancesAndRoutes>,
 }
 
+enum CompiledComponent {
+    ActivityOrWorkflow {
+        worker: WorkerCompiled,
+        component_config: ComponentConfig,
+    },
+    Webhook {
+        webhook_name: ConfigName,
+        webhook_compiled: WebhookEndpointCompiled,
+        routes: Vec<WebhookRouteVerified>,
+        content_digest: ContentDigest,
+    },
+    ActivityStub {
+        component_config: ComponentConfig,
+    },
+}
+
 #[instrument(skip_all)]
 async fn compile_and_verify(
     engines: &Engines,
@@ -1595,7 +1613,43 @@ async fn compile_and_verify(
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     let executor_id = ExecutorId::generate();
-                    prespawn_activity(activity, &engines, executor_id).map(Either::Left)
+                    if activity.component_id().component_type == ComponentType::ActivityStub {
+                        let engine = engines.activity_engine.clone();
+                        let wasm_component = WasmComponent::new(
+                            activity.wasm_path,
+                            &engine,
+                            ComponentExportsType::from(
+                                activity.activity_config.component_id.component_type,
+                            ),
+                        )?;
+                        let wit = wasm_component
+                            .wit()
+                            .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
+                            .ok();
+                        let exports_ext = wasm_component.exim.get_exports(true).to_vec();
+                        let exports_hierarchy_ext =
+                            wasm_component.exim.get_exports_hierarchy_ext().to_vec();
+                        let component_config_importable = ComponentConfigImportable {
+                            exports_ext,
+                            exports_hierarchy_ext,
+                            retry_config: ComponentRetryConfig::ZERO,
+                        };
+                        let component_config = ComponentConfig {
+                            component_id: activity.activity_config.component_id,
+                            imports: vec![],
+                            workflow_or_activity_config: Some(component_config_importable),
+                            content_digest: activity.content_digest,
+                            wit,
+                        };
+                        Ok(CompiledComponent::ActivityStub { component_config })
+                    } else {
+                        prespawn_activity(activity, &engines, executor_id).map(
+                            |(worker, component_config)| CompiledComponent::ActivityOrWorkflow {
+                                worker,
+                                component_config,
+                            },
+                        )
+                    }
                 })
             })
         })
@@ -1606,33 +1660,44 @@ async fn compile_and_verify(
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     let executor_id = ExecutorId::generate();
-                    prespawn_workflow(workflow, &engines, executor_id).map(Either::Left)
+                    prespawn_workflow(workflow, &engines, executor_id).map(
+                        |(worker, component_config)| CompiledComponent::ActivityOrWorkflow {
+                            worker,
+                            component_config,
+                        },
+                    )
                 })
             })
         }))
-        .chain(webhooks_by_names.into_iter().map(|(name, webhook)| {
-            let engines = engines.clone();
-            let span = info_span!("webhook_compile", component_id = %webhook.component_id);
-            #[cfg_attr(madsim, allow(deprecated))]
-            tokio::task::spawn_blocking(move || {
-                span.in_scope(|| {
-                    let component_id = webhook.component_id;
-                    let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
-                        webhook.wasm_path,
-                        &engines.webhook_engine,
-                        component_id.clone(),
-                        webhook.forward_stdout,
-                        webhook.forward_stderr,
-                        webhook.env_vars,
-                        global_backtrace_persist,
-                    )?;
-                    Ok(Either::Right((
-                        name,
-                        (webhook_compiled, webhook.routes, webhook.content_digest),
-                    )))
-                })
-            })
-        }))
+        .chain(
+            webhooks_by_names
+                .into_iter()
+                .map(|(webhook_name, webhook)| {
+                    let engines = engines.clone();
+                    let span = info_span!("webhook_compile", component_id = %webhook.component_id);
+                    #[cfg_attr(madsim, allow(deprecated))]
+                    tokio::task::spawn_blocking(move || {
+                        span.in_scope(|| {
+                            let component_id = webhook.component_id;
+                            let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
+                                webhook.wasm_path,
+                                &engines.webhook_engine,
+                                component_id.clone(),
+                                webhook.forward_stdout,
+                                webhook.forward_stderr,
+                                webhook.env_vars,
+                                global_backtrace_persist,
+                            )?;
+                            Ok(CompiledComponent::Webhook {
+                                webhook_name,
+                                webhook_compiled,
+                                routes: webhook.routes,
+                                content_digest: webhook.content_digest,
+                            })
+                        })
+                    })
+                }),
+        )
         .collect();
 
     // Abort/cancel safety:
@@ -1645,13 +1710,12 @@ async fn compile_and_verify(
             let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
             for handle in results_of_results {
                 match handle?? {
-
-                    Either::Left((worker, component)) => {
+                    CompiledComponent::ActivityOrWorkflow { worker, component_config } => {
                         // Activity or Workflow
-                        component_registry.insert(component)?;
+                        component_registry.insert(component_config)?;
                         workers_compiled.push(worker);
                     },
-                    Either::Right((webhook_name, (webhook_compiled, routes, content_digest))) => {
+                    CompiledComponent::Webhook{webhook_name, webhook_compiled, routes, content_digest} => {
                         let component = ComponentConfig {
                             component_id: webhook_compiled.component_id.clone(),
                             imports: webhook_compiled.imports().to_vec(),
@@ -1663,6 +1727,9 @@ async fn compile_and_verify(
                         component_registry.insert(component)?;
                         let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
                         assert!(old.is_none());
+                    },
+                    CompiledComponent::ActivityStub {  component_config } => {
+                        component_registry.insert(component_config)?;
                     },
                 }
             }
@@ -1696,14 +1763,12 @@ fn prespawn_activity(
     engines: &Engines,
     executor_id: ExecutorId,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+    assert!(activity.component_id().component_type == ComponentType::ActivityWasm);
     debug!("Instantiating activity");
     trace!(?activity, "Full configuration");
     let engine = engines.activity_engine.clone();
-    let wasm_component = WasmComponent::new(
-        activity.wasm_path,
-        &engine,
-        Some(ComponentType::ActivityWasm.into()),
-    )?;
+    let component_exports_type = ComponentExportsType::from(activity.component_id().component_type);
+    let wasm_component = WasmComponent::new(activity.wasm_path, &engine, component_exports_type)?;
     let wit = wasm_component
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
@@ -1735,15 +1800,12 @@ fn prespawn_workflow(
     engines: &Engines,
     executor_id: ExecutorId,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+    assert!(workflow.component_id().component_type == ComponentType::Workflow);
     debug!("Instantiating workflow");
     trace!(?workflow, "Full configuration");
     let engine = engines.workflow_engine.clone();
-    let wasm_component = WasmComponent::new(
-        &workflow.wasm_path,
-        &engine,
-        Some(ComponentType::Workflow.into()),
-    )
-    .with_context(|| format!("Error decoding {:?}", workflow.wasm_path))?;
+    let component_exports_type = ComponentExportsType::from(workflow.component_id().component_type);
+    let wasm_component = WasmComponent::new(&workflow.wasm_path, &engine, component_exports_type)?;
     let wit = wasm_component
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
@@ -1896,7 +1958,6 @@ impl ComponentConfigRegistry {
                     );
                 }
             }
-
             // insert to `exported_ffqns_ext`
             for exported_fn_metadata in &importable.exports_ext {
                 let old = self.inner.exported_ffqns_ext.insert(
@@ -1986,6 +2047,7 @@ impl ComponentConfigRegistry {
                     _ => false,
                 }
             }
+            ComponentType::ActivityStub => false,
         }
     }
 

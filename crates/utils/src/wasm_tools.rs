@@ -27,6 +27,7 @@ pub const HTTP_HANDLER_FFQN: FunctionFqn =
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ComponentExportsType {
     Enrichable,
+    EnrichableStub,
     Plain,
 }
 
@@ -36,10 +37,13 @@ impl From<ComponentType> for ComponentExportsType {
             ComponentType::ActivityWasm | ComponentType::Workflow => {
                 ComponentExportsType::Enrichable
             }
+            ComponentType::ActivityStub => ComponentExportsType::EnrichableStub,
             ComponentType::WebhookEndpoint => ComponentExportsType::Plain,
         }
     }
 }
+
+type FfqnToMetadataMap = hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>;
 
 #[derive(derive_more::Debug)]
 pub struct WasmComponent {
@@ -119,12 +123,18 @@ impl WasmComponent {
         Ok(Some(output_file))
     }
 
-    pub fn new<P: AsRef<Path>>(
-        wasm_path: P,
-        engine: &Engine,
-        component_exports_type_or_auto_detect: Option<ComponentExportsType>,
-    ) -> Result<Self, DecodeError> {
+    /// Attempt to open the WASM file, parse it using `wit_parser`.
+    /// Check that the file is a WASM Component.
+    pub fn verify_wasm<P: AsRef<Path>>(wasm_path: P) -> Result<(), DecodeError> {
         let wasm_path = wasm_path.as_ref();
+        Self::decode_using_wit_parser(wasm_path)?;
+        Ok(())
+    }
+
+    fn decode_using_wit_parser(
+        wasm_path: &Path,
+    ) -> Result<(FfqnToMetadataMap, FfqnToMetadataMap, DecodedWasm), DecodeError> {
+        trace!("Decoding using wit_parser");
 
         let wasm_file = std::fs::File::open(wasm_path)
             .with_context(|| format!("cannot open {wasm_path:?}"))
@@ -132,39 +142,43 @@ impl WasmComponent {
                 error!("Cannot read the file {wasm_path:?} - {err:?}");
                 DecodeError::CannotReadComponent { source: err }
             })?;
-        trace!("Decoding using wit_parser");
-        let (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta, decoded) = {
-            let stopwatch = std::time::Instant::now();
-            let decoded = wit_parser::decoding::decode_reader(wasm_file).map_err(|err| {
-                error!("Cannot read {wasm_path:?} using wit_parser - {err:?}");
-                DecodeError::CannotReadComponent { source: err }
-            })?;
+        let stopwatch = std::time::Instant::now();
+        let decoded = wit_parser::decoding::decode_reader(wasm_file).map_err(|err| {
+            error!("Cannot read {wasm_path:?} using wit_parser - {err:?}");
+            DecodeError::CannotReadComponent { source: err }
+        })?;
 
-            let (resolve, world_id) = match &decoded {
-                DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
-                DecodedWasm::WitPackage(..) => {
-                    error!("Input file must not be a WIT package");
-                    return Err(DecodeError::CannotReadComponentWithReason {
-                        reason: "must not be a WIT package".to_string(),
-                    });
-                }
-            };
-
-            let world = resolve.worlds.get(*world_id).expect("world must exist");
-            let exported_ffqns_to_wit_meta =
-                wit_parsed_ffqn_to_wit_parsed_fn_metadata(resolve, world.exports.iter())?;
-            let imported_ffqns_to_wit_meta =
-                wit_parsed_ffqn_to_wit_parsed_fn_metadata(resolve, world.imports.iter())?;
-            debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
-            trace!(
-                "Exports: {exported_ffqns_to_wit_meta:?}, imports: {imported_ffqns_to_wit_meta:?}"
-            );
-            (
-                exported_ffqns_to_wit_meta,
-                imported_ffqns_to_wit_meta,
-                decoded,
-            )
+        let (resolve, world_id) = match &decoded {
+            DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
+            DecodedWasm::WitPackage(..) => {
+                error!("Input file must not be a WIT package");
+                return Err(DecodeError::CannotReadComponentWithReason {
+                    reason: "must not be a WIT package".to_string(),
+                });
+            }
         };
+
+        let world = resolve.worlds.get(*world_id).expect("world must exist");
+        let exported_ffqns_to_wit_meta =
+            create_ffqn_to_metadata_map(resolve, world.exports.iter())?;
+        let imported_ffqns_to_wit_meta =
+            create_ffqn_to_metadata_map(resolve, world.imports.iter())?;
+        debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
+        trace!("Exports: {exported_ffqns_to_wit_meta:?}, imports: {imported_ffqns_to_wit_meta:?}");
+        Ok((
+            exported_ffqns_to_wit_meta,
+            imported_ffqns_to_wit_meta,
+            decoded,
+        ))
+    }
+
+    pub fn new<P: AsRef<Path>>(
+        wasm_path: P,
+        engine: &Engine,
+        exports_type: ComponentExportsType,
+    ) -> Result<Self, DecodeError> {
+        let wasm_path = wasm_path.as_ref();
+
         trace!("Decoding using wasmtime");
         let wasmtime_component = {
             let stopwatch = std::time::Instant::now();
@@ -175,6 +189,8 @@ impl WasmComponent {
             debug!("Parsed with wasmtime in {:?}", stopwatch.elapsed());
             component
         };
+        let (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta, decoded) =
+            Self::decode_using_wit_parser(wasm_path)?;
 
         let exim = ExIm::decode(
             &wasmtime_component,
@@ -185,24 +201,10 @@ impl WasmComponent {
 
         Ok(Self {
             wasmtime_component,
-            decoded,
-            exports_type: component_exports_type_or_auto_detect
-                .unwrap_or_else(|| Self::auto_detect_type(&exim)),
             exim,
+            decoded,
+            exports_type,
         })
-    }
-
-    fn auto_detect_type(exim: &ExIm) -> ComponentExportsType {
-        // If the component exports wasi:http/incoming-handler, it is a WebhookEndpoint, thus `ComponentExportsType::Plain`
-        for pkg_ifc_fns in exim.get_exports_hierarchy_noext() {
-            if pkg_ifc_fns.ifc_fqn.namespace() == HTTP_HANDLER_FFQN.ifc_fqn.namespace()
-                && pkg_ifc_fns.ifc_fqn.package_name() == HTTP_HANDLER_FFQN.ifc_fqn.package_name()
-                && pkg_ifc_fns.ifc_fqn.ifc_name() == HTTP_HANDLER_FFQN.ifc_fqn.ifc_name()
-            {
-                return ComponentExportsType::Plain;
-            }
-        }
-        ComponentExportsType::Enrichable
     }
 
     pub fn wit(&self) -> Result<String, anyhow::Error> {
@@ -567,7 +569,7 @@ fn merge_function_params_with_wasmtime(
     // wasmtime_parsed_interfaces: impl ExactSizeIterator<Item = (&'a str /* ifc_fqn */, ComponentItem)>
     //     + 'a,
     engine: &Engine,
-    ffqns_to_wit_parsed_meta: hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>,
+    ffqns_to_wit_parsed_meta: FfqnToMetadataMap,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
     if exports {
         merge_function_params_with_wasmtime_internal(
@@ -591,7 +593,7 @@ fn merge_function_params_with_wasmtime_internal<'a>(
     wasmtime_parsed_interfaces: impl ExactSizeIterator<Item = (&'a str /* ifc_fqn */, ComponentItem)>
     + 'a,
     engine: &Engine,
-    mut ffqns_to_wit_parsed_meta: hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>,
+    mut ffqns_to_wit_parsed_meta: FfqnToMetadataMap,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
     let mut vec = Vec::new();
     for (ifc_fqn, item) in wasmtime_parsed_interfaces {
@@ -705,10 +707,10 @@ struct ParameterNameWitType {
     wit_type: StrVariant,
 }
 
-fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
+fn create_ffqn_to_metadata_map<'a>(
     resolve: &'a Resolve,
     iter: impl Iterator<Item = (&'a WorldKey, &'a WorldItem)>,
-) -> Result<hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>, DecodeError> {
+) -> Result<FfqnToMetadataMap, DecodeError> {
     let mut res_map = hashbrown::HashMap::new();
     for (_, item) in iter {
         if let wit_parser::WorldItem::Interface {
@@ -783,8 +785,8 @@ fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::wit_parsed_ffqn_to_wit_parsed_fn_metadata;
-    use crate::wasm_tools::{ComponentExportsType, WasmComponent};
+    use super::create_ffqn_to_metadata_map;
+    use crate::wasm_tools::WasmComponent;
     use concepts::ComponentType;
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
@@ -809,7 +811,7 @@ pub(crate) mod tests {
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
         let engine = engine();
         let component =
-            WasmComponent::new(&wasm_path, &engine, Some(ComponentType::Workflow.into())).unwrap();
+            WasmComponent::new(&wasm_path, &engine, ComponentType::Workflow.into()).unwrap();
         let exports = component
             .exported_functions(false)
             .iter()
@@ -845,39 +847,18 @@ pub(crate) mod tests {
             panic!();
         };
         let world = resolve.worlds.get(world_id).expect("world must exist");
-        let exports = wit_parsed_ffqn_to_wit_parsed_fn_metadata(&resolve, world.exports.iter())
+        let exports = create_ffqn_to_metadata_map(&resolve, world.exports.iter())
             .unwrap()
             .into_iter()
             .map(|(ffqn, val)| (ffqn.to_string(), val))
             .collect::<hashbrown::HashMap<_, _>>();
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
 
-        let imports = wit_parsed_ffqn_to_wit_parsed_fn_metadata(&resolve, world.imports.iter())
+        let imports = create_ffqn_to_metadata_map(&resolve, world.imports.iter())
             .unwrap()
             .into_iter()
             .map(|(ffqn, val)| (ffqn.to_string(), (val, ffqn.ifc_fqn, ffqn.function_name)))
             .collect::<hashbrown::HashMap<_, _>>();
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
-    }
-
-    #[rstest]
-    #[test]
-    #[case(
-        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-        ComponentExportsType::Enrichable
-    )]
-    #[case(
-        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-        ComponentExportsType::Enrichable
-    )]
-    #[case(
-        test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
-        ComponentExportsType::Plain
-    )]
-    fn auto_detection(#[case] wasm_path: &str, #[case] exports_type: ComponentExportsType) {
-        test_utils::set_up();
-        let engine = engine();
-        let component = WasmComponent::new(wasm_path, &engine, None).unwrap();
-        assert_eq!(exports_type, component.exports_type);
     }
 }

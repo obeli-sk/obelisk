@@ -46,6 +46,7 @@ pub(crate) fn wit(
     let wit = printer.output.to_string();
     match enrich {
         ComponentExportsType::Enrichable => add_ext_exports(&wit, exim),
+        ComponentExportsType::EnrichableStub => add_ext_exports(&wit, exim), // FIXME: Add -stub
         ComponentExportsType::Plain => Ok(wit),
     }
 }
@@ -512,7 +513,7 @@ mod tests {
         test_utils::set_up();
 
         let engine = engine();
-        let component = WasmComponent::new(wasm_path, &engine, Some(exports_type)).unwrap();
+        let component = WasmComponent::new(wasm_path, &engine, exports_type).unwrap();
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
         let wit = component.wit().unwrap();

@@ -174,6 +174,7 @@ impl From<ComponentType> for grpc_gen::ComponentType {
     fn from(value: ComponentType) -> Self {
         match value {
             ComponentType::ActivityWasm => grpc_gen::ComponentType::ActivityWasm,
+            ComponentType::ActivityStub => grpc_gen::ComponentType::ActivityStub,
             ComponentType::Workflow => grpc_gen::ComponentType::Workflow,
             ComponentType::WebhookEndpoint => grpc_gen::ComponentType::WebhookEndpoint,
         }

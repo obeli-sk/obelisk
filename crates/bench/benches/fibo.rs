@@ -41,8 +41,7 @@ mod bench {
         let component_id =
             ComponentId::new(ComponentType::ActivityWasm, wasm_file_name(wasm_path)).unwrap();
         (
-            WasmComponent::new(wasm_path, engine, Some(component_id.component_type.into()))
-                .unwrap(),
+            WasmComponent::new(wasm_path, engine, component_id.component_type.into()).unwrap(),
             component_id,
         )
     }
@@ -151,8 +150,7 @@ mod bench {
         let component_id =
             ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         (
-            WasmComponent::new(wasm_path, engine, Some(component_id.component_type.into()))
-                .unwrap(),
+            WasmComponent::new(wasm_path, engine, component_id.component_type.into()).unwrap(),
             component_id,
         )
     }
@@ -172,7 +170,7 @@ mod bench {
                 WasmComponent::new(
                     wasm_path,
                     &workflow_engine,
-                    Some(component_id.component_type.into()),
+                    component_id.component_type.into(),
                 )
                 .unwrap(),
                 WorkflowConfig {

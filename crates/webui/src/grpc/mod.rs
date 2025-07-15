@@ -52,6 +52,7 @@ impl yew::ToHtml for ComponentType {
         match self {
             ComponentType::Workflow => "Workflow",
             ComponentType::ActivityWasm => "Activity",
+            ComponentType::ActivityStub => "Activity Stub",
             ComponentType::WebhookEndpoint => "Webhook Endpoint",
         }
         .to_html()
@@ -63,6 +64,7 @@ impl ComponentType {
         match self {
             ComponentType::Workflow => yewprint::Icon::GanttChart,
             ComponentType::ActivityWasm => yewprint::Icon::CodeBlock,
+            ComponentType::ActivityStub => yewprint::Icon::Import,
             ComponentType::WebhookEndpoint => yewprint::Icon::GlobeNetwork,
         }
     }

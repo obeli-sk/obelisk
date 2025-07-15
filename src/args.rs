@@ -1,5 +1,5 @@
 use clap::Parser;
-use concepts::{ExecutionId, FunctionFqn};
+use concepts::{ComponentType, ExecutionId, FunctionFqn};
 use std::path::PathBuf;
 
 mod shadow {
@@ -95,6 +95,8 @@ pub(crate) enum Component {
     Inspect {
         #[arg(required(true))]
         path: PathBuf,
+        #[arg(required(true))]
+        component_type: ComponentType,
         #[arg(short, long)]
         imports: bool,
         #[arg(short, long)]

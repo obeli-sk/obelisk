@@ -95,6 +95,7 @@ enum ComponentType {
     WORKFLOW = 0;
     ACTIVITY_WASM = 1;
     WEBHOOK_ENDPOINT = 2;
+    ACTIVITY_STUB = 3;
 }
 
 message FunctionDetail {

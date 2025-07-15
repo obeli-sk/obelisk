@@ -11,7 +11,6 @@ use std::{
 };
 use tracing::{Instrument, debug, info, info_span, instrument, warn};
 use utils::wasm_tools::WasmComponent;
-use wasmtime::Engine;
 
 const OCI_CLIENT_RETRIES: u64 = 10;
 
@@ -164,14 +163,9 @@ pub(crate) async fn push(wasm_path: PathBuf, reference: &Reference) -> Result<()
             .await?
             .unwrap_or(wasm_path)
     };
-    let engine = {
-        let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_component_model(true);
-        Engine::new(&wasmtime_config).unwrap()
-    };
     // Sanity check: Is it really a WASM Component?
-    let wasm_component = WasmComponent::new(&wasm_path, &engine, None)?;
-    debug!("Pushing {wasm_component:?}");
+    WasmComponent::verify_wasm(&wasm_path)?;
+    debug!("Pushing...");
 
     let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
     let (conf, layer) = WasmConfig::from_component(&wasm_path, None)

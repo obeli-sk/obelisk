@@ -1409,6 +1409,7 @@ impl<'a> arbitrary::Arbitrary<'a> for JoinSetId {
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentType {
     ActivityWasm,
+    ActivityStub,
     Workflow,
     WebhookEndpoint,
 }
@@ -1685,6 +1686,12 @@ pub struct PackageIfcFns {
 pub struct ComponentRetryConfig {
     pub max_retries: u32,
     pub retry_exp_backoff: Duration,
+}
+impl ComponentRetryConfig {
+    pub const ZERO: ComponentRetryConfig = ComponentRetryConfig {
+        max_retries: 0,
+        retry_exp_backoff: Duration::ZERO,
+    };
 }
 
 /// Implementation must not return `-obelisk-ext` suffix in any package name, nor `obelisk` namespace.

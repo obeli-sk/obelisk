@@ -70,9 +70,10 @@ max_retries = 0
 forward_stdout = "stderr"
 forward_stderr = "stderr"
 
-[[activity_wasm]]
+[[activity_wasm]] # TODO: activity_stub
 name = "test_programs_stub_activity_dummy"
 location.path = "target/release_testprograms/wasm32-wasip2/release/test_programs_stub_activity.wasm"
+stub = true
 
 # [[workflow]]
 # name = "test_programs_stub_workflow"

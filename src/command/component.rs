@@ -2,6 +2,7 @@ use crate::FunctionMetadataVerbosity;
 use crate::FunctionRepositoryClient;
 use crate::grpc_util::grpc_gen;
 use anyhow::Context;
+use concepts::ComponentType;
 use concepts::{FunctionFqn, FunctionMetadata};
 use std::path::PathBuf;
 use utils::wasm_tools::WasmComponent;
@@ -9,6 +10,7 @@ use wasmtime::Engine;
 
 pub(crate) async fn inspect(
     wasm_path: PathBuf,
+    component_type: ComponentType,
     verbosity: FunctionMetadataVerbosity,
     extensions: bool,
     convert_core_module: bool,
@@ -33,7 +35,7 @@ pub(crate) async fn inspect(
         wasmtime_config.wasm_component_model(true);
         Engine::new(&wasmtime_config).unwrap()
     };
-    let wasm_component = WasmComponent::new(wasm_path, &engine, None)?;
+    let wasm_component = WasmComponent::new(wasm_path, &engine, component_type.into())?;
 
     println!("Exports:");
     inspect_fns(wasm_component.exported_functions(extensions));
