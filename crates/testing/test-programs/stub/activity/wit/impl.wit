@@ -1,5 +1,5 @@
 package any:any;
 
 world any {
-    export testing:stub-activity/stub-activity;
+    export testing:stub-activity/activity;
 }
