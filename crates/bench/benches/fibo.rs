@@ -41,7 +41,7 @@ mod bench {
         let component_id =
             ComponentId::new(ComponentType::ActivityWasm, wasm_file_name(wasm_path)).unwrap();
         (
-            WasmComponent::new(wasm_path, engine, component_id.component_type.into()).unwrap(),
+            WasmComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
             component_id,
         )
     }
@@ -150,7 +150,7 @@ mod bench {
         let component_id =
             ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         (
-            WasmComponent::new(wasm_path, engine, component_id.component_type.into()).unwrap(),
+            WasmComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
             component_id,
         )
     }
@@ -167,12 +167,8 @@ mod bench {
             ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         let worker = Arc::new(
             WorkflowWorkerCompiled::new_with_config(
-                WasmComponent::new(
-                    wasm_path,
-                    &workflow_engine,
-                    component_id.component_type.into(),
-                )
-                .unwrap(),
+                WasmComponent::new(wasm_path, &workflow_engine, component_id.component_type)
+                    .unwrap(),
                 WorkflowConfig {
                     component_id: component_id.clone(),
                     join_next_blocking_strategy,

@@ -92,8 +92,7 @@ impl WebhookEndpointCompiled {
         env_vars: Arc<[EnvVar]>,
         backtrace_persist: bool,
     ) -> Result<Self, WasmFileError> {
-        let wasm_component =
-            WasmComponent::new(wasm_path, engine, ComponentType::WebhookEndpoint.into())?;
+        let wasm_component = WasmComponent::new(wasm_path, engine, ComponentType::WebhookEndpoint)?;
         Ok(Self {
             component_id,
             forward_stdout,
@@ -1022,7 +1021,7 @@ pub(crate) mod tests {
 
         pub(crate) fn compile_webhook(wasm_path: &str) -> WasmComponent {
             let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
-            WasmComponent::new(wasm_path, &engine, ComponentType::WebhookEndpoint.into()).unwrap()
+            WasmComponent::new(wasm_path, &engine, ComponentType::WebhookEndpoint).unwrap()
         }
 
         struct SetUpFiboWebhook {

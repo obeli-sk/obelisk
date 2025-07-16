@@ -105,7 +105,6 @@ use tracing::info_span;
 use tracing::instrument;
 use tracing::warn;
 use tracing::{debug, info, trace};
-use utils::wasm_tools::ComponentExportsType;
 use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
 use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
@@ -840,6 +839,7 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
                     FunctionExtension::Submit => grpc_gen::FunctionExtension::Submit,
                     FunctionExtension::AwaitNext => grpc_gen::FunctionExtension::AwaitNext,
                     FunctionExtension::Schedule => grpc_gen::FunctionExtension::Schedule,
+                    FunctionExtension::Stub => grpc_gen::FunctionExtension::Stub,
                 }
                 .into()
             }),
@@ -1618,9 +1618,7 @@ async fn compile_and_verify(
                         let wasm_component = WasmComponent::new(
                             activity.wasm_path,
                             &engine,
-                            ComponentExportsType::from(
-                                activity.activity_config.component_id.component_type,
-                            ),
+                            activity.activity_config.component_id.component_type,
                         )?;
                         let wit = wasm_component
                             .wit()
@@ -1767,8 +1765,8 @@ fn prespawn_activity(
     debug!("Instantiating activity");
     trace!(?activity, "Full configuration");
     let engine = engines.activity_engine.clone();
-    let component_exports_type = ComponentExportsType::from(activity.component_id().component_type);
-    let wasm_component = WasmComponent::new(activity.wasm_path, &engine, component_exports_type)?;
+    let component_type = activity.component_id().component_type;
+    let wasm_component = WasmComponent::new(activity.wasm_path, &engine, component_type)?;
     let wit = wasm_component
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
@@ -1804,8 +1802,8 @@ fn prespawn_workflow(
     debug!("Instantiating workflow");
     trace!(?workflow, "Full configuration");
     let engine = engines.workflow_engine.clone();
-    let component_exports_type = ComponentExportsType::from(workflow.component_id().component_type);
-    let wasm_component = WasmComponent::new(&workflow.wasm_path, &engine, component_exports_type)?;
+    let component_type = workflow.component_id().component_type;
+    let wasm_component = WasmComponent::new(&workflow.wasm_path, &engine, component_type)?;
     let wit = wasm_component
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))

@@ -61,6 +61,7 @@ package obelisk:types@1.1.0 {
 
     variant execution-error {
       /// FIXME: keep only one variant `unknown`
+      /// NB: Update wasm_tools' error_tuple as well.
       activity-trap(string),
       permanent-timeout,
     }

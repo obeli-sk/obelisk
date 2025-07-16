@@ -2,7 +2,8 @@ use crate::sha256sum::calculate_sha256_file;
 use anyhow::Context;
 use concepts::{
     ComponentType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
-    PackageIfcFns, ParameterType, ParameterTypes, ReturnType, SUFFIX_PKG_EXT, StrVariant,
+    PackageIfcFns, ParameterType, ParameterTypes, ReturnType, SUFFIX_PKG_EXT, SUFFIX_PKG_STUB,
+    StrVariant,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -175,7 +176,7 @@ impl WasmComponent {
     pub fn new<P: AsRef<Path>>(
         wasm_path: P,
         engine: &Engine,
-        exports_type: ComponentExportsType,
+        component_type: ComponentType,
     ) -> Result<Self, DecodeError> {
         let wasm_path = wasm_path.as_ref();
 
@@ -197,13 +198,14 @@ impl WasmComponent {
             engine,
             exported_ffqns_to_wit_meta,
             imported_ffqns_to_wit_meta,
+            component_type,
         )?;
 
         Ok(Self {
             wasmtime_component,
             exim,
             decoded,
-            exports_type,
+            exports_type: component_type.into(), // FIXME: replace with component_type
         })
     }
 
@@ -320,10 +322,11 @@ impl ExIm {
             FunctionFqn,
             WitParsedFunctionMetadata,
         >,
+        component_type: ComponentType,
     ) -> Result<ExIm, DecodeError> {
-        let component_type = component.component_type();
+        let wasmtime_component_type = component.component_type();
         let mut exports_hierarchy_ext = merge_function_params_with_wasmtime(
-            &component_type,
+            &wasmtime_component_type,
             true,
             engine,
             exported_ffqns_to_wit_parsed_meta,
@@ -347,10 +350,10 @@ impl ExIm {
         }
 
         let exports_flat_noext = Self::flatten(&exports_hierarchy_ext);
-        Self::enrich_exports_with_extensions(&mut exports_hierarchy_ext);
+        Self::enrich_exports_with_extensions(&mut exports_hierarchy_ext, component_type);
         let exports_flat_ext = Self::flatten(&exports_hierarchy_ext);
         let imports_hierarchy = merge_function_params_with_wasmtime(
-            &component_type,
+            &wasmtime_component_type,
             false,
             engine,
             imported_ffqns_to_wit_parsed_meta,
@@ -364,7 +367,13 @@ impl ExIm {
         })
     }
 
-    fn enrich_exports_with_extensions(exports_hierarchy: &mut Vec<PackageIfcFns>) {
+    fn enrich_exports_with_extensions(
+        exports_hierarchy: &mut Vec<PackageIfcFns>,
+        component_type: ComponentType,
+    ) {
+        if component_type == ComponentType::WebhookEndpoint {
+            return;
+        }
         // initialize values for reuse
         let execution_id_type_wrapper =
             TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
@@ -374,6 +383,11 @@ impl ExIm {
             type_wrapper: execution_id_type_wrapper.clone(),
             wit_type: concepts::StrVariant::Static("execution-id"),
         });
+        let param_type_execution_id = ParameterType {
+            type_wrapper: execution_id_type_wrapper.clone(),
+            name: StrVariant::Static("execution-id"),
+            wit_type: StrVariant::Static("execution-id"),
+        };
         let param_type_join_set = ParameterType {
             type_wrapper: join_set_id_type_wrapper.clone(),
             name: StrVariant::Static("join-set-id"),
@@ -398,8 +412,21 @@ impl ExIm {
             name: StrVariant::Static("scheduled-at"),
             wit_type: StrVariant::Static("schedule-at"),
         };
+        let execution_id_and_error_tuple_type_wrapper = TypeWrapper::Tuple(Box::new([
+            execution_id_type_wrapper.clone(),
+            TypeWrapper::Variant(indexmap! {
+                Box::from("activity-trap") => Some(TypeWrapper::String),
+                Box::from("permanent-timeout") => None,
+            }),
+        ]));
+        let stub_error_type_wrapper = TypeWrapper::Variant(indexmap! {
+            Box::from("not-found") => None,
+            Box::from("ffqn-mismatch") => None,
+            Box::from("conflict") => None,
+        });
 
-        let mut extensions = Vec::with_capacity(exports_hierarchy.len());
+        let mut extensions = Vec::new();
+        let mut stubs = Vec::new();
         for PackageIfcFns {
             ifc_fqn,
             fns,
@@ -407,16 +434,23 @@ impl ExIm {
         } in exports_hierarchy.iter()
         {
             assert!(!extension);
-            let obelisk_extended_ifc = IfcFqnName::from_parts(
+            let obelisk_ext_ifc = IfcFqnName::from_parts(
                 ifc_fqn.namespace(),
                 &format!("{}{SUFFIX_PKG_EXT}", ifc_fqn.package_name()),
                 ifc_fqn.ifc_name(),
                 ifc_fqn.version(),
             );
             let mut extension_fns = IndexMap::new();
-            let mut insert = |fn_metadata: FunctionMetadata| {
+            let mut insert_ext = |fn_metadata: FunctionMetadata| {
                 extension_fns.insert(fn_metadata.ffqn.function_name.clone(), fn_metadata);
             };
+            let obelisk_stub_ifc = IfcFqnName::from_parts(
+                ifc_fqn.namespace(),
+                &format!("{}{SUFFIX_PKG_STUB}", ifc_fqn.package_name()),
+                ifc_fqn.ifc_name(),
+                ifc_fqn.version(),
+            );
+            let mut stub_fns = IndexMap::new();
             for (
                 fun,
                 FunctionMetadata {
@@ -450,7 +484,7 @@ impl ExIm {
                 // -submit(join-set-id: join-set-id, original params) -> execution id
                 let fn_submit = FunctionMetadata {
                     ffqn: FunctionFqn {
-                        ifc_fqn: obelisk_extended_ifc.clone(),
+                        ifc_fqn: obelisk_ext_ifc.clone(),
                         function_name: FnName::from(format!(
                             "{}-submit",
                             exported_fn_metadata.ffqn.function_name
@@ -467,12 +501,12 @@ impl ExIm {
                     extension: Some(FunctionExtension::Submit),
                     submittable: false,
                 };
-                insert(fn_submit);
+                insert_ext(fn_submit);
 
                 // -await-next(join-set-id: join-set-id) ->  result<(execution_id, original_return_type), execution-error>
                 let fn_await_next = FunctionMetadata {
                     ffqn: FunctionFqn {
-                        ifc_fqn: obelisk_extended_ifc.clone(),
+                        ifc_fqn: obelisk_ext_ifc.clone(),
                         function_name: FnName::from(format!(
                             "{}-await-next",
                             exported_fn_metadata.ffqn.function_name
@@ -480,24 +514,19 @@ impl ExIm {
                     },
                     parameter_types: ParameterTypes(vec![param_type_join_set.clone()]),
                     return_type: {
-                        let error_tuple = Some(Box::new(TypeWrapper::Tuple(Box::new([
-                            execution_id_type_wrapper.clone(),
-                            TypeWrapper::Variant(indexmap! {
-                                Box::from("activity-trap") => Some(TypeWrapper::String),
-                                Box::from("permanent-timeout") => None,
-                            }),
-                        ]))));
                         let (ok_part, type_wrapper) =
-                            if let Some(original_ret) = exported_fn_metadata.return_type {
+                            if let Some(original_ret) = &exported_fn_metadata.return_type {
                                 (
                                     // Use ReturnType::display to serialize wit_type or fallback
                                     Cow::Owned(format!("tuple<execution-id, {original_ret}>")),
                                     TypeWrapper::Result {
                                         ok: Some(Box::new(TypeWrapper::Tuple(Box::new([
                                             execution_id_type_wrapper.clone(),
-                                            original_ret.type_wrapper,
+                                            original_ret.type_wrapper.clone(),
                                         ])))), // (execution-id, original_ret)
-                                        err: error_tuple,
+                                        err: Some(Box::new(
+                                            execution_id_and_error_tuple_type_wrapper.clone(),
+                                        )),
                                     },
                                 )
                             } else {
@@ -505,7 +534,9 @@ impl ExIm {
                                     Cow::Borrowed("execution-id"),
                                     TypeWrapper::Result {
                                         ok: Some(Box::new(execution_id_type_wrapper.clone())),
-                                        err: error_tuple,
+                                        err: Some(Box::new(
+                                            execution_id_and_error_tuple_type_wrapper.clone(),
+                                        )),
                                     },
                                 )
                             };
@@ -519,11 +550,12 @@ impl ExIm {
                     extension: Some(FunctionExtension::AwaitNext),
                     submittable: false,
                 };
-                insert(fn_await_next);
+                insert_ext(fn_await_next);
+
                 // -schedule(schedule: schedule-at, original params) -> string (execution id)
                 let fn_schedule = FunctionMetadata {
                     ffqn: FunctionFqn {
-                        ifc_fqn: obelisk_extended_ifc.clone(),
+                        ifc_fqn: obelisk_ext_ifc.clone(),
                         function_name: FnName::from(format!(
                             "{}{EXTENSION_FN_SUFFIX_SCHEDULE}",
                             exported_fn_metadata.ffqn.function_name
@@ -540,14 +572,56 @@ impl ExIm {
                     extension: Some(FunctionExtension::Schedule),
                     submittable: true,
                 };
-                insert(fn_schedule);
+                insert_ext(fn_schedule);
+
+                if component_type == ComponentType::ActivityStub {
+                    // -stub(execution-id: execution-id, original retval) -> result<_, stub-error>
+                    let fn_stub = FunctionMetadata {
+                        ffqn: FunctionFqn {
+                            ifc_fqn: obelisk_stub_ifc.clone(),
+                            function_name: FnName::from(format!(
+                                "{}-stub",
+                                exported_fn_metadata.ffqn.function_name
+                            )),
+                        },
+                        parameter_types: {
+                            let mut params = vec![param_type_execution_id.clone()];
+                            if let Some(original_ret) = &exported_fn_metadata.return_type {
+                                params.push(ParameterType {
+                                    type_wrapper: original_ret.type_wrapper.clone(),
+                                    name: StrVariant::Static("return-value"),
+                                    wit_type: original_ret.wit_type.clone(),
+                                });
+                            }
+                            ParameterTypes(params)
+                        },
+                        return_type: Some(ReturnType {
+                            type_wrapper: TypeWrapper::Result {
+                                ok: None,
+                                err: Some(Box::new(stub_error_type_wrapper.clone())),
+                            },
+                            wit_type: StrVariant::Static("result<_, stub-error>"),
+                        }),
+                        extension: Some(FunctionExtension::Stub),
+                        submittable: false, // TODO: Allow external submission.
+                    };
+                    stub_fns.insert(fn_stub.ffqn.function_name.clone(), fn_stub);
+                }
             }
-            extensions.push((obelisk_extended_ifc, extension_fns));
+            extensions.push((obelisk_ext_ifc, extension_fns));
+            stubs.push((obelisk_stub_ifc, stub_fns));
         }
-        for (obelisk_extended_ifc, extension_fns) in extensions {
+        for (obelisk_ext_ifc, extension_fns) in extensions {
             exports_hierarchy.push(PackageIfcFns {
-                ifc_fqn: obelisk_extended_ifc,
+                ifc_fqn: obelisk_ext_ifc,
                 fns: extension_fns,
+                extension: true,
+            });
+        }
+        for (obelisk_stub_ifc, stub_fns) in stubs {
+            exports_hierarchy.push(PackageIfcFns {
+                ifc_fqn: obelisk_stub_ifc,
+                fns: stub_fns,
                 extension: true,
             });
         }
@@ -810,8 +884,7 @@ pub(crate) mod tests {
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
         let engine = engine();
-        let component =
-            WasmComponent::new(&wasm_path, &engine, ComponentType::Workflow.into()).unwrap();
+        let component = WasmComponent::new(&wasm_path, &engine, ComponentType::Workflow).unwrap();
         let exports = component
             .exported_functions(false)
             .iter()

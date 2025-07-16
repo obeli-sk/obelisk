@@ -34,6 +34,7 @@ use wasmtime::component::{Type, Val};
 pub const NAMESPACE_OBELISK: &str = "obelisk";
 const NAMESPACE_WASI: &str = "wasi";
 pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
+pub const SUFFIX_PKG_STUB: &str = "-obelisk-stub";
 
 pub type FinishedExecutionResult = Result<SupportedFunctionReturnValue, FinishedExecutionError>;
 
@@ -645,6 +646,7 @@ pub enum FunctionExtension {
     Submit,
     AwaitNext,
     Schedule,
+    Stub,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

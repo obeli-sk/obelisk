@@ -153,11 +153,12 @@ fn build_internal(
 fn generate_code(_wasm_path: &Path, _pkg_name: &str, _component_type: ComponentType) {}
 
 #[cfg(feature = "genrs")]
-impl From<ComponentType> for utils::wasm_tools::ComponentExportsType {
+impl From<ComponentType> for concepts::ComponentType {
     fn from(value: ComponentType) -> Self {
         match value {
-            ComponentType::ActivityWasm | ComponentType::Workflow => Self::Enrichable,
-            ComponentType::WebhookEndpoint => Self::Plain,
+            ComponentType::ActivityWasm => Self::ActivityWasm,
+            ComponentType::Workflow => Self::Workflow,
+            ComponentType::WebhookEndpoint => Self::WebhookEndpoint,
         }
     }
 }

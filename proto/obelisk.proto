@@ -110,6 +110,7 @@ enum FunctionExtension {
     SUBMIT = 0;
     AWAIT_NEXT = 1;
     SCHEDULE = 2;
+    STUB = 3;
 }
 
 message FunctionParameter {

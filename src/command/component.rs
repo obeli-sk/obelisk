@@ -35,7 +35,7 @@ pub(crate) async fn inspect(
         wasmtime_config.wasm_component_model(true);
         Engine::new(&wasmtime_config).unwrap()
     };
-    let wasm_component = WasmComponent::new(wasm_path, &engine, component_type.into())?;
+    let wasm_component = WasmComponent::new(wasm_path, &engine, component_type)?;
 
     println!("Exports:");
     inspect_fns(wasm_component.exported_functions(extensions));

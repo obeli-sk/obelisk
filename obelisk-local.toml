@@ -75,6 +75,6 @@ name = "test_programs_stub_activity_dummy"
 location.path = "target/release_testprograms/wasm32-wasip2/release/test_programs_stub_activity.wasm"
 stub = true
 
-# [[workflow]]
-# name = "test_programs_stub_workflow"
-# location.path = "target/release_testprograms/wasm32-unknown-unknown/release/test_programs_stub_workflow.wasm"
+[[workflow]]
+name = "test_programs_stub_workflow"
+location.path = "target/release_testprograms/wasm32-unknown-unknown/release/test_programs_stub_workflow.wasm"

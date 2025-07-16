@@ -484,7 +484,8 @@ fn from_pkg_fqn_to_wit_package_name(pkg_fqn: PkgFqn) -> Result<PackageName, semv
 #[cfg(test)]
 mod tests {
     use crate::wasm_tools::tests::engine;
-    use crate::wasm_tools::{ComponentExportsType, WasmComponent};
+    use crate::wasm_tools::WasmComponent;
+    use concepts::ComponentType;
     use rstest::rstest;
     use std::path::PathBuf;
 
@@ -492,28 +493,29 @@ mod tests {
     #[test]
     #[case(
         test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-        ComponentExportsType::Enrichable
+        ComponentType::Workflow
     )]
     #[case(
         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-        ComponentExportsType::Enrichable
+        ComponentType::ActivityWasm
     )]
     #[case(
         test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
-        ComponentExportsType::Plain
+        ComponentType::WebhookEndpoint
     )]
     #[case(
         test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-        ComponentExportsType::Enrichable
+        ComponentType::ActivityWasm
+    )]
     )]
     fn wit_should_contain_extensions(
         #[case] wasm_path: &'static str,
-        #[case] exports_type: ComponentExportsType,
+        #[case] component_type: ComponentType,
     ) {
         test_utils::set_up();
 
         let engine = engine();
-        let component = WasmComponent::new(wasm_path, &engine, exports_type).unwrap();
+        let component = WasmComponent::new(wasm_path, &engine, component_type).unwrap();
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
         let wit = component.wit().unwrap();
