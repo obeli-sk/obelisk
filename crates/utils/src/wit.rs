@@ -48,6 +48,7 @@ pub(crate) fn wit(
 }
 
 // Replace obelisk:types from the actual WASM file because it may not contain all types we are going to need in exported functions.
+#[expect(clippy::items_after_statements)]
 fn replace_obelisk_types(wit: &str) -> String {
     // Replace last character of the first line from ; to {
     let types_nesting = {
@@ -377,7 +378,7 @@ fn add_ext_exports(
                     let mut params =
                         vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
                     if let Some(actual_return_type_id) = &original_fn.result {
-                        params.push(("return-value".to_string(), actual_return_type_id.clone()));
+                        params.push(("return-value".to_string(), *actual_return_type_id));
                     }
 
                     let fn_stub = Function {

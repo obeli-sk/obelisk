@@ -306,7 +306,7 @@ impl ExIm {
         component_type: ComponentType,
     ) -> Result<ExIm, DecodeError> {
         let mut exports_hierarchy_ext = merge_function_params_with_wasmtime(
-            &wasmtime_component_type,
+            wasmtime_component_type,
             true,
             engine,
             exported_ffqns_to_wit_parsed_meta,
@@ -333,7 +333,7 @@ impl ExIm {
         Self::enrich_exports_with_extensions(&mut exports_hierarchy_ext, component_type);
         let exports_flat_ext = Self::flatten(&exports_hierarchy_ext);
         let imports_hierarchy = merge_function_params_with_wasmtime(
-            &wasmtime_component_type,
+            wasmtime_component_type,
             false,
             engine,
             imported_ffqns_to_wit_parsed_meta,

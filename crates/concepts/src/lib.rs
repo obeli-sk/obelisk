@@ -1680,7 +1680,7 @@ impl Display for ParameterTypes {
 #[derive(Debug, Clone)]
 pub struct PackageIfcFns {
     pub ifc_fqn: IfcFqnName,
-    pub extension: bool,
+    pub extension: bool, // interface ending with `-obelisk-ext` or `-obelisk-stub`
     pub fns: IndexMap<FnName, FunctionMetadata>,
 }
 
