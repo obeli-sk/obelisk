@@ -151,6 +151,10 @@
         "retry_on_err": {
           "type": "boolean",
           "default": true
+        },
+        "stub": {
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false,
