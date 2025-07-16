@@ -3279,6 +3279,7 @@ dependencies = [
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-activity-builder",
  "test-programs-http-get-workflow-builder",
+ "test-programs-stub-activity-builder",
  "test-utils",
  "thiserror 2.0.12",
  "tracing",

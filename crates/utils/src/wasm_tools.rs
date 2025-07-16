@@ -175,7 +175,7 @@ impl WasmComponent {
             Self::decode_using_wit_parser(wasm_path)?;
 
         let exim = ExIm::decode(
-            &wasmtime_component,
+            &wasmtime_component.component_type(),
             engine,
             exported_ffqns_to_wit_meta,
             imported_ffqns_to_wit_meta,
@@ -293,7 +293,7 @@ impl ExIm {
     }
 
     fn decode(
-        component: &Component,
+        wasmtime_component_type: &wasmtime::component::types::Component,
         engine: &Engine,
         exported_ffqns_to_wit_parsed_meta: hashbrown::HashMap<
             FunctionFqn,
@@ -305,7 +305,6 @@ impl ExIm {
         >,
         component_type: ComponentType,
     ) -> Result<ExIm, DecodeError> {
-        let wasmtime_component_type = component.component_type();
         let mut exports_hierarchy_ext = merge_function_params_with_wasmtime(
             &wasmtime_component_type,
             true,
@@ -619,24 +618,22 @@ impl ExIm {
 // Merge parameters obtained using the wit-parser passed as `ffqns_to_wit_parsed_meta` with `TypeWrapper` obtained from wasmtime representation.
 // TODO: Implement wit-parser -> TypeWrapper conversion which would simplify this operation
 fn merge_function_params_with_wasmtime(
-    component_type: &wasmtime::component::types::Component,
+    wasmtime_component_type: &wasmtime::component::types::Component,
     exports: bool,
-    // wasmtime_parsed_interfaces: impl ExactSizeIterator<Item = (&'a str /* ifc_fqn */, ComponentItem)>
-    //     + 'a,
     engine: &Engine,
     ffqns_to_wit_parsed_meta: FfqnToMetadataMap,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
     if exports {
         merge_function_params_with_wasmtime_internal(
             true,
-            component_type.exports(engine),
+            wasmtime_component_type.exports(engine),
             engine,
             ffqns_to_wit_parsed_meta,
         )
     } else {
         merge_function_params_with_wasmtime_internal(
             false,
-            component_type.imports(engine),
+            wasmtime_component_type.imports(engine),
             engine,
             ffqns_to_wit_parsed_meta,
         )
