@@ -1,6 +1,6 @@
-use crate::wasm_tools::{ComponentExportsType, ExIm};
+use crate::wasm_tools::ExIm;
 use anyhow::Context;
-use concepts::{FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT};
+use concepts::{ComponentType, FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT};
 use const_format::formatcp;
 use hashbrown::HashMap;
 use id_arena::Arena;
@@ -28,7 +28,7 @@ const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!(concat!(
 ));
 
 pub(crate) fn wit(
-    enrich: ComponentExportsType,
+    component_type: ComponentType,
     decoded: &DecodedWasm,
     exim: &ExIm,
 ) -> Result<String, anyhow::Error> {
@@ -44,10 +44,12 @@ pub(crate) fn wit(
     let mut printer = WitPrinter::default();
     printer.print(resolve, decoded.package(), &ids)?;
     let wit = printer.output.to_string();
-    match enrich {
-        ComponentExportsType::Enrichable => add_ext_exports(&wit, exim),
-        ComponentExportsType::EnrichableStub => add_ext_exports(&wit, exim), // FIXME: Add -stub
-        ComponentExportsType::Plain => Ok(wit),
+    match component_type {
+        ComponentType::ActivityWasm | ComponentType::Workflow => add_ext_exports(&wit, exim),
+        ComponentType::ActivityStub => {
+            add_ext_exports(&wit, exim) // FIXME: Add -stub
+        }
+        ComponentType::WebhookEndpoint => Ok(wit),
     }
 }
 

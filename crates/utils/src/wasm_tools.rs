@@ -25,25 +25,6 @@ pub const EXTENSION_FN_SUFFIX_SCHEDULE: &str = "-schedule";
 pub const HTTP_HANDLER_FFQN: FunctionFqn =
     FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ComponentExportsType {
-    Enrichable,
-    EnrichableStub,
-    Plain,
-}
-
-impl From<ComponentType> for ComponentExportsType {
-    fn from(value: ComponentType) -> Self {
-        match value {
-            ComponentType::ActivityWasm | ComponentType::Workflow => {
-                ComponentExportsType::Enrichable
-            }
-            ComponentType::ActivityStub => ComponentExportsType::EnrichableStub,
-            ComponentType::WebhookEndpoint => ComponentExportsType::Plain,
-        }
-    }
-}
-
 type FfqnToMetadataMap = hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>;
 
 #[derive(derive_more::Debug)]
@@ -53,7 +34,7 @@ pub struct WasmComponent {
     pub exim: ExIm,
     #[debug(skip)]
     pub decoded: DecodedWasm,
-    exports_type: ComponentExportsType,
+    component_type: ComponentType,
 }
 
 impl WasmComponent {
@@ -205,12 +186,12 @@ impl WasmComponent {
             wasmtime_component,
             exim,
             decoded,
-            exports_type: component_type.into(), // FIXME: replace with component_type
+            component_type,
         })
     }
 
     pub fn wit(&self) -> Result<String, anyhow::Error> {
-        crate::wit::wit(self.exports_type, &self.decoded, &self.exim)
+        crate::wit::wit(self.component_type, &self.decoded, &self.exim)
     }
 
     #[must_use]
