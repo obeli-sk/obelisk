@@ -244,10 +244,10 @@ impl<'a> ImportedFnCall<'a> {
             None
         };
 
-        if let Some(package_name) = called_ffqn.ifc_fqn.package_strip_extension_suffix() {
-            let ifc_fqn = IfcFqnName::from_parts(
+        if let Some(target_package_name) = called_ffqn.ifc_fqn.package_strip_extension_suffix() {
+            let target_ifc_fqn = IfcFqnName::from_parts(
                 called_ffqn.ifc_fqn.namespace(),
-                package_name,
+                target_package_name,
                 called_ffqn.ifc_fqn.ifc_name(),
                 called_ffqn.ifc_fqn.version(),
             );
