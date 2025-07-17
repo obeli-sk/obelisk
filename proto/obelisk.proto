@@ -370,12 +370,17 @@ message ExecutionEvent {
             ScheduledAt scheduled_at = 2;
         }
 
+        message StubResponse {
+            ExecutionId execution_id = 1;
+        }
+
         oneof event {
             Persist persist = 1;
             JoinSetCreated join_set_created = 2;
             JoinSetRequest join_set_request = 3;
             JoinNext join_next = 4;
             Schedule schedule = 5;
+            StubResponse stub_response = 6;
         }
     }
 

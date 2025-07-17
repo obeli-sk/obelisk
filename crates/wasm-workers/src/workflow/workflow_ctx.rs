@@ -3,6 +3,7 @@ use super::host_exports::{self, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
+use crate::workflow::host_exports::SUFFIX_FN_STUB;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
@@ -20,6 +21,7 @@ use host_exports::v1_1_0::obelisk::workflow::workflow_support::ClosingStrategy a
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, error, instrument, trace};
@@ -135,7 +137,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn> {
     wasi_ctx: WasiCtx,
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub(crate) enum ImportedFnCall<'a> {
     Direct {
         ffqn: FunctionFqn,
@@ -157,6 +159,14 @@ pub(crate) enum ImportedFnCall<'a> {
     AwaitNext {
         target_ffqn: FunctionFqn,
         join_set_id: JoinSetId,
+    StubResponse {
+        target_ffqn: FunctionFqn,
+        target_execution_id: ExecutionIdDerived,
+        parent_id: ExecutionId,
+        join_set_id: JoinSetId,
+        #[debug(skip)]
+        return_value: Option<wasmtime::component::Val>,
+        #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
 }
@@ -193,6 +203,25 @@ impl<'a> ImportedFnCall<'a> {
         }
     }
 
+    fn val_to_execution_id(execution_id: &Val) -> Result<ExecutionId, String> {
+        if let Val::Record(key_vals) = execution_id
+            && key_vals.len() == 1
+            && let Some((key, execution_id)) = key_vals.first()
+            && key == "id"
+            && let Val::String(execution_id) = execution_id
+        {
+            ExecutionId::from_str(execution_id).map_err(|err| {
+                error!("Error parsing execution ID parameter `{execution_id}` - {err:?}");
+                format!("error parsing execution ID parameter `{execution_id}` - {err:?}")
+            })
+        } else {
+            error!("Wrong type for ExecutionId, expected execution-id, got `{execution_id:?}`");
+            Err(format!(
+                "wrong type for ExecutionId, expected execution-id, got `{execution_id:?}`"
+            ))
+        }
+    }
+
     #[instrument(skip_all, fields(ffqn = %called_ffqn, otel.name = format!("imported_fn_call {called_ffqn}")), name = "imported_fn_call")]
     pub(crate) fn new<'ctx, C: ClockFn>(
         called_ffqn: FunctionFqn,
@@ -216,8 +245,10 @@ impl<'a> ImportedFnCall<'a> {
             );
 
             if let Some(function_name) = called_ffqn.function_name.strip_suffix(SUFFIX_FN_SUBMIT) {
-                let target_ffqn =
-                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
+                let target_ffqn = FunctionFqn::new_arc(
+                    Arc::from(target_ifc_fqn.to_string()),
+                    Arc::from(function_name),
+                );
                 let (join_set_id, params) =
                     Self::extract_join_set_id(&called_ffqn, store_ctx, params).map_err(
                         |detail| WorkflowFunctionError::ImportedFunctionCallError {
@@ -235,8 +266,10 @@ impl<'a> ImportedFnCall<'a> {
             } else if let Some(function_name) =
                 called_ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
             {
-                let target_ffqn =
-                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
+                let target_ffqn = FunctionFqn::new_arc(
+                    Arc::from(target_ifc_fqn.to_string()),
+                    Arc::from(function_name),
+                );
                 let (join_set_id, params) =
                     match Self::extract_join_set_id(&called_ffqn, store_ctx, params) {
                         Ok(ok) => ok,
@@ -266,8 +299,10 @@ impl<'a> ImportedFnCall<'a> {
             } else if let Some(function_name) =
                 called_ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
             {
-                let target_ffqn =
-                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
+                let target_ffqn = FunctionFqn::new_arc(
+                    Arc::from(target_ifc_fqn.to_string()),
+                    Arc::from(function_name),
+                );
                 let Some((scheduled_at, params)) = params.split_first() else {
                     return Err(WorkflowFunctionError::ImportedFunctionCallError {
                         ffqn: called_ffqn,
@@ -309,10 +344,89 @@ impl<'a> ImportedFnCall<'a> {
                     wasm_backtrace,
                 })
             } else {
-                error!("Unrecognized extension function {called_ffqn}");
+                error!("Unrecognized `-obelisk-ext` interface function {called_ffqn}");
                 return Err(WorkflowFunctionError::ImportedFunctionCallError {
                     ffqn: called_ffqn,
-                    reason: StrVariant::Static("unrecognized extension function"),
+                    reason: StrVariant::Static("unrecognized `-obelisk-ext` interface function"),
+                    detail: None,
+                });
+            }
+        } else if let Some(target_package_name) =
+            called_ffqn.ifc_fqn.package_strip_obelisk_stub_suffix()
+        {
+            let target_ifc_fqn = IfcFqnName::from_parts(
+                called_ffqn.ifc_fqn.namespace(),
+                target_package_name,
+                called_ffqn.ifc_fqn.ifc_name(),
+                called_ffqn.ifc_fqn.version(),
+            );
+            if let Some(function_name) = called_ffqn.function_name.strip_suffix(SUFFIX_FN_STUB) {
+                let target_ffqn = FunctionFqn::new_arc(
+                    Arc::from(target_ifc_fqn.to_string()),
+                    Arc::from(function_name),
+                );
+                let Some((target_execution_id, return_value)) = params.split_first() else {
+                    return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                        ffqn: called_ffqn,
+                        reason: StrVariant::Static(
+                            "exepcted at least one parameter of type `execution-id`",
+                        ),
+                        detail: None,
+                    });
+                };
+                let target_execution_id = match Self::val_to_execution_id(target_execution_id) {
+                    Ok(ExecutionId::Derived(derived)) => derived,
+                    Ok(ExecutionId::TopLevel(_)) => {
+                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: called_ffqn,
+                            reason: "first parameter must not be a top-level `execution-id`".into(),
+                            detail: None,
+                        });
+                    }
+                    Err(err) => {
+                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: called_ffqn,
+                            reason: "cannot parse first parameter as `execution-id`".into(),
+                            detail: Some(err),
+                        });
+                    }
+                };
+
+                let return_value = match return_value {
+                    [] => None,
+                    [return_value] => Some(return_value.clone()),
+                    _ => {
+                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: called_ffqn,
+                            reason: "exepcted at most two parameters for `-stub` function".into(),
+                            detail: None,
+                        });
+                    }
+                };
+                let (parent_id, join_set_id) = match target_execution_id.split_to_parts() {
+                    Ok(ok) => ok,
+                    Err(err) => {
+                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: called_ffqn,
+                            reason: "cannot split target execution id to parts in `-stub` function"
+                                .into(),
+                            detail: Some(format!("{err:?}")),
+                        });
+                    }
+                };
+                Ok(ImportedFnCall::StubResponse {
+                    target_ffqn,
+                    target_execution_id,
+                    parent_id,
+                    join_set_id,
+                    return_value,
+                    wasm_backtrace,
+                })
+            } else {
+                error!("Unrecognized `-obelisk-stub` interface function {called_ffqn}");
+                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: StrVariant::Static("unrecognized `-obelisk-stub` interface function"),
                     detail: None,
                 });
             }
@@ -335,6 +449,9 @@ impl<'a> ImportedFnCall<'a> {
                 target_ffqn: ffqn, ..
             }
             | Self::AwaitNext {
+                target_ffqn: ffqn, ..
+            }
+            | Self::StubResponse {
                 target_ffqn: ffqn, ..
             } => ffqn,
         }
@@ -778,6 +895,21 @@ impl<C: ClockFn> WorkflowCtx<C> {
             } => EventCall::BlockingChildAwaitNext {
                 join_set_id,
                 closing: false,
+                wasm_backtrace,
+            },
+            ImportedFnCall::StubResponse {
+                target_ffqn,
+                target_execution_id,
+                parent_id,
+                join_set_id,
+                return_value,
+                wasm_backtrace,
+            } => EventCall::StubResponse {
+                target_ffqn,
+                target_execution_id,
+                parent_id,
+                join_set_id,
+                return_value,
                 wasm_backtrace,
             },
         }

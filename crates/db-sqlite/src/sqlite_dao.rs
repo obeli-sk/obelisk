@@ -1672,7 +1672,8 @@ impl<S: Sleep> SqlitePool<S> {
                         ..
                     }
                     | HistoryEvent::Persist { .. }
-                    | HistoryEvent::Schedule { .. },
+                    | HistoryEvent::Schedule { .. }
+                    | HistoryEvent::StubResponse { .. },
             } => IndexAction::NoPendingStateChange(None),
 
             ExecutionEventInner::HistoryEvent {

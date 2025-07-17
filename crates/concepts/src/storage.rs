@@ -7,6 +7,7 @@ use crate::FunctionFqn;
 use crate::JoinSetId;
 use crate::Params;
 use crate::StrVariant;
+use crate::StubReturnValue;
 use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
@@ -261,7 +262,14 @@ pub const DUMMY_TEMPORARILY_FAILED: ExecutionEventInner = ExecutionEventInner::T
 };
 
 #[derive(
-    Clone, Debug, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, IntoStaticStr,
+    Clone,
+    derive_more::Debug,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    IntoStaticStr,
 )]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[allow(clippy::large_enum_variant)]
@@ -273,6 +281,7 @@ pub enum ExecutionEventInner {
     Created {
         ffqn: FunctionFqn,
         #[cfg_attr(any(test, feature = "test"), arbitrary(default))]
+        #[debug(skip)]
         params: Params,
         parent: Option<(ExecutionId, JoinSetId)>,
         scheduled_at: DateTime<Utc>,
@@ -437,6 +446,14 @@ pub enum HistoryEvent {
     Schedule {
         execution_id: ExecutionId,
         scheduled_at: HistoryEventScheduledAt,
+    },
+    #[display("StubResponse({target_execution_id})")]
+    StubResponse {
+        target_ffqn: FunctionFqn,
+        target_execution_id: ExecutionIdDerived,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StubReturnValue::None))]
+        #[debug(skip)]
+        return_value: StubReturnValue,
     },
 }
 

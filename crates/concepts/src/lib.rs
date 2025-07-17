@@ -385,11 +385,17 @@ impl IfcFqnName {
     #[must_use]
     pub fn is_extension(&self) -> bool {
         self.package_name().ends_with(SUFFIX_PKG_EXT)
+            || self.package_name().ends_with(SUFFIX_PKG_STUB)
     }
 
     #[must_use]
     pub fn package_strip_extension_suffix(&self) -> Option<&str> {
         self.package_name().strip_suffix(SUFFIX_PKG_EXT)
+    }
+
+    #[must_use]
+    pub fn package_strip_obelisk_stub_suffix(&self) -> Option<&str> {
+        self.package_name().strip_suffix(SUFFIX_PKG_STUB)
     }
 
     #[must_use]
@@ -531,19 +537,25 @@ impl SupportedFunctionReturnValue {
         } else if iter.len() == 1 {
             let (val, r#type) = iter.next().unwrap();
             let r#type = TypeWrapper::try_from(r#type)?;
-            let val = WastVal::try_from(val)?;
-            match &val {
-                WastVal::Result(Err(_)) => Ok(Self::FallibleResultErr(WastValWithType {
-                    r#type,
-                    value: val,
-                })),
-                _ => Ok(Self::InfallibleOrResultOk(WastValWithType {
-                    r#type,
-                    value: val,
-                })),
-            }
+            Self::from_val_and_type_wrapper(val, r#type)
         } else {
             Err(ResultParsingError::MultiValue)
+        }
+    }
+
+    pub fn from_val_and_type_wrapper(
+        value: wasmtime::component::Val,
+        r#type: TypeWrapper,
+    ) -> Result<Self, ResultParsingError> {
+        let value = WastVal::try_from(value)?;
+        match &value {
+            WastVal::Result(Err(_)) => {
+                Ok(Self::FallibleResultErr(WastValWithType { r#type, value }))
+            }
+            _ => Ok(Self::InfallibleOrResultOk(WastValWithType {
+                r#type,
+                value,
+            })),
         }
     }
 
@@ -640,6 +652,8 @@ impl Default for Params {
         Self(ParamsInternal::Empty)
     }
 }
+
+pub type StubReturnValue = SupportedFunctionReturnValue;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum FunctionExtension {
@@ -877,7 +891,7 @@ pub mod prefixed_ulid {
     };
     use ulid::Ulid;
 
-    use crate::JoinSetId;
+    use crate::{JoinSetId, JoinSetIdParseError};
 
     #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr)]
     #[derive_where::derive_where(Clone, Copy)]
@@ -1076,7 +1090,50 @@ pub mod prefixed_ulid {
                 "{top_level}{EXECUTION_ID_INFIX}{infix}{EXECUTION_ID_JOIN_SET_INFIX}{idx}"
             )
         }
+
+        // Two cases:
+        // A. infix does not contain dots -> first level, will be split into the top level, the whole infix must be JoinSetId.
+        // B. infix must be split into old_infix _ old_idx . JoinSetId
+        pub fn split_to_parts(
+            &self,
+        ) -> Result<(ExecutionId, JoinSetId), ExecutionIdDerivedSplitError> {
+            if let Some((old_infix_and_index, join_set_id)) =
+                self.infix.rsplit_once(EXECUTION_ID_INFIX)
+            {
+                let join_set_id = JoinSetId::from_str(join_set_id)?;
+                let Some((old_infix, old_idx)) =
+                    old_infix_and_index.rsplit_once(EXECUTION_ID_JOIN_SET_INFIX)
+                else {
+                    return Err(ExecutionIdDerivedSplitError::CannotFindJoinSetDelimiter);
+                };
+                let parent = ExecutionIdDerived {
+                    top_level: self.top_level,
+                    infix: Arc::from(old_infix),
+                    idx: old_idx
+                        .parse()
+                        .map_err(|err| ExecutionIdDerivedSplitError::CannotParseOldIndex(err))?,
+                };
+                Ok((ExecutionId::Derived(parent), join_set_id))
+            } else {
+                // This was the first level
+                Ok((
+                    ExecutionId::TopLevel(self.top_level),
+                    JoinSetId::from_str(&self.infix)?,
+                ))
+            }
+        }
     }
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum ExecutionIdDerivedSplitError {
+        #[error(transparent)]
+        JoinSetIdParseError(#[from] JoinSetIdParseError),
+        #[error("cannot parse index of parent execution - {0}")]
+        CannotParseOldIndex(ParseIntError),
+        #[error("cannot find join set delimiter")]
+        CannotFindJoinSetDelimiter,
+    }
+
     impl Debug for ExecutionIdDerived {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             self.display_or_debug(f)
@@ -1828,6 +1885,8 @@ impl opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'_
 #[cfg(test)]
 mod tests {
 
+    use rstest::rstest;
+
     use crate::{
         ExecutionId, FunctionFqn, JoinSetId, JoinSetKind, StrVariant, prefixed_ulid::ExecutorId,
     };
@@ -1910,6 +1969,35 @@ mod tests {
         assert_eq!(format!("{top_level}.g:gg_2.o:oo_2"), ser);
         let parsed = ExecutionId::from_str(&ser).unwrap();
         assert_eq!(execution_id, parsed);
+    }
+
+    #[test]
+    fn execution_id_split_first_level() {
+        let top_level = ExecutionId::generate();
+        let join_set_id =
+            JoinSetId::new(JoinSetKind::Generated, StrVariant::Static("some")).unwrap();
+        let execution_id = top_level.next_level(&join_set_id);
+        let (actual_top_level, actual_join_set) = execution_id.split_to_parts().unwrap();
+        assert_eq!(top_level, actual_top_level);
+        assert_eq!(join_set_id, actual_join_set);
+    }
+
+    #[rstest]
+    fn execution_id_split_second_level(#[values(0, 1)] outer_idx: u64) {
+        let top_level = ExecutionId::generate();
+        let join_set_id_outer =
+            JoinSetId::new(JoinSetKind::Generated, StrVariant::Static("some")).unwrap();
+        let first_level = top_level
+            .next_level(&join_set_id_outer)
+            .get_incremented_by(outer_idx);
+
+        let join_set_id_inner =
+            JoinSetId::new(JoinSetKind::Generated, StrVariant::Static("other")).unwrap();
+        let second_level = first_level.next_level(&join_set_id_inner);
+
+        let (actual_first_level, actual_join_set) = second_level.split_to_parts().unwrap();
+        assert_eq!(ExecutionId::Derived(first_level), actual_first_level);
+        assert_eq!(join_set_id_inner, actual_join_set);
     }
 
     #[test]
