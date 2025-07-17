@@ -389,7 +389,7 @@ impl IfcFqnName {
     }
 
     #[must_use]
-    pub fn package_strip_extension_suffix(&self) -> Option<&str> {
+    pub fn package_strip_obelisk_ext_suffix(&self) -> Option<&str> {
         self.package_name().strip_suffix(SUFFIX_PKG_EXT)
     }
 

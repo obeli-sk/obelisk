@@ -442,7 +442,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
         let (db_connection, version_min_including, version_max_excluding) = if let Some(
             package_name,
         ) =
-            ffqn.ifc_fqn.package_strip_extension_suffix()
+            ffqn.ifc_fqn.package_strip_obelisk_ext_suffix()
         {
             let ifc_fqn = IfcFqnName::from_parts(
                 ffqn.ifc_fqn.namespace(),

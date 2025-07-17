@@ -263,7 +263,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     fn_metadata
                         .ffqn
                         .ifc_fqn
-                        .package_strip_extension_suffix()
+                        .package_strip_obelisk_ext_suffix()
                         .expect("checked that the ifc is ext"),
                     fn_metadata.ffqn.ifc_fqn.ifc_name(),
                     fn_metadata.ffqn.ifc_fqn.version(),
