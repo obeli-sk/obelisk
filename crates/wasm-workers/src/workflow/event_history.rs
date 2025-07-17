@@ -264,9 +264,10 @@ impl<C: ClockFn> EventHistory<C> {
                     .map_err(ApplyError::DbError)?;
                 self.event_history
                     .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
+                trace!("find_matching_atomic must mark the non-blocking event as Processed");
                 let non_blocking_resp = self
                     .find_matching_atomic(&cloned_non_blocking)?
-                    .expect("now it must be found");
+                    .expect("just stored the event as Unprocessed, it must be found");
                 return Ok(non_blocking_resp);
             }
             Some(poll_variant) => poll_variant,
@@ -1551,6 +1552,7 @@ pub(crate) enum EventCall {
         ffqn: FunctionFqn,
         join_set_id: JoinSetId,
         child_execution_id: ExecutionIdDerived,
+        #[debug(skip)]
         params: Params,
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -1559,6 +1561,7 @@ pub(crate) enum EventCall {
         scheduled_at: HistoryEventScheduledAt,
         execution_id: ExecutionId,
         ffqn: FunctionFqn,
+        #[debug(skip)]
         params: Params,
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -1585,6 +1588,7 @@ pub(crate) enum EventCall {
         ffqn: FunctionFqn,
         join_set_id: JoinSetId,
         child_execution_id: ExecutionIdDerived,
+        #[debug(skip)]
         params: Params,
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,

@@ -142,23 +142,31 @@ pub(crate) enum ImportedFnCall<'a> {
     Direct {
         ffqn: FunctionFqn,
         params: &'a [Val],
+        #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     Schedule {
         target_ffqn: FunctionFqn,
         scheduled_at: HistoryEventScheduledAt,
+        #[debug(skip)]
         target_params: &'a [Val],
+        #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     Submit {
         target_ffqn: FunctionFqn,
         join_set_id: JoinSetId,
+        #[debug(skip)]
         target_params: &'a [Val],
+        #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     AwaitNext {
         target_ffqn: FunctionFqn,
         join_set_id: JoinSetId,
+        #[debug(skip)]
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+    },
     StubResponse {
         target_ffqn: FunctionFqn,
         target_execution_id: ExecutionIdDerived,

@@ -60,7 +60,7 @@ impl<S: Sleep + 'static, C: ClockFn + 'static> PreopensCleaner<S, C> {
         }
         let delete_older_than = self.clock_fn.now() - self.delete_older_than;
         debug!(
-            "Scanning {} subfolder for finished before {delete_older_than}",
+            "Scanning {} subfolders for finished before {delete_older_than}",
             subfolders.len()
         );
         for subfolder in subfolders {

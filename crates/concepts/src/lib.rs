@@ -507,13 +507,13 @@ impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, derive_more::Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SupportedFunctionReturnValue {
     None,
     // Top level type is result<_,_> with Err variant
-    FallibleResultErr(WastValWithType),
+    FallibleResultErr(#[debug(skip)] WastValWithType),
     // All other top level types
-    InfallibleOrResultOk(WastValWithType),
+    InfallibleOrResultOk(#[debug(skip)] WastValWithType),
 }
 
 #[derive(Debug, thiserror::Error)]
