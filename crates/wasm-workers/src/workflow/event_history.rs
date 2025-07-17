@@ -811,7 +811,7 @@ impl<C: ClockFn> EventHistory<C> {
 
             (
                 EventHistoryKey::Schedule {
-                    execution_id: target_execution_id,
+                    target_execution_id,
                 },
                 HistoryEvent::Schedule {
                     execution_id: found_execution_id,
@@ -1677,7 +1677,7 @@ enum EventHistoryKey {
         join_set_id: JoinSetId,
     },
     Schedule {
-        execution_id: ExecutionId,
+        target_execution_id: ExecutionId,
     },
     StubResponse {
         target_ffqn: FunctionFqn,
@@ -1761,7 +1761,7 @@ impl EventCall {
             ],
             EventCall::ScheduleRequest { execution_id, .. } => {
                 vec![EventHistoryKey::Schedule {
-                    execution_id: execution_id.clone(),
+                    target_execution_id: execution_id.clone(),
                 }]
             }
             EventCall::StubResponse {
