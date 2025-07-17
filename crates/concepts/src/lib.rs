@@ -1344,10 +1344,13 @@ pub struct JoinSetId {
     pub name: StrVariant,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, Default,
+)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
 pub enum ClosingStrategy {
+    #[default]
     Complete,
 }
 

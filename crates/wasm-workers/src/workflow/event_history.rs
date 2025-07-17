@@ -535,12 +535,17 @@ impl<C: ClockFn> EventHistory<C> {
         trace!("Finding match for {key:?}, [{found_idx}] {found_request_event:?}");
         match (key, found_request_event) {
             (
-                EventHistoryKey::CreateJoinSet { join_set_id },
+                EventHistoryKey::CreateJoinSet {
+                    join_set_id,
+                    closing_strategy,
+                },
                 HistoryEvent::JoinSetCreate {
                     join_set_id: found_join_set_id,
-                    ..
+                    closing_strategy: found_closing_strategy,
                 },
-            ) if *join_set_id == *found_join_set_id => {
+            ) if *join_set_id == *found_join_set_id
+                && closing_strategy == found_closing_strategy =>
+            {
                 trace!(%join_set_id, "Matched JoinSet");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
@@ -1648,6 +1653,7 @@ impl EventCall {
 enum EventHistoryKey {
     CreateJoinSet {
         join_set_id: JoinSetId,
+        closing_strategy: ClosingStrategy,
     },
     Persist {
         #[debug(skip)]
@@ -1688,9 +1694,14 @@ enum JoinNextKind {
 impl EventCall {
     fn as_keys(&self) -> Vec<EventHistoryKey> {
         match self {
-            EventCall::CreateJoinSet { join_set_id, .. } => {
+            EventCall::CreateJoinSet {
+                join_set_id,
+                closing_strategy,
+                ..
+            } => {
                 vec![EventHistoryKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
+                    closing_strategy: *closing_strategy,
                 }]
             }
             EventCall::Persist { value, kind, .. } => {
@@ -1720,6 +1731,7 @@ impl EventCall {
             } => vec![
                 EventHistoryKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
+                    closing_strategy: ClosingStrategy::default(),
                 },
                 EventHistoryKey::ChildExecutionRequest {
                     join_set_id: join_set_id.clone(),
@@ -1737,6 +1749,7 @@ impl EventCall {
             } => vec![
                 EventHistoryKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
+                    closing_strategy: ClosingStrategy::default(),
                 },
                 EventHistoryKey::DelayRequest {
                     join_set_id: join_set_id.clone(),
