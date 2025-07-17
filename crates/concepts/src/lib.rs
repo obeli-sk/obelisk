@@ -1111,7 +1111,7 @@ pub mod prefixed_ulid {
                     infix: Arc::from(old_infix),
                     idx: old_idx
                         .parse()
-                        .map_err(|err| ExecutionIdDerivedSplitError::CannotParseOldIndex(err))?,
+                        .map_err(ExecutionIdDerivedSplitError::CannotParseOldIndex)?,
                 };
                 Ok((ExecutionId::Derived(parent), join_set_id))
             } else {
