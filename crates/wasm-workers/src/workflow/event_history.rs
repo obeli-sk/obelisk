@@ -1682,6 +1682,7 @@ enum EventHistoryKey {
     StubResponse {
         target_ffqn: FunctionFqn,
         target_execution_id: ExecutionIdDerived,
+        // TODO: Add and compare return_value: StubReturnValue,
     },
 }
 
