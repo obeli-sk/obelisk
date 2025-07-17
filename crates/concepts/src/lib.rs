@@ -383,6 +383,7 @@ impl IfcFqnName {
     }
 
     #[must_use]
+    // Returns true if this is an `-obelisk-*` extended function (including `-stub`).
     pub fn is_extension(&self) -> bool {
         self.package_name().ends_with(SUFFIX_PKG_EXT)
             || self.package_name().ends_with(SUFFIX_PKG_STUB)
@@ -1756,7 +1757,7 @@ impl ComponentRetryConfig {
     };
 }
 
-/// Implementation must not return `-obelisk-ext` suffix in any package name, nor `obelisk` namespace.
+/// Implementation must not return `-obelisk-*` extended function, nor functions from `obelisk` namespace.
 #[async_trait]
 pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(

@@ -916,18 +916,6 @@ impl<C: ClockFn> EventHistory<C> {
         Ok(())
     }
 
-    pub(crate) async fn get_called_function_metadata(
-        fn_registry: &dyn FunctionRegistry,
-        ffqn: &FunctionFqn,
-    ) -> (FunctionMetadata, ComponentId, ComponentRetryConfig) {
-        fn_registry
-            .get_by_exported_function(ffqn)
-            .await
-            .unwrap_or_else(|| {
-                panic!("imported function must be found during verification: {ffqn}")
-            })
-    }
-
     #[instrument(level = Level::DEBUG, skip_all, fields(%version))]
     async fn append_to_db(
         &mut self,
@@ -1036,7 +1024,9 @@ impl<C: ClockFn> EventHistory<C> {
                     },
                     component_id,
                     resolved_retry_config,
-                ) = Self::get_called_function_metadata(fn_registry, &ffqn).await;
+                ) = fn_registry.get_by_exported_function(&ffqn).await.expect(
+                    "extended function was derived from the target function in fn_registry",
+                );
                 assert!(extension.is_none());
                 let child_req = CreateRequest {
                     created_at: called_at,
@@ -1131,7 +1121,9 @@ impl<C: ClockFn> EventHistory<C> {
                     },
                     component_id,
                     resolved_retry_config,
-                ) = Self::get_called_function_metadata(fn_registry, &ffqn).await;
+                ) = fn_registry.get_by_exported_function(&ffqn).await.expect(
+                    "extended function was derived from the target function in fn_registry",
+                );
                 assert!(extension.is_none());
                 let child_req = CreateRequest {
                     created_at: called_at,
@@ -1285,7 +1277,10 @@ impl<C: ClockFn> EventHistory<C> {
                     },
                     component_id,
                     resolved_retry_config,
-                ) = Self::get_called_function_metadata(fn_registry, &ffqn).await;
+                ) = fn_registry
+                    .get_by_exported_function(&ffqn)
+                    .await
+                    .expect("all imported functions were sourced from fn_registry");
                 assert!(extension.is_none());
                 let child = CreateRequest {
                     created_at: called_at,
@@ -1402,8 +1397,12 @@ impl<C: ClockFn> EventHistory<C> {
 
                 // Convert Val to StubReturnValue
                 let return_value = {
-                    let (target_fn_meta, _, _) =
-                        Self::get_called_function_metadata(fn_registry, &target_ffqn).await;
+                    let (target_fn_meta, _, _) = fn_registry
+                        .get_by_exported_function(&target_ffqn)
+                        .await
+                        .expect(
+                            "extended function was derived from the target function in fn_registry",
+                        );
                     let return_type = target_fn_meta.return_type;
                     match (return_value, return_type) {
                         (Some(return_value), Some(return_type)) => {
