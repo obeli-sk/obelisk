@@ -62,8 +62,6 @@ package obelisk:types@1.1.0 {
     }
 
     variant stub-error {
-      not-found,
-      ffqn-mismatch,
       /// stubbed execution must not contain any execution log entries except for the `Created` event.
       conflict,
     }

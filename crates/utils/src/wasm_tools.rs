@@ -400,8 +400,6 @@ impl ExIm {
             }),
         ]));
         let stub_error_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("not-found") => None,
-            Box::from("ffqn-mismatch") => None,
             Box::from("conflict") => None,
         });
 
