@@ -1738,11 +1738,11 @@ mod tests {
     use super::super::event_history::{EventCall, EventHistory};
     use super::super::host_exports::execution_id_into_wast_val;
     use super::super::workflow_worker::JoinNextBlockingStrategy;
-    use crate::workflow::event_history::ApplyError;
+    use crate::workflow::event_history::{ApplyError, ChildReturnValue};
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::ExecutionIdDerived;
-    use concepts::storage::{CreateRequest, DbPool};
+    use concepts::storage::CreateRequest;
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::time::ClockFn;
     use concepts::{
@@ -1760,32 +1760,6 @@ mod tests {
 
     pub const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
 
-    async fn load_event_history<C: ClockFn>(
-        db_connection: &dyn DbConnection,
-        execution_id: ExecutionId,
-        execution_deadline: DateTime<Utc>,
-        clock_fn: C,
-        join_next_blocking_strategy: JoinNextBlockingStrategy,
-    ) -> (EventHistory<C>, Version) {
-        let exec_log = db_connection.get(&execution_id).await.unwrap();
-        let event_history = EventHistory::new(
-            execution_id.clone(),
-            ComponentId::dummy_activity(),
-            exec_log.event_history().collect(),
-            exec_log
-                .responses
-                .into_iter()
-                .map(|event| event.event)
-                .collect(),
-            join_next_blocking_strategy,
-            execution_deadline,
-            clock_fn,
-            info_span!("worker-test"),
-            false,
-        );
-        (event_history, exec_log.next_version)
-    }
-
     #[rstest]
     #[tokio::test]
     async fn regular_join_next_child(
@@ -1795,28 +1769,10 @@ mod tests {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = Database::Memory.set_up().await;
-
-        // Create an execution.
-        let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
 
-        let execution_id = ExecutionId::generate();
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn: MOCK_FFQN,
-                params: Params::empty(),
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-                component_id: ComponentId::dummy_activity(),
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
+        // Create an execution.
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
 
         let (event_history, version) = load_event_history(
             db_connection.as_ref(),
@@ -1831,58 +1787,16 @@ mod tests {
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         let child_execution_id = execution_id.next_level(&join_set_id);
 
-        let blocking_join_first =
-            |mut event_history: EventHistory<_>, mut version: Version, join_set_id: JoinSetId| {
-                let db_pool = db_pool.clone();
-                let child_execution_id = child_execution_id.clone();
-                async move {
-                    event_history
-                        .apply(
-                            EventCall::CreateJoinSet {
-                                join_set_id: join_set_id.clone(),
-                                closing_strategy: ClosingStrategy::Complete,
-                                wasm_backtrace: None,
-                            },
-                            db_pool.connection().as_ref(),
-                            &mut version,
-                        )
-                        .await
-                        .unwrap();
-
-                    event_history
-                        .apply(
-                            EventCall::StartAsync {
-                                ffqn: MOCK_FFQN,
-                                fn_component_id: ComponentId::dummy_activity(),
-                                fn_retry_config: ComponentRetryConfig::ZERO,
-                                join_set_id: join_set_id.clone(),
-                                child_execution_id: child_execution_id.clone(),
-                                params: Params::empty(),
-                                wasm_backtrace: None,
-                            },
-                            db_pool.connection().as_ref(),
-                            &mut version,
-                        )
-                        .await
-                        .unwrap();
-                    event_history
-                        .apply(
-                            EventCall::BlockingChildAwaitNext {
-                                join_set_id,
-                                closing: false,
-                                wasm_backtrace: None,
-                            },
-                            db_pool.connection().as_ref(),
-                            &mut version,
-                        )
-                        .await
-                }
-            };
-
         assert_matches!(
-            blocking_join_first(event_history, version, join_set_id.clone())
-                .await
-                .unwrap_err(),
+            apply_create_js_start_async_await_next(
+                db_connection.as_ref(),
+                child_execution_id.clone(),
+                event_history,
+                version,
+                join_set_id.clone()
+            )
+            .await
+            .unwrap_err(),
             ApplyError::InterruptRequested,
             "should have ended with an interrupt"
         );
@@ -1911,9 +1825,15 @@ mod tests {
             second_run_strategy,
         )
         .await;
-        blocking_join_first(event_history, version, join_set_id)
-            .await
-            .expect("should finish successfuly");
+        apply_create_js_start_async_await_next(
+            db_connection.as_ref(),
+            child_execution_id,
+            event_history,
+            version,
+            join_set_id,
+        )
+        .await
+        .expect("should finish successfuly");
 
         drop(db_connection);
         db_pool.close().await.unwrap();
@@ -1930,67 +1850,12 @@ mod tests {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(1),
             });
-
-        async fn start_async<C: ClockFn>(
-            event_history: &mut EventHistory<C>,
-            version: &mut Version,
-            db_pool: &dyn DbPool,
-            join_set_id: JoinSetId,
-            child_execution_id: ExecutionIdDerived,
-        ) {
-            event_history
-                .apply(
-                    EventCall::CreateJoinSet {
-                        join_set_id: join_set_id.clone(),
-                        closing_strategy: ClosingStrategy::Complete,
-                        wasm_backtrace: None,
-                    },
-                    db_pool.connection().as_ref(),
-                    version,
-                )
-                .await
-                .unwrap();
-            event_history
-                .apply(
-                    EventCall::StartAsync {
-                        ffqn: MOCK_FFQN,
-                        fn_component_id: ComponentId::dummy_activity(),
-                        fn_retry_config: ComponentRetryConfig::ZERO,
-                        join_set_id,
-                        child_execution_id,
-                        params: Params::empty(),
-                        wasm_backtrace: None,
-                    },
-                    db_pool.connection().as_ref(),
-                    version,
-                )
-                .await
-                .unwrap();
-        }
-
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = Database::Memory.set_up().await;
-        let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         // Create an execution.
-        let execution_id = ExecutionId::generate();
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn: MOCK_FFQN,
-                params: Params::empty(),
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-                component_id: ComponentId::dummy_activity(),
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
 
         let (mut event_history, mut version) = load_event_history(
             db_connection.as_ref(),
@@ -2005,10 +1870,10 @@ mod tests {
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         let child_execution_id = execution_id.next_level(&join_set_id);
 
-        start_async(
+        apply_create_js_start_async(
+            db_connection.as_ref(),
             &mut event_history,
             &mut version,
-            db_pool.as_ref(),
             join_set_id.clone(),
             child_execution_id.clone(),
         )
@@ -2042,10 +1907,10 @@ mod tests {
         )
         .await;
 
-        start_async(
+        apply_create_js_start_async(
+            db_connection.as_ref(),
             &mut event_history,
             &mut version,
-            db_pool.as_ref(),
             join_set_id.clone(),
             child_execution_id.clone(),
         )
@@ -2092,96 +1957,13 @@ mod tests {
                 value: WastVal::U8(2),
             });
 
-        async fn blocking_join_first<C: ClockFn>(
-            event_history: &mut EventHistory<C>,
-            version: &mut Version,
-            db_pool: &dyn DbPool,
-            join_set_id: JoinSetId,
-            child_execution_id_a: ExecutionIdDerived,
-            child_execution_id_b: ExecutionIdDerived,
-        ) -> Result<Option<WastVal>, ApplyError> {
-            event_history
-                .apply(
-                    EventCall::CreateJoinSet {
-                        join_set_id: join_set_id.clone(),
-                        closing_strategy: ClosingStrategy::Complete,
-                        wasm_backtrace: None,
-                    },
-                    db_pool.connection().as_ref(),
-                    version,
-                )
-                .await
-                .unwrap();
-            event_history
-                .apply(
-                    EventCall::StartAsync {
-                        ffqn: MOCK_FFQN,
-                        fn_component_id: ComponentId::dummy_activity(),
-                        fn_retry_config: ComponentRetryConfig::ZERO,
-                        join_set_id: join_set_id.clone(),
-                        child_execution_id: child_execution_id_a,
-                        params: Params::empty(),
-                        wasm_backtrace: None,
-                    },
-                    db_pool.connection().as_ref(),
-                    version,
-                )
-                .await
-                .unwrap();
-            event_history
-                .apply(
-                    EventCall::StartAsync {
-                        ffqn: MOCK_FFQN,
-                        fn_component_id: ComponentId::dummy_activity(),
-                        fn_retry_config: ComponentRetryConfig::ZERO,
-                        join_set_id: join_set_id.clone(),
-                        child_execution_id: child_execution_id_b,
-                        params: Params::empty(),
-                        wasm_backtrace: None,
-                    },
-                    db_pool.connection().as_ref(),
-                    version,
-                )
-                .await
-                .unwrap();
-            event_history
-                .apply(
-                    EventCall::BlockingChildAwaitNext {
-                        join_set_id,
-                        closing: false,
-                        wasm_backtrace: None,
-                    },
-                    db_pool.connection().as_ref(),
-                    version,
-                )
-                .await
-                .map(super::ChildReturnValue::into_wast_val)
-        }
-
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection();
 
         // Create an execution.
-        let created_at = sim_clock.now();
-        let db_connection = db_pool.connection();
-        let execution_id = ExecutionId::generate();
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn: MOCK_FFQN,
-                params: Params::empty(),
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-                component_id: ComponentId::dummy_activity(),
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
 
         let (mut event_history, mut version) = load_event_history(
             db_connection.as_ref(),
@@ -2199,10 +1981,10 @@ mod tests {
         let child_execution_id_b = child_execution_id_a.get_incremented();
 
         assert_matches!(
-            blocking_join_first(
+            apply_create_js_two_start_asyncs_await_next(
+                db_connection.as_ref(),
                 &mut event_history,
                 &mut version,
-                db_pool.as_ref(),
                 join_set_id.clone(),
                 child_execution_id_a.clone(),
                 child_execution_id_b.clone()
@@ -2254,10 +2036,10 @@ mod tests {
         )
         .await;
 
-        let res = blocking_join_first(
+        let res = apply_create_js_two_start_asyncs_await_next(
+            db_connection.as_ref(),
             &mut event_history,
             &mut version,
-            db_pool.as_ref(),
             join_set_id.clone(),
             child_execution_id_a.clone(),
             child_execution_id_b.clone(),
@@ -2295,4 +2077,168 @@ mod tests {
 
     // TODO: Check -await-next for fn without return type
     // TODO: Check execution errors translating to execution-error
+
+    // utils
+
+    async fn create_execution(
+        db_connection: &dyn DbConnection,
+        sim_clock: &SimClock,
+    ) -> ExecutionId {
+        let created_at = sim_clock.now();
+        let execution_id = ExecutionId::generate();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: MOCK_FFQN,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+                component_id: ComponentId::dummy_activity(),
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+        execution_id
+    }
+
+    async fn load_event_history<C: ClockFn>(
+        db_connection: &dyn DbConnection,
+        execution_id: ExecutionId,
+        execution_deadline: DateTime<Utc>,
+        clock_fn: C,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+    ) -> (EventHistory<C>, Version) {
+        let exec_log = db_connection.get(&execution_id).await.unwrap();
+        let event_history = EventHistory::new(
+            execution_id.clone(),
+            ComponentId::dummy_activity(),
+            exec_log.event_history().collect(),
+            exec_log
+                .responses
+                .into_iter()
+                .map(|event| event.event)
+                .collect(),
+            join_next_blocking_strategy,
+            execution_deadline,
+            clock_fn,
+            info_span!("worker-test"),
+            false,
+        );
+        (event_history, exec_log.next_version)
+    }
+
+    async fn apply_create_js_start_async_await_next(
+        db_connection: &dyn DbConnection,
+        child_execution_id: ExecutionIdDerived,
+        mut event_history: EventHistory<SimClock>,
+        mut version: Version,
+        join_set_id: JoinSetId,
+    ) -> Result<ChildReturnValue, ApplyError> {
+        apply_create_js_start_async(
+            db_connection,
+            &mut event_history,
+            &mut version,
+            join_set_id.clone(),
+            child_execution_id,
+        )
+        .await;
+        event_history
+            .apply(
+                EventCall::BlockingChildAwaitNext {
+                    join_set_id,
+                    closing: false,
+                    wasm_backtrace: None,
+                },
+                db_connection,
+                &mut version,
+            )
+            .await
+    }
+
+    async fn apply_create_js_start_async(
+        db_connection: &dyn DbConnection,
+        event_history: &mut EventHistory<SimClock>,
+        version: &mut Version,
+        join_set_id: JoinSetId,
+        child_execution_id: ExecutionIdDerived,
+    ) {
+        event_history
+            .apply(
+                EventCall::CreateJoinSet {
+                    join_set_id: join_set_id.clone(),
+                    closing_strategy: ClosingStrategy::Complete,
+                    wasm_backtrace: None,
+                },
+                db_connection,
+                version,
+            )
+            .await
+            .unwrap();
+        event_history
+            .apply(
+                EventCall::StartAsync {
+                    ffqn: MOCK_FFQN,
+                    fn_component_id: ComponentId::dummy_activity(),
+                    fn_retry_config: ComponentRetryConfig::ZERO,
+                    join_set_id,
+                    child_execution_id,
+                    params: Params::empty(),
+                    wasm_backtrace: None,
+                },
+                db_connection,
+                version,
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn apply_create_js_two_start_asyncs_await_next(
+        db_connection: &dyn DbConnection,
+        event_history: &mut EventHistory<SimClock>,
+        version: &mut Version,
+        join_set_id: JoinSetId,
+        child_execution_id_a: ExecutionIdDerived,
+        child_execution_id_b: ExecutionIdDerived,
+    ) -> Result<Option<WastVal>, ApplyError> {
+        apply_create_js_start_async(
+            db_connection,
+            event_history,
+            version,
+            join_set_id.clone(),
+            child_execution_id_a,
+        )
+        .await;
+        event_history
+            .apply(
+                EventCall::StartAsync {
+                    ffqn: MOCK_FFQN,
+                    fn_component_id: ComponentId::dummy_activity(),
+                    fn_retry_config: ComponentRetryConfig::ZERO,
+                    join_set_id: join_set_id.clone(),
+                    child_execution_id: child_execution_id_b,
+                    params: Params::empty(),
+                    wasm_backtrace: None,
+                },
+                db_connection,
+                version,
+            )
+            .await
+            .unwrap();
+        event_history
+            .apply(
+                EventCall::BlockingChildAwaitNext {
+                    join_set_id,
+                    closing: false,
+                    wasm_backtrace: None,
+                },
+                db_connection,
+                version,
+            )
+            .await
+            .map(super::ChildReturnValue::into_wast_val)
+    }
 }
