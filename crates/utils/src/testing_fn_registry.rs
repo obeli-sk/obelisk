@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use concepts::{
     ComponentId, ComponentRetryConfig, FnName, FunctionFqn, FunctionMetadata, FunctionRegistry,
     IfcFqnName, PackageIfcFns, ParameterTypes,
@@ -56,9 +55,8 @@ impl TestingFnRegistry {
     }
 }
 
-#[async_trait]
 impl FunctionRegistry for TestingFnRegistry {
-    async fn get_by_exported_function(
+    fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
     ) -> Option<(FunctionMetadata, ComponentId, ComponentRetryConfig)> {
@@ -89,10 +87,7 @@ pub fn fn_registry_dummy(ffqns: &[FunctionFqn]) -> Arc<dyn FunctionRegistry> {
             (
                 fn_metadata.clone(),
                 component_id.clone(),
-                ComponentRetryConfig {
-                    max_retries: 0,
-                    retry_exp_backoff: Duration::ZERO,
-                },
+                ComponentRetryConfig::ZERO,
             ),
         );
         let index_map = export_hierarchy.entry(ffqn.ifc_fqn.clone()).or_default();

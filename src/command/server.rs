@@ -93,7 +93,6 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_stream::{Stream, wrappers::ReceiverStream};
-use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
 use tonic_web::GrpcWebLayer;
 use tower_http::trace::DefaultOnFailure;
@@ -1896,7 +1895,7 @@ impl WorkerCompiled {
             worker: match self.worker {
                 Either::Left(activity) => Either::Left(activity),
                 Either::Right(workflow_compiled) => {
-                    Either::Right(workflow_compiled.link(fn_registry.clone())?)
+                    Either::Right(workflow_compiled.link(fn_registry)?)
                 }
             },
             exec_config: self.exec_config,
@@ -2149,9 +2148,8 @@ impl ComponentConfigRegistryRO {
     }
 }
 
-#[async_trait]
 impl FunctionRegistry for ComponentConfigRegistryRO {
-    async fn get_by_exported_function(
+    fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
     ) -> Option<(FunctionMetadata, ComponentId, ComponentRetryConfig)> {

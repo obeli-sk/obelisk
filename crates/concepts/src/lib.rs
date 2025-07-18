@@ -5,7 +5,6 @@ pub mod time;
 
 use ::serde::{Deserialize, Serialize};
 use assert_matches::assert_matches;
-use async_trait::async_trait;
 pub use indexmap;
 use indexmap::IndexMap;
 use opentelemetry::propagation::{Extractor, Injector};
@@ -1758,9 +1757,8 @@ impl ComponentRetryConfig {
 }
 
 /// Implementation must not return `-obelisk-*` extended function, nor functions from `obelisk` namespace.
-#[async_trait]
 pub trait FunctionRegistry: Send + Sync {
-    async fn get_by_exported_function(
+    fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
     ) -> Option<(FunctionMetadata, ComponentId, ComponentRetryConfig)>;

@@ -12,7 +12,6 @@ use concepts::ComponentRetryConfig;
 use concepts::ExecutionMetadata;
 use concepts::FinishedExecutionError;
 use concepts::FunctionMetadata;
-use concepts::FunctionRegistry;
 use concepts::JoinSetId;
 use concepts::JoinSetKind;
 use concepts::PermanentFailureKind;
@@ -231,7 +230,6 @@ impl<C: ClockFn> EventHistory<C> {
         event_call: EventCall,
         db_connection: &dyn DbConnection,
         version: &mut Version,
-        fn_registry: &dyn FunctionRegistry,
     ) -> Result<ChildReturnValue, ApplyError> {
         trace!("apply({event_call:?})");
         if let Some(resp) = self.find_matching_atomic(&event_call)? {
@@ -255,7 +253,6 @@ impl<C: ClockFn> EventHistory<C> {
                     .append_to_db(
                         event_call,
                         db_connection,
-                        fn_registry,
                         called_at,
                         lock_expires_at,
                         version,
@@ -279,7 +276,6 @@ impl<C: ClockFn> EventHistory<C> {
             .append_to_db(
                 event_call,
                 db_connection,
-                fn_registry,
                 called_at,
                 lock_expires_at,
                 version,
@@ -300,7 +296,7 @@ impl<C: ClockFn> EventHistory<C> {
             }
         }
         // Now either wait or interrupt.
-        // FIXME: perf: if start_from_index was at top, it should move forward to n - 1
+        // TODO: perf: if start_from_index was at top, it should move forward to n - 1
 
         if matches!(
             self.join_next_blocking_strategy,
@@ -344,7 +340,6 @@ impl<C: ClockFn> EventHistory<C> {
         &mut self,
         db_connection: &dyn DbConnection,
         version: &mut Version,
-        fn_registry: &dyn FunctionRegistry,
     ) -> Result<(), ApplyError> {
         // We want to end with the same actions when called again.
         // Count the iteractions not counting the delay requests and closing JoinNext-s.
@@ -418,7 +413,6 @@ impl<C: ClockFn> EventHistory<C> {
                         },
                         db_connection,
                         version,
-                        fn_registry,
                     )
                     .await
                 {
@@ -921,7 +915,6 @@ impl<C: ClockFn> EventHistory<C> {
         &mut self,
         event_call: EventCall,
         db_connection: &dyn DbConnection,
-        fn_registry: &dyn FunctionRegistry,
         called_at: DateTime<Utc>,
         lock_expires_at: DateTime<Utc>,
         version: &mut Version,
@@ -996,6 +989,8 @@ impl<C: ClockFn> EventHistory<C> {
 
             EventCall::StartAsync {
                 ffqn,
+                fn_component_id,
+                fn_retry_config,
                 join_set_id,
                 child_execution_id,
                 params,
@@ -1014,20 +1009,6 @@ impl<C: ClockFn> EventHistory<C> {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                let (
-                    FunctionMetadata {
-                        ffqn,
-                        parameter_types: _,
-                        return_type: _,
-                        extension,
-                        submittable: _,
-                    },
-                    component_id,
-                    resolved_retry_config,
-                ) = fn_registry.get_by_exported_function(&ffqn).await.expect(
-                    "extended function was derived from the target function in fn_registry",
-                );
-                assert!(extension.is_none());
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: ExecutionId::Derived(child_execution_id),
@@ -1036,9 +1017,9 @@ impl<C: ClockFn> EventHistory<C> {
                     parent: Some((self.execution_id.clone(), join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
-                    retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
-                    max_retries: resolved_retry_config.max_retries,
-                    component_id,
+                    retry_exp_backoff: fn_retry_config.retry_exp_backoff,
+                    max_retries: fn_retry_config.max_retries,
+                    component_id: fn_component_id,
                     scheduled_by: None,
                 };
                 *version =
@@ -1096,6 +1077,8 @@ impl<C: ClockFn> EventHistory<C> {
                 scheduled_at,
                 execution_id: new_execution_id,
                 ffqn,
+                fn_component_id,
+                fn_retry_config,
                 params,
                 wasm_backtrace,
             } => {
@@ -1111,20 +1094,6 @@ impl<C: ClockFn> EventHistory<C> {
                     created_at: called_at,
                 };
                 debug!(%new_execution_id, "ScheduleRequest: appending");
-                let (
-                    FunctionMetadata {
-                        ffqn,
-                        parameter_types: _,
-                        return_type: _,
-                        extension,
-                        submittable: _,
-                    },
-                    component_id,
-                    resolved_retry_config,
-                ) = fn_registry.get_by_exported_function(&ffqn).await.expect(
-                    "extended function was derived from the target function in fn_registry",
-                );
-                assert!(extension.is_none());
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: new_execution_id,
@@ -1133,9 +1102,9 @@ impl<C: ClockFn> EventHistory<C> {
                     params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
                     scheduled_at,
-                    retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
-                    max_retries: resolved_retry_config.max_retries,
-                    component_id,
+                    retry_exp_backoff: fn_retry_config.retry_exp_backoff,
+                    max_retries: fn_retry_config.max_retries,
+                    component_id: fn_component_id,
                     scheduled_by: Some(self.execution_id.clone()),
                 };
                 *version =
@@ -1226,6 +1195,8 @@ impl<C: ClockFn> EventHistory<C> {
 
             EventCall::BlockingChildDirectCall {
                 ffqn,
+                fn_component_id,
+                fn_retry_config,
                 join_set_id,
                 child_execution_id,
                 params,
@@ -1267,21 +1238,6 @@ impl<C: ClockFn> EventHistory<C> {
                     created_at: called_at,
                 };
 
-                let (
-                    FunctionMetadata {
-                        ffqn,
-                        parameter_types: _,
-                        return_type: _,
-                        extension,
-                        submittable: _,
-                    },
-                    component_id,
-                    resolved_retry_config,
-                ) = fn_registry
-                    .get_by_exported_function(&ffqn)
-                    .await
-                    .expect("all imported functions were sourced from fn_registry");
-                assert!(extension.is_none());
                 let child = CreateRequest {
                     created_at: called_at,
                     execution_id: ExecutionId::Derived(child_execution_id),
@@ -1290,9 +1246,9 @@ impl<C: ClockFn> EventHistory<C> {
                     parent: Some((self.execution_id.clone(), join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
-                    retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
-                    max_retries: resolved_retry_config.max_retries,
-                    component_id,
+                    retry_exp_backoff: fn_retry_config.retry_exp_backoff,
+                    max_retries: fn_retry_config.max_retries,
+                    component_id: fn_component_id,
                     scheduled_by: None,
                 };
                 *version = {
@@ -1384,6 +1340,7 @@ impl<C: ClockFn> EventHistory<C> {
 
             EventCall::StubResponse {
                 target_ffqn,
+                fn_meta,
                 target_execution_id,
                 parent_id,
                 join_set_id,
@@ -1396,25 +1353,16 @@ impl<C: ClockFn> EventHistory<C> {
                     .await?;
 
                 // Convert Val to StubReturnValue
-                let return_value = {
-                    let (target_fn_meta, _, _) = fn_registry
-                        .get_by_exported_function(&target_ffqn)
-                        .await
-                        .expect(
-                            "extended function was derived from the target function in fn_registry",
-                        );
-                    let return_type = target_fn_meta.return_type;
-                    match (return_value, return_type) {
-                        (Some(return_value), Some(return_type)) => {
-                            SupportedFunctionReturnValue::from_val_and_type_wrapper(
-                                return_value,
-                                return_type.type_wrapper,
-                            )
-                            .expect("TODO")
-                        }
-                        (None, None) => SupportedFunctionReturnValue::None,
-                        _ => todo!("TODO: error"),
+                let return_value = match (return_value, fn_meta.return_type) {
+                    (Some(return_value), Some(return_type)) => {
+                        SupportedFunctionReturnValue::from_val_and_type_wrapper(
+                            return_value,
+                            return_type.type_wrapper,
+                        )
+                        .expect("TODO")
                     }
+                    (None, None) => SupportedFunctionReturnValue::None,
+                    _ => todo!("TODO: error"),
                 };
 
                 let event = HistoryEvent::StubResponse {
@@ -1553,7 +1501,9 @@ pub(crate) enum EventCall {
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     StartAsync {
-        ffqn: FunctionFqn,
+        ffqn: FunctionFqn, // TODO: rename to target_ffqn
+        fn_component_id: ComponentId,
+        fn_retry_config: ComponentRetryConfig,
         join_set_id: JoinSetId,
         child_execution_id: ExecutionIdDerived,
         #[debug(skip)]
@@ -1564,7 +1514,9 @@ pub(crate) enum EventCall {
     ScheduleRequest {
         scheduled_at: HistoryEventScheduledAt,
         execution_id: ExecutionId,
-        ffqn: FunctionFqn,
+        ffqn: FunctionFqn, // TODO: rename to target_ffqn
+        fn_component_id: ComponentId,
+        fn_retry_config: ComponentRetryConfig,
         #[debug(skip)]
         params: Params,
         #[debug(skip)]
@@ -1572,6 +1524,7 @@ pub(crate) enum EventCall {
     },
     StubResponse {
         target_ffqn: FunctionFqn,
+        fn_meta: FunctionMetadata,
         target_execution_id: ExecutionIdDerived,
         parent_id: ExecutionId,
         join_set_id: JoinSetId,
@@ -1590,6 +1543,8 @@ pub(crate) enum EventCall {
     /// Direct call
     BlockingChildDirectCall {
         ffqn: FunctionFqn,
+        fn_component_id: ComponentId,
+        fn_retry_config: ComponentRetryConfig,
         join_set_id: JoinSetId,
         child_execution_id: ExecutionIdDerived,
         #[debug(skip)]
@@ -1791,17 +1746,15 @@ mod tests {
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::time::ClockFn;
     use concepts::{
-        ClosingStrategy, ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params,
+        ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, Params,
         SupportedFunctionReturnValue,
     };
     use concepts::{JoinSetId, StrVariant};
     use db_tests::Database;
     use rstest::rstest;
-    use std::sync::Arc;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::{info, info_span};
-    use utils::testing_fn_registry::fn_registry_dummy;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::{WastVal, WastValWithType};
 
@@ -1846,7 +1799,7 @@ mod tests {
         // Create an execution.
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        let fn_registry = fn_registry_dummy(&[MOCK_FFQN]);
+
         let execution_id = ExecutionId::generate();
         db_connection
             .create(CreateRequest {
@@ -1878,66 +1831,58 @@ mod tests {
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         let child_execution_id = execution_id.next_level(&join_set_id);
 
-        let blocking_join_first = |mut event_history: EventHistory<_>,
-                                   mut version: Version,
-                                   fn_registry: Arc<dyn FunctionRegistry>,
-                                   join_set_id: JoinSetId| {
-            let db_pool = db_pool.clone();
-            let child_execution_id = child_execution_id.clone();
-            async move {
-                event_history
-                    .apply(
-                        EventCall::CreateJoinSet {
-                            join_set_id: join_set_id.clone(),
-                            closing_strategy: ClosingStrategy::Complete,
-                            wasm_backtrace: None,
-                        },
-                        db_pool.connection().as_ref(),
-                        &mut version,
-                        fn_registry.as_ref(),
-                    )
-                    .await
-                    .unwrap();
+        let blocking_join_first =
+            |mut event_history: EventHistory<_>, mut version: Version, join_set_id: JoinSetId| {
+                let db_pool = db_pool.clone();
+                let child_execution_id = child_execution_id.clone();
+                async move {
+                    event_history
+                        .apply(
+                            EventCall::CreateJoinSet {
+                                join_set_id: join_set_id.clone(),
+                                closing_strategy: ClosingStrategy::Complete,
+                                wasm_backtrace: None,
+                            },
+                            db_pool.connection().as_ref(),
+                            &mut version,
+                        )
+                        .await
+                        .unwrap();
 
-                event_history
-                    .apply(
-                        EventCall::StartAsync {
-                            ffqn: MOCK_FFQN,
-                            join_set_id: join_set_id.clone(),
-                            child_execution_id: child_execution_id.clone(),
-                            params: Params::empty(),
-                            wasm_backtrace: None,
-                        },
-                        db_pool.connection().as_ref(),
-                        &mut version,
-                        fn_registry.as_ref(),
-                    )
-                    .await
-                    .unwrap();
-                event_history
-                    .apply(
-                        EventCall::BlockingChildAwaitNext {
-                            join_set_id,
-                            closing: false,
-                            wasm_backtrace: None,
-                        },
-                        db_pool.connection().as_ref(),
-                        &mut version,
-                        fn_registry.as_ref(),
-                    )
-                    .await
-            }
-        };
+                    event_history
+                        .apply(
+                            EventCall::StartAsync {
+                                ffqn: MOCK_FFQN,
+                                fn_component_id: ComponentId::dummy_activity(),
+                                fn_retry_config: ComponentRetryConfig::ZERO,
+                                join_set_id: join_set_id.clone(),
+                                child_execution_id: child_execution_id.clone(),
+                                params: Params::empty(),
+                                wasm_backtrace: None,
+                            },
+                            db_pool.connection().as_ref(),
+                            &mut version,
+                        )
+                        .await
+                        .unwrap();
+                    event_history
+                        .apply(
+                            EventCall::BlockingChildAwaitNext {
+                                join_set_id,
+                                closing: false,
+                                wasm_backtrace: None,
+                            },
+                            db_pool.connection().as_ref(),
+                            &mut version,
+                        )
+                        .await
+                }
+            };
 
         assert_matches!(
-            blocking_join_first(
-                event_history,
-                version,
-                fn_registry.clone(),
-                join_set_id.clone()
-            )
-            .await
-            .unwrap_err(),
+            blocking_join_first(event_history, version, join_set_id.clone())
+                .await
+                .unwrap_err(),
             ApplyError::InterruptRequested,
             "should have ended with an interrupt"
         );
@@ -1966,7 +1911,7 @@ mod tests {
             second_run_strategy,
         )
         .await;
-        blocking_join_first(event_history, version, fn_registry.clone(), join_set_id)
+        blocking_join_first(event_history, version, join_set_id)
             .await
             .expect("should finish successfuly");
 
@@ -1992,7 +1937,6 @@ mod tests {
             db_pool: &dyn DbPool,
             join_set_id: JoinSetId,
             child_execution_id: ExecutionIdDerived,
-            fn_registry: &dyn FunctionRegistry,
         ) {
             event_history
                 .apply(
@@ -2003,7 +1947,6 @@ mod tests {
                     },
                     db_pool.connection().as_ref(),
                     version,
-                    fn_registry,
                 )
                 .await
                 .unwrap();
@@ -2011,6 +1954,8 @@ mod tests {
                 .apply(
                     EventCall::StartAsync {
                         ffqn: MOCK_FFQN,
+                        fn_component_id: ComponentId::dummy_activity(),
+                        fn_retry_config: ComponentRetryConfig::ZERO,
                         join_set_id,
                         child_execution_id,
                         params: Params::empty(),
@@ -2018,7 +1963,6 @@ mod tests {
                     },
                     db_pool.connection().as_ref(),
                     version,
-                    fn_registry,
                 )
                 .await
                 .unwrap();
@@ -2029,7 +1973,6 @@ mod tests {
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        let fn_registry = fn_registry_dummy(&[MOCK_FFQN]);
         // Create an execution.
         let execution_id = ExecutionId::generate();
         db_connection
@@ -2068,7 +2011,6 @@ mod tests {
             db_pool.as_ref(),
             join_set_id.clone(),
             child_execution_id.clone(),
-            fn_registry.as_ref(),
         )
         .await;
 
@@ -2106,7 +2048,6 @@ mod tests {
             db_pool.as_ref(),
             join_set_id.clone(),
             child_execution_id.clone(),
-            fn_registry.as_ref(),
         )
         .await;
         // issue BlockingChildJoinNext
@@ -2119,7 +2060,6 @@ mod tests {
                 },
                 db_pool.connection().as_ref(),
                 &mut version,
-                fn_registry.as_ref(),
             )
             .await
             .unwrap();
@@ -2156,7 +2096,6 @@ mod tests {
             event_history: &mut EventHistory<C>,
             version: &mut Version,
             db_pool: &dyn DbPool,
-            fn_registry: &dyn FunctionRegistry,
             join_set_id: JoinSetId,
             child_execution_id_a: ExecutionIdDerived,
             child_execution_id_b: ExecutionIdDerived,
@@ -2170,7 +2109,6 @@ mod tests {
                     },
                     db_pool.connection().as_ref(),
                     version,
-                    fn_registry,
                 )
                 .await
                 .unwrap();
@@ -2178,6 +2116,8 @@ mod tests {
                 .apply(
                     EventCall::StartAsync {
                         ffqn: MOCK_FFQN,
+                        fn_component_id: ComponentId::dummy_activity(),
+                        fn_retry_config: ComponentRetryConfig::ZERO,
                         join_set_id: join_set_id.clone(),
                         child_execution_id: child_execution_id_a,
                         params: Params::empty(),
@@ -2185,7 +2125,6 @@ mod tests {
                     },
                     db_pool.connection().as_ref(),
                     version,
-                    fn_registry,
                 )
                 .await
                 .unwrap();
@@ -2193,6 +2132,8 @@ mod tests {
                 .apply(
                     EventCall::StartAsync {
                         ffqn: MOCK_FFQN,
+                        fn_component_id: ComponentId::dummy_activity(),
+                        fn_retry_config: ComponentRetryConfig::ZERO,
                         join_set_id: join_set_id.clone(),
                         child_execution_id: child_execution_id_b,
                         params: Params::empty(),
@@ -2200,7 +2141,6 @@ mod tests {
                     },
                     db_pool.connection().as_ref(),
                     version,
-                    fn_registry,
                 )
                 .await
                 .unwrap();
@@ -2213,7 +2153,6 @@ mod tests {
                     },
                     db_pool.connection().as_ref(),
                     version,
-                    fn_registry,
                 )
                 .await
                 .map(super::ChildReturnValue::into_wast_val)
@@ -2226,7 +2165,6 @@ mod tests {
         // Create an execution.
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        let fn_registry = fn_registry_dummy(&[MOCK_FFQN]);
         let execution_id = ExecutionId::generate();
         db_connection
             .create(CreateRequest {
@@ -2265,7 +2203,6 @@ mod tests {
                 &mut event_history,
                 &mut version,
                 db_pool.as_ref(),
-                fn_registry.as_ref(),
                 join_set_id.clone(),
                 child_execution_id_a.clone(),
                 child_execution_id_b.clone()
@@ -2321,7 +2258,6 @@ mod tests {
             &mut event_history,
             &mut version,
             db_pool.as_ref(),
-            fn_registry.as_ref(),
             join_set_id.clone(),
             child_execution_id_a.clone(),
             child_execution_id_b.clone(),
@@ -2344,7 +2280,6 @@ mod tests {
                 },
                 db_pool.connection().as_ref(),
                 &mut version,
-                fn_registry.as_ref(),
             )
             .await
             .unwrap();

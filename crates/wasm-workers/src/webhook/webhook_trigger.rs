@@ -387,9 +387,8 @@ impl<C: ClockFn> HostJoinSetId_1_1_0 for WebhookEndpointCtx<C> {
 impl<C: ClockFn> ExecutionHost_1_1_0 for WebhookEndpointCtx<C> {}
 
 #[derive(thiserror::Error, Debug, Clone)]
+#[expect(clippy::enum_variant_names)]
 enum WebhookEndpointFunctionError {
-    #[error("sumbitting failed, metadata for {ffqn} not found")]
-    FunctionMetadataNotFound { ffqn: FunctionFqn },
     #[error(transparent)]
     DbError(#[from] DbError),
     #[error(transparent)]
@@ -504,11 +503,10 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let new_execution_id = ExecutionId::generate();
-                let Some((_function_metadata, component_id, import_retry_config)) =
-                    self.fn_registry.get_by_exported_function(&ffqn).await
-                else {
-                    return Err(WebhookEndpointFunctionError::FunctionMetadataNotFound { ffqn });
-                };
+                let (_function_metadata, component_id, import_retry_config) = self
+                    .fn_registry
+                    .get_by_exported_function(&ffqn)
+                    .expect("target function must be found in fn_registry");
                 let created_at = self.clock_fn.now();
 
                 let event = HistoryEvent::Schedule {
@@ -569,11 +567,10 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             let child_execution_id =
                 ExecutionId::TopLevel(self.execution_id).next_level(&join_set_id_direct);
             let created_at = self.clock_fn.now();
-            let Some((_function_metadata, component_id, import_retry_config)) =
-                self.fn_registry.get_by_exported_function(&ffqn).await
-            else {
-                return Err(WebhookEndpointFunctionError::FunctionMetadataNotFound { ffqn });
-            };
+            let (_function_metadata, component_id, import_retry_config) = self
+                .fn_registry
+                .get_by_exported_function(&ffqn)
+                .expect("imported function must be found in fn_registry");
 
             let req_join_set_created = AppendRequest {
                 created_at,
@@ -1059,7 +1056,7 @@ pub(crate) mod tests {
                     JoinNextBlockingStrategy::Await {
                         non_blocking_event_batching: 0,
                     },
-                    fn_registry.clone(),
+                    &fn_registry,
                 );
 
                 let router = {

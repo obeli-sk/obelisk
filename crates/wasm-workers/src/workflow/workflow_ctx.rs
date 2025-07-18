@@ -129,7 +129,6 @@ pub(crate) struct WorkflowCtx<C: ClockFn> {
     pub(crate) clock_fn: C,
     pub(crate) db_pool: Arc<dyn DbPool>,
     pub(crate) version: Version,
-    fn_registry: Arc<dyn FunctionRegistry>,
     component_logger: ComponentLogger,
     pub(crate) resource_table: wasmtime::component::ResourceTable,
     backtrace: Option<WasmBacktrace>, // Temporary storage of current backtrace
@@ -494,7 +493,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
         db_pool: Arc<dyn DbPool>,
         version: Version,
         execution_deadline: DateTime<Utc>,
-        fn_registry: Arc<dyn FunctionRegistry>,
         worker_span: Span,
         forward_unhandled_child_errors_in_join_set_close: bool,
         backtrace_persist: bool,
@@ -521,7 +519,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
             clock_fn,
             db_pool,
             version,
-            fn_registry,
             component_logger: ComponentLogger { span: worker_span },
             resource_table: wasmtime::component::ResourceTable::default(),
             backtrace: None,
@@ -542,16 +539,16 @@ impl<C: ClockFn> WorkflowCtx<C> {
         imported_fn_call: ImportedFnCall<'_>,
         results: &mut [Val],
         called_ffqn: FunctionFqn,
+        fn_registry: &dyn FunctionRegistry,
     ) -> Result<(), WorkflowFunctionError> {
         trace!(?imported_fn_call, "call_imported_fn start");
-        let event_call = self.imported_fn_to_event_call(imported_fn_call);
+        let event_call = self.imported_fn_to_event_call(imported_fn_call, fn_registry);
         let res = self
             .event_history
             .apply(
                 event_call,
                 self.db_pool.connection().as_ref(),
                 &mut self.version,
-                self.fn_registry.as_ref(),
             )
             .await?;
         let res = res.into_wast_val();
@@ -588,7 +585,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 },
                 self.db_pool.connection().as_ref(),
                 &mut self.version,
-                self.fn_registry.as_ref(),
             )
             .await?;
         Ok(())
@@ -639,7 +635,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     },
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
-                    self.fn_registry.as_ref(),
                 )
                 .await
                 .map_err(WorkflowFunctionError::from)?;
@@ -830,11 +825,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     pub(crate) async fn close_opened_join_sets(&mut self) -> Result<(), ApplyError> {
         self.event_history
-            .close_opened_join_sets(
-                self.db_pool.connection().as_ref(),
-                &mut self.version,
-                self.fn_registry.as_ref(),
-            )
+            .close_opened_join_sets(self.db_pool.connection().as_ref(), &mut self.version)
             .await
     }
 
@@ -845,7 +836,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .get_incremented_by(u64::try_from(count).unwrap())
     }
 
-    fn imported_fn_to_event_call(&mut self, imported_fn_call: ImportedFnCall) -> EventCall {
+    fn imported_fn_to_event_call(
+        &mut self,
+        imported_fn_call: ImportedFnCall,
+        fn_registry: &dyn FunctionRegistry,
+    ) -> EventCall {
         match imported_fn_call {
             ImportedFnCall::Direct {
                 ffqn,
@@ -854,8 +849,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
             } => {
                 let join_set_id = self.next_join_set_one_off();
                 let child_execution_id = self.execution_id.next_level(&join_set_id);
+                let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
+                    .get_by_exported_function(&ffqn)
+                    .expect("function obtained from fn_registry exports must be found");
                 EventCall::BlockingChildDirectCall {
                     ffqn,
+                    fn_component_id,
+                    fn_retry_config,
                     join_set_id,
                     params: Params::from_wasmtime(Arc::from(params)),
                     child_execution_id,
@@ -873,10 +873,15 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 // Or use ExecutionId::generate(), but ignore the id when checking determinism.
                 let execution_id =
                     ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+                let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
+                    .get_by_exported_function(&target_ffqn)
+                    .expect("function obtained from fn_registry exports must be found");
                 EventCall::ScheduleRequest {
                     scheduled_at,
                     execution_id,
                     ffqn: target_ffqn,
+                    fn_component_id,
+                    fn_retry_config,
                     params: Params::from_wasmtime(Arc::from(target_params)),
                     wasm_backtrace,
                 }
@@ -888,8 +893,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 wasm_backtrace,
             } => {
                 let child_execution_id = self.next_child_id(&join_set_id);
+                let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
+                    .get_by_exported_function(&target_ffqn)
+                    .expect("function obtained from fn_registry exports must be found");
                 EventCall::StartAsync {
                     ffqn: target_ffqn,
+                    fn_component_id,
+                    fn_retry_config,
                     join_set_id,
                     params: Params::from_wasmtime(Arc::from(target_params)),
                     child_execution_id,
@@ -912,14 +922,20 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 join_set_id,
                 return_value,
                 wasm_backtrace,
-            } => EventCall::StubResponse {
-                target_ffqn,
-                target_execution_id,
-                parent_id,
-                join_set_id,
-                return_value,
-                wasm_backtrace,
-            },
+            } => {
+                let (fn_meta, _fn_component_id, _fn_retry_config) = fn_registry
+                    .get_by_exported_function(&target_ffqn)
+                    .expect("function obtained from fn_registry exports must be found");
+                EventCall::StubResponse {
+                    target_ffqn,
+                    fn_meta,
+                    target_execution_id,
+                    parent_id,
+                    join_set_id,
+                    return_value,
+                    wasm_backtrace,
+                }
+            }
         }
     }
 }
@@ -990,7 +1006,6 @@ mod workflow_support {
                     },
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
-                    self.fn_registry.as_ref(),
                 )
                 .await
                 .map_err(WorkflowFunctionError::from)?;
@@ -1037,7 +1052,6 @@ mod workflow_support {
                     },
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
-                    self.fn_registry.as_ref(),
                 )
                 .await
                 .map_err(WorkflowFunctionError::from)?;
@@ -1240,7 +1254,6 @@ pub(crate) mod tests {
                 self.db_pool.clone(),
                 ctx.version,
                 ctx.execution_deadline,
-                self.fn_registry.clone(),
                 tracing::info_span!("workflow-test"),
                 false,
                 false,
@@ -1263,6 +1276,7 @@ pub(crate) mod tests {
                                 },
                                 &mut [],
                                 ffqn.clone(),
+                                self.fn_registry.as_ref(),
                             )
                             .await
                     }
@@ -1299,6 +1313,7 @@ pub(crate) mod tests {
                                 },
                                 &mut ret_val,
                                 submit_ffqn,
+                                self.fn_registry.as_ref(),
                             )
                             .await
                     }

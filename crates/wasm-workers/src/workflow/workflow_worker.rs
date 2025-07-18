@@ -71,7 +71,6 @@ pub struct WorkflowWorkerLinked<C: ClockFn, S: Sleep> {
     clock_fn: C,
     sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
-    fn_registry: Arc<dyn FunctionRegistry>,
     instance_pre: InstancePre<WorkflowCtx<C>>,
     exported_functions_noext: Vec<FunctionMetadata>,
 }
@@ -85,7 +84,6 @@ pub struct WorkflowWorker<C: ClockFn, S: Sleep> {
     clock_fn: C,
     sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
-    fn_registry: Arc<dyn FunctionRegistry>,
     instance_pre: InstancePre<WorkflowCtx<C>>,
 }
 
@@ -186,7 +184,7 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
     #[instrument(skip_all, fields(component_id = %self.config.component_id))]
     pub fn link(
         self,
-        fn_registry: Arc<dyn FunctionRegistry>,
+        fn_registry: &Arc<dyn FunctionRegistry>,
     ) -> Result<WorkflowWorkerLinked<C, S>, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
 
@@ -213,6 +211,7 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
                     trace!("Adding mock for imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(function_name.deref(), {
                         let ffqn = ffqn.clone();
+                        let fn_registry = fn_registry.clone();
                         move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                               params: &[Val],
                               results: &mut [Val]| {
@@ -230,10 +229,16 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
                                 }
                             };
                             let ffqn = ffqn.clone();
+                            let fn_registry = fn_registry.clone();
                             Box::new(async move {
                                 Ok(store_ctx
                                     .data_mut()
-                                    .call_imported_fn(imported_fn_call, results, ffqn)
+                                    .call_imported_fn(
+                                        imported_fn_call,
+                                        results,
+                                        ffqn,
+                                        fn_registry.as_ref(),
+                                    )
                                     .await?)
                             })
                         }
@@ -271,7 +276,6 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
             clock_fn: self.clock_fn,
             sleep: self.sleep,
             exported_ffqn_to_index: self.exported_ffqn_to_index,
-            fn_registry,
             instance_pre,
             exported_functions_noext: self.exported_functions_noext,
         })
@@ -299,7 +303,6 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerLinked<C, S> {
             clock_fn: self.clock_fn,
             sleep: self.sleep,
             exported_ffqn_to_index: self.exported_ffqn_to_index,
-            fn_registry: self.fn_registry,
             instance_pre: self.instance_pre,
             exported_functions_noext: self.exported_functions_noext,
         }
@@ -345,7 +348,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
             self.db_pool.clone(),
             ctx.version,
             ctx.execution_deadline,
-            self.fn_registry.clone(),
             ctx.worker_span,
             self.config.forward_unhandled_child_errors_in_join_set_close,
             self.config.backtrace_persist,
@@ -765,7 +767,7 @@ pub(crate) mod tests {
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        fn_registry: Arc<dyn FunctionRegistry>,
+        fn_registry: &Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         let workflow_engine =
             Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
@@ -813,7 +815,7 @@ pub(crate) mod tests {
         db_pool: Arc<dyn DbPool>,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        fn_registry: Arc<dyn FunctionRegistry>,
+        fn_registry: &Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         spawn_workflow(
             db_pool,
@@ -876,7 +878,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock.clone(),
             join_next_blocking_strategy,
-            fn_registry,
+            &fn_registry,
         );
         // Create an execution.
         let execution_id = ExecutionId::generate();
@@ -944,7 +946,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
-            fn_registry,
+            &fn_registry,
         );
         db_pool.close().await.unwrap();
     }
@@ -955,7 +957,7 @@ pub(crate) mod tests {
         clock_fn: C,
         sleep: S,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        fn_registry: Arc<dyn FunctionRegistry>,
+        fn_registry: &Arc<dyn FunctionRegistry>,
     ) -> Arc<WorkflowWorker<C, S>> {
         let workflow_engine =
             Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
@@ -995,7 +997,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             TokioSleep,
             JoinNextBlockingStrategy::Interrupt,
-            TestingFnRegistry::new_from_components(vec![
+            &TestingFnRegistry::new_from_components(vec![
                 compile_activity(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 )
@@ -1076,7 +1078,7 @@ pub(crate) mod tests {
                 sim_clock.clone(),
                 TokioSleep,
                 join_next_blocking_strategy,
-                fn_registry,
+                &fn_registry,
             );
             let exec_config = ExecConfig {
                 batch_size: 1,
@@ -1228,7 +1230,7 @@ pub(crate) mod tests {
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
-            fn_registry,
+            &fn_registry,
         );
         let execution_id = ExecutionId::generate();
         db_connection
@@ -1313,7 +1315,7 @@ pub(crate) mod tests {
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
             join_next_blocking_strategy,
-            fn_registry,
+            &fn_registry,
         );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1415,7 +1417,7 @@ pub(crate) mod tests {
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
             join_next_strategy,
-            fn_registry,
+            &fn_registry,
         );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1496,7 +1498,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             TokioSleep,
             join_next_strategy,
-            fn_registry,
+            &fn_registry,
         );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
@@ -1620,7 +1622,7 @@ pub(crate) mod tests {
             JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching: 0,
             },
-            fn_registry,
+            &fn_registry,
         );
 
         let url = "http://";
