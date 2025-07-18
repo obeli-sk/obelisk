@@ -534,39 +534,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .await
     }
 
-    async fn call_apply(
-        &mut self,
-        imported_fn_call: ImportedFnCall<'_>,
-        fn_registry: &dyn FunctionRegistry,
-    ) -> Result<Option<WastVal>, WorkflowFunctionError> {
-        let (intermediate_event, last_event_call) =
-            self.imported_fn_to_event_calls(imported_fn_call, fn_registry);
-        if let Some(intermediate_event) = intermediate_event {
-            let first_res = self
-                .event_history
-                .apply(
-                    intermediate_event,
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                )
-                .await?;
-            assert_matches!(
-                first_res,
-                ChildReturnValue::None,
-                "intermediate event must result in None"
-            );
-        }
-        let res = self
-            .event_history
-            .apply(
-                last_event_call,
-                self.db_pool.connection().as_ref(),
-                &mut self.version,
-            )
-            .await?;
-        Ok(res.into_wast_val())
-    }
-
     #[instrument(level = tracing::Level::DEBUG, skip_all, fields(ffqn = %imported_fn_call.ffqn()))]
     pub(crate) async fn call_imported_fn(
         &mut self,
@@ -576,7 +543,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<(), WorkflowFunctionError> {
         trace!(?imported_fn_call, "call_imported_fn start");
-        let res = self.call_apply(imported_fn_call, fn_registry).await?;
+        let event = self.imported_fn_to_event_call(imported_fn_call, fn_registry);
+        let res = self
+            .event_history
+            .apply(event, self.db_pool.connection().as_ref(), &mut self.version)
+            .await?
+            .into_wast_val();
+
         match (results.len(), res) {
             (0, None) => {}
             (1, Some(res)) => {
@@ -861,11 +834,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .get_incremented_by(u64::try_from(count).unwrap())
     }
 
-    fn imported_fn_to_event_calls(
+    fn imported_fn_to_event_call(
         &mut self,
         imported_fn_call: ImportedFnCall,
         fn_registry: &dyn FunctionRegistry,
-    ) -> (Option<EventCall> /* Intermediate event */, EventCall) {
+    ) -> EventCall {
         match imported_fn_call {
             ImportedFnCall::Direct {
                 ffqn,
@@ -877,18 +850,16 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
                     .get_by_exported_function(&ffqn)
                     .expect("function obtained from fn_registry exports must be found");
-                (
-                    None,
-                    EventCall::BlockingChildDirectCall {
-                        ffqn,
-                        fn_component_id,
-                        fn_retry_config,
-                        join_set_id,
-                        params: Params::from_wasmtime(Arc::from(params)),
-                        child_execution_id,
-                        wasm_backtrace,
-                    },
-                )
+
+                EventCall::BlockingChildDirectCall {
+                    ffqn,
+                    fn_component_id,
+                    fn_retry_config,
+                    join_set_id,
+                    params: Params::from_wasmtime(Arc::from(params)),
+                    child_execution_id,
+                    wasm_backtrace,
+                }
             }
             ImportedFnCall::Schedule {
                 target_ffqn,
@@ -904,18 +875,16 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from fn_registry exports must be found");
-                (
-                    None,
-                    EventCall::ScheduleRequest {
-                        scheduled_at,
-                        execution_id,
-                        ffqn: target_ffqn,
-                        fn_component_id,
-                        fn_retry_config,
-                        params: Params::from_wasmtime(Arc::from(target_params)),
-                        wasm_backtrace,
-                    },
-                )
+
+                EventCall::ScheduleRequest {
+                    scheduled_at,
+                    execution_id,
+                    ffqn: target_ffqn,
+                    fn_component_id,
+                    fn_retry_config,
+                    params: Params::from_wasmtime(Arc::from(target_params)),
+                    wasm_backtrace,
+                }
             }
             ImportedFnCall::Submit {
                 target_ffqn,
@@ -927,31 +896,25 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from fn_registry exports must be found");
-                (
-                    None,
-                    EventCall::StartAsync {
-                        ffqn: target_ffqn,
-                        fn_component_id,
-                        fn_retry_config,
-                        join_set_id,
-                        params: Params::from_wasmtime(Arc::from(target_params)),
-                        child_execution_id,
-                        wasm_backtrace,
-                    },
-                )
+                EventCall::StartAsync {
+                    ffqn: target_ffqn,
+                    fn_component_id,
+                    fn_retry_config,
+                    join_set_id,
+                    params: Params::from_wasmtime(Arc::from(target_params)),
+                    child_execution_id,
+                    wasm_backtrace,
+                }
             }
             ImportedFnCall::AwaitNext {
                 target_ffqn: _, // Currently multiple functions are not supported in one join set.
                 join_set_id,
                 wasm_backtrace,
-            } => (
-                None,
-                EventCall::BlockingChildAwaitNext {
-                    join_set_id,
-                    closing: false,
-                    wasm_backtrace,
-                },
-            ),
+            } => EventCall::BlockingChildAwaitNext {
+                join_set_id,
+                closing: false,
+                wasm_backtrace,
+            },
             ImportedFnCall::Stub {
                 target_ffqn,
                 target_execution_id,
@@ -975,17 +938,14 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     (None, None) => SupportedFunctionReturnValue::None,
                     _ => todo!("TODO: error"),
                 };
-                (
-                    None,
-                    EventCall::Stub {
-                        target_ffqn: target_ffqn.clone(),
-                        target_execution_id: target_execution_id.clone(),
-                        parent_id,
-                        join_set_id,
-                        return_value: return_value.clone(),
-                        wasm_backtrace,
-                    },
-                )
+                EventCall::Stub {
+                    target_ffqn: target_ffqn.clone(),
+                    target_execution_id: target_execution_id.clone(),
+                    parent_id,
+                    join_set_id,
+                    return_value: return_value.clone(),
+                    wasm_backtrace,
+                }
             }
         }
     }
