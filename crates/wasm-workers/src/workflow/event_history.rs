@@ -813,6 +813,7 @@ impl<C: ClockFn> EventHistory<C> {
                 },
             ) if *target_execution_id == *found_execution_id => {
                 trace!(%target_execution_id, "Matched Schedule");
+                self.event_history[found_idx].1 = Processed;
                 // return execution id
                 Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                     execution_id_into_wast_val(target_execution_id),
@@ -1742,7 +1743,7 @@ mod tests {
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::ExecutionIdDerived;
-    use concepts::storage::CreateRequest;
+    use concepts::storage::{CreateRequest, HistoryEventScheduledAt};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::time::ClockFn;
     use concepts::{
@@ -2075,6 +2076,64 @@ mod tests {
         db_pool.close().await.unwrap();
     }
 
+    #[rstest]
+    #[tokio::test]
+    async fn schedule_event_should_be_processed(
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100})]
+        second_run_strategy: JoinNextBlockingStrategy,
+    ) {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection();
+
+        // Create an execution.
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
+
+        let (event_history, version) = load_event_history(
+            db_connection.as_ref(),
+            execution_id.clone(),
+            sim_clock.now(),
+            sim_clock.clone(),
+            JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
+        )
+        .await;
+
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        let scheduled_execution_id = ExecutionId::generate();
+
+        apply_schedule_create_js(
+            db_connection.as_ref(),
+            scheduled_execution_id.clone(),
+            event_history,
+            version,
+            join_set_id.clone(),
+        )
+        .await;
+
+        info!("Second run");
+        let (event_history, version) = load_event_history(
+            db_connection.as_ref(),
+            execution_id,
+            sim_clock.now(),
+            sim_clock.clone(),
+            second_run_strategy,
+        )
+        .await;
+        apply_schedule_create_js(
+            db_connection.as_ref(),
+            scheduled_execution_id,
+            event_history,
+            version,
+            join_set_id,
+        )
+        .await;
+
+        drop(db_connection);
+        db_pool.close().await.unwrap();
+    }
+
     // TODO: Check -await-next for fn without return type
     // TODO: Check execution errors translating to execution-error
 
@@ -2240,5 +2299,42 @@ mod tests {
             )
             .await
             .map(super::ChildReturnValue::into_wast_val)
+    }
+
+    async fn apply_schedule_create_js(
+        db_connection: &dyn DbConnection,
+        execution_id: ExecutionId,
+        mut event_history: EventHistory<SimClock>,
+        mut version: Version,
+        join_set_id: JoinSetId,
+    ) {
+        event_history
+            .apply(
+                EventCall::ScheduleRequest {
+                    scheduled_at: HistoryEventScheduledAt::Now,
+                    execution_id,
+                    ffqn: MOCK_FFQN,
+                    fn_component_id: ComponentId::dummy_activity(),
+                    fn_retry_config: ComponentRetryConfig::ZERO,
+                    params: Params::empty(),
+                    wasm_backtrace: None,
+                },
+                db_connection,
+                &mut version,
+            )
+            .await
+            .unwrap();
+        event_history
+            .apply(
+                EventCall::CreateJoinSet {
+                    join_set_id: join_set_id.clone(),
+                    closing_strategy: ClosingStrategy::Complete,
+                    wasm_backtrace: None,
+                },
+                db_connection,
+                &mut version,
+            )
+            .await
+            .unwrap();
     }
 }
