@@ -206,7 +206,7 @@ mod bench {
         db_pool: Arc<dyn DbPool>,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        fn_registry: Arc<dyn FunctionRegistry>,
+        fn_registry: &Arc<dyn FunctionRegistry>,
         workflow_engine: Arc<Engine>,
     ) -> ExecutorTaskHandle {
         spawn_workflow(
@@ -214,7 +214,7 @@ mod bench {
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
             clock_fn,
             join_next_blocking_strategy,
-            &fn_registry,
+            fn_registry,
             workflow_engine,
         )
     }
@@ -265,7 +265,7 @@ mod bench {
             db_pool.clone(),
             Now,
             JoinNextBlockingStrategy::default(),
-            fn_registry,
+            &fn_registry,
             engines.workflow_engine.clone(),
         );
 
