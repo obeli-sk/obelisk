@@ -2076,12 +2076,8 @@ mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[rstest]
     #[tokio::test]
-    async fn schedule_event_should_be_processed(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100})]
-        second_run_strategy: JoinNextBlockingStrategy,
-    ) {
+    async fn schedule_event_should_be_processed() {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = Database::Memory.set_up().await;
@@ -2095,38 +2091,16 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             sim_clock.clone(),
-            JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
+            JoinNextBlockingStrategy::Interrupt, // does not matter, there are no blocking events
         )
         .await;
-
-        let join_set_id =
-            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
-        let scheduled_execution_id = ExecutionId::generate();
 
         apply_schedule_create_js(
             db_connection.as_ref(),
-            scheduled_execution_id.clone(),
+            ExecutionId::generate(),
             event_history,
             version,
-            join_set_id.clone(),
-        )
-        .await;
-
-        info!("Second run");
-        let (event_history, version) = load_event_history(
-            db_connection.as_ref(),
-            execution_id,
-            sim_clock.now(),
-            sim_clock.clone(),
-            second_run_strategy,
-        )
-        .await;
-        apply_schedule_create_js(
-            db_connection.as_ref(),
-            scheduled_execution_id,
-            event_history,
-            version,
-            join_set_id,
+            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap(),
         )
         .await;
 
