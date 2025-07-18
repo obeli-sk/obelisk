@@ -1,4 +1,4 @@
-use super::grpc_gen::execution_event::history_event::StubResponse;
+use super::grpc_gen::execution_event::history_event::{StubRequest, StubResponse};
 use crate::grpc_util::grpc_gen;
 use concepts::{
     ClosingStrategy, ComponentId, ComponentType, ExecutionId, FinishedExecutionError,
@@ -516,9 +516,12 @@ pub(crate) fn from_execution_event_to_grpc(
                                 },
                             }),
                         }),
+                        HistoryEvent::StubRequest {  target_execution_id, .. } => grpc_gen::execution_event::history_event::Event::StubRequest(StubRequest {
+                            execution_id: Some(ExecutionId::Derived(target_execution_id).into()),
+                        }),
                         HistoryEvent::StubResponse {  target_execution_id, .. } => grpc_gen::execution_event::history_event::Event::StubResponse(StubResponse {
                             execution_id: Some(ExecutionId::Derived(target_execution_id).into()),
-                        })
+                        }),
                     }),
                 }),
             }),

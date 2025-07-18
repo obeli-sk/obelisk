@@ -12,6 +12,7 @@ use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
     ClosingStrategy, ComponentId, ExecutionId, FunctionRegistry, IfcFqnName, StrVariant,
+    SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
@@ -166,7 +167,7 @@ pub(crate) enum ImportedFnCall<'a> {
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
-    StubResponse {
+    Stub {
         target_ffqn: FunctionFqn,
         target_execution_id: ExecutionIdDerived,
         parent_id: ExecutionId,
@@ -421,7 +422,7 @@ impl<'a> ImportedFnCall<'a> {
                         });
                     }
                 };
-                Ok(ImportedFnCall::StubResponse {
+                Ok(ImportedFnCall::Stub {
                     target_ffqn,
                     target_execution_id,
                     parent_id,
@@ -458,7 +459,7 @@ impl<'a> ImportedFnCall<'a> {
             | Self::AwaitNext {
                 target_ffqn: ffqn, ..
             }
-            | Self::StubResponse {
+            | Self::Stub {
                 target_ffqn: ffqn, ..
             } => ffqn,
         }
@@ -951,7 +952,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     wasm_backtrace,
                 },
             ),
-            ImportedFnCall::StubResponse {
+            ImportedFnCall::Stub {
                 target_ffqn,
                 target_execution_id,
                 parent_id,
@@ -962,16 +963,32 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 let (fn_meta, _fn_component_id, _fn_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from fn_registry exports must be found");
+                // Convert Val to StubReturnValue
+                let return_value = match (return_value, fn_meta.return_type) {
+                    (Some(return_value), Some(return_type)) => {
+                        SupportedFunctionReturnValue::from_val_and_type_wrapper(
+                            return_value,
+                            return_type.type_wrapper,
+                        )
+                        .expect("TODO")
+                    }
+                    (None, None) => SupportedFunctionReturnValue::None,
+                    _ => todo!("TODO: error"),
+                };
                 (
-                    None,
-                    EventCall::StubResponse {
-                        target_ffqn,
-                        fn_meta,
-                        target_execution_id,
+                    Some(EventCall::StubRequest {
+                        target_ffqn: target_ffqn.clone(),
+                        target_execution_id: target_execution_id.clone(),
                         parent_id,
                         join_set_id,
-                        return_value,
+                        return_value: return_value.clone(),
                         wasm_backtrace,
+                    }),
+                    // Determine whether the `StubRequest` write was successful - is the row at Version=1 what was expected?
+                    // TODO SELECT == return_value
+                    EventCall::StubResponse {
+                        target_execution_id,
+                        target_result: Ok(()),
                     },
                 )
             }

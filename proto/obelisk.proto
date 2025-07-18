@@ -370,6 +370,10 @@ message ExecutionEvent {
             ScheduledAt scheduled_at = 2;
         }
 
+        message StubRequest {
+            ExecutionId execution_id = 1;
+        }
+
         message StubResponse {
             ExecutionId execution_id = 1;
         }
@@ -380,7 +384,8 @@ message ExecutionEvent {
             JoinSetRequest join_set_request = 3;
             JoinNext join_next = 4;
             Schedule schedule = 5;
-            StubResponse stub_response = 6;
+            StubRequest stub_request = 6;
+            StubResponse stub_response = 7;
         }
     }
 

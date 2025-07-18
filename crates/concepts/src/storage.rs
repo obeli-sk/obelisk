@@ -447,13 +447,17 @@ pub enum HistoryEvent {
         execution_id: ExecutionId,
         scheduled_at: HistoryEventScheduledAt,
     },
-    #[display("StubResponse({target_execution_id})")]
-    StubResponse {
-        target_ffqn: FunctionFqn,
+    #[display("StubRequest({target_execution_id})")]
+    StubRequest {
         target_execution_id: ExecutionIdDerived,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = StubReturnValue::None))]
         #[debug(skip)]
-        return_value: StubReturnValue,
+        return_value: StubReturnValue, // FIXME: does not need to be there
+    },
+    #[display("StubResponse({target_execution_id})")]
+    StubResponse {
+        target_execution_id: ExecutionIdDerived,
+        target_result: Result<(), ()>, // Is the Row (target_execution_id,Version:1) what is expected?
     },
 }
 
