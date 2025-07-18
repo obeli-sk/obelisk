@@ -166,6 +166,7 @@ test-programs-serde-activity-builder = { path = "crates/testing/test-programs/se
 test-programs-sleep-activity-builder = { path = "crates/testing/test-programs/sleep/activity/builder" }
 test-programs-sleep-workflow-builder = { path = "crates/testing/test-programs/sleep/workflow/builder" }
 test-programs-stub-activity-builder = { path = "crates/testing/test-programs/stub/activity/builder" }
+test-programs-stub-workflow-builder = { path = "crates/testing/test-programs/stub/workflow/builder" }
 test-utils = { path = "crates/testing/test-utils" }
 utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.23.1" }
 val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.23.1" }

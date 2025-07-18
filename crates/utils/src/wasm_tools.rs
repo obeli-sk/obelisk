@@ -726,7 +726,7 @@ fn merge_function_params_with_wasmtime_internal<'a>(
                         },
                     );
                 } else {
-                    debug!("Ignoring export - not a ComponentFunc: {export:?}");
+                    trace!("Ignoring export - not a ComponentFunc: {export:?}");
                 }
             }
             vec.push(PackageIfcFns {

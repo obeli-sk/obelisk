@@ -3354,6 +3354,8 @@ dependencies = [
  "test-programs-serde-activity-builder",
  "test-programs-sleep-activity-builder",
  "test-programs-sleep-workflow-builder",
+ "test-programs-stub-activity-builder",
+ "test-programs-stub-workflow-builder",
  "test-utils",
  "thiserror 2.0.12",
  "tracing",

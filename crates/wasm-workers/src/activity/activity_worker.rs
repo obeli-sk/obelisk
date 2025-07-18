@@ -391,15 +391,20 @@ pub(crate) mod tests {
 
     pub(crate) async fn compile_activity(wasm_path: &str) -> (WasmComponent, ComponentId) {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
-        compile_activity_with_engine(wasm_path, &engine)
+        compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm)
+    }
+
+    pub(crate) async fn compile_activity_stub(wasm_path: &str) -> (WasmComponent, ComponentId) {
+        let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+        compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityStub)
     }
 
     pub(crate) fn compile_activity_with_engine(
         wasm_path: &str,
         engine: &Engine,
+        component_type: ComponentType,
     ) -> (WasmComponent, ComponentId) {
-        let component_id =
-            ComponentId::new(ComponentType::ActivityWasm, wasm_file_name(wasm_path)).unwrap();
+        let component_id = ComponentId::new(component_type, wasm_file_name(wasm_path)).unwrap();
         (
             WasmComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
             component_id,
@@ -423,7 +428,8 @@ pub(crate) mod tests {
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
     ) -> (Arc<dyn Worker>, ComponentId) {
-        let (wasm_component, component_id) = compile_activity_with_engine(wasm_path, &engine);
+        let (wasm_component, component_id) =
+            compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm);
         (
             Arc::new(
                 ActivityWorker::new_with_config(

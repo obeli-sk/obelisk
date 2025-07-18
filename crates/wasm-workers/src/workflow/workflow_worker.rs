@@ -834,7 +834,7 @@ pub(crate) mod tests {
     ) {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
-        fibo_workflow_should_schedule_fibo_activity(
+        fibo_workflow_should_submit_fibo_activity(
             db_pool.clone(),
             sim_clock,
             join_next_blocking_strategy,
@@ -846,13 +846,13 @@ pub(crate) mod tests {
     #[cfg(not(madsim))]
     #[rstest]
     #[tokio::test]
-    async fn fibo_workflow_should_schedule_fibo_activity_sqlite(
+    async fn fibo_workflow_should_submit_fibo_activity_sqlite(
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Sqlite.set_up().await;
-        fibo_workflow_should_schedule_fibo_activity(
+        fibo_workflow_should_submit_fibo_activity(
             db_pool.clone(),
             sim_clock,
             join_next_blocking_strategy,
@@ -861,7 +861,7 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    async fn fibo_workflow_should_schedule_fibo_activity(
+    async fn fibo_workflow_should_submit_fibo_activity(
         db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -1677,6 +1677,115 @@ pub(crate) mod tests {
         drop(db_connection);
         activity_exec_task.close().await;
         workflow_exec_task.close().await;
+        db_pool.close().await.unwrap();
+    }
+
+    #[cfg(not(madsim))]
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn stub(
+        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
+    ) {
+        use crate::activity::activity_worker::tests::compile_activity_stub;
+
+        const FFQN_WORKFLOW_STUB_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::FOO,
+        );
+        const INPUT_PARAM: &str = "bar";
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool) = db.set_up().await;
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW)
+                .await,
+        ]);
+
+        let worker = compile_workflow_worker(
+            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+            db_pool.clone(),
+            sim_clock.clone(),
+            TokioSleep,
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+        );
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection();
+
+        let params =
+            Params::from_json_values(vec![serde_json::Value::String(INPUT_PARAM.to_string())]);
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: FFQN_WORKFLOW_STUB_FFQN,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: u32::MAX,
+                component_id: ComponentId::dummy_workflow(),
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+        let exec_task = ExecTask::new(
+            worker,
+            ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: TICK_SLEEP,
+                component_id: ComponentId::dummy_workflow(),
+                task_limiter: None,
+            },
+            sim_clock.clone(),
+            db_pool.clone(),
+            Arc::new([FFQN_WORKFLOW_STUB_FFQN]),
+        );
+        info!("Should be interrupted at PendingAt now");
+        // tick + await should mark the first execution finished.
+        assert_eq!(
+            1,
+            exec_task
+                .tick_test(sim_clock.now())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap()
+        );
+
+        let pending_state = db_connection
+            .get_pending_state(&execution_id)
+            .await
+            .unwrap();
+        let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
+        assert_eq!(sim_clock.now(), scheduled_at);
+
+        // another tick + await should mark the execution finished.
+        assert_eq!(
+            1,
+            exec_task
+                .tick_test(sim_clock.now())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap()
+        );
+
+        let res = db_connection.get(&execution_id).await.unwrap();
+        let value = assert_matches!(
+            res.into_finished_result().unwrap(),
+            Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(
+                WastValWithType { value, .. }
+            )) => value
+        );
+        assert_eq!(WastVal::String(format!("stubbing {INPUT_PARAM}")), value);
+
+        drop(exec_task);
         db_pool.close().await.unwrap();
     }
 }

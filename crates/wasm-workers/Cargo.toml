@@ -60,6 +60,8 @@ test-programs-process-activity-builder.workspace = true
 test-programs-serde-activity-builder.workspace = true
 test-programs-sleep-activity-builder.workspace = true
 test-programs-sleep-workflow-builder.workspace = true
+test-programs-stub-activity-builder.workspace = true
+test-programs-stub-workflow-builder.workspace = true
 test-utils.workspace = true
 utils = { workspace = true, features = ["test"] }
 
