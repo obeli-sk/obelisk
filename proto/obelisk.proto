@@ -370,12 +370,9 @@ message ExecutionEvent {
             ScheduledAt scheduled_at = 2;
         }
 
-        message StubRequest {
+        message Stub {
             ExecutionId execution_id = 1;
-        }
-
-        message StubResponse {
-            ExecutionId execution_id = 1;
+            bool success = 2;
         }
 
         oneof event {
@@ -384,8 +381,7 @@ message ExecutionEvent {
             JoinSetRequest join_set_request = 3;
             JoinNext join_next = 4;
             Schedule schedule = 5;
-            StubRequest stub_request = 6;
-            StubResponse stub_response = 7;
+            Stub stub = 6;
         }
     }
 

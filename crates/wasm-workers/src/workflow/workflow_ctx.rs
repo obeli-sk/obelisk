@@ -976,19 +976,14 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     _ => todo!("TODO: error"),
                 };
                 (
-                    Some(EventCall::StubRequest {
+                    None,
+                    EventCall::Stub {
                         target_ffqn: target_ffqn.clone(),
                         target_execution_id: target_execution_id.clone(),
                         parent_id,
                         join_set_id,
                         return_value: return_value.clone(),
                         wasm_backtrace,
-                    }),
-                    // Determine whether the `StubRequest` write was successful - is the row at Version=1 what was expected?
-                    // TODO SELECT == return_value
-                    EventCall::StubResponse {
-                        target_execution_id,
-                        target_result: Ok(()),
                     },
                 )
             }

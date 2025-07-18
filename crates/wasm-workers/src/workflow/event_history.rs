@@ -14,6 +14,7 @@ use concepts::FinishedExecutionError;
 use concepts::JoinSetId;
 use concepts::JoinSetKind;
 use concepts::PermanentFailureKind;
+use concepts::StubReturnValue;
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage;
@@ -820,35 +821,32 @@ impl<C: ClockFn> EventHistory<C> {
             }
 
             (
-                EventHistoryKey::StubRequest {
+                EventHistoryKey::Stub {
                     target_execution_id,
-                    target_ffqn: _, // should have been checked on write
+                    return_value,
                 },
-                HistoryEvent::StubRequest {
+                HistoryEvent::Stub {
                     target_execution_id: found_execution_id,
-                    ..
-                },
-            ) if target_execution_id == found_execution_id => {
-                trace!(%target_execution_id, "Matched StubRequest");
-                self.event_history[found_idx].1 = Processed;
-                Ok(FindMatchingResponse::Found(ChildReturnValue::None))
-            }
-
-            (
-                EventHistoryKey::StubResponse {
-                    target_execution_id,
+                    return_value: found_return_value,
                     target_result,
                 },
-                HistoryEvent::StubResponse {
-                    target_execution_id: found_execution_id,
-                    target_result: found_result,
-                },
-            ) if target_execution_id == found_execution_id && target_result == found_result => {
-                trace!(%target_execution_id, "Matched StubResponse");
+            ) if target_execution_id == found_execution_id
+                && return_value == found_return_value =>
+            {
+                trace!(%target_execution_id, "Matched Stub");
+                let ret = match target_result {
+                    Ok(()) => Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                        WastVal::Result(Ok(None)),
+                    ))),
+                    Err(()) => Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                        WastVal::Result(Err(Some(Box::new(WastVal::Variant(
+                            "conflict".to_string(),
+                            None,
+                        ))))),
+                    ))),
+                };
                 self.event_history[found_idx].1 = Processed;
-                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                    WastVal::Result(Ok(None)),
-                )))
+                ret
             }
 
             (key, found) => Err(ApplyError::NondeterminismDetected(format!(
@@ -1352,7 +1350,7 @@ impl<C: ClockFn> EventHistory<C> {
                 Ok(history_events)
             }
 
-            EventCall::StubRequest {
+            EventCall::Stub {
                 target_ffqn, // TODO: check that the target_execution_id belongs to target_ffqn
                 target_execution_id,
                 parent_id,
@@ -1366,27 +1364,8 @@ impl<C: ClockFn> EventHistory<C> {
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
 
-                let event = HistoryEvent::StubRequest {
-                    target_execution_id: target_execution_id.clone(),
-                    return_value: return_value.clone(),
-                };
-                let history_events = vec![event.clone()];
-                let history_event_req = AppendRequest {
-                    created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
-                };
-                *version = {
-                    let next_version = db_connection
-                        .append_batch(
-                            called_at,
-                            vec![history_event_req],
-                            self.execution_id.clone(),
-                            version.clone(),
-                        )
-                        .await?;
-
-                    // FIXME: one tx
-
+                // Attempt to write to target_execution_id and its parent, ignoring the possible conflict error on this tx
+                let write_attempt = {
                     let finished_version = Version::new(1); // Stub activities have no execution log except Created event.
                     let finished_req = AppendRequest {
                         created_at: called_at,
@@ -1407,16 +1386,47 @@ impl<C: ClockFn> EventHistory<C> {
                                 event: JoinSetResponseEvent {
                                     join_set_id,
                                     event: JoinSetResponse::ChildExecutionFinished {
-                                        child_execution_id: target_execution_id,
+                                        child_execution_id: target_execution_id.clone(),
                                         finished_version,
-                                        result: Ok(return_value),
+                                        result: Ok(return_value.clone()),
                                     },
                                 },
                             },
                         )
                         .await
-                        .expect("FIXME"); // TODO: on conflict do nothing.
+                };
+                debug!(%target_execution_id, "Executed append_batch_respond_to_parent: {write_attempt:?}");
+                // The server might crash at this point, and restart processing.
+                let target_result = match write_attempt {
+                    Ok(_) => Ok(()),
+                    Err(err) => {
+                        // TODO: check error == conflict
+                        // In case of conflict, select row (target_execution_id, version:1)
+                        // SELECT
+                        todo!()
+                    }
+                };
 
+                // Second write tx: Append the HistoryEvent with target_result.
+                let event = HistoryEvent::Stub {
+                    target_execution_id: target_execution_id.clone(),
+                    return_value,
+                    target_result,
+                };
+                let history_events = vec![event.clone()];
+                let history_event_req = AppendRequest {
+                    created_at: called_at,
+                    event: ExecutionEventInner::HistoryEvent { event },
+                };
+                *version = {
+                    let next_version = db_connection
+                        .append_batch(
+                            called_at,
+                            vec![history_event_req],
+                            self.execution_id.clone(),
+                            version.clone(),
+                        )
+                        .await?;
                     self.persist_backtrace_blocking(
                         db_connection,
                         version,
@@ -1427,34 +1437,6 @@ impl<C: ClockFn> EventHistory<C> {
 
                     next_version
                 };
-                Ok(history_events)
-            }
-            EventCall::StubResponse {
-                target_execution_id,
-                target_result,
-            } => {
-                // Non-cacheable event. (could be turned into one)
-                debug!(%target_execution_id, "StubResponse: Flushing and appending");
-                self.flush_non_blocking_event_cache(db_connection, called_at)
-                    .await?;
-
-                let event = HistoryEvent::StubResponse {
-                    target_execution_id: target_execution_id.clone(),
-                    target_result,
-                };
-                let history_events = vec![event.clone()];
-                let history_event_req = AppendRequest {
-                    created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
-                };
-                *version = db_connection
-                    .append_batch(
-                        called_at,
-                        vec![history_event_req],
-                        self.execution_id.clone(),
-                        version.clone(),
-                    )
-                    .await?;
                 Ok(history_events)
             }
         }
@@ -1551,7 +1533,7 @@ pub(crate) enum EventCall {
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
-    StubRequest {
+    Stub {
         target_ffqn: FunctionFqn,
         target_execution_id: ExecutionIdDerived,
         parent_id: ExecutionId,
@@ -1560,10 +1542,6 @@ pub(crate) enum EventCall {
         return_value: SupportedFunctionReturnValue,
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
-    },
-    StubResponse {
-        target_execution_id: ExecutionIdDerived,
-        target_result: Result<(), ()>,
     },
     BlockingChildAwaitNext {
         join_set_id: JoinSetId,
@@ -1630,8 +1608,7 @@ impl EventCall {
             | EventCall::StartAsync { .. }
             | EventCall::ScheduleRequest { .. }
             | EventCall::Persist { .. }
-            | EventCall::StubRequest { .. }
-            | EventCall::StubResponse { .. } => None, // continue the execution event if Interrupt strategy is set
+            | EventCall::Stub { .. } => None, // continue the execution event if Interrupt strategy is set
         }
     }
 }
@@ -1670,14 +1647,9 @@ enum EventHistoryKey {
     Schedule {
         target_execution_id: ExecutionId,
     },
-    StubRequest {
-        target_ffqn: FunctionFqn,
+    Stub {
         target_execution_id: ExecutionIdDerived,
-        // TODO: Add and compare return_value: StubReturnValue,
-    },
-    StubResponse {
-        target_execution_id: ExecutionIdDerived,
-        target_result: Result<(), ()>,
+        return_value: StubReturnValue,
     },
 }
 
@@ -1760,23 +1732,15 @@ impl EventCall {
                     target_execution_id: execution_id.clone(),
                 }]
             }
-            EventCall::StubRequest {
+            EventCall::Stub {
                 target_ffqn,
                 target_execution_id,
+                return_value,
                 ..
             } => {
-                vec![EventHistoryKey::StubRequest {
-                    target_ffqn: target_ffqn.clone(),
+                vec![EventHistoryKey::Stub {
                     target_execution_id: target_execution_id.clone(),
-                }]
-            }
-            EventCall::StubResponse {
-                target_execution_id,
-                target_result,
-            } => {
-                vec![EventHistoryKey::StubResponse {
-                    target_execution_id: target_execution_id.clone(),
-                    target_result: *target_result,
+                    return_value: return_value.clone(),
                 }]
             }
         }
