@@ -2144,6 +2144,79 @@ mod tests {
         db_pool.close().await.unwrap();
     }
 
+    #[tokio::test]
+    async fn submit_stub_await() {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection();
+        let db_connection = db_connection.as_ref();
+
+        let execution_id = create_execution(db_connection, &sim_clock).await;
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        let child_execution_id = execution_id.next_level(&join_set_id);
+
+        for run_id in 0..1 {
+            info!("Run {run_id}");
+            let (mut event_history, mut version) = load_event_history(
+                db_connection,
+                execution_id.clone(),
+                sim_clock.now(),
+                sim_clock.clone(),
+                JoinNextBlockingStrategy::Await {
+                    non_blocking_event_batching: 0,
+                },
+            )
+            .await;
+
+            apply_create_js_start_async(
+                db_connection,
+                &mut event_history,
+                &mut version,
+                join_set_id.clone(),
+                child_execution_id.clone(),
+            )
+            .await;
+
+            event_history
+                .apply(
+                    EventCall::Stub {
+                        target_ffqn: MOCK_FFQN,
+                        target_execution_id: child_execution_id.clone(),
+                        parent_id: execution_id.clone(),
+                        join_set_id: join_set_id.clone(),
+                        return_value: SupportedFunctionReturnValue::None,
+                        wasm_backtrace: None,
+                    },
+                    db_connection,
+                    &mut version,
+                )
+                .await
+                .unwrap();
+
+            let child_return_value = event_history
+                .apply(
+                    EventCall::BlockingChildAwaitNext {
+                        join_set_id: join_set_id.clone(),
+                        closing: false,
+                        wasm_backtrace: None,
+                    },
+                    db_connection,
+                    &mut version,
+                )
+                .await
+                .unwrap();
+
+            assert_matches!(
+                child_return_value,
+                ChildReturnValue::WastVal(_child_execution_id)
+            );
+        }
+
+        db_pool.close().await.unwrap();
+    }
+
     // TODO: Check -await-next for fn without return type
     // TODO: Check execution errors translating to execution-error
 
