@@ -2095,12 +2095,13 @@ mod tests {
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
+        let db_connection = db_connection.as_ref();
 
         // Create an execution.
-        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
+        let execution_id = create_execution(db_connection, &sim_clock).await;
 
-        let (event_history, version) = load_event_history(
-            db_connection.as_ref(),
+        let (mut event_history, mut version) = load_event_history(
+            db_connection,
             execution_id.clone(),
             sim_clock.now(),
             sim_clock.clone(),
@@ -2108,16 +2109,38 @@ mod tests {
         )
         .await;
 
-        apply_schedule_create_js(
-            db_connection.as_ref(),
-            ExecutionId::generate(),
-            event_history,
-            version,
-            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap(),
-        )
-        .await;
+        event_history
+            .apply(
+                EventCall::ScheduleRequest {
+                    scheduled_at: HistoryEventScheduledAt::Now,
+                    execution_id: ExecutionId::generate(),
+                    ffqn: MOCK_FFQN,
+                    fn_component_id: ComponentId::dummy_activity(),
+                    fn_retry_config: ComponentRetryConfig::ZERO,
+                    params: Params::empty(),
+                    wasm_backtrace: None,
+                },
+                db_connection,
+                &mut version,
+            )
+            .await
+            .unwrap();
+        // Create a join set to force checking of "Processed" status of the schedule event.
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        event_history
+            .apply(
+                EventCall::CreateJoinSet {
+                    join_set_id: join_set_id.clone(),
+                    closing_strategy: ClosingStrategy::Complete,
+                    wasm_backtrace: None,
+                },
+                db_connection,
+                &mut version,
+            )
+            .await
+            .unwrap();
 
-        drop(db_connection);
         db_pool.close().await.unwrap();
     }
 
@@ -2286,42 +2309,5 @@ mod tests {
             )
             .await
             .map(super::ChildReturnValue::into_wast_val)
-    }
-
-    async fn apply_schedule_create_js(
-        db_connection: &dyn DbConnection,
-        execution_id: ExecutionId,
-        mut event_history: EventHistory<SimClock>,
-        mut version: Version,
-        join_set_id: JoinSetId,
-    ) {
-        event_history
-            .apply(
-                EventCall::ScheduleRequest {
-                    scheduled_at: HistoryEventScheduledAt::Now,
-                    execution_id,
-                    ffqn: MOCK_FFQN,
-                    fn_component_id: ComponentId::dummy_activity(),
-                    fn_retry_config: ComponentRetryConfig::ZERO,
-                    params: Params::empty(),
-                    wasm_backtrace: None,
-                },
-                db_connection,
-                &mut version,
-            )
-            .await
-            .unwrap();
-        event_history
-            .apply(
-                EventCall::CreateJoinSet {
-                    join_set_id: join_set_id.clone(),
-                    closing_strategy: ClosingStrategy::Complete,
-                    wasm_backtrace: None,
-                },
-                db_connection,
-                &mut version,
-            )
-            .await
-            .unwrap();
     }
 }
