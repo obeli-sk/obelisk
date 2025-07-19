@@ -1352,7 +1352,7 @@ impl<C: ClockFn> EventHistory<C> {
             }
 
             EventCall::Stub {
-                target_ffqn, // TODO: check that the target_execution_id belongs to target_ffqn
+                target_ffqn,
                 target_execution_id,
                 parent_id,
                 join_set_id,
@@ -1415,7 +1415,7 @@ impl<C: ClockFn> EventHistory<C> {
                             ExecutionEventInner::Finished {
                                 result: Ok(result), ..
                             } if result == return_value => Ok(()),
-                            ExecutionEventInner::Finished { result, .. } => {
+                            ExecutionEventInner::Finished { .. } => {
                                 info!(%target_ffqn, %target_execution_id, "Different value found in stubbed execution's finished event");
                                 Err(())
                             }
@@ -1638,7 +1638,7 @@ impl EventCall {
 /// Stores important properties of events as they are executed or replayed.
 /// Those properties are checked for equality with `HistoryEvent` before it is marked as `Processed`.
 /// One `EventCall` can be represented as multiple `EventHistoryKey`-s.
-/// One EventHistoryKey` corresponds to one `HistoryEvent`.
+/// One `EventHistoryKey` corresponds to one `HistoryEvent`.
 #[derive(derive_more::Debug, Clone)]
 enum EventHistoryKey {
     Persist {
@@ -1755,7 +1755,6 @@ impl EventCall {
                 }]
             }
             EventCall::Stub {
-                target_ffqn,
                 target_execution_id,
                 return_value,
                 ..

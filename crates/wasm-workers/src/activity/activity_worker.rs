@@ -394,7 +394,8 @@ pub(crate) mod tests {
         compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm)
     }
 
-    pub(crate) async fn compile_activity_stub(wasm_path: &str) -> (WasmComponent, ComponentId) {
+    #[cfg_attr(madsim, allow(dead_code))]
+    pub(crate) fn compile_activity_stub(wasm_path: &str) -> (WasmComponent, ComponentId) {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
         compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityStub)
     }
