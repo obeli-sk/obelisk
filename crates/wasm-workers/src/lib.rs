@@ -49,9 +49,9 @@ pub(crate) mod tests {
             test_programs_dir_activity_builder::TEST_PROGRAMS_DIR_ACTIVITY,
             test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
             ])]
-        #[tokio::test]
-        async fn fibo(wasm_path: &str) {
-            compile_activity(wasm_path).await;
+        #[test]
+        fn fibo(wasm_path: &str) {
+            compile_activity(wasm_path);
         }
 
         #[rstest::rstest(wasm_path => [
@@ -59,9 +59,9 @@ pub(crate) mod tests {
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             ])]
-        #[tokio::test]
-        async fn workflow(wasm_path: &str) {
-            compile_workflow(wasm_path).await;
+        #[test]
+        fn workflow(wasm_path: &str) {
+            compile_workflow(wasm_path);
         }
 
         #[cfg(not(madsim))]

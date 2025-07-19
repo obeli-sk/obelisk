@@ -1041,12 +1041,10 @@ pub(crate) mod tests {
                 let fn_registry = TestingFnRegistry::new_from_components(vec![
                     compile_activity(
                         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                    )
-                    .await,
+                    ),
                     compile_workflow(
                         test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-                    )
-                    .await,
+                    ),
                 ]);
                 let engine =
                     Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();

@@ -745,7 +745,7 @@ pub(crate) mod tests {
     #[cfg(not(madsim))]
     const FFQN_WORKFLOW_HTTP_GET_RESP: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_RESP);
 
-    pub(crate) async fn compile_workflow(wasm_path: &str) -> (WasmComponent, ComponentId) {
+    pub(crate) fn compile_workflow(wasm_path: &str) -> (WasmComponent, ComponentId) {
         let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
         compile_workflow_with_engine(wasm_path, &engine)
     }
@@ -869,10 +869,8 @@ pub(crate) mod tests {
         const INPUT_ITERATIONS: u32 = 1;
         test_utils::set_up();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
-                .await,
-            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
-                .await,
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
+            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW),
         ]);
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
@@ -1000,12 +998,10 @@ pub(crate) mod tests {
             &TestingFnRegistry::new_from_components(vec![
                 compile_activity(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                )
-                .await,
+                ),
                 compile_workflow(
                     test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
-                )
-                .await,
+                ),
             ]),
         );
         // simulate a scheduling problem where deadline < now
@@ -1046,10 +1042,8 @@ pub(crate) mod tests {
         let (_guard, db_pool) = database.set_up().await;
 
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY) // not used here
-                .await,
-            compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW)
-                .await,
+            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY), // not used here
+            compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW),
         ]);
 
         let execution_id = ExecutionId::generate();
@@ -1211,12 +1205,10 @@ pub(crate) mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            )
-            .await,
+            ),
             compile_workflow(
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            )
-            .await,
+            ),
         ]);
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
@@ -1296,12 +1288,10 @@ pub(crate) mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            )
-            .await,
+            ),
             compile_workflow(
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            )
-            .await,
+            ),
         ]);
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
@@ -1398,12 +1388,10 @@ pub(crate) mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            )
-            .await,
+            ),
             compile_workflow(
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            )
-            .await,
+            ),
         ]);
 
         let activity_exec_task = spawn_activity(
@@ -1487,10 +1475,8 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY)
-                .await,
-            compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW)
-                .await,
+            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY),
+            compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW),
         ]);
         let worker = compile_workflow_worker(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
@@ -1601,12 +1587,10 @@ pub(crate) mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            )
-            .await,
+            ),
             compile_workflow(
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            )
-            .await,
+            ),
         ]);
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
@@ -1697,8 +1681,7 @@ pub(crate) mod tests {
         let (_guard, db_pool) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
-            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW)
-                .await,
+            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW),
         ]);
 
         let worker = compile_workflow_worker(

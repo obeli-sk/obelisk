@@ -389,7 +389,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) async fn compile_activity(wasm_path: &str) -> (WasmComponent, ComponentId) {
+    pub(crate) fn compile_activity(wasm_path: &str) -> (WasmComponent, ComponentId) {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
         compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm)
     }
