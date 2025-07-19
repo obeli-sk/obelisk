@@ -1,3 +1,4 @@
+use super::history::stub::HistoryStubEvent;
 use crate::components::execution_detail::created::CreatedEvent;
 use crate::components::execution_detail::finished::FinishedEvent;
 use crate::components::execution_detail::history::join_next::HistoryJoinNextEvent;
@@ -11,6 +12,7 @@ use crate::components::execution_detail::temporarily_failed::TemporarilyFailedEv
 use crate::components::execution_detail::timed_out::TemporarilyTimedOutEvent;
 use crate::components::execution_detail::unlocked::UnlockedEvent;
 use crate::components::execution_header::ExecutionLink;
+use crate::grpc::grpc_client::execution_event::HistoryEvent;
 use crate::grpc::grpc_client::{
     ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent, execution_event,
 };
@@ -24,7 +26,7 @@ pub fn compute_join_next_to_response<'a>(
     let mut map = HashMap::new();
     let mut seen_join_nexts: HashMap<&JoinSetId, usize> = HashMap::new();
     for event in events {
-        if let Some(execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+        if let Some(execution_event::Event::HistoryVariant(HistoryEvent {
             event: Some(execution_event::history_event::Event::JoinNext(join_next)),
         })) = &event.event
         {
@@ -88,12 +90,12 @@ pub fn event_to_detail(
                 </>
             }
         }
-        execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+        execution_event::Event::HistoryVariant(HistoryEvent {
             event: Some(execution_event::history_event::Event::Schedule(inner_event)),
         }) => html! {
             <HistoryScheduleEvent event={inner_event.clone()} version={event.version} {link} {is_selected} />
         },
-        execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+        execution_event::Event::HistoryVariant(HistoryEvent {
             event: Some(execution_event::history_event::Event::JoinSetCreated(inner_event)),
         }) => html! {
             <HistoryJoinSetCreatedEvent
@@ -104,7 +106,7 @@ pub fn event_to_detail(
                 backtrace_id={event.backtrace_id}
                 />
         },
-        execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+        execution_event::Event::HistoryVariant(HistoryEvent {
             event: Some(execution_event::history_event::Event::JoinSetRequest(join_set_request)),
         }) => html! {
             <HistoryJoinSetRequestEvent
@@ -116,7 +118,7 @@ pub fn event_to_detail(
                 {is_selected}
                 />
         },
-        execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+        execution_event::Event::HistoryVariant(HistoryEvent {
             event: Some(execution_event::history_event::Event::JoinNext(join_next)),
         }) => {
             let response = join_next_version_to_response
@@ -135,12 +137,16 @@ pub fn event_to_detail(
                 />
             }
         }
-        execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+        execution_event::Event::HistoryVariant(HistoryEvent {
             event: Some(execution_event::history_event::Event::Persist(inner_event)),
         }) => html! {
             <HistoryPersistEvent event={inner_event.clone()} version={event.version} {is_selected}/>
         },
-
-        other => html! { {format!("unknown variant {other:?}")}},
+        execution_event::Event::HistoryVariant(HistoryEvent {
+            event: Some(execution_event::history_event::Event::Stub(inner_event)),
+        }) => html! {
+            <HistoryStubEvent event={inner_event.clone()} version={event.version} {link} {is_selected}/>
+        },
+        execution_event::Event::HistoryVariant(HistoryEvent { event: None }) => unreachable!(),
     }
 }
