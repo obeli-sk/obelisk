@@ -37,6 +37,7 @@ use std::fmt::Display;
 use strum::IntoStaticStr;
 use tracing::Level;
 use tracing::Span;
+use tracing::info;
 use tracing::instrument;
 use tracing::{debug, error, trace};
 use val_json::wast_val::WastVal;
@@ -1363,10 +1364,9 @@ impl<C: ClockFn> EventHistory<C> {
                 debug!(%target_execution_id, "StubRequest: Flushing and appending");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
-
+                let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
                 // Attempt to write to target_execution_id and its parent, ignoring the possible conflict error on this tx
                 let write_attempt = {
-                    let finished_version = Version::new(1); // Stub activities have no execution log except Created event.
                     let finished_req = AppendRequest {
                         created_at: called_at,
                         event: ExecutionEventInner::Finished {
@@ -1379,7 +1379,7 @@ impl<C: ClockFn> EventHistory<C> {
                             target_execution_id.clone(),
                             called_at,
                             vec![finished_req],
-                            finished_version.clone(),
+                            stub_finished_version.clone(),
                             parent_id,
                             JoinSetResponseEventOuter {
                                 created_at: called_at,
@@ -1387,7 +1387,7 @@ impl<C: ClockFn> EventHistory<C> {
                                     join_set_id,
                                     event: JoinSetResponse::ChildExecutionFinished {
                                         child_execution_id: target_execution_id.clone(),
-                                        finished_version,
+                                        finished_version: stub_finished_version.clone(),
                                         result: Ok(return_value.clone()),
                                     },
                                 },
@@ -1395,15 +1395,37 @@ impl<C: ClockFn> EventHistory<C> {
                         )
                         .await
                 };
-                debug!(%target_execution_id, "Executed append_batch_respond_to_parent: {write_attempt:?}");
+                debug!(%target_ffqn, %target_execution_id, "Executed append_batch_respond_to_parent: {write_attempt:?}");
                 // The server might crash at this point, and restart processing.
                 let target_result = match write_attempt {
                     Ok(_) => Ok(()),
                     Err(err) => {
                         // TODO: check error == conflict
+                        info!(%target_ffqn, %target_execution_id,
+                            "append_batch_respond_to_parent was not successful, checking execution result - {err:?}"
+                        );
                         // In case of conflict, select row (target_execution_id, version:1)
-                        // SELECT
-                        todo!()
+                        let found = db_connection
+                            .get_execution_event(
+                                &ExecutionId::Derived(target_execution_id.clone()),
+                                &stub_finished_version,
+                            )
+                            .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
+                        match found.event {
+                            ExecutionEventInner::Finished {
+                                result: Ok(result), ..
+                            } if result == return_value => Ok(()),
+                            ExecutionEventInner::Finished { result, .. } => {
+                                info!(%target_ffqn, %target_execution_id, "Different value found in stubbed execution's finished event");
+                                Err(())
+                            }
+                            other => {
+                                info!(%target_ffqn, %target_execution_id,
+                                    "Unexpected execution event at stubbed execution - {other:?}"
+                                );
+                                Err(())
+                            }
+                        }
                     }
                 };
 
@@ -2212,6 +2234,76 @@ mod tests {
                 child_return_value,
                 ChildReturnValue::WastVal(_child_execution_id)
             );
+        }
+
+        db_pool.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    // Simulate idempotency of two executions setting the same value to the same execution.
+    async fn submit_stub_stub_with_same_value_should_be_ok() {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection();
+        let db_connection = db_connection.as_ref();
+
+        let execution_id = create_execution(db_connection, &sim_clock).await;
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        let child_execution_id = execution_id.next_level(&join_set_id);
+
+        for run_id in 0..1 {
+            info!("Run {run_id}");
+            let (mut event_history, mut version) = load_event_history(
+                db_connection,
+                execution_id.clone(),
+                sim_clock.now(),
+                sim_clock.clone(),
+                JoinNextBlockingStrategy::Await {
+                    non_blocking_event_batching: 0,
+                },
+            )
+            .await;
+            apply_create_js_start_async(
+                db_connection,
+                &mut event_history,
+                &mut version,
+                join_set_id.clone(),
+                child_execution_id.clone(),
+            )
+            .await;
+            event_history
+                .apply(
+                    EventCall::Stub {
+                        target_ffqn: MOCK_FFQN,
+                        target_execution_id: child_execution_id.clone(),
+                        parent_id: execution_id.clone(),
+                        join_set_id: join_set_id.clone(),
+                        return_value: SupportedFunctionReturnValue::None,
+                        wasm_backtrace: None,
+                    },
+                    db_connection,
+                    &mut version,
+                )
+                .await
+                .unwrap();
+
+            event_history
+                .apply(
+                    EventCall::Stub {
+                        target_ffqn: MOCK_FFQN,
+                        target_execution_id: child_execution_id.clone(),
+                        parent_id: execution_id.clone(),
+                        join_set_id: join_set_id.clone(),
+                        return_value: SupportedFunctionReturnValue::None,
+                        wasm_backtrace: None,
+                    },
+                    db_connection,
+                    &mut version,
+                )
+                .await
+                .unwrap();
         }
 
         db_pool.close().await.unwrap();
