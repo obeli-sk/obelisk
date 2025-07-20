@@ -1673,7 +1673,7 @@ pub(crate) mod tests {
         use crate::activity::activity_worker::tests::compile_activity_stub;
 
         const FFQN_WORKFLOW_STUB_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
-            test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::FOO,
+            test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_STUB_AWAIT,
         );
         const INPUT_PARAM: &str = "bar";
         test_utils::set_up();

@@ -1,5 +1,5 @@
 package testing:stub-workflow;
 
 interface workflow {
-    foo: func(arg: string) -> string;
+    submit-stub-await: func(arg: string) -> string;
 }

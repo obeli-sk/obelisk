@@ -9,7 +9,7 @@ struct Component;
 export!(Component);
 
 impl Guest for Component {
-    fn foo(arg: String) -> String {
+    fn submit_stub_await(arg: String) -> String {
         let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
         let execution_id = activity_ext::foo_submit(&join_set, &arg);
         activity_stub::foo_stub(&execution_id, &format!("stubbing {arg}"))
