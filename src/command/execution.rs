@@ -2,6 +2,7 @@ use crate::ExecutionRepositoryClient;
 use crate::grpc_util::grpc_gen;
 use crate::grpc_util::grpc_gen::execution_status::BlockedByJoinSet;
 use crate::grpc_util::grpc_gen::execution_status::Finished;
+use anyhow::Context as _;
 use chrono::DateTime;
 use concepts::JOIN_SET_ID_INFIX;
 use concepts::JoinSetKind;
@@ -64,16 +65,19 @@ pub(crate) async fn submit(
 pub(crate) async fn stub(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionIdDerived,
-    return_value: serde_json::Value,
+    return_value: String,
 ) -> anyhow::Result<()> {
     let execution_id = ExecutionId::Derived(execution_id);
+    // Make sure `return_value` is a JSON string.
+
+    serde_json::from_str::<serde_json::Value>(&return_value)
+        .context("`RETURN_VALUE` must be passed as JSON")?;
     client
         .stub(tonic::Request::new(grpc_gen::StubRequest {
             execution_id: Some(execution_id.clone().into()),
             return_value: Some(prost_wkt_types::Any {
                 type_url: format!("urn:obelisk:json:retval:TBD"),
-                value: serde_json::to_vec(&return_value)
-                    .expect("converting back to JSON must succeed"),
+                value: return_value.into_bytes(),
             }),
         }))
         .await?
