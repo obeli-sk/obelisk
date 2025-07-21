@@ -3,6 +3,7 @@ use crate::grpc_util::grpc_gen;
 use crate::grpc_util::grpc_gen::execution_status::BlockedByJoinSet;
 use crate::grpc_util::grpc_gen::execution_status::Finished;
 use anyhow::Context as _;
+use anyhow::bail;
 use chrono::DateTime;
 use concepts::JOIN_SET_ID_INFIX;
 use concepts::JoinSetKind;
@@ -24,17 +25,22 @@ pub(crate) enum SubmitOutputOpts {
 pub(crate) async fn submit(
     mut client: ExecutionRepositoryClient,
     ffqn: FunctionFqn,
-    params: Vec<serde_json::Value>,
+    params: String,
     follow: bool,
     opts: SubmitOutputOpts,
 ) -> anyhow::Result<()> {
     let execution_id = ExecutionId::generate();
+    // Verify params are string parseable as JSON array.
+    match serde_json::from_str(&params).context("PARAMS must be a JSON-encoded string")? {
+        serde_json::Value::Array(_) => {}
+        _ => bail!("PARAMS must be a JSON-encoded array"),
+    };
     client
         .submit(tonic::Request::new(grpc_gen::SubmitRequest {
             execution_id: Some(execution_id.clone().into()),
             params: Some(prost_wkt_types::Any {
                 type_url: format!("urn:obelisk:json:params:{ffqn}"),
-                value: serde_json::Value::Array(params).to_string().into_bytes(),
+                value: params.into_bytes(),
             }),
             function_name: Some(ffqn.into()),
         }))
@@ -71,7 +77,7 @@ pub(crate) async fn stub(
     // Make sure `return_value` is a JSON string.
 
     serde_json::from_str::<serde_json::Value>(&return_value)
-        .context("`RETURN_VALUE` must be passed as JSON")?;
+        .context("`RETURN_VALUE` must be a JSON-encoded string")?;
     client
         .stub(tonic::Request::new(grpc_gen::StubRequest {
             execution_id: Some(execution_id.clone().into()),

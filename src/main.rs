@@ -114,11 +114,6 @@ async fn main() -> Result<(), anyhow::Error> {
                 no_reconnect,
             }) => {
                 let client = get_execution_repository_client(api_url).await?;
-                let params =
-                    serde_json::from_str(&params).context("params should be a json array")?;
-                let serde_json::Value::Array(params) = params else {
-                    bail!("params should be a JSON array");
-                };
                 let opts = if json_output {
                     SubmitOutputOpts::Json
                 } else {
