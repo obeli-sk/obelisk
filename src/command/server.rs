@@ -353,10 +353,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         request: tonic::Request<grpc_gen::StubRequest>,
     ) -> TonicRespResult<grpc_gen::StubResponse> {
         let request = request.into_inner();
-        let grpc_gen::FunctionName {
-            interface_name,
-            function_name,
-        } = request.function_name.argument_must_exist("function")?;
         let execution_id: ExecutionId = request
             .execution_id
             .argument_must_exist("execution_id")?
@@ -376,14 +372,19 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             ));
         };
         span.record("execution_id", tracing::field::display(&execution_id));
+        // Get FFQN
+
+        let db_connection = self.db_pool.connection();
+        let ffqn = db_connection
+            .get_create_request(&ExecutionId::Derived(execution_id.clone()))
+            .await
+            .to_status()?
+            .ffqn;
 
         // Check that ffqn exists
         let Some((component_id, _retry_config, fn_metadata)) = self
             .component_registry_ro
-            .find_by_exported_ffqn_submittable(&concepts::FunctionFqn::new_arc(
-                Arc::from(interface_name),
-                Arc::from(function_name),
-            ))
+            .find_by_exported_ffqn_submittable(&ffqn)
         else {
             return Err(tonic::Status::not_found("function not found"));
         };
@@ -417,19 +418,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 ));
             }
         };
-
-        let db_connection = self.db_pool.connection();
-        if *ffqn
-            != db_connection
-                .get_create_request(&ExecutionId::Derived(execution_id.clone()))
-                .await
-                .to_status()?
-                .ffqn
-        {
-            return Err(tonic::Status::invalid_argument(
-                "mismatch between argument `ffqn` and the create request found in database",
-            ));
-        }
 
         let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
         // Attempt to write to `execution_id` and its parent, ignoring the possible conflict error on this tx

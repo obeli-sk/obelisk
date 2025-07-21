@@ -143,9 +143,6 @@ pub(crate) enum Execution {
         json: bool,
     },
     Stub {
-        /// Stub function target (not the `-stub` extension) in the fully qualified format
-        #[arg(value_name = "FUNCTION")]
-        ffqn: FunctionFqn,
         /// Execution ID of the stub execution waiting for its return value.
         #[arg(value_name = "EXECUTION_ID")]
         execution_id: ExecutionIdDerived,

@@ -127,12 +127,11 @@ async fn main() -> Result<(), anyhow::Error> {
                 command::execution::submit(client, ffqn, params, follow, opts).await
             }
             ClientSubcommand::Execution(args::Execution::Stub {
-                ffqn,
                 execution_id,
                 return_value,
             }) => {
                 let client = get_execution_repository_client(api_url).await?;
-                command::execution::stub(client, ffqn, execution_id, return_value).await
+                command::execution::stub(client, execution_id, return_value).await
             }
             ClientSubcommand::Execution(args::Execution::Get {
                 execution_id,

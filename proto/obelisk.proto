@@ -171,8 +171,7 @@ message SubmitResponse {
 
 message StubRequest {
     ExecutionId execution_id = 1;
-    FunctionName function_name = 2;
-    google.protobuf.Any return_value = 3;
+    google.protobuf.Any return_value = 2;
 }
 
 message StubResponse {

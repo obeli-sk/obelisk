@@ -63,7 +63,6 @@ pub(crate) async fn submit(
 
 pub(crate) async fn stub(
     mut client: ExecutionRepositoryClient,
-    ffqn: FunctionFqn,
     execution_id: ExecutionIdDerived,
     return_value: serde_json::Value,
 ) -> anyhow::Result<()> {
@@ -72,11 +71,10 @@ pub(crate) async fn stub(
         .stub(tonic::Request::new(grpc_gen::StubRequest {
             execution_id: Some(execution_id.clone().into()),
             return_value: Some(prost_wkt_types::Any {
-                type_url: format!("urn:obelisk:json:retval:{ffqn}"),
+                type_url: format!("urn:obelisk:json:retval:TBD"),
                 value: serde_json::to_vec(&return_value)
                     .expect("converting back to JSON must succeed"),
             }),
-            function_name: Some(ffqn.into()),
         }))
         .await?
         .into_inner();
