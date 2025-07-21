@@ -2,15 +2,14 @@ use crate::ExecutionRepositoryClient;
 use crate::grpc_util::grpc_gen;
 use crate::grpc_util::grpc_gen::execution_status::BlockedByJoinSet;
 use crate::grpc_util::grpc_gen::execution_status::Finished;
-use anyhow::Context;
 use chrono::DateTime;
 use concepts::JOIN_SET_ID_INFIX;
 use concepts::JoinSetKind;
+use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc_gen::execution_status::Status;
 use itertools::Either;
 use serde_json::json;
-use std::str::FromStr;
 use std::time::Duration;
 use tracing::instrument;
 
@@ -28,23 +27,17 @@ pub(crate) async fn submit(
     follow: bool,
     opts: SubmitOutputOpts,
 ) -> anyhow::Result<()> {
-    let resp = client
+    let execution_id = ExecutionId::generate();
+    client
         .submit(tonic::Request::new(grpc_gen::SubmitRequest {
-            execution_id: Some(ExecutionId::generate().into()),
+            execution_id: Some(execution_id.clone().into()),
             params: Some(prost_wkt_types::Any {
                 type_url: format!("urn:obelisk:json:params:{ffqn}"),
                 value: serde_json::Value::Array(params).to_string().into_bytes(),
             }),
             function_name: Some(ffqn.into()),
         }))
-        .await?
-        .into_inner();
-    let execution_id = resp
-        .execution_id
-        .context("response field `execution_id` must be present")
-        .map(|execution_id| {
-            ExecutionId::from_str(&execution_id.id).context("cannot parse `execution_id`")
-        })??;
+        .await?;
     if opts == SubmitOutputOpts::Json {
         let json = json!(
             {"submit": {"execution_id": execution_id }}
@@ -65,6 +58,28 @@ pub(crate) async fn submit(
             }
         }
     }
+    Ok(())
+}
+
+pub(crate) async fn stub(
+    mut client: ExecutionRepositoryClient,
+    ffqn: FunctionFqn,
+    execution_id: ExecutionIdDerived,
+    return_value: serde_json::Value,
+) -> anyhow::Result<()> {
+    let execution_id = ExecutionId::Derived(execution_id);
+    client
+        .stub(tonic::Request::new(grpc_gen::StubRequest {
+            execution_id: Some(execution_id.clone().into()),
+            return_value: Some(prost_wkt_types::Any {
+                type_url: format!("urn:obelisk:json:retval:{ffqn}"),
+                value: serde_json::to_vec(&return_value)
+                    .expect("converting back to JSON must succeed"),
+            }),
+            function_name: Some(ffqn.into()),
+        }))
+        .await?
+        .into_inner();
     Ok(())
 }
 

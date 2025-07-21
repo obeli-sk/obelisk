@@ -683,6 +683,19 @@ pub mod params {
     }
 }
 
+pub fn deserialize_slice(
+    slice: &[u8],
+    type_wrapper: TypeWrapper,
+) -> Result<WastValWithType, serde_json::Error> {
+    let mut deserializer = serde_json::Deserializer::from_slice(slice);
+    let seed = WastValDeserialize(&type_wrapper);
+    seed.deserialize(&mut deserializer)
+        .map(|value| WastValWithType {
+            r#type: type_wrapper,
+            value,
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::params::deserialize_str;

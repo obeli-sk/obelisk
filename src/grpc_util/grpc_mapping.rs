@@ -338,7 +338,7 @@ impl From<FinishedExecutionResult> for grpc_gen::ResultDetail {
                 grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
                     return_value: to_any(
                         val_with_type.value,
-                        "urn:obelisk:json:result:TBD".to_string(),
+                        "urn:obelisk:json:retval:TBD".to_string(),
                     ),
                 })
             }
@@ -347,7 +347,7 @@ impl From<FinishedExecutionResult> for grpc_gen::ResultDetail {
                     grpc_gen::result_detail::FallibleError {
                         return_value: to_any(
                             val_with_type.value,
-                            "urn:obelisk:json:result:TBD".to_string(),
+                            "urn:obelisk:json:retval:TBD".to_string(),
                         ),
                     },
                 )

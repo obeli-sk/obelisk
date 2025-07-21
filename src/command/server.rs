@@ -55,13 +55,19 @@ use concepts::ParameterType;
 use concepts::Params;
 use concepts::ReturnType;
 use concepts::StrVariant;
+use concepts::SupportedFunctionReturnValue;
 use concepts::prefixed_ulid::ExecutorId;
+use concepts::storage::AppendRequest;
 use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbPool;
+use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionWithState;
 use concepts::storage::HistoryEventScheduledAt;
+use concepts::storage::JoinSetResponse;
+use concepts::storage::JoinSetResponseEvent;
+use concepts::storage::JoinSetResponseEventOuter;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
 use concepts::storage::VersionType;
@@ -107,6 +113,7 @@ use tracing::{debug, info, trace};
 use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
 use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
+use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::activity::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
@@ -201,7 +208,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             let params = String::from_utf8(params.value).map_err(|_err| {
                 tonic::Status::invalid_argument("argument `params` must be UTF-8 encoded")
             })?;
-            span.record("params", &params);
             JsonVals::deserialize(&mut serde_json::Deserializer::from_str(&params))
                 .map_err(|serde_err| {
                     tonic::Status::invalid_argument(format!(
@@ -289,8 +295,10 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 fn_metadata,
             )
         } else {
+            assert!(fn_metadata.extension.is_none());
             (created_at, Params::from_json_values(params), fn_metadata)
         };
+
         let ffqn = &fn_metadata.ffqn;
         span.record("ffqn", tracing::field::display(ffqn));
         // Type check `params`
@@ -306,6 +314,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         }
 
         let db_connection = self.db_pool.connection();
+
+        if !execution_id.is_top_level() {
+            return Err(tonic::Status::invalid_argument(
+                "argument `execution_id` must be a top-level Execution ID",
+            ));
+        }
         // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
         let metadata = concepts::ExecutionMetadata::from_parent_span(&span);
         db_connection
@@ -324,11 +338,155 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             })
             .await
             .to_status()?;
+
         let resp = grpc_gen::SubmitResponse {
             execution_id: Some(grpc_gen::ExecutionId {
                 id: execution_id.to_string(),
             }),
         };
+        Ok(tonic::Response::new(resp))
+    }
+
+    #[instrument(skip_all, fields(execution_id, ffqn, params, component_id))]
+    async fn stub(
+        &self,
+        request: tonic::Request<grpc_gen::StubRequest>,
+    ) -> TonicRespResult<grpc_gen::StubResponse> {
+        let request = request.into_inner();
+        let grpc_gen::FunctionName {
+            interface_name,
+            function_name,
+        } = request.function_name.argument_must_exist("function")?;
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        let span = Span::current();
+        let execution_id = match execution_id {
+            ExecutionId::TopLevel(_) => {
+                return Err(tonic::Status::invalid_argument(
+                    "execution ID value must be a derived ExecutionId",
+                ));
+            }
+            ExecutionId::Derived(derived) => derived,
+        };
+        let Ok((parent_id, join_set_id)) = execution_id.split_to_parts() else {
+            return Err(tonic::Status::invalid_argument(
+                "execution ID cannot be parsed",
+            ));
+        };
+        span.record("execution_id", tracing::field::display(&execution_id));
+
+        // Check that ffqn exists
+        let Some((component_id, _retry_config, fn_metadata)) = self
+            .component_registry_ro
+            .find_by_exported_ffqn_submittable(&concepts::FunctionFqn::new_arc(
+                Arc::from(interface_name),
+                Arc::from(function_name),
+            ))
+        else {
+            return Err(tonic::Status::not_found("function not found"));
+        };
+        span.record("component_id", tracing::field::display(component_id));
+
+        let created_at = Now.now();
+
+        let ffqn = &fn_metadata.ffqn;
+        span.record("ffqn", tracing::field::display(ffqn));
+        if ffqn.ifc_fqn.is_extension() {
+            return Err(tonic::Status::invalid_argument(
+                "argument `ffqn` must be the target, not the extension".to_string(),
+            ));
+        }
+        // Type check `return_value`
+        let return_value = match (request.return_value, fn_metadata.return_type.clone()) {
+            (Some(return_value), Some(return_type)) => {
+                match deserialize_slice(&return_value.value, return_type.type_wrapper) {
+                    Ok(return_value) => SupportedFunctionReturnValue::from(return_value),
+                    Err(err) => {
+                        return Err(tonic::Status::invalid_argument(format!(
+                            "cannot deserialize return value according to its type - {err}"
+                        )));
+                    }
+                }
+            }
+            (None, None) => SupportedFunctionReturnValue::None,
+            (_return_value, _ty) => {
+                return Err(tonic::Status::invalid_argument(
+                    "mismatch between return value and its type",
+                ));
+            }
+        };
+
+        let db_connection = self.db_pool.connection();
+        if *ffqn
+            != db_connection
+                .get_create_request(&ExecutionId::Derived(execution_id.clone()))
+                .await
+                .to_status()?
+                .ffqn
+        {
+            return Err(tonic::Status::invalid_argument(
+                "mismatch between argument `ffqn` and the create request found in database",
+            ));
+        }
+
+        let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
+        // Attempt to write to `execution_id` and its parent, ignoring the possible conflict error on this tx
+        let write_attempt = {
+            let finished_req = AppendRequest {
+                created_at,
+                event: ExecutionEventInner::Finished {
+                    result: Ok(return_value.clone()),
+                    http_client_traces: None,
+                },
+            };
+            db_connection
+                .append_batch_respond_to_parent(
+                    execution_id.clone(),
+                    created_at,
+                    vec![finished_req],
+                    stub_finished_version.clone(),
+                    parent_id,
+                    JoinSetResponseEventOuter {
+                        created_at,
+                        event: JoinSetResponseEvent {
+                            join_set_id,
+                            event: JoinSetResponse::ChildExecutionFinished {
+                                child_execution_id: execution_id.clone(),
+                                finished_version: stub_finished_version.clone(),
+                                result: Ok(return_value.clone()),
+                            },
+                        },
+                    },
+                )
+                .await
+        };
+        if let Err(write_attempt) = write_attempt {
+            // Check that the expected value is in the database
+            debug!("Stub write attempt failed - {write_attempt:?}");
+
+            let found = db_connection
+                .get_execution_event(&ExecutionId::Derived(execution_id), &stub_finished_version)
+                .await
+                .to_status()?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
+            match found.event {
+                ExecutionEventInner::Finished {
+                    result: Ok(result), ..
+                } if result == return_value => {}
+                ExecutionEventInner::Finished { .. } => {
+                    return Err(tonic::Status::already_exists(
+                        "different value found in stubbed execution's finished event",
+                    ));
+                }
+                _other => {
+                    return Err(tonic::Status::internal(
+                        "unexpected execution event at stubbed execution",
+                    ));
+                }
+            }
+        }
+        let resp = grpc_gen::StubResponse {};
         Ok(tonic::Response::new(resp))
     }
 
@@ -2135,8 +2293,7 @@ impl ComponentConfigRegistryRO {
             .cloned()
             .map(|mut component| {
                 // If no extensions are requested, retain those that are !ext
-                if let (Some(importable), false) =
-                    (&mut component.workflow_or_activity_config, extensions)
+                if !extensions && let Some(importable) = &mut component.workflow_or_activity_config
                 {
                     importable
                         .exports_ext

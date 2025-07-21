@@ -18,6 +18,7 @@ service ExecutionRepository {
     rpc ListExecutionEventsAndResponses(ListExecutionEventsAndResponsesRequest) returns (ListExecutionEventsAndResponsesResponse);
     rpc GetBacktrace(GetBacktraceRequest) returns (GetBacktraceResponse);
     rpc GetBacktraceSource(GetBacktraceSourceRequest) returns (GetBacktraceSourceResponse);
+    rpc Stub(StubRequest) returns (StubResponse);
 }
 
 service FunctionRepository {
@@ -165,7 +166,16 @@ message SubmitRequest {
 }
 
 message SubmitResponse {
+    ExecutionId execution_id = 1; // TODO: remove
+}
+
+message StubRequest {
     ExecutionId execution_id = 1;
+    FunctionName function_name = 2;
+    google.protobuf.Any return_value = 3;
+}
+
+message StubResponse {
 }
 
 message GetStatusRequest {

@@ -1,5 +1,5 @@
 use clap::Parser;
-use concepts::{ComponentType, ExecutionId, FunctionFqn};
+use concepts::{ComponentType, ExecutionId, FunctionFqn, prefixed_ulid::ExecutionIdDerived};
 use std::path::PathBuf;
 
 mod shadow {
@@ -141,6 +141,17 @@ pub(crate) enum Execution {
         /// Print output as JSON
         #[arg(long)]
         json: bool,
+    },
+    Stub {
+        /// Stub function target (not the `-stub` extension) in the fully qualified format
+        #[arg(value_name = "FUNCTION")]
+        ffqn: FunctionFqn,
+        /// Execution ID of the stub execution waiting for its return value.
+        #[arg(value_name = "EXECUTION_ID")]
+        execution_id: ExecutionIdDerived,
+        /// Return value encoded as an JSON
+        #[arg(value_name = "RETVAL")]
+        return_value: serde_json::Value,
     },
     Get {
         /// Follow the status stream until the execution finishes.

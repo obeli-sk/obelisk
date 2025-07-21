@@ -22,7 +22,6 @@ use host_exports::v1_1_0::obelisk::workflow::workflow_support::ClosingStrategy a
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, error, instrument, trace};
@@ -211,25 +210,6 @@ impl<'a> ImportedFnCall<'a> {
         }
     }
 
-    fn val_to_execution_id(execution_id: &Val) -> Result<ExecutionId, String> {
-        if let Val::Record(key_vals) = execution_id
-            && key_vals.len() == 1
-            && let Some((key, execution_id)) = key_vals.first()
-            && key == "id"
-            && let Val::String(execution_id) = execution_id
-        {
-            ExecutionId::from_str(execution_id).map_err(|err| {
-                error!("Error parsing execution ID parameter `{execution_id}` - {err:?}");
-                format!("error parsing execution ID parameter `{execution_id}` - {err:?}")
-            })
-        } else {
-            error!("Wrong type for ExecutionId, expected execution-id, got `{execution_id:?}`");
-            Err(format!(
-                "wrong type for ExecutionId, expected execution-id, got `{execution_id:?}`"
-            ))
-        }
-    }
-
     #[instrument(skip_all, fields(ffqn = %called_ffqn, otel.name = format!("imported_fn_call {called_ffqn}")), name = "imported_fn_call")]
     pub(crate) fn new<'ctx, C: ClockFn>(
         called_ffqn: FunctionFqn,
@@ -281,11 +261,11 @@ impl<'a> ImportedFnCall<'a> {
                 let (join_set_id, params) =
                     match Self::extract_join_set_id(&called_ffqn, store_ctx, params) {
                         Ok(ok) => ok,
-                        Err(err) => {
+                        Err(detail) => {
                             return Err(WorkflowFunctionError::ImportedFunctionCallError {
                                 ffqn: called_ffqn,
-                                reason: StrVariant::Static("cannot extract join set id"),
-                                detail: Some(err),
+                                reason: "cannot extract join set id".into(),
+                                detail: Some(detail),
                             });
                         }
                     };
@@ -293,7 +273,7 @@ impl<'a> ImportedFnCall<'a> {
                     return Err(WorkflowFunctionError::ImportedFunctionCallError {
                         reason: StrVariant::Static("wrong parameter length"),
                         detail: Some(format!(
-                            "error running {called_ffqn}: wrong parameter length, expected single string parameter containing join-set-id, got {} other parameters",
+                            "wrong parameter length, expected single string parameter containing join-set-id, got {} other parameters",
                             params.len()
                         )),
                         ffqn: called_ffqn,
@@ -325,22 +305,21 @@ impl<'a> ImportedFnCall<'a> {
                     Err(err) => {
                         return Err(WorkflowFunctionError::ImportedFunctionCallError {
                             ffqn: called_ffqn,
-                            reason: StrVariant::Static(
-                                "cannot convert `scheduled-at` to internal representation",
-                            ),
+                            reason: format!(
+                                "cannot convert `scheduled-at` to internal representation - {err}"
+                            )
+                            .into(),
                             detail: Some(format!("{err:?}")),
                         });
                     }
                 };
                 let scheduled_at = match HistoryEventScheduledAt::try_from(&scheduled_at) {
                     Ok(scheduled_at) => scheduled_at,
-                    Err(err) => {
+                    Err(detail) => {
                         return Err(WorkflowFunctionError::ImportedFunctionCallError {
                             ffqn: called_ffqn,
-                            reason: StrVariant::Static(
-                                "first parameter type must be `scheduled-at`",
-                            ),
-                            detail: Some(format!("{err:?}")),
+                            reason: "first parameter type must be `scheduled-at`".into(),
+                            detail: Some(detail.to_string()),
                         });
                     }
                 };
@@ -382,7 +361,7 @@ impl<'a> ImportedFnCall<'a> {
                         detail: None,
                     });
                 };
-                let target_execution_id = match Self::val_to_execution_id(target_execution_id) {
+                let target_execution_id = match ExecutionId::try_from(target_execution_id) {
                     Ok(ExecutionId::Derived(derived)) => derived,
                     Ok(ExecutionId::TopLevel(_)) => {
                         return Err(WorkflowFunctionError::ImportedFunctionCallError {
@@ -394,8 +373,11 @@ impl<'a> ImportedFnCall<'a> {
                     Err(err) => {
                         return Err(WorkflowFunctionError::ImportedFunctionCallError {
                             ffqn: called_ffqn,
-                            reason: "cannot parse first parameter as `execution-id`".into(),
-                            detail: Some(err),
+                            reason: format!(
+                                "cannot parse first parameter as `execution-id`: {err}"
+                            )
+                            .into(),
+                            detail: Some(format!("{err:?}")),
                         });
                     }
                 };
@@ -416,7 +398,7 @@ impl<'a> ImportedFnCall<'a> {
                     Err(err) => {
                         return Err(WorkflowFunctionError::ImportedFunctionCallError {
                             ffqn: called_ffqn,
-                            reason: "cannot split target execution id to parts in `-stub` function"
+                            reason: format!("cannot split target execution id to parts in `-stub` function - {err}")
                                 .into(),
                             detail: Some(format!("{err:?}")),
                         });

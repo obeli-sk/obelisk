@@ -1364,6 +1364,17 @@ impl<C: ClockFn> EventHistory<C> {
                 debug!(%target_execution_id, "StubRequest: Flushing and appending");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
+                // Check that the execution exists and FFQN matches.
+                if target_ffqn
+                    != db_connection
+                        .get_create_request(&ExecutionId::Derived(target_execution_id.clone()))
+                        .await?
+                        .ffqn
+                {
+                    return Err(DbError::Specific(SpecificError::ValidationFailed(
+                        "ffqn mismatch".into(),
+                    )));
+                }
                 let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
                 // Attempt to write to target_execution_id and its parent, ignoring the possible conflict error on this tx
                 let write_attempt = {

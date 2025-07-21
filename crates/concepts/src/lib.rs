@@ -547,16 +547,10 @@ impl SupportedFunctionReturnValue {
         value: wasmtime::component::Val,
         r#type: TypeWrapper,
     ) -> Result<Self, ResultParsingError> {
-        let value = WastVal::try_from(value)?;
-        match &value {
-            WastVal::Result(Err(_)) => {
-                Ok(Self::FallibleResultErr(WastValWithType { r#type, value }))
-            }
-            _ => Ok(Self::InfallibleOrResultOk(WastValWithType {
-                r#type,
-                value,
-            })),
-        }
+        Ok(Self::from(WastValWithType {
+            r#type,
+            value: WastVal::try_from(value)?,
+        }))
     }
 
     #[cfg(feature = "test")]
@@ -630,6 +624,14 @@ impl SupportedFunctionReturnValue {
             PendingStateFinishedResultKind(Err(PendingStateFinishedError::FallibleError))
         } else {
             PendingStateFinishedResultKind(Ok(()))
+        }
+    }
+}
+impl From<WastValWithType> for SupportedFunctionReturnValue {
+    fn from(val: WastValWithType) -> Self {
+        match &val.value {
+            WastVal::Result(Err(_)) => Self::FallibleResultErr(val),
+            _ => Self::InfallibleOrResultOk(val),
         }
     }
 }
@@ -880,6 +882,7 @@ impl Params {
 }
 
 pub mod prefixed_ulid {
+    use crate::{JoinSetId, JoinSetIdParseError};
     use serde_with::{DeserializeFromStr, SerializeDisplay};
     use std::{
         fmt::{Debug, Display},
@@ -890,8 +893,6 @@ pub mod prefixed_ulid {
         sync::Arc,
     };
     use ulid::Ulid;
-
-    use crate::{JoinSetId, JoinSetIdParseError};
 
     #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr)]
     #[derive_where::derive_where(Clone, Copy)]
@@ -1303,6 +1304,32 @@ pub mod prefixed_ulid {
                     })
             } else {
                 Ok(ExecutionId::TopLevel(PrefixedUlid::from_str(input)?))
+            }
+        }
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum ExecutionIdStructuralParseError {
+        #[error(transparent)]
+        ExecutionIdParseError(#[from] ExecutionIdParseError),
+        #[error("execution-id must be a record with `id` field of type string")]
+        TypeError,
+    }
+
+    impl TryFrom<&wasmtime::component::Val> for ExecutionId {
+        type Error = ExecutionIdStructuralParseError;
+
+        fn try_from(execution_id: &wasmtime::component::Val) -> Result<Self, Self::Error> {
+            if let wasmtime::component::Val::Record(key_vals) = execution_id
+                && key_vals.len() == 1
+                && let Some((key, execution_id)) = key_vals.first()
+                && key == "id"
+                && let wasmtime::component::Val::String(execution_id) = execution_id
+            {
+                ExecutionId::from_str(execution_id)
+                    .map_err(ExecutionIdStructuralParseError::ExecutionIdParseError)
+            } else {
+                Err(ExecutionIdStructuralParseError::TypeError)
             }
         }
     }
