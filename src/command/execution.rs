@@ -34,7 +34,7 @@ pub(crate) async fn submit(
     match serde_json::from_str(&params).context("PARAMS must be a JSON-encoded string")? {
         serde_json::Value::Array(_) => {}
         _ => bail!("PARAMS must be a JSON-encoded array"),
-    };
+    }
     client
         .submit(tonic::Request::new(grpc_gen::SubmitRequest {
             execution_id: Some(execution_id.clone().into()),
@@ -82,7 +82,7 @@ pub(crate) async fn stub(
         .stub(tonic::Request::new(grpc_gen::StubRequest {
             execution_id: Some(execution_id.clone().into()),
             return_value: Some(prost_wkt_types::Any {
-                type_url: format!("urn:obelisk:json:retval:TBD"),
+                type_url: "urn:obelisk:json:retval:TBD".to_string(),
                 value: return_value.into_bytes(),
             }),
         }))

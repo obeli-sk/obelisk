@@ -6,7 +6,6 @@ mod grpc_util;
 mod init;
 mod oci;
 
-use anyhow::{Context, bail};
 use args::{Args, Client, ClientSubcommand, Generate, Server, Subcommand};
 use clap::Parser;
 use command::{
