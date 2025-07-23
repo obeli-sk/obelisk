@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS t_metadata (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     schema_version INTEGER NOT NULL,
     created_at TEXT NOT NULL
-);
+) STRICT
 ";
 const T_METADATA_SINGLETON: u32 = 1;
 const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 1;
@@ -85,13 +85,13 @@ const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
 CREATE TABLE IF NOT EXISTS t_execution_log (
     execution_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    json_value JSONB NOT NULL,
+    json_value TEXT NOT NULL,
     version INTEGER NOT NULL,
     variant TEXT NOT NULL,
     join_set_id TEXT,
     history_event_type TEXT GENERATED ALWAYS AS (json_value->>'$.HistoryEvent.event.type') STORED,
     PRIMARY KEY (execution_id, version)
-);
+) STRICT
 ";
 // Used in `fetch_created` and `get_execution_event`
 const CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION: &str = r"
@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS t_join_set_response (
     finished_version INTEGER,
 
     UNIQUE (execution_id, join_set_id, delay_id, child_execution_id)
-);
+) STRICT
 ";
 // Used when querying for the next response
 const CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID: &str = r"
@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     result_kind TEXT,
 
     PRIMARY KEY (execution_id)
-)
+) STRICT
 ";
 const STATE_PENDING_AT: &str = "PendingAt";
 const STATE_BLOCKED_BY_JOIN_SET: &str = "BlockedByJoinSet";
@@ -191,7 +191,7 @@ CREATE TABLE IF NOT EXISTS t_delay (
     delay_id TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     PRIMARY KEY (execution_id, join_set_id, delay_id)
-)
+) STRICT
 ";
 
 const CREATE_TABLE_T_BACKTRACE: &str = r"
@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS t_backtrace (
     version_max_excluding INTEGER NOT NULL,
     wasm_backtrace TEXT NOT NULL,
     PRIMARY KEY (execution_id, version_min_including, version_max_excluding)
-);
+) STRICT
 ";
 // Index for searching backtraces by execution_id and version
 const IDX_T_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
