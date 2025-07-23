@@ -78,3 +78,4 @@ stub = true
 [[workflow]]
 name = "test_programs_stub_workflow"
 location.path = "target/release_testprograms/wasm32-unknown-unknown/release/test_programs_stub_workflow.wasm"
+backtrace.sources = { "${OBELISK_TOML_DIR}/crates/testing/test-programs/stub/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/stub/workflow/src/lib.rs" }
