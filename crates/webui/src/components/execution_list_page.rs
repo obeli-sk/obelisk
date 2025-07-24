@@ -166,7 +166,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                         <Link<Route> to={Route::ExecutionTrace { execution_id: execution_id.clone() }}>{&execution_id}</Link<Route>>
                     </td>
                         <td><Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() }}>{ffqn.to_string()}</Link<Route>></td>
-                    <td><ExecutionStatus {status} {execution_id} /></td>
+                    <td><ExecutionStatus {status} {execution_id} print_finished_status={false} /></td>
                     </tr>
                 }
             })

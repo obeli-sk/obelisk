@@ -17,7 +17,6 @@ use yew::prelude::*;
 pub struct ExecutionStatusProps {
     pub status: Option<grpc_client::execution_status::Status>,
     pub execution_id: grpc_client::ExecutionId,
-    #[prop_or_default]
     pub print_finished_status: bool,
 }
 
@@ -72,7 +71,7 @@ pub fn execution_status(
                     );
                     wasm_bindgen_futures::spawn_local({
                         let status_state = status_state.clone();
-                        let connectin_id = connectin_id.clone();
+                        let connection_id = connectin_id.clone();
                         let execution_id = execution_id.clone();
                         async move {
                             let base_url = "/api";
@@ -101,20 +100,20 @@ pub fn execution_status(
                                             "GetStatusResponse.message is sent by the server",
                                         );
                                         trace!(
-                                            "[{connectin_id}] <ExecutionStatus /> Got {status:?}"
+                                            "[{connection_id}] <ExecutionStatus /> Got {status:?}"
                                         );
                                         status_state.set(Some(status));
                                     }
                                     Ok(None) => break,
                                     Err(err) => {
                                         error!(
-                                            "[{connectin_id}] Error wile listening to status updates: {err:?}"
+                                            "[{connection_id}] Error wile listening to status updates: {err:?}"
                                         );
                                         break;
                                     }
                                 }
                             }
-                            debug!("[{connectin_id}] <ExecutionStatus /> Ended subscription");
+                            debug!("[{connection_id}] <ExecutionStatus /> Ended subscription");
                         }
                     })
                 }

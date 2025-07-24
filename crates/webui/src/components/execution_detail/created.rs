@@ -44,7 +44,7 @@ impl CreatedEventProps {
         let scheduled_at =
             DateTime::from(scheduled_at.expect("`scheduled_at` is sent by the server"));
         let scheduled_by = scheduled_by.clone();
-        let params = match app_state.submittable_ffqns_to_details.get(&ffqn) {
+        let params = match app_state.ffqns_to_details.get(&ffqn) {
             Some((function_detail, _)) if function_detail.params.len() == params.len() => {
                 function_detail
                     .params

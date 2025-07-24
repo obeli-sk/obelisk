@@ -1,12 +1,14 @@
 use crate::{
     components::{
         component_list_page::ComponentListPage,
+        debugger::debugger_view::DebuggerView,
         execution_detail_page::ExecutionLogPage,
         execution_list_page::{ExecutionFilter, ExecutionListPage},
+        execution_stub_submit_page::ExecutionStubResultPage,
         execution_submit_page::ExecutionSubmitPage,
         not_found::NotFound,
+        trace::trace_view::TraceView,
     },
-    components::{debugger::debugger_view::DebuggerView, trace::trace_view::TraceView},
     grpc::{
         ffqn::FunctionFqn,
         grpc_client::{self, ComponentId, ExecutionId},
@@ -24,7 +26,7 @@ use yew_router::prelude::*;
 pub struct AppState {
     pub components_by_id: HashMap<ComponentId, Rc<grpc_client::Component>>,
     pub comopnents_by_exported_ifc: HashMap<IfcFqn, Rc<grpc_client::Component>>,
-    pub submittable_ffqns_to_details:
+    pub ffqns_to_details:
         hashbrown::HashMap<FunctionFqn, (grpc_client::FunctionDetail, grpc_client::ComponentId)>,
 }
 
@@ -123,6 +125,11 @@ pub enum Route {
     },
     #[at("/execution/submit/:ffqn")]
     ExecutionSubmit { ffqn: FunctionFqn },
+    #[at("/execution/stub/:ffqn/:execution_id")]
+    ExecutionStubResult {
+        ffqn: FunctionFqn,
+        execution_id: ExecutionId,
+    },
     #[at("/execution/list")]
     ExecutionList,
     #[at("/execution/list/older/:cursor")]
@@ -166,6 +173,9 @@ impl Route {
                 html! { <ComponentListPage maybe_component_id={Some(component_id)}/> }
             }
             Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
+            Route::ExecutionStubResult { ffqn, execution_id } => {
+                html! { <ExecutionStubResultPage {ffqn}  {execution_id} /> }
+            }
             Route::ExecutionLog { execution_id } => {
                 html! { <ExecutionLogPage {execution_id} /> }
             }
@@ -215,22 +225,17 @@ pub fn app(
         comopnents_by_exported_ifc,
     }: &AppProps,
 ) -> Html {
-    let mut submittable_ffqns_to_details = hashbrown::HashMap::new();
+    let mut ffqns_to_details = hashbrown::HashMap::new();
     for (component_id, component) in components_by_id {
-        for exported_fn_detail in component
-            .exports
-            .iter()
-            .filter(|fn_detail| fn_detail.submittable)
-        {
+        for exported_fn_detail in component.exports.iter() {
             let ffqn =
                 FunctionFqn::from_fn_detail(exported_fn_detail).expect("ffqn should be parseable");
-            submittable_ffqns_to_details
-                .insert(ffqn, (exported_fn_detail.clone(), component_id.clone()));
+            ffqns_to_details.insert(ffqn, (exported_fn_detail.clone(), component_id.clone()));
         }
     }
     let app_state = use_state(|| AppState {
         components_by_id: components_by_id.clone(),
-        submittable_ffqns_to_details,
+        ffqns_to_details,
         comopnents_by_exported_ifc: comopnents_by_exported_ifc.clone(),
     });
     html! {

@@ -4,7 +4,7 @@ use yew::ToHtml;
 use crate::grpc::grpc_client;
 use std::{fmt::Display, str::FromStr};
 
-use super::ifc_fqn::IfcFqn;
+use super::{grpc_client::execution_event::Created, ifc_fqn::IfcFqn};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct FunctionFqn {
@@ -61,6 +61,17 @@ impl From<grpc_client::FunctionName> for FunctionFqn {
             ifc_fqn: IfcFqn::from_str(&value.interface_name).expect("ffqn must be parseable"),
             function_name: value.function_name,
         }
+    }
+}
+
+impl From<&Created> for FunctionFqn {
+    fn from(value: &Created) -> Self {
+        Self::from(
+            value
+                .function_name
+                .clone()
+                .expect("`function_name` is sent"),
+        )
     }
 }
 

@@ -126,16 +126,19 @@ pub fn execution_submit_form(
                 .deref()
                 .param_refs
                 .iter()
-                .map(|param_ref| {
+                .enumerate()
+                .map(|(idx, param_ref)| {
                     let param_value = param_ref.cast::<HtmlInputElement>().unwrap().value();
-                    serde_json::from_str(&param_value)
+                    serde_json::from_str(&param_value).map_err(|err| (idx, err))
                 })
                 .collect::<Result<Vec<_>, _>>()
             {
                 Ok(params) => params,
-                Err(serde_err) => {
+                Err((idx, serde_err)) => {
                     error!("Cannot serialize parameters - {serde_err:?}");
-                    submit_err_state.set(Some("Cannot serialize parameters".to_string()));
+                    submit_err_state.set(Some(format!(
+                        "cannot serialize {idx}-th parameter - {serde_err}"
+                    )));
                     return;
                 }
             };
@@ -157,9 +160,10 @@ pub fn execution_submit_form(
                         grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
                             tonic_web_wasm_client::Client::new(base_url.to_string()),
                         );
+                    let execution_id = ExecutionId::generate();
                     let response = client
                         .submit(grpc_client::SubmitRequest {
-                            execution_id: Some(ExecutionId::generate()),
+                            execution_id: Some(execution_id.clone()),
                             params: Some(prost_wkt_types::Any {
                                 type_url: format!("urn:obelisk:json:params:{ffqn}"),
                                 value: serde_json::Value::Array(params).to_string().into_bytes(),
@@ -170,14 +174,7 @@ pub fn execution_submit_form(
                     request_processing_state.set(false); // reenable the submit button
                     trace!("Got gRPC {response:?}");
                     match response {
-                        Ok(response) => {
-                            let execution_id = response
-                                .into_inner()
-                                .execution_id
-                                .expect("SubmitResponse.execution_id is sent by the server");
-                            debug!("Submitted as {execution_id}");
-                            navigator.push(&Route::ExecutionTrace { execution_id })
-                        }
+                        Ok(_response) => navigator.push(&Route::ExecutionTrace { execution_id }),
                         Err(err) => {
                             error!("Got error {err:?}");
                             submit_err_state
