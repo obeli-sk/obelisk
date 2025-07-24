@@ -175,9 +175,9 @@ impl ComponentTree {
 fn as_label(component_type: &ComponentType) -> Html {
     match component_type {
         ComponentType::Workflow => "Workflows",
-        ComponentType::ActivityWasm => "Activities - WASM",
+        ComponentType::ActivityWasm => "WASM Activities",
         ComponentType::WebhookEndpoint => "Webhooks",
-        ComponentType::ActivityStub => "Activities- Stub",
+        ComponentType::ActivityStub => "Stub Activities",
     }
     .to_html()
 }
