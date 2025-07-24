@@ -41,8 +41,8 @@ pub fn component_list_page(
     let wit_state = use_state(|| None);
     // Fetch GetWit
     use_effect_with(maybe_component_id.clone(), {
+        let wit_state = wit_state.clone();
         if let Some(component_id) = maybe_component_id {
-            let wit_state = wit_state.clone();
             let component = components_by_id
                 .get(component_id)
                 .expect("selected component must be found")
@@ -88,7 +88,9 @@ pub fn component_list_page(
                 });
             boxed_closure
         } else {
-            let boxed_closure: EffectsCallback = Box::new(|_| {});
+            let boxed_closure: EffectsCallback = Box::new(move |_| {
+                wit_state.set(None);
+            });
             boxed_closure
         }
     });
