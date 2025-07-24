@@ -38,7 +38,7 @@ pub struct TraceViewProps {
 }
 
 pub const PAGE: u32 = 500;
-pub const SLEEP_MILLIS: u32 = 100;
+pub const SLEEP_MILLIS: u32 = 500;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Cursors {
