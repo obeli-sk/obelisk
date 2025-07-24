@@ -446,10 +446,6 @@ impl ExIm {
                     extension.is_none(),
                     "`exports_hierarchy` must not contain extensions"
                 );
-                assert!(
-                    original_submittable,
-                    "original exported function must be submittable"
-                );
                 let exported_fn_metadata = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: ifc_fqn.clone(),
@@ -632,7 +628,7 @@ fn merge_function_params_with_wasmtime(
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
     if exports {
         merge_function_params_with_wasmtime_internal(
-            true,
+            component_type != ComponentType::ActivityStub,
             wasmtime_component_type.exports(engine),
             engine,
             ffqns_to_wit_parsed_meta,
