@@ -356,8 +356,9 @@ fn add_ext_exports(
                     };
                     ext_ifc.functions.insert(fn_name, fn_ext);
                 }
-                // -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
-                {
+                if component_type != ComponentType::ActivityStub {
+                    // -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
+
                     let fn_name = format!("{fn_name}-schedule");
                     let mut params =
                         vec![("schedule-at".to_string(), Type::Id(type_id_schedule_at))];

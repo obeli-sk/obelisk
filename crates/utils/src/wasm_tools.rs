@@ -308,6 +308,7 @@ impl ExIm {
         let mut exports_hierarchy_ext = merge_function_params_with_wasmtime(
             wasmtime_component_type,
             true,
+            component_type,
             engine,
             exported_ffqns_to_wit_parsed_meta,
         )?;
@@ -335,6 +336,7 @@ impl ExIm {
         let imports_hierarchy = merge_function_params_with_wasmtime(
             wasmtime_component_type,
             false,
+            component_type,
             engine,
             imported_ffqns_to_wit_parsed_meta,
         )?;
@@ -530,27 +532,33 @@ impl ExIm {
                 };
                 insert_ext(fn_await_next);
 
-                // -schedule(schedule: schedule-at, original params) -> string (execution id)
-                let fn_schedule = FunctionMetadata {
-                    ffqn: FunctionFqn {
-                        ifc_fqn: obelisk_ext_ifc.clone(),
-                        function_name: FnName::from(format!(
-                            "{}{EXTENSION_FN_SUFFIX_SCHEDULE}",
-                            exported_fn_metadata.ffqn.function_name
-                        )),
-                    },
-                    parameter_types: {
-                        let mut params =
-                            Vec::with_capacity(exported_fn_metadata.parameter_types.len() + 1);
-                        params.push(param_type_scheduled_at.clone());
-                        params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
-                        ParameterTypes(params)
-                    },
-                    return_type: return_type_execution_id.clone(),
-                    extension: Some(FunctionExtension::Schedule),
-                    submittable: true,
-                };
-                insert_ext(fn_schedule);
+                if component_type != ComponentType::ActivityStub {
+                    assert!(
+                        original_submittable,
+                        "original exported function must be submittable for components different from activity stubs"
+                    );
+                    // -schedule(schedule: schedule-at, original params) -> string (execution id)
+                    let fn_schedule = FunctionMetadata {
+                        ffqn: FunctionFqn {
+                            ifc_fqn: obelisk_ext_ifc.clone(),
+                            function_name: FnName::from(format!(
+                                "{}{EXTENSION_FN_SUFFIX_SCHEDULE}",
+                                exported_fn_metadata.ffqn.function_name
+                            )),
+                        },
+                        parameter_types: {
+                            let mut params =
+                                Vec::with_capacity(exported_fn_metadata.parameter_types.len() + 1);
+                            params.push(param_type_scheduled_at.clone());
+                            params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
+                            ParameterTypes(params)
+                        },
+                        return_type: return_type_execution_id.clone(),
+                        extension: Some(FunctionExtension::Schedule),
+                        submittable: true,
+                    };
+                    insert_ext(fn_schedule);
+                }
 
                 if component_type == ComponentType::ActivityStub {
                     // -stub(execution-id: execution-id, original retval) -> result<_, stub-error>
@@ -581,7 +589,7 @@ impl ExIm {
                             wit_type: StrVariant::Static("result<_, stub-error>"),
                         }),
                         extension: Some(FunctionExtension::Stub),
-                        submittable: false, // TODO: Allow external submission.
+                        submittable: false,
                     };
                     stub_fns.insert(fn_stub.ffqn.function_name.clone(), fn_stub);
                 }
@@ -618,6 +626,7 @@ impl ExIm {
 fn merge_function_params_with_wasmtime(
     wasmtime_component_type: &wasmtime::component::types::Component,
     exports: bool,
+    component_type: ComponentType,
     engine: &Engine,
     ffqns_to_wit_parsed_meta: FfqnToMetadataMap,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
