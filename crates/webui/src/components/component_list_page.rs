@@ -97,7 +97,7 @@ pub fn component_list_page(
         .and_then(|id| components_by_id.get(id))
         .map(|component| {
             let exports =
-                map_interfaces_to_fn_details(&component.exports, InterfaceFilter::WithExtensions);
+                map_interfaces_to_fn_details(&component.exports, InterfaceFilter::All);
 
             let render_exported_ifc_with_fns = |ifc_fqn: &IfcFqn, fn_details: &[FunctionDetail] | {
                 let submittable_fn_details = fn_details
@@ -143,7 +143,7 @@ pub fn component_list_page(
 
             // imports:
             let imports =
-                map_interfaces_to_fn_details(&component.imports, InterfaceFilter::WithExtensions);
+                map_interfaces_to_fn_details(&component.imports, InterfaceFilter::All);
             let imports: Vec<_> = imports.keys().map(|ifc| html!{ <>
                 <h4>{ifc.to_string()}
                 if let Some(found) = components_by_exported_ifc.get(ifc) {

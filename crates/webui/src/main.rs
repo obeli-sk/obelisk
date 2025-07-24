@@ -46,7 +46,7 @@ fn main() {
             components_by_id
                 .values()
                 .flat_map(|component| {
-                    map_interfaces_to_fn_details(&component.exports, InterfaceFilter::default())
+                    map_interfaces_to_fn_details(&component.exports, InterfaceFilter::All)
                         .keys()
                         .map(|ifc| (ifc.clone(), component.clone()))
                         .collect::<Vec<_>>()

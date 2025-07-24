@@ -7,17 +7,11 @@ pub fn is_extension_interface(ifc: &IfcFqn) -> bool {
     ifc.pkg_fqn.is_extension()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum InterfaceFilter {
-    #[default]
-    WithExtensions,
+    All,
+    // without -ext, -stub interfaces
     WithoutExtensions,
-}
-
-impl InterfaceFilter {
-    pub fn is_with_extensions(&self) -> bool {
-        matches!(self, InterfaceFilter::WithExtensions)
-    }
 }
 
 pub fn map_interfaces_to_fn_details(
@@ -32,7 +26,7 @@ pub fn map_interfaces_to_fn_details(
             .expect("function and its name is sent by the server");
         let ifc_fqn = IfcFqn::from_str(&function_name.interface_name)
             .expect("received interface must be well-formed");
-        if filter == InterfaceFilter::WithExtensions || !ifc_fqn.pkg_fqn.is_extension() {
+        if filter == InterfaceFilter::All || !ifc_fqn.pkg_fqn.is_extension() {
             interfaces_to_fn_details
                 .entry(ifc_fqn)
                 .or_default()

@@ -30,7 +30,7 @@ pub fn ffqn_with_links(
     let ext = ffqn.ifc_fqn.pkg_fqn.is_extension();
     html! {
         <div style="display: inline-flex;">
-            // Finding makes no sense when rendering an extension function.
+            // Finding executions makes no sense when rendering an extension function.
             if !ext && !hide_find {
                 <Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() } }>
                     <Icon icon = { Icon::Search }/>

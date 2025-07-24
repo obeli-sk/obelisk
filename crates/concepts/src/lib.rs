@@ -671,6 +671,7 @@ pub struct FunctionMetadata {
     pub parameter_types: ParameterTypes,
     pub return_type: Option<ReturnType>,
     pub extension: Option<FunctionExtension>,
+    /// primary functions + `-schedule` extended
     pub submittable: bool,
 }
 impl Display for FunctionMetadata {

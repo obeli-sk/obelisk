@@ -11,6 +11,7 @@ pub mod version;
 
 pub const NAMESPACE_OBELISK: &str = "obelisk"; // TODO: unify with concepts
 pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext"; // TODO: unify with concepts
+pub const SUFFIX_PKG_STUB: &str = "-obelisk-stub"; // TODO: unify with concepts
 
 pub trait ResultValueExt {
     fn is_ok(&self) -> bool;

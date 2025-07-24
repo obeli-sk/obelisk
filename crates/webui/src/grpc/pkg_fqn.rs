@@ -1,4 +1,4 @@
-use super::{NAMESPACE_OBELISK, SUFFIX_PKG_EXT, ifc_fqn::IfcFqn};
+use super::{NAMESPACE_OBELISK, SUFFIX_PKG_EXT, SUFFIX_PKG_STUB, ifc_fqn::IfcFqn};
 use anyhow::Context;
 use std::fmt::Display;
 use wit_parser::{Interface, PackageName};
@@ -27,12 +27,7 @@ impl Display for PkgFqn {
 impl PkgFqn {
     #[must_use]
     pub fn is_extension(&self) -> bool {
-        self.package_name.ends_with(SUFFIX_PKG_EXT)
-    }
-
-    #[must_use]
-    pub fn package_strip_extension_suffix(&self) -> Option<&str> {
-        self.package_name.as_str().strip_suffix(SUFFIX_PKG_EXT)
+        self.package_name.ends_with(SUFFIX_PKG_EXT) || self.package_name.ends_with(SUFFIX_PKG_STUB)
     }
 
     #[must_use]
