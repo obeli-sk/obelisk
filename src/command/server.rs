@@ -382,9 +382,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .ffqn;
 
         // Check that ffqn exists
-        let Some((component_id, _retry_config, fn_metadata)) = self
-            .component_registry_ro
-            .find_by_exported_ffqn_submittable(&ffqn)
+        let Some((component_id, fn_metadata)) =
+            self.component_registry_ro.find_by_exported_ffqn_stub(&ffqn)
         else {
             return Err(tonic::Status::not_found("function not found"));
         };
@@ -2091,8 +2090,12 @@ impl ComponentConfigRegistry {
         {
             bail!("component {} is already inserted", component.component_id);
         }
-        if let Some(importable) = &component.workflow_or_activity_config {
-            for exported_ffqn in importable.exports_ext.iter().map(|f| &f.ffqn) {
+        if let Some(workflow_or_activity_config) = &component.workflow_or_activity_config {
+            for exported_ffqn in workflow_or_activity_config
+                .exports_ext
+                .iter()
+                .map(|f| &f.ffqn)
+            {
                 if let Some((offending_id, _, _)) = self.inner.exported_ffqns_ext.get(exported_ffqn)
                 {
                     bail!(
@@ -2102,13 +2105,13 @@ impl ComponentConfigRegistry {
                 }
             }
             // insert to `exported_ffqns_ext`
-            for exported_fn_metadata in &importable.exports_ext {
+            for exported_fn_metadata in &workflow_or_activity_config.exports_ext {
                 let old = self.inner.exported_ffqns_ext.insert(
                     exported_fn_metadata.ffqn.clone(),
                     (
                         component.component_id.clone(),
                         exported_fn_metadata.clone(),
-                        importable.retry_config,
+                        workflow_or_activity_config.retry_config,
                     ),
                 );
                 assert!(old.is_none());
@@ -2116,7 +2119,7 @@ impl ComponentConfigRegistry {
             // insert to `export_hierarchy`
             self.inner
                 .export_hierarchy
-                .extend_from_slice(&importable.exports_hierarchy_ext);
+                .extend_from_slice(&workflow_or_activity_config.exports_hierarchy_ext);
         }
         // insert to `ids_to_components`
         let old = self
@@ -2267,6 +2270,21 @@ impl ComponentConfigRegistryRO {
             |(component_id, fn_metadata, retry_config)| {
                 if fn_metadata.submittable {
                     Some((component_id, *retry_config, fn_metadata))
+                } else {
+                    None
+                }
+            },
+        )
+    }
+
+    pub fn find_by_exported_ffqn_stub(
+        &self,
+        ffqn: &FunctionFqn,
+    ) -> Option<(&ComponentId, &FunctionMetadata)> {
+        self.inner.exported_ffqns_ext.get(ffqn).and_then(
+            |(component_id, fn_metadata, _retry_config)| {
+                if component_id.component_type == ComponentType::ActivityStub {
+                    Some((component_id, fn_metadata))
                 } else {
                     None
                 }
