@@ -141,12 +141,6 @@ impl ComponentTree {
         components: &HashMap<grpc_client::ComponentId, Rc<grpc_client::Component>>,
         config: &ComponentTreeConfig,
     ) -> TreeData<NodeDataType> {
-        let workflows =
-            filter_component_list_by_type(components, grpc_client::ComponentType::Workflow);
-        let activities =
-            filter_component_list_by_type(components, grpc_client::ComponentType::ActivityWasm);
-        let webhooks =
-            filter_component_list_by_type(components, grpc_client::ComponentType::WebhookEndpoint);
         let mut tree = TreeBuilder::new().build();
         let root_id = tree
             .insert(
@@ -157,37 +151,35 @@ impl ComponentTree {
             )
             .unwrap();
 
-        // Workflows
-        Self::attach_components_to_tree(
-            &mut tree,
-            &root_id,
-            config,
-            "Workflows".into(),
-            ComponentType::Workflow.as_icon(),
-            workflows,
-        );
-        // Activities
-        Self::attach_components_to_tree(
-            &mut tree,
-            &root_id,
-            config,
-            "Activities".into(),
-            ComponentType::ActivityWasm.as_icon(),
-            activities,
-        );
-        // Webhook endpoints
-        if matches!(config, ComponentTreeConfig::ComponentsOnly { .. }) {
+        let mut attach = |component_type: ComponentType| {
             Self::attach_components_to_tree(
                 &mut tree,
                 &root_id,
                 config,
-                "Webhook Endpoints".into(),
-                ComponentType::WebhookEndpoint.as_icon(),
-                webhooks,
+                as_label(&component_type),
+                component_type.as_icon(),
+                filter_component_list_by_type(components, component_type),
             );
+        };
+
+        attach(ComponentType::Workflow);
+        attach(ComponentType::ActivityWasm);
+        if matches!(config, ComponentTreeConfig::ComponentsOnly { .. }) {
+            attach(ComponentType::WebhookEndpoint);
+            attach(ComponentType::ActivityStub);
         }
         tree.into()
     }
+}
+
+fn as_label(component_type: &ComponentType) -> Html {
+    match component_type {
+        ComponentType::Workflow => "Workflows",
+        ComponentType::ActivityWasm => "Activities - WASM",
+        ComponentType::WebhookEndpoint => "Webhooks",
+        ComponentType::ActivityStub => "Activities- Stub",
+    }
+    .to_html()
 }
 
 impl Component for ComponentTree {

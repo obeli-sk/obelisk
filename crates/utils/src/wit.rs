@@ -258,6 +258,7 @@ fn add_ext_exports(
             };
             let mut stub_ifc = if let Some(obelisk_stub_pkg_id) = obelisk_stub_pkg_id {
                 let mut types = IndexMap::new();
+                types.insert("execution-id".to_string(), type_id_execution_id);
                 types.insert("stub-error".to_string(), type_id_stub_error);
                 copy_original_types(
                     original_ifc_id,

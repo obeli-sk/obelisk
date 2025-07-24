@@ -230,15 +230,13 @@ package testing:stub-activity-obelisk-ext {
     foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
 
     foo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, string>, tuple<execution-id, execution-error>>;
-
-    foo-schedule: func(schedule-at: schedule-at, arg: string) -> execution-id;
   }
 }
 
 
 package testing:stub-activity-obelisk-stub {
   interface activity {
-    use obelisk:types/execution@1.1.0.{stub-error};
+    use obelisk:types/execution@1.1.0.{execution-id, stub-error};
 
     foo-stub: func(execution-id: execution-id, return-value: string) -> result<_, stub-error>;
   }
