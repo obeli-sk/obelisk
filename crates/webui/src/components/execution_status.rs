@@ -11,6 +11,7 @@ use chrono::DateTime;
 use futures::FutureExt as _;
 use log::{debug, error, trace};
 use std::ops::Deref;
+use tonic_web_wasm_client::options::FetchOptions;
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
@@ -64,7 +65,7 @@ pub fn execution_status(
                 } else {
                     (None, None)
                 };
-
+                let abort_controller = web_sys::AbortController::new().unwrap();
                 if let Some(cancel_rx) = cancel_rx {
                     debug!(
                         "[{connectin_id}] <ExecutionStatus /> Subscribing to status of {execution_id}"
@@ -75,10 +76,16 @@ pub fn execution_status(
                         let execution_id = execution_id.clone();
                         async move {
                             let base_url = "/api";
-                            let mut execution_client =
-                        grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
-                            tonic_web_wasm_client::Client::new(base_url.to_string()),
-                        );
+
+                            let mut execution_client = {
+                                let mut client =
+                                    tonic_web_wasm_client::Client::new(base_url.to_string());
+                                client.with_options(FetchOptions {
+                                    signal: Some(abort_controller.signal()),
+                                    ..Default::default()
+                                });
+                                grpc_client::execution_repository_client::ExecutionRepositoryClient::new(client)
+                            };
                             let mut response_stream = execution_client
                                 .get_status(grpc_client::GetStatusRequest {
                                     execution_id: Some(execution_id),
@@ -114,6 +121,7 @@ pub fn execution_status(
                                 }
                             }
                             debug!("[{connection_id}] <ExecutionStatus /> Ended subscription");
+                            abort_controller.abort();
                         }
                     })
                 }
