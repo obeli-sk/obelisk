@@ -97,6 +97,7 @@ pub fn execution_submit_form(
     });
     let submit_err_state = use_state(|| None);
 
+    // Validate on first render
     use_effect_with(form_data_state.deref().clone(), {
         let submit_err_state = submit_err_state.clone();
         let fn_detail = fn_detail.clone();

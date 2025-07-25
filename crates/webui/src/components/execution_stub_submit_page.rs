@@ -9,6 +9,7 @@ use crate::{
 };
 use log::{debug, error, trace};
 use std::ops::Deref;
+use val_json::wast_val::WastValWithType;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 use yew_router::{hooks::use_navigator, prelude::Link};
@@ -26,16 +27,20 @@ pub fn execution_stub_result_page(
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
 
-    let provided_by = app_state.comopnents_by_exported_ifc.get(&ffqn.ifc_fqn);
-
-    let component_id = match app_state.ffqns_to_details.get(ffqn) {
-        Some((_detail, id)) => id.clone(),
-        None => {
-            return html! {
-                <p>{"function not found"}</p>
-            };
-        }
+    let Some(component) = app_state.comopnents_by_exported_ifc.get(&ffqn.ifc_fqn) else {
+        return html! {
+            <p>{"function not found"}</p>
+        };
     };
+    let (fn_detail, _) = app_state
+        .ffqns_to_details
+        .get(ffqn)
+        .expect("`ffqns_to_details` and `comopnents_by_exported_ifc` must be consistent, based from `ListComponentsResponse`");
+
+    let component_id = component
+        .component_id
+        .clone()
+        .expect("`component_id` is sent");
     // disable the submit button while a request is inflight
     let request_processing_state = use_state(|| false);
     let input_state = use_state(NodeRef::default);
@@ -133,32 +138,74 @@ pub fn execution_stub_result_page(
         })
     };
 
+    // Validate on first render
+    use_effect_with(input_state.deref().clone(), {
+        let err_state = err_state.clone();
+        let fn_detail = fn_detail.clone();
+        let input_state = input_state.clone();
+        move |_| {
+            debug!("Validating the form after first render");
+            let input = input_state
+                .deref()
+                .cast::<HtmlInputElement>()
+                .unwrap()
+                .value();
+            if let Err(err) = validate_response(&fn_detail, &input) {
+                err_state.set(Some(err));
+            } else {
+                err_state.set(None);
+            }
+        }
+    });
+    let oninput = {
+        let input_state = input_state.clone();
+        let err_state = err_state.clone();
+        let fn_detail = fn_detail.clone();
+        move |_| {
+            let input = input_state
+                .deref()
+                .cast::<HtmlInputElement>()
+                .unwrap()
+                .value();
+            if let Err(err) = validate_response(&fn_detail, &input) {
+                err_state.set(Some(err));
+            } else {
+                err_state.set(None);
+            }
+        }
+    };
+
     let wit = wit_state
         .deref()
         .as_ref()
         .map(|wit| wit_highlighter::print_interface_with_single_fn(wit, ffqn));
 
+    let wit_type = fn_detail
+        .return_type
+        .as_ref()
+        .expect("TODO")
+        .wit_type
+        .as_str();
     html! {<>
         <header>
             <h1>{"Stub execution result"}</h1>
             <h2>
                 <FfqnWithLinks ffqn={ffqn.clone()} fully_qualified={true} hide_submit={true}  />
             </h2>
-            if let Some(found) = provided_by {
-                <h3>
-                    {"Provided by "}
-                    <Link<Route> to={Route::Component { component_id: found.component_id.clone().expect("`component_id` is sent") } }>
-                        <Icon icon = { found.as_type().as_icon() }/>
-                        {" "}
-                        {&found.name}
-                    </Link<Route>>
-
-                </h3>
-            }
+            <h3>
+                {"Provided by "}
+                <Link<Route> to={Route::Component { component_id: component_id.clone() } }>
+                    <Icon icon = { component.as_type().as_icon() }/>
+                    {" "}
+                    {&component.name}
+                </Link<Route>>
+            </h3>
         </header>
         <form id="execution-stub-result-form" onsubmit = {on_submit }>
-            <label for="input">{"TODO type"}</label>
-            <input id="input" type="text" ref={input_state.deref()} />
+            <p>
+                <label for="input">{wit_type}</label>
+                <input id="input" type="text" ref={input_state.deref()} oninput = {oninput}/>
+            </p>
             <button type="submit" disabled={*request_processing_state}>
                 {"Submit response"}
             </button>
@@ -171,4 +218,26 @@ pub fn execution_stub_result_page(
             <CodeBlock source={wit.clone()} />
         }
     </>}
+}
+
+fn validate_response(
+    function_detail: &grpc_client::FunctionDetail,
+    value: &str,
+) -> Result<(), String> {
+    match serde_json::from_str::<serde_json::Value>(value) {
+        Ok(value) => {
+            let type_wrapper = function_detail
+                .return_type
+                .as_ref()
+                .expect("TODO")
+                .type_wrapper
+                .as_str();
+            let type_and_value_json = format!("{{\"type\": {type_wrapper}, \"value\": {value}}}");
+            match serde_json::from_str::<WastValWithType>(&type_and_value_json) {
+                Ok(_) => Ok(()),
+                Err(err) => Err(format!("Typecheck error: {err}")),
+            }
+        }
+        Err(err) => Err(format!("Cannot serialize value to JSON: {err}")),
+    }
 }
