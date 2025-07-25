@@ -4,4 +4,7 @@ interface activity {
     use obelisk:types/execution@1.1.0.{execution-id, stub-error};
 
     foo-stub: func(execution-id: execution-id, return-value: string) -> result<_, stub-error>;
+
+    noret-stub: func(execution-id: execution-id) -> result<_, stub-error>;
+
 }

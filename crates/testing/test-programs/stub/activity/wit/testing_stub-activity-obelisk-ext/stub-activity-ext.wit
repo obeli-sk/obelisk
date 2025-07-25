@@ -5,4 +5,7 @@ interface activity {
 
     foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
     foo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, string>, tuple<execution-id, execution-error>>;
+
+    noret-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+    noret-await-next: func(join-set-id: borrow<join-set-id>) -> result<execution-id, tuple<execution-id, execution-error>>;
 }

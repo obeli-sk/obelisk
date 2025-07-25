@@ -148,7 +148,7 @@ pub(crate) enum Execution {
         execution_id: ExecutionIdDerived,
         /// Return value encoded as an JSON
         #[arg(value_name = "RETVAL")]
-        return_value: String,
+        return_value: Option<String>,
     },
     Get {
         /// Follow the status stream until the execution finishes.

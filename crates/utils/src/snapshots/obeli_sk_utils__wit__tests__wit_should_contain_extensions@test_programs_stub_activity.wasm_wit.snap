@@ -217,6 +217,8 @@ package wasi:filesystem@0.2.3 {
 package testing:stub-activity {
   interface activity {
     foo: func(arg: string) -> string;
+
+    noret: func();
   }
 }
 
@@ -230,6 +232,10 @@ package testing:stub-activity-obelisk-ext {
     foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
 
     foo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, string>, tuple<execution-id, execution-error>>;
+
+    noret-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+
+    noret-await-next: func(join-set-id: borrow<join-set-id>) -> result<execution-id, tuple<execution-id, execution-error>>;
   }
 }
 
@@ -239,5 +245,7 @@ package testing:stub-activity-obelisk-stub {
     use obelisk:types/execution@1.1.0.{execution-id, stub-error};
 
     foo-stub: func(execution-id: execution-id, return-value: string) -> result<_, stub-error>;
+
+    noret-stub: func(execution-id: execution-id) -> result<_, stub-error>;
   }
 }

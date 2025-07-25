@@ -32,10 +32,11 @@ pub fn execution_stub_result_page(
             <p>{"function not found"}</p>
         };
     };
-    let (fn_detail, _) = app_state
+    let maybe_return_type = &app_state
         .ffqns_to_details
         .get(ffqn)
-        .expect("`ffqns_to_details` and `comopnents_by_exported_ifc` must be consistent, based from `ListComponentsResponse`");
+        .expect("`ffqns_to_details` and `comopnents_by_exported_ifc` must be consistent, based from `ListComponentsResponse`").0
+        .return_type;
 
     let component_id = component
         .component_id
@@ -43,7 +44,7 @@ pub fn execution_stub_result_page(
         .expect("`component_id` is sent");
     // disable the submit button while a request is inflight
     let request_processing_state = use_state(|| false);
-    let input_state = use_state(NodeRef::default);
+    let input_ref = use_node_ref();
     let err_state = use_state(|| None);
 
     let wit_state: UseStateHandle<Option<String>> = use_state(|| None);
@@ -73,28 +74,31 @@ pub fn execution_stub_result_page(
 
     let on_submit = {
         let request_processing_state = request_processing_state.clone();
-        let input_state = input_state.clone();
         let err_state = err_state.clone();
         let ffqn = ffqn.clone();
         let navigator = use_navigator().unwrap();
         let execution_id = execution_id.clone();
+        let input_ref = input_ref.clone();
+        let is_ret_some = maybe_return_type.is_some();
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default(); // prevent form submission
-            let input = input_state
-                .deref()
-                .cast::<HtmlInputElement>()
-                .unwrap()
-                .value();
-            match serde_json::from_str::<serde_json::Value>(&input) {
-                Ok(_) => {
-                    debug!("serde ok")
-                }
-                Err(serde_err) => {
-                    error!("Cannot serialize input - {serde_err:?}");
-                    err_state.set(Some(format!("cannot serialize input - {serde_err}")));
-                    return;
-                }
+            let input = if is_ret_some {
+                let input = input_ref.cast::<HtmlInputElement>().unwrap().value();
+                match serde_json::from_str::<serde_json::Value>(&input) {
+                    Ok(_) => {
+                        debug!("serde ok")
+                    }
+                    Err(serde_err) => {
+                        error!("Cannot serialize input - {serde_err:?}");
+                        err_state.set(Some(format!("cannot serialize input - {serde_err}")));
+                        return;
+                    }
+                };
+                Some(input)
+            } else {
+                None
             };
+
             debug!("Input: {input:?}");
             {
                 err_state.set(None);
@@ -117,7 +121,7 @@ pub fn execution_stub_result_page(
                     let response = client
                         .stub(grpc_client::StubRequest {
                             execution_id: Some(execution_id.clone()),
-                            return_value: Some(prost_wkt_types::Any {
+                            return_value: input.map(|input| prost_wkt_types::Any {
                                 type_url: format!("urn:obelisk:json:retval:{ffqn}"),
                                 value: input.into_bytes(),
                             }),
@@ -139,39 +143,38 @@ pub fn execution_stub_result_page(
     };
 
     // Validate on first render
-    use_effect_with(input_state.deref().clone(), {
+    use_effect_with((), {
         let err_state = err_state.clone();
-        let fn_detail = fn_detail.clone();
-        let input_state = input_state.clone();
+        let input_ref = input_ref.clone();
+        let maybe_return_type = maybe_return_type.clone();
         move |_| {
-            debug!("Validating the form after first render");
-            let input = input_state
-                .deref()
-                .cast::<HtmlInputElement>()
-                .unwrap()
-                .value();
-            if let Err(err) = validate_response(&fn_detail, &input) {
-                err_state.set(Some(err));
-            } else {
-                err_state.set(None);
+            if let Some(return_type) = maybe_return_type {
+                debug!("Validating the form after first render");
+                let input = input_ref.cast::<HtmlInputElement>().unwrap().value();
+                if let Err(err) = validate_response(&return_type, &input) {
+                    err_state.set(Some(err));
+                } else {
+                    err_state.set(None);
+                }
             }
         }
     });
+
     let oninput = {
-        let input_state = input_state.clone();
-        let err_state = err_state.clone();
-        let fn_detail = fn_detail.clone();
-        move |_| {
-            let input = input_state
-                .deref()
-                .cast::<HtmlInputElement>()
-                .unwrap()
-                .value();
-            if let Err(err) = validate_response(&fn_detail, &input) {
-                err_state.set(Some(err));
-            } else {
-                err_state.set(None);
-            }
+        if let Some(return_type) = maybe_return_type {
+            let err_state = err_state.clone();
+            let return_type = return_type.clone();
+            let input_ref = input_ref.clone();
+            Some(move |_| {
+                let input = input_ref.cast::<HtmlInputElement>().unwrap().value();
+                if let Err(err) = validate_response(&return_type, &input) {
+                    err_state.set(Some(err));
+                } else {
+                    err_state.set(None);
+                }
+            })
+        } else {
+            None
         }
     };
 
@@ -180,12 +183,6 @@ pub fn execution_stub_result_page(
         .as_ref()
         .map(|wit| wit_highlighter::print_interface_with_single_fn(wit, ffqn));
 
-    let wit_type = fn_detail
-        .return_type
-        .as_ref()
-        .expect("TODO")
-        .wit_type
-        .as_str();
     html! {<>
         <header>
             <h1>{"Stub execution result"}</h1>
@@ -202,10 +199,14 @@ pub fn execution_stub_result_page(
             </h3>
         </header>
         <form id="execution-stub-result-form" onsubmit = {on_submit }>
-            <p>
-                <label for="input">{wit_type}</label>
-                <input id="input" type="text" ref={input_state.deref()} oninput = {oninput}/>
-            </p>
+            if let Some(return_type) = maybe_return_type {
+                <p>
+                    <label for="input">{return_type.wit_type.as_str()}</label>
+                    <input id="input" type="text" ref={input_ref.clone()} oninput = {oninput}/>
+                </p>
+            } else {
+                <p>{"(no return value)"}</p>
+            }
             <button type="submit" disabled={*request_processing_state}>
                 {"Submit response"}
             </button>
@@ -220,18 +221,10 @@ pub fn execution_stub_result_page(
     </>}
 }
 
-fn validate_response(
-    function_detail: &grpc_client::FunctionDetail,
-    value: &str,
-) -> Result<(), String> {
+fn validate_response(return_type: &grpc_client::WitType, value: &str) -> Result<(), String> {
     match serde_json::from_str::<serde_json::Value>(value) {
         Ok(value) => {
-            let type_wrapper = function_detail
-                .return_type
-                .as_ref()
-                .expect("TODO")
-                .type_wrapper
-                .as_str();
+            let type_wrapper = return_type.type_wrapper.as_str();
             let type_and_value_json = format!("{{\"type\": {type_wrapper}, \"value\": {value}}}");
             match serde_json::from_str::<WastValWithType>(&type_and_value_json) {
                 Ok(_) => Ok(()),

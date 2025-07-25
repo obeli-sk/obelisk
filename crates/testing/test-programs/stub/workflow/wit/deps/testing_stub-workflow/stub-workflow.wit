@@ -3,4 +3,6 @@ package testing:stub-workflow;
 interface workflow {
     submit-stub-await: func(arg: string) -> string;
     submit-await: func(arg: string) -> string;
+
+    noret-submit-await: func();
 }

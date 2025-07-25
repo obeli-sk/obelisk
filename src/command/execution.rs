@@ -71,17 +71,18 @@ pub(crate) async fn submit(
 pub(crate) async fn stub(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionIdDerived,
-    return_value: String,
+    return_value: Option<String>,
 ) -> anyhow::Result<()> {
     let execution_id = ExecutionId::Derived(execution_id);
     // Make sure `return_value` is a JSON string.
-
-    serde_json::from_str::<serde_json::Value>(&return_value)
-        .context("`RETURN_VALUE` must be a JSON-encoded string")?;
+    if let Some(return_value) = &return_value {
+        serde_json::from_str::<serde_json::Value>(return_value)
+            .context("`RETURN_VALUE` must be a JSON-encoded string")?;
+    }
     client
         .stub(tonic::Request::new(grpc_gen::StubRequest {
             execution_id: Some(execution_id.clone().into()),
-            return_value: Some(prost_wkt_types::Any {
+            return_value: return_value.map(|return_value| prost_wkt_types::Any {
                 type_url: "urn:obelisk:json:retval:TBD".to_string(),
                 value: return_value.into_bytes(),
             }),

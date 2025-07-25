@@ -9,4 +9,6 @@ impl Guest for Component {
     fn foo(_arg: String) -> String {
         todo!()
     }
+
+    fn noret() {}
 }

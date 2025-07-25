@@ -24,4 +24,8 @@ impl Guest for Component {
     fn submit_await(arg: String) -> String {
         activity::foo(&arg)
     }
+
+    fn noret_submit_await() {
+        activity::noret();
+    }
 }
