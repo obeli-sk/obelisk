@@ -1,6 +1,6 @@
 use super::data::{BusyIntervalStatus, TraceData};
 use crate::{
-    app::Route,
+    app::{AppState, Route},
     components::{
         execution_detail::utils::{compute_join_next_to_response, event_to_detail},
         execution_header::{ExecutionHeader, ExecutionLink},
@@ -13,8 +13,8 @@ use crate::{
         execution_id::{EXECUTION_ID_INFIX, ExecutionIdExt as _},
         ffqn::FunctionFqn,
         grpc_client::{
-            self, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent, ResponseWithCursor,
-            ResultDetail,
+            self, ComponentType, ExecutionEvent, ExecutionId, JoinSetId, JoinSetResponseEvent,
+            ResponseWithCursor, ResultDetail,
             execution_event::{
                 self, Finished, TemporarilyFailed, TemporarilyTimedOut,
                 history_event::{JoinSetRequest, join_set_request},
@@ -157,6 +157,9 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
 
     let trace_view = trace_view_state.deref();
 
+    let app_state =
+        use_context::<AppState>().expect("AppState context is set when starting the App");
+
     let root_trace = {
         let events_map = &trace_view.events;
         let responses_map = &trace_view.responses;
@@ -175,6 +178,7 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
                     trace_view_state.dispatch(TraceviewStateAction::AddExecutionId(execution_id));
                 }
             },
+            &app_state,
         )
     };
 
@@ -313,6 +317,7 @@ fn compute_root_trace(
     responses_map: &HashMap<ExecutionId, HashMap<JoinSetId, Vec<JoinSetResponseEvent>>>,
     contains: impl Fn(&ExecutionId) -> bool + Clone,
     on_execution_load: impl Fn(ExecutionId) + Clone + 'static,
+    app_state: &AppState,
 ) -> Option<TraceDataRoot> {
     let events = match events_map.get(execution_id) {
         Some(events) if !events.is_empty() => events,
@@ -324,22 +329,33 @@ fn compute_root_trace(
     let responses = responses_map.get(execution_id);
     let mut last_event_at = compute_last_event_at(last_event, is_finished, responses);
 
-    let execution_scheduled_at = {
-        let create_event = events
-            .first()
-            .expect("not found is sent as an error")
-            .event
-            .as_ref()
-            .expect("`event` is sent by the server");
-        let create_event = assert_matches!(
-            create_event,
-            grpc_client::execution_event::Event::Created(created) => created
-        );
-        DateTime::from(
-            create_event
-                .scheduled_at
-                .expect("`scheduled_at` is sent by the server"),
-        )
+    let create_event = events
+        .first()
+        .expect("not found is sent as an error")
+        .event
+        .as_ref()
+        .expect("`event` is sent by the server");
+    let create_event = assert_matches!(
+        create_event,
+        grpc_client::execution_event::Event::Created(created) => created
+    );
+    let execution_scheduled_at = DateTime::from(
+        create_event
+            .scheduled_at
+            .expect("`scheduled_at` is sent by the server"),
+    );
+
+    let ffqn = FunctionFqn::from(create_event);
+    let maybe_stub_link = if events.len() == 1 // stub execution can only contain Created and Finished events
+        && let Some((_, component_id)) = app_state.ffqns_to_details.get(&ffqn)
+        && let Some(found_component) = app_state.components_by_id.get(component_id)
+        && found_component.as_type() == ComponentType::ActivityStub
+    {
+        Some(html! {
+            <Link<Route> to={Route::ExecutionStubResult { ffqn: ffqn.clone(), execution_id: execution_id.clone() }}>{"Submit stub response"}</Link<Route>>
+        })
+    } else {
+        None
     };
 
     let child_ids_to_results = compute_child_execution_id_to_child_execution_finished(responses);
@@ -431,7 +447,8 @@ fn compute_root_trace(
                             events_map,
                             responses_map,
                             contains.clone(),
-                            on_execution_load.clone()
+                            on_execution_load.clone(),
+                            app_state
                         ) {
                             last_event_at = last_event_at.max(child_root.last_event_at);
                             Some(vec![TraceData::Root(child_root)])
@@ -572,6 +589,8 @@ fn compute_root_trace(
         <>
             {execution_id.render_execution_parts(true, ExecutionLink::Trace)}
             {" "}{&ffqn.function_name}
+            {" "}
+            {maybe_stub_link}
         </>
     };
     Some(TraceDataRoot {

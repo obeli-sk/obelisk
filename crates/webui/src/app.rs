@@ -191,7 +191,6 @@ impl Route {
             Route::ExecutionListNewerIncluding { cursor } => {
                 html! { <ExecutionListPage filter={ExecutionFilter::Newer { cursor, including_cursor: true }} /> }
             }
-
             Route::ExecutionListByFfqn { ffqn } => {
                 html! { <ExecutionListPage filter={ExecutionFilter::Ffqn { ffqn } } /> }
             }
