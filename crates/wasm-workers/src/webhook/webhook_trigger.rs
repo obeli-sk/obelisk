@@ -981,7 +981,6 @@ pub(crate) mod tests {
     use super::MethodAwareRouter;
     use hyper::{Method, Uri};
 
-    #[cfg(not(madsim))] // Due to TCP server/client
     pub(crate) mod nosim {
         use super::*;
         use crate::activity::activity_worker::tests::{FIBO_10_OUTPUT, compile_activity};

@@ -139,7 +139,6 @@ impl HostChildProcess {
             );
             return;
         };
-        #[cfg_attr(madsim, allow(deprecated))]
         tokio::task::spawn_blocking(move || {
             trace!("Attempting to kill process group with PGID: {pid}");
             unsafe {
@@ -194,7 +193,6 @@ impl HostChildProcess {
     }
 
     pub(crate) fn try_wait(&mut self) -> Result<Option<i32>, process_support::WaitError> {
-        #[cfg_attr(madsim, allow(deprecated))]
         let wait_result = self.child.try_wait();
         match wait_result {
             Ok(Some(exit_status)) => Ok(exit_status.code()),

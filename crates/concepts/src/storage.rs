@@ -682,6 +682,7 @@ pub trait DbConnection: Send + Sync {
         component_id: ComponentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
     ) -> Result<LockPendingResponse, DbError>;
 
     /// Specialized `append` which returns the event history.

@@ -1,20 +1,17 @@
+use rand::{Rng, SeedableRng as _, rngs::StdRng};
+
 pub struct UnstructuredHolder {
     raw_data: Vec<u8>,
 }
 
-impl Default for UnstructuredHolder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl UnstructuredHolder {
     #[must_use]
-    pub fn new() -> Self {
-        let len = madsim::rand::random::<u16>() as usize;
+    pub fn new(seed: u64) -> Self {
+        let mut seedable_rng = StdRng::seed_from_u64(seed);
+        let len = seedable_rng.r#gen::<u16>() as usize;
         let mut raw_data = Vec::with_capacity(len);
         while raw_data.len() < len {
-            raw_data.push(madsim::rand::random::<u8>());
+            raw_data.push(seedable_rng.r#gen::<u8>());
         }
         Self { raw_data }
     }

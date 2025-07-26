@@ -107,7 +107,6 @@ impl EngineConfig {
             codegen_cache_dir: Some(codegen_cache),
         }
     }
-    #[cfg(not(madsim))]
     #[cfg(test)]
     pub(crate) fn pooling_nocache_testing(opts: PoolingOptions) -> Self {
         Self {

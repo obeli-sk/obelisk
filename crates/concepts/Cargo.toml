@@ -21,7 +21,6 @@ const_format.workspace = true
 derive-where.workspace = true
 derive_more.workspace = true
 fxhash.workspace = true
-getrandom.workspace = true                       # Only needed for the madsim patch
 hashbrown.workspace = true
 indexmap.workspace = true
 opentelemetry.workspace = true
@@ -41,7 +40,6 @@ wasmtime-environ.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
-madsim.workspace = true
 rstest.workspace = true
 
 [features]

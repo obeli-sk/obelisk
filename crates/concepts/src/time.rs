@@ -22,41 +22,16 @@ impl Sleep for TokioSleep {
     }
 }
 
-cfg_if::cfg_if! {
-    if #[cfg(all(test, madsim))] {
-        #[must_use]
-        pub fn now_tokio_instant() -> tokio::time::Instant {
-            if madsim::rand::random() {
-                madsim::time::advance(std::time::Duration::from_millis(madsim::rand::random()));
-            }
-            madsim::time::Instant::now()
-        }
-    } else {
-        #[must_use]
-        pub fn now_tokio_instant() -> tokio::time::Instant {
-            tokio::time::Instant::now()
-        }
-    }
+#[must_use]
+pub fn now_tokio_instant() -> tokio::time::Instant {
+    tokio::time::Instant::now()
 }
 
 #[derive(Clone)]
 pub struct Now;
 
 impl ClockFn for Now {
-    cfg_if::cfg_if! {
-        if #[cfg(all(test, madsim))] {
-            fn now(&self) -> DateTime<Utc> {
-                if madsim::rand::random() {
-                    madsim::time::advance(std::time::Duration::from_millis(madsim::rand::random()));
-                }
-                DateTime::from(madsim::time::TimeHandle::current().now_time())
-            }
-
-        } else {
-            fn now(&self) -> DateTime<Utc> {
-                Utc::now()
-            }
-
-        }
+    fn now(&self) -> DateTime<Utc> {
+        Utc::now()
     }
 }

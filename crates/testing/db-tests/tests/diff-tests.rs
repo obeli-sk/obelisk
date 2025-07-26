@@ -1,22 +1,34 @@
 use concepts::ComponentId;
 use concepts::ExecutionId;
+use concepts::FinishedExecutionResult;
 use concepts::Params;
+use concepts::prefixed_ulid::ExecutorId;
+use concepts::prefixed_ulid::RunId;
 use concepts::storage::DbConnection;
 use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
+use concepts::storage::Version;
 use concepts::storage::{AppendRequest, CreateRequest};
 use concepts::time::ClockFn as _;
 use concepts::time::Now;
 use db_tests::Database;
 use db_tests::SOME_FFQN;
+use rand::Rng as _;
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
+use std::sync::Arc;
 use std::time::Duration;
 use test_utils::arbitrary::UnstructuredHolder;
 use test_utils::set_up;
+use test_utils::sim_clock::SimClock;
+use val_json::wast_val::WastValWithType;
 
 #[tokio::test]
 async fn diff_proptest() {
     set_up();
-    let unstructured_holder = UnstructuredHolder::new();
+    let seed = StdRng::from_entropy().r#gen();
+    println!("Seed: {seed}");
+    let unstructured_holder = UnstructuredHolder::new(seed);
     let mut unstructured = unstructured_holder.unstructured();
     let execution_id = ExecutionId::generate();
     let create_req = CreateRequest {
@@ -115,28 +127,7 @@ async fn create_and_append(
     db_connection.get(&execution_id).await.unwrap()
 }
 
-#[cfg(not(madsim))]
-mod nomadsim {
-    use concepts::ComponentId;
-    use concepts::ExecutionId;
-    use concepts::FinishedExecutionResult;
-    use concepts::Params;
-    use concepts::prefixed_ulid::ExecutorId;
-    use concepts::storage::DbConnection;
-    use concepts::storage::ExecutionEventInner;
-    use concepts::storage::Version;
-    use concepts::storage::{AppendRequest, CreateRequest};
-    use concepts::time::ClockFn as _;
-    use db_tests::Database;
-    use db_tests::SOME_FFQN;
-    use std::sync::Arc;
-    use std::time::Duration;
-    use test_utils::set_up;
-    use test_utils::sim_clock::SimClock;
-
-    use val_json::wast_val::WastValWithType;
-
-    const WVWT_RECORD_UNSORTED: &str = r#"
+const WVWT_RECORD_UNSORTED: &str = r#"
         {
             "type": {
                 "record": {
@@ -155,118 +146,117 @@ mod nomadsim {
         }
         "#;
 
-    async fn persist_finished_event(
-        db_connection: &dyn DbConnection,
-    ) -> (ExecutionId, Version, ExecutionEventInner) {
-        const LOCK_EXPIRY: Duration = Duration::from_millis(500);
-        let component_id = ComponentId::dummy_activity();
-        let sim_clock = SimClock::default();
-        let execution_id = ExecutionId::generate();
-        let exec1 = ExecutorId::generate();
+async fn persist_finished_event(
+    db_connection: &dyn DbConnection,
+) -> (ExecutionId, Version, ExecutionEventInner) {
+    const LOCK_EXPIRY: Duration = Duration::from_millis(500);
+    let component_id = ComponentId::dummy_activity();
+    let sim_clock = SimClock::default();
+    let execution_id = ExecutionId::generate();
+    let exec1 = ExecutorId::generate();
 
-        db_connection
-            .create(CreateRequest {
-                created_at: sim_clock.now(),
-                execution_id: execution_id.clone(),
-                ffqn: SOME_FFQN,
-                params: Params::default(),
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: sim_clock.now(),
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-                component_id: component_id.clone(),
-                scheduled_by: None,
-            })
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+            component_id: component_id.clone(),
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // LockPending
+    let version = {
+        let created_at = sim_clock.now();
+        let mut locked_executions = db_connection
+            .lock_pending(
+                1,
+                created_at,
+                Arc::from([SOME_FFQN]),
+                created_at,
+                component_id.clone(),
+                exec1,
+                created_at + LOCK_EXPIRY,
+                RunId::generate(),
+            )
             .await
             .unwrap();
+        assert_eq!(1, locked_executions.len());
+        let locked_execution = locked_executions.pop().unwrap();
+        assert_eq!(Version::new(2), locked_execution.version);
+        locked_execution.version
+    };
 
-        // LockPending
-        let version = {
-            let created_at = sim_clock.now();
-            let mut locked_executions = db_connection
-                .lock_pending(
-                    1,
-                    created_at,
-                    Arc::from([SOME_FFQN]),
-                    created_at,
-                    component_id.clone(),
-                    exec1,
-                    created_at + LOCK_EXPIRY,
-                )
-                .await
-                .unwrap();
-            assert_eq!(1, locked_executions.len());
-            let locked_execution = locked_executions.pop().unwrap();
-            assert_eq!(Version::new(2), locked_execution.version);
-            locked_execution.version
+    let wast_val_with_type: WastValWithType = serde_json::from_str(WVWT_RECORD_UNSORTED).unwrap();
+    let inner = ExecutionEventInner::Finished {
+        result: FinishedExecutionResult::Ok(
+            concepts::SupportedFunctionReturnValue::InfallibleOrResultOk(wast_val_with_type),
+        ),
+        http_client_traces: None,
+    };
+    // Finished
+    let version = {
+        let req = AppendRequest {
+            event: inner.clone(),
+            created_at: sim_clock.now(),
         };
-
-        let wast_val_with_type: WastValWithType =
-            serde_json::from_str(WVWT_RECORD_UNSORTED).unwrap();
-        let inner = ExecutionEventInner::Finished {
-            result: FinishedExecutionResult::Ok(
-                concepts::SupportedFunctionReturnValue::InfallibleOrResultOk(wast_val_with_type),
-            ),
-            http_client_traces: None,
-        };
-        // Finished
-        let version = {
-            let req = AppendRequest {
-                event: inner.clone(),
-                created_at: sim_clock.now(),
-            };
-            db_connection
-                .append(execution_id.clone(), version, req)
-                .await
-                .unwrap()
-        };
-        (execution_id, version, inner)
-    }
-
-    // Test that the sqlite database no longer uses serde_json::Value during deserialization as it
-    // would sorts attributes and thus break `TypeWrapper` and `WastVal`,
-    #[tokio::test]
-    #[rstest::rstest]
-    async fn get_execution_event_should_not_break_json_order(
-        #[values(Database::Sqlite, Database::Memory)] database: Database,
-    ) {
-        set_up();
-        let (_guard, db_pool) = database.set_up().await;
-        let db_connection = db_pool.connection();
-
-        let (execution_id, version, expected_inner) =
-            persist_finished_event(db_connection.as_ref()).await;
-        let found_inner = db_connection
-            .get_execution_event(&execution_id, &version)
+        db_connection
+            .append(execution_id.clone(), version, req)
             .await
             .unwrap()
-            .event;
-        assert_eq!(expected_inner, found_inner);
+    };
+    (execution_id, version, inner)
+}
 
-        drop(db_connection);
-        db_pool.close().await.unwrap();
-    }
+// Test that the sqlite database no longer uses serde_json::Value during deserialization as it
+// would sorts attributes and thus break `TypeWrapper` and `WastVal`,
+#[tokio::test]
+#[rstest::rstest]
+async fn get_execution_event_should_not_break_json_order(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let (_guard, db_pool) = database.set_up().await;
+    let db_connection = db_pool.connection();
 
-    // Test that the sqlite database no longer uses serde_json::Value during deserialization as it
-    // would sorts attributes and thus break `TypeWrapper` and `WastVal`,
-    #[tokio::test]
-    async fn list_execution_events_should_not_break_json_order() {
-        set_up();
-        let (_guard, db_pool) = Database::Sqlite.set_up().await;
-        let db_connection = db_pool.connection();
+    let (execution_id, version, expected_inner) =
+        persist_finished_event(db_connection.as_ref()).await;
+    let found_inner = db_connection
+        .get_execution_event(&execution_id, &version)
+        .await
+        .unwrap()
+        .event;
+    assert_eq!(expected_inner, found_inner);
 
-        let (execution_id, version, expected_inner) =
-            persist_finished_event(db_connection.as_ref()).await;
-        let found_inner = db_connection
-            .list_execution_events(&execution_id, &version, 1, false)
-            .await
-            .unwrap();
-        assert_eq!(1, found_inner.len());
-        let found_inner = &found_inner[0].event;
-        assert_eq!(expected_inner, *found_inner);
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
 
-        drop(db_connection);
-        db_pool.close().await.unwrap();
-    }
+// Test that the sqlite database no longer uses serde_json::Value during deserialization as it
+// would sorts attributes and thus break `TypeWrapper` and `WastVal`,
+#[tokio::test]
+async fn list_execution_events_should_not_break_json_order() {
+    set_up();
+    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let db_connection = db_pool.connection();
+
+    let (execution_id, version, expected_inner) =
+        persist_finished_event(db_connection.as_ref()).await;
+    let found_inner = db_connection
+        .list_execution_events(&execution_id, &version, 1, false)
+        .await
+        .unwrap();
+    assert_eq!(1, found_inner.len());
+    let found_inner = &found_inner[0].event;
+    assert_eq!(expected_inner, *found_inner);
+
+    drop(db_connection);
+    db_pool.close().await.unwrap();
 }

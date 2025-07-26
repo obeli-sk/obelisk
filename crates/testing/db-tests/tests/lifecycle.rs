@@ -31,7 +31,6 @@ async fn test_lifecycle_mem() {
     db_pool.close().await.unwrap();
 }
 
-#[cfg(not(madsim))]
 #[tokio::test]
 async fn test_lifecycle_sqlite() {
     set_up();
@@ -54,7 +53,6 @@ async fn test_expired_lock_should_be_found_mem() {
     db_pool.close().await.unwrap();
 }
 
-#[cfg(not(madsim))]
 #[tokio::test]
 async fn test_expired_lock_should_be_found_sqlite() {
     set_up();
@@ -77,7 +75,6 @@ async fn test_append_batch_respond_to_parent_mem() {
     db_pool.close().await.unwrap();
 }
 
-#[cfg(not(madsim))]
 #[tokio::test]
 async fn test_append_batch_respond_to_parent_sqlite() {
     set_up();
@@ -100,7 +97,6 @@ async fn test_lock_pending_should_sort_by_scheduled_at_mem() {
     db_pool.close().await.unwrap();
 }
 
-#[cfg(not(madsim))]
 #[tokio::test]
 async fn test_lock_pending_should_sort_by_scheduled_at_sqlite() {
     set_up();
@@ -123,7 +119,6 @@ async fn test_lock_mem() {
     db_pool.close().await.unwrap();
 }
 
-#[cfg(not(madsim))]
 #[tokio::test]
 async fn test_lock_sqlite() {
     set_up();
@@ -146,7 +141,6 @@ async fn test_get_expired_lock_mem() {
     db_pool.close().await.unwrap();
 }
 
-#[cfg(not(madsim))]
 #[tokio::test]
 async fn test_get_expired_lock_sqlite() {
     set_up();
@@ -169,7 +163,6 @@ async fn test_get_expired_delay_mem() {
     db_pool.close().await.unwrap();
 }
 
-#[cfg(not(madsim))]
 #[tokio::test]
 async fn test_get_expired_delay_sqlite() {
     set_up();
@@ -197,6 +190,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
                 ComponentId::dummy_activity(),
                 exec1,
                 sim_clock.now() + lock_expiry,
+                RunId::generate()
             )
             .await
             .unwrap()
@@ -254,6 +248,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
                 component_id.clone(),
                 exec1,
                 created_at + lock_expiry,
+                RunId::generate(),
             )
             .await
             .unwrap();
@@ -266,9 +261,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         version = locked_execution.version;
         locked_execution.run_id
     };
-    sim_clock
-        .move_time_forward(Duration::from_millis(499))
-        .await;
+    sim_clock.move_time_forward(Duration::from_millis(499));
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Temporary timeout");
@@ -285,9 +278,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
             .await
             .unwrap();
     }
-    sim_clock
-        .move_time_forward(lock_expiry - Duration::from_millis(100))
-        .await;
+    sim_clock.move_time_forward(lock_expiry - Duration::from_millis(100));
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock using exec2");
@@ -312,9 +303,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     }
     // TODO: attempt to append an event requiring version without it.
 
-    sim_clock
-        .move_time_forward(Duration::from_millis(100))
-        .await;
+    sim_clock.move_time_forward(Duration::from_millis(100));
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Lock again using exec1");
@@ -333,9 +322,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         assert!(event_history.is_empty());
         version = current_version;
     }
-    sim_clock
-        .move_time_forward(Duration::from_millis(700))
-        .await;
+    sim_clock.move_time_forward(Duration::from_millis(700));
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock using exec2  while in a lock");
@@ -374,9 +361,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         assert!(event_history.is_empty());
         version = current_version;
     }
-    sim_clock
-        .move_time_forward(Duration::from_millis(200))
-        .await;
+    sim_clock.move_time_forward(Duration::from_millis(200));
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Extend lock using exec1 and wrong run id should fail");
@@ -428,9 +413,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
             .unwrap();
         backoff_expires_at
     };
-    sim_clock
-        .move_time_forward(Duration::from_millis(200))
-        .await;
+    sim_clock.move_time_forward(Duration::from_millis(200));
     assert!(sim_clock.now() < backoff_expires_at);
     {
         let created_at = sim_clock.now();
@@ -454,7 +437,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
             not_yet_pending
         );
     }
-    sim_clock.move_time_to(backoff_expires_at).await;
+    sim_clock.move_time_to(backoff_expires_at);
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Locking exactly at `backoff_expires_at` should succeed");
@@ -476,9 +459,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         assert_eq!(Vec::from("hello".as_bytes()), *value);
         version = current_version;
     }
-    sim_clock
-        .move_time_forward(Duration::from_millis(300))
-        .await;
+    sim_clock.move_time_forward(Duration::from_millis(300));
     {
         let created_at = sim_clock.now();
         debug!(now = %created_at, "Finish execution");
@@ -523,7 +504,6 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     }
 }
 
-#[cfg(not(madsim))]
 #[tokio::test]
 #[rstest::rstest]
 async fn lock_pending_while_expired_lock_should_return_nothing(
@@ -538,7 +518,6 @@ async fn lock_pending_while_expired_lock_should_return_nothing(
     db_pool.close().await.unwrap();
 }
 
-#[cfg(not(madsim))]
 async fn lock_pending_while_expired_lock_should_return_nothing_inner(
     db_connection: &dyn DbConnection,
 ) {
@@ -579,6 +558,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
                 component_id.clone(),
                 exec1,
                 created_at + LOCK_EXPIRY,
+                RunId::generate(),
             )
             .await
             .unwrap();
@@ -603,12 +583,13 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
                     ComponentId::dummy_activity(),
                     exec1,
                     sim_clock.now() + LOCK_EXPIRY,
+                    RunId::generate()
                 )
                 .await
                 .unwrap()
                 .is_empty()
         );
-        sim_clock.move_time_forward(LOCK_EXPIRY).await;
+        sim_clock.move_time_forward(LOCK_EXPIRY);
     }
 }
 
@@ -649,6 +630,7 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
                 ComponentId::dummy_activity(),
                 exec1,
                 sim_clock.now() + lock_duration,
+                RunId::generate(),
             )
             .await
             .unwrap();
@@ -659,7 +641,7 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
         assert_eq!(Version::new(2), locked_execution.version);
     }
     // Calling `get_expired_timers` after lock expiry should return the expired execution.
-    sim_clock.move_time_forward(lock_duration).await;
+    sim_clock.move_time_forward(lock_duration);
     {
         let expired_at = sim_clock.now();
         let expired = db_connection.get_expired_timers(expired_at).await.unwrap();
@@ -940,7 +922,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
         .await
         .unwrap();
 
-    sim_clock.move_time_forward(Duration::from_nanos(1)).await;
+    sim_clock.move_time_forward(Duration::from_nanos(1));
     let newer_id = ExecutionId::generate();
     db_connection
         .create(CreateRequest {
@@ -959,7 +941,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
         .await
         .unwrap();
 
-    sim_clock.move_time_forward(Duration::from_nanos(999)).await;
+    sim_clock.move_time_forward(Duration::from_nanos(999));
     let newest_id = ExecutionId::generate();
     db_connection
         .create(CreateRequest {
@@ -987,6 +969,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             ComponentId::dummy_activity(),
             ExecutorId::generate(),
             sim_clock.now() + Duration::from_secs(1),
+            RunId::generate(),
         )
         .await
         .unwrap()
@@ -1098,7 +1081,7 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
             .is_empty()
     );
 
-    sim_clock.move_time_forward(lock_expiry).await;
+    sim_clock.move_time_forward(lock_expiry);
 
     let mut actual = db_connection
         .get_expired_timers(sim_clock.now())
@@ -1182,7 +1165,7 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
             .is_empty()
     );
 
-    sim_clock.move_time_forward(lock_expiry).await;
+    sim_clock.move_time_forward(lock_expiry);
 
     let mut actual = db_connection
         .get_expired_timers(sim_clock.now())

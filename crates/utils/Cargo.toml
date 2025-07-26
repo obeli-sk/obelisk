@@ -36,7 +36,6 @@ wit-parser.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
-madsim.workspace = true
 rstest.workspace = true
 serde.workspace = true
 test-programs-fibo-activity-builder.workspace = true

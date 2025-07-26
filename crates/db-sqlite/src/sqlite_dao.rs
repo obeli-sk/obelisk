@@ -680,7 +680,6 @@ impl<S: Sleep> SqlitePool<S> {
         {
             // Initialize the `Connection`.
             let init_task = {
-                #[cfg_attr(madsim, allow(deprecated))]
                 tokio::task::spawn_blocking(move || {
                     Self::init_thread(&path, config.pragma_override.unwrap_or_default())
                 })
@@ -2345,6 +2344,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
         component_id: ComponentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
     ) -> Result<LockPendingResponse, DbError> {
         let execution_ids_versions = self
             .conn_low_prio(
@@ -2366,7 +2366,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                             created_at,
                             component_id.clone(),
                             &execution_id,
-                            RunId::generate(),
+                            run_id,
                             &version,
                             executor_id,
                             lock_expires_at,

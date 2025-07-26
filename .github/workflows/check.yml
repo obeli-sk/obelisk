@@ -95,23 +95,3 @@ jobs:
 
       - name: cargo clippy
         run: nix develop --command cargo clippy --workspace --all-targets -- -D warnings
-
-  clippy-madsim:
-    name: clippy - madsim
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-
-      - uses: nixbuild/nix-quick-install-action@63ca48f939ee3b8d835f4126562537df0fee5b91
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Populate the nix store
-        run: nix develop --command echo
-
-      - name: cargo clippy (madsim)
-        run: nix develop --command cargo clippy --workspace --all-targets -- -D warnings
-        env:
-          RUSTFLAGS: "--cfg madsim"

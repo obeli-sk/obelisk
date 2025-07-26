@@ -47,6 +47,7 @@ impl DbConnection for InMemoryDbConnection {
         component_id: ComponentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
     ) -> Result<LockPendingResponse, DbError> {
         Ok(self.0.lock().await.lock_pending(
             batch_size,
@@ -56,6 +57,7 @@ impl DbConnection for InMemoryDbConnection {
             &component_id,
             executor_id,
             lock_expires_at,
+            run_id,
         ))
     }
 
@@ -530,6 +532,7 @@ impl DbHolder {
         component_id: &ComponentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
     ) -> LockPendingResponse {
         let pending =
             self.index
@@ -547,7 +550,7 @@ impl DbHolder {
                 scheduled_at,
                 retry_exp_backoff: journal.retry_exp_backoff(),
                 max_retries: journal.max_retries(),
-                run_id: RunId::generate(),
+                run_id,
                 parent: journal.parent(),
                 temporary_event_count: journal.temporary_event_count(),
             };
