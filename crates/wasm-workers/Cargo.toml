@@ -67,7 +67,6 @@ utils = { workspace = true, features = ["test"] }
 
 async-trait.workspace = true
 futures-util.workspace = true
-madsim.workspace = true
 reqwest.workspace = true
 rstest.workspace = true
 tempfile.workspace = true

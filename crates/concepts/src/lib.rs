@@ -1926,22 +1926,6 @@ mod tests {
         sync::Arc,
     };
 
-    #[cfg(madsim)]
-    #[test]
-    fn ulid_generation_should_be_deterministic() {
-        let mut builder_a = madsim::runtime::Builder::from_env();
-        builder_a.check = true;
-
-        let mut builder_b = madsim::runtime::Builder::from_env(); // Builder: Clone would be useful
-        builder_b.check = true;
-        builder_b.seed = builder_a.seed;
-
-        assert_eq!(
-            builder_a.run(|| async { ulid::Ulid::new() }),
-            builder_b.run(|| async { ulid::Ulid::new() })
-        );
-    }
-
     #[test]
     fn ulid_parsing() {
         let generated = ExecutorId::generate();
@@ -2080,7 +2064,6 @@ mod tests {
         assert_eq!(FunctionFqn::new_static("wasi:cli/run@0.2.0", "run"), ffqn);
     }
 
-    #[cfg(madsim)]
     #[tokio::test]
     async fn join_set_serde_should_be_consistent() {
         use crate::{JoinSetId, JoinSetKind};

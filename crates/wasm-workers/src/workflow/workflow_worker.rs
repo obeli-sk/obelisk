@@ -732,17 +732,13 @@ pub(crate) mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
-    #[cfg(not(madsim))]
     const FFQN_WORKFLOW_HTTP_GET_STARGAZERS: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_STARGAZERS);
 
-    #[cfg(not(madsim))]
     const FFQN_WORKFLOW_HTTP_GET: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET,
     );
-    #[cfg(not(madsim))]
     const FFQN_WORKFLOW_HTTP_GET_SUCCESSFUL: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
-    #[cfg(not(madsim))]
     const FFQN_WORKFLOW_HTTP_GET_RESP: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_RESP);
 
     pub(crate) fn compile_workflow(wasm_path: &str) -> (WasmComponent, ComponentId) {
@@ -801,14 +797,9 @@ pub(crate) mod tests {
             tick_sleep: TICK_SLEEP,
             component_id,
             task_limiter: None,
+            executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(
-            worker,
-            exec_config,
-            clock_fn,
-            db_pool,
-            ExecutorId::generate(),
-        )
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool)
     }
 
     pub(crate) fn spawn_workflow_fibo(
@@ -843,7 +834,6 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[cfg(not(madsim))]
     #[rstest]
     #[tokio::test]
     async fn fibo_workflow_should_submit_fibo_activity_sqlite(
@@ -1006,9 +996,7 @@ pub(crate) mod tests {
         );
         // simulate a scheduling problem where deadline < now
         let execution_deadline = sim_clock.now();
-        sim_clock
-            .move_time_forward(Duration::from_millis(100))
-            .await;
+        sim_clock.move_time_forward(Duration::from_millis(100));
 
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
@@ -1080,6 +1068,7 @@ pub(crate) mod tests {
                 tick_sleep: Duration::ZERO, // irrelevant here as we call tick manually
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
+                executor_id: ExecutorId::generate(),
             };
             let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
             ExecTask::new(
@@ -1092,7 +1081,7 @@ pub(crate) mod tests {
         };
         {
             let worker_tasks = sleep_exec
-                .tick_test(sim_clock.now())
+                .tick_test(sim_clock.now(), RunId::generate())
                 .await
                 .unwrap()
                 .wait_for_tasks()
@@ -1113,14 +1102,12 @@ pub(crate) mod tests {
                 assert_eq!(sim_clock.now() + LOCK_DURATION, blocked_until);
             }
         }
-        sim_clock
-            .move_time_forward(Duration::from_millis(u64::from(SLEEP_MILLIS)))
-            .await;
+        sim_clock.move_time_forward(Duration::from_millis(u64::from(SLEEP_MILLIS)));
 
         // Run the worker tick again before the response arrives - should be noop
         {
             let worker_tasks = sleep_exec
-                .tick_test(sim_clock.now())
+                .tick_test(sim_clock.now(), RunId::generate())
                 .await
                 .unwrap()
                 .wait_for_tasks()
@@ -1156,14 +1143,14 @@ pub(crate) mod tests {
                 }
                 JoinNextBlockingStrategy::Await { .. } => {
                     assert_eq!(blocked_until, actual_pending_at);
-                    sim_clock.move_time_to(blocked_until).await;
+                    sim_clock.move_time_to(blocked_until);
                 }
             }
         }
         // Reexecute the worker
         {
             let worker_tasks = sleep_exec
-                .tick_test(sim_clock.now())
+                .tick_test(sim_clock.now(), RunId::generate())
                 .await
                 .unwrap()
                 .wait_for_tasks()
@@ -1189,7 +1176,6 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[cfg(not(madsim))]
     #[rstest]
     #[tokio::test]
     async fn stargazers_should_be_deserialized_after_interrupt(
@@ -1256,7 +1242,6 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[cfg(not(madsim))]
     #[rstest]
     #[tokio::test]
     async fn http_get(
@@ -1353,7 +1338,6 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[cfg(not(madsim))]
     #[rstest::rstest]
     #[tokio::test]
     async fn http_get_concurrent(
@@ -1457,7 +1441,6 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[cfg(not(madsim))]
     #[rstest::rstest]
     #[tokio::test]
     async fn schedule(
@@ -1517,6 +1500,7 @@ pub(crate) mod tests {
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
+                executor_id: ExecutorId::generate(),
             },
             sim_clock.clone(),
             db_pool.clone(),
@@ -1526,7 +1510,7 @@ pub(crate) mod tests {
         assert_eq!(
             1,
             exec_task
-                .tick_test(sim_clock.now())
+                .tick_test(sim_clock.now(), RunId::generate())
                 .await
                 .unwrap()
                 .wait_for_tasks()
@@ -1538,7 +1522,7 @@ pub(crate) mod tests {
             res.into_finished_result().unwrap(),
             Ok(SupportedFunctionReturnValue::None)
         );
-        sim_clock.move_time_forward(SLEEP_DURATION).await;
+        sim_clock.move_time_forward(SLEEP_DURATION);
         // New execution should be pending.
         let mut next_pending = db_pool
             .connection()
@@ -1550,6 +1534,7 @@ pub(crate) mod tests {
                 ComponentId::dummy_workflow(),
                 ExecutorId::generate(),
                 sim_clock.now() + Duration::from_secs(1),
+                RunId::generate(),
             )
             .await
             .unwrap();
@@ -1566,7 +1551,6 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[cfg(not(madsim))]
     #[rstest]
     #[tokio::test]
     async fn http_get_fallible_err(
@@ -1664,7 +1648,6 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[cfg(not(madsim))]
     #[rstest::rstest]
     #[tokio::test]
     async fn stub(
@@ -1721,6 +1704,7 @@ pub(crate) mod tests {
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
+                executor_id: ExecutorId::generate(),
             },
             sim_clock.clone(),
             db_pool.clone(),
@@ -1731,7 +1715,7 @@ pub(crate) mod tests {
         assert_eq!(
             1,
             exec_task
-                .tick_test(sim_clock.now())
+                .tick_test(sim_clock.now(), RunId::generate())
                 .await
                 .unwrap()
                 .wait_for_tasks()
@@ -1750,7 +1734,7 @@ pub(crate) mod tests {
         assert_eq!(
             1,
             exec_task
-                .tick_test(sim_clock.now())
+                .tick_test(sim_clock.now(), RunId::generate())
                 .await
                 .unwrap()
                 .wait_for_tasks()

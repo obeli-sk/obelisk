@@ -56,7 +56,6 @@ use concepts::Params;
 use concepts::ReturnType;
 use concepts::StrVariant;
 use concepts::SupportedFunctionReturnValue;
-use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::AppendRequest;
 use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
@@ -1613,7 +1612,7 @@ impl ConfigVerified {
             http_servers_to_webhook_names
         };
         // Download WASM files from OCI registries if needed.
-        // TODO: Switch to `JoinSet` when madsim supports it.
+        // TODO!: Switch to `JoinSet` when madsim supports it.
         let activities = wasm_activities
             .into_iter()
             .map(|activity| {
@@ -1753,10 +1752,8 @@ async fn compile_and_verify(
         .map(|activity| {
             let engines = engines.clone();
             let span = info_span!("activity_compile", component_id = %activity.component_id());
-            #[cfg_attr(madsim, allow(deprecated))]
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
-                    let executor_id = ExecutorId::generate();
                     if activity.component_id().component_type == ComponentType::ActivityStub {
                         let engine = engines.activity_engine.clone();
                         let wasm_component = WasmComponent::new(
@@ -1785,12 +1782,12 @@ async fn compile_and_verify(
                         };
                         Ok(CompiledComponent::ActivityStub { component_config })
                     } else {
-                        prespawn_activity(activity, &engines, executor_id).map(
-                            |(worker, component_config)| CompiledComponent::ActivityOrWorkflow {
+                        prespawn_activity(activity, &engines).map(|(worker, component_config)| {
+                            CompiledComponent::ActivityOrWorkflow {
                                 worker,
                                 component_config,
-                            },
-                        )
+                            }
+                        })
                     }
                 })
             })
@@ -1798,16 +1795,14 @@ async fn compile_and_verify(
         .chain(workflows.into_iter().map(|workflow| {
             let engines = engines.clone();
             let span = info_span!("workflow_compile", component_id = %workflow.component_id());
-            #[cfg_attr(madsim, allow(deprecated))]
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
-                    let executor_id = ExecutorId::generate();
-                    prespawn_workflow(workflow, &engines, executor_id).map(
-                        |(worker, component_config)| CompiledComponent::ActivityOrWorkflow {
+                    prespawn_workflow(workflow, &engines).map(|(worker, component_config)| {
+                        CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
-                        },
-                    )
+                        }
+                    })
                 })
             })
         }))
@@ -1817,7 +1812,6 @@ async fn compile_and_verify(
                 .map(|(webhook_name, webhook)| {
                     let engines = engines.clone();
                     let span = info_span!("webhook_compile", component_id = %webhook.component_id);
-                    #[cfg_attr(madsim, allow(deprecated))]
                     tokio::task::spawn_blocking(move || {
                         span.in_scope(|| {
                             let component_id = webhook.component_id;
@@ -1896,14 +1890,13 @@ async fn compile_and_verify(
 }
 
 #[instrument(skip_all, fields(
-    %executor_id,
+    executor_id = %activity.exec_config.executor_id,
     component_id = %activity.exec_config.component_id,
     wasm_path = ?activity.wasm_path,
 ))]
 fn prespawn_activity(
     activity: ActivityWasmConfigVerified,
     engines: &Engines,
-    executor_id: ExecutorId,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     assert!(activity.component_id().component_type == ComponentType::ActivityWasm);
     debug!("Instantiating activity");
@@ -1927,20 +1920,18 @@ fn prespawn_activity(
         activity.content_digest,
         activity.exec_config,
         activity.retry_config,
-        executor_id,
         wit,
     ))
 }
 
 #[instrument(skip_all, fields(
-    %executor_id,
+    executor_id = %workflow.exec_config.executor_id,
     component_id = %workflow.exec_config.component_id,
     wasm_path = ?workflow.wasm_path,
 ))]
 fn prespawn_workflow(
     workflow: WorkflowConfigVerified,
     engines: &Engines,
-    executor_id: ExecutorId,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     assert!(workflow.component_id().component_type == ComponentType::Workflow);
     debug!("Instantiating workflow");
@@ -1964,7 +1955,6 @@ fn prespawn_workflow(
         workflow.content_digest,
         workflow.exec_config,
         workflow.retry_config,
-        executor_id,
         wit,
     ))
 }
@@ -1972,7 +1962,6 @@ fn prespawn_workflow(
 struct WorkerCompiled {
     worker: Either<Arc<dyn Worker>, WorkflowWorkerCompiled<Now, TokioSleep>>,
     exec_config: ExecConfig,
-    executor_id: ExecutorId,
 }
 
 impl WorkerCompiled {
@@ -1981,7 +1970,6 @@ impl WorkerCompiled {
         content_digest: ContentDigest,
         exec_config: ExecConfig,
         retry_config: ComponentRetryConfig,
-        executor_id: ExecutorId,
         wit: Option<String>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -1999,7 +1987,6 @@ impl WorkerCompiled {
             WorkerCompiled {
                 worker: Either::Left(Arc::from(worker)),
                 exec_config,
-                executor_id,
             },
             component,
         )
@@ -2010,7 +1997,6 @@ impl WorkerCompiled {
         content_digest: ContentDigest,
         exec_config: ExecConfig,
         retry_config: ComponentRetryConfig,
-        executor_id: ExecutorId,
         wit: Option<String>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -2028,7 +2014,6 @@ impl WorkerCompiled {
             WorkerCompiled {
                 worker: Either::Right(worker),
                 exec_config,
-                executor_id,
             },
             component,
         )
@@ -2044,7 +2029,6 @@ impl WorkerCompiled {
                 }
             },
             exec_config: self.exec_config,
-            executor_id: self.executor_id,
         })
     }
 }
@@ -2052,7 +2036,6 @@ impl WorkerCompiled {
 struct WorkerLinked {
     worker: Either<Arc<dyn Worker>, WorkflowWorkerLinked<Now, TokioSleep>>,
     exec_config: ExecConfig,
-    executor_id: ExecutorId,
 }
 impl WorkerLinked {
     fn spawn(self, db_pool: Arc<dyn DbPool>) -> ExecutorTaskHandle {
@@ -2062,7 +2045,7 @@ impl WorkerLinked {
                 Arc::from(workflow_linked.into_worker(db_pool.clone()))
             }
         };
-        ExecTask::spawn_new(worker, self.exec_config, Now, db_pool, self.executor_id)
+        ExecTask::spawn_new(worker, self.exec_config, Now, db_pool)
     }
 }
 
@@ -2331,7 +2314,7 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
     }
 }
 
-#[cfg(all(test, not(madsim)))]
+#[cfg(test)]
 mod tests {
     use crate::{
         ConfigHolder,

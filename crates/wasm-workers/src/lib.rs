@@ -64,7 +64,6 @@ pub(crate) mod tests {
             compile_workflow(wasm_path);
         }
 
-        #[cfg(not(madsim))]
         #[rstest::rstest(wasm_path => [
             test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK
             ])]

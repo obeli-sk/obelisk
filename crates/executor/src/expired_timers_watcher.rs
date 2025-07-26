@@ -32,7 +32,7 @@ pub struct TimersWatcherConfig<C: ClockFn> {
     pub leeway: Duration, // A short duration that will be subtracted from now() so that a hot workflow can win.
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct TickProgress {
     pub expired_locks: usize,
     pub expired_async_timers: usize,

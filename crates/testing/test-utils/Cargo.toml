@@ -14,7 +14,7 @@ utils.workspace = true
 
 arbitrary.workspace = true
 chrono.workspace = true
-madsim.workspace = true
+rand.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

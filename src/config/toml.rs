@@ -4,7 +4,7 @@ use super::{
 use anyhow::{anyhow, bail};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, InvalidNameError, StrVariant,
-    check_name,
+    check_name, prefixed_ulid::ExecutorId,
 };
 use db_sqlite::sqlite_dao::SqliteConfig;
 use log::{LoggingConfig, LoggingStyle};
@@ -382,6 +382,7 @@ impl ExecConfigToml {
             batch_size: self.batch_size,
             component_id,
             task_limiter: self.max_inflight_instances.into(),
+            executor_id: ExecutorId::generate(),
         }
     }
 }

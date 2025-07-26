@@ -1124,7 +1124,6 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
     }
 }
 
-#[cfg(madsim)]
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
@@ -1135,11 +1134,10 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::prefixed_ulid::{ExecutionIdDerived, RunId};
+    use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
         AppendRequest, CreateRequest, DbPool, HistoryEvent, JoinSetRequest, JoinSetResponse,
         PendingState, PendingStateFinished, PendingStateFinishedResultKind,
-        wait_for_pending_state_fn,
     };
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
     use concepts::time::{ClockFn, Now};
@@ -1147,11 +1145,15 @@ pub(crate) mod tests {
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
+    use executor::expired_timers_watcher::TickProgress;
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
         worker::{Worker, WorkerContext, WorkerResult},
     };
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng as _};
+    use std::env::VarError;
     use std::{fmt::Debug, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info, info_span};
@@ -1390,23 +1392,31 @@ pub(crate) mod tests {
     // E. Remove a step
     // F. Change the final result
 
-    #[test]
-    fn check_determinism() {
-        test_utils::set_up();
-        let mut builder_a = madsim::runtime::Builder::from_env();
-        builder_a.check = false;
-        info!("MADSIM_TEST_SEED={}", builder_a.seed);
-        let mut builder_b = madsim::runtime::Builder::from_env(); // Builder: Clone would be useful
-        builder_b.check = false;
-        builder_b.seed = builder_a.seed;
+    fn get_seed() -> u64 {
+        match std::env::var("TEST_SEED") {
+            Ok(seed) => seed.parse().unwrap(),
+            Err(VarError::NotPresent) => StdRng::from_entropy().r#gen(),
+            _ => unimplemented!(),
+        }
+    }
 
-        let closure = || async move {
+    #[tokio::test]
+    async fn generate_steps_execute_twice_check_determinism() {
+        test_utils::set_up();
+        let seed = get_seed();
+        println!("Seed: {seed}");
+        let steps = generate_steps(seed);
+        let closure = |steps, sim_clock, seed| async move {
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let res = execute_steps(generate_steps(), db_pool.clone()).await;
+            let res = execute_steps(steps, db_pool.clone(), sim_clock, seed).await;
             db_pool.close().await.unwrap();
             res
         };
-        assert_eq!(builder_a.run(closure), builder_b.run(closure));
+        println!("Run 1");
+        let res1 = closure(steps.clone(), SimClock::epoch(), seed).await;
+        println!("Run 2");
+        let res2 = closure(steps, SimClock::epoch(), seed).await;
+        assert_eq!(res1, res2);
     }
 
     #[tokio::test]
@@ -1421,7 +1431,8 @@ pub(crate) mod tests {
                 target_ffqn: FFQN_CHILD_MOCK,
             },
         ];
-        execute_steps(steps, db_pool.clone()).await;
+        let seed = get_seed();
+        execute_steps(steps, db_pool.clone(), SimClock::epoch(), seed).await;
         db_pool.close().await.unwrap();
     }
 
@@ -1643,8 +1654,8 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    fn generate_steps() -> Vec<WorkflowStep> {
-        let unstructured_holder = UnstructuredHolder::new();
+    fn generate_steps(seed: u64) -> Vec<WorkflowStep> {
+        let unstructured_holder = UnstructuredHolder::new(seed);
         let mut unstructured = unstructured_holder.unstructured();
         let mut steps = unstructured
             .arbitrary_iter()
@@ -1679,11 +1690,17 @@ pub(crate) mod tests {
     async fn execute_steps(
         steps: Vec<WorkflowStep>,
         db_pool: Arc<dyn DbPool>,
+        sim_clock: SimClock,
+        seed: u64,
     ) -> (ExecutionId, ExecutionLog) {
-        let created_at = Now.now();
+        let mut seedable_rng = StdRng::seed_from_u64(seed);
+        let mut next_u128 = || rand::Rng::r#gen(&mut seedable_rng);
+        let created_at = sim_clock.now();
         info!(now = %created_at, "Steps: {steps:?}");
-        let execution_id = ExecutionId::generate();
-        let sim_clock = SimClock::new(created_at);
+        let execution_id = ExecutionId::from_parts(
+            u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
+            next_u128(),
+        );
 
         let mut child_execution_count = steps
             .iter()
@@ -1698,19 +1715,11 @@ pub(crate) mod tests {
             .iter()
             .filter(|step| matches!(step, WorkflowStep::Sleep { .. }))
             .count();
-        let timers_watcher_task = expired_timers_watcher::spawn_new(
-            db_pool.clone(),
-            expired_timers_watcher::TimersWatcherConfig {
-                tick_sleep: TICK_SLEEP,
-                clock_fn: sim_clock.clone(),
-                leeway: Duration::ZERO,
-            },
-        );
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         let fn_registry = steps_to_registry(&steps);
 
-        let workflow_exec_task = {
+        let workflow_exec = {
             let worker = Arc::new(WorkflowWorkerMock::new(
                 FFQN_MOCK,
                 fn_registry.clone(),
@@ -1724,13 +1733,17 @@ pub(crate) mod tests {
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
+                executor_id: ExecutorId::from_parts(
+                    u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
+                    next_u128(),
+                ),
             };
-            ExecTask::spawn_new(
+            ExecTask::new(
                 worker,
                 exec_config,
                 sim_clock.clone(),
                 db_pool.clone(),
-                concepts::prefixed_ulid::ExecutorId::generate(),
+                Arc::new([FFQN_MOCK]),
             )
         };
         // Create an execution.
@@ -1752,46 +1765,69 @@ pub(crate) mod tests {
             .unwrap();
 
         let mut processed = Vec::new();
-        while let Some((join_set_id, join_set_req)) = wait_for_pending_state_fn(
-            db_connection.as_ref(),
-            &execution_id,
-            |execution_log| match &execution_log.pending_state {
-                PendingState::BlockedByJoinSet { join_set_id, .. } => Some(Some((
-                    join_set_id.clone(),
-                    execution_log
-                        .find_join_set_request(join_set_id)
+        loop {
+            workflow_exec
+                .tick_test(
+                    sim_clock.now(),
+                    RunId::from_parts(
+                        u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
+                        next_u128(),
+                    ),
+                )
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap();
+            if let Some((join_set_id, join_set_req)) = match db_connection
+                .get_pending_state(&execution_id)
+                .await
+                .unwrap()
+            {
+                PendingState::BlockedByJoinSet { join_set_id, .. } => {
+                    let execution_log = db_connection.get(&execution_id).await.unwrap();
+                    let join_set_req = execution_log
+                        .find_join_set_request(&join_set_id)
                         .cloned()
-                        .expect("must be found"),
-                ))), // Execution is currently blocked, unblock it in the loop body.
-                PendingState::Finished { .. } => Some(None), // Exit the while loop.
-                _ => None,                                   // Ignore other states.
-            },
-            None,
-        )
-        .await
-        .unwrap()
-        {
-            if processed.contains(&join_set_id) {
-                continue;
-            }
-
-            match join_set_req {
-                JoinSetRequest::DelayRequest {
-                    delay_id,
-                    expires_at,
-                } => {
-                    info!("Moving time to {expires_at} - {delay_id}");
-                    assert!(delay_request_count > 0);
-                    sim_clock.move_time_to(expires_at).await;
-                    delay_request_count -= 1;
+                        .expect("must be found");
+                    if processed.contains(&join_set_id) {
+                        None
+                    } else {
+                        Some((join_set_id, join_set_req))
+                    }
                 }
-                JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
-                    assert!(child_execution_count > 0);
-                    exec_child(child_execution_id, db_pool.clone(), sim_clock.clone()).await;
-                    child_execution_count -= 1;
+                PendingState::Finished { .. } => break,
+                other => unreachable!("unexpected {other}"),
+            } {
+                match join_set_req {
+                    JoinSetRequest::DelayRequest {
+                        delay_id,
+                        expires_at,
+                    } => {
+                        info!("Moving time to {expires_at} - {delay_id}");
+                        assert!(delay_request_count > 0);
+                        sim_clock.move_time_to(expires_at);
+                        delay_request_count -= 1;
+                        let actual_progress =
+                            expired_timers_watcher::tick_test(db_connection.as_ref(), expires_at)
+                                .await
+                                .unwrap();
+                        assert_eq!(
+                            TickProgress {
+                                expired_locks: 0,
+                                expired_async_timers: 1
+                            },
+                            actual_progress
+                        );
+                    }
+                    JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
+                        assert!(child_execution_count > 0);
+                        exec_child(child_execution_id, db_pool.clone(), sim_clock.clone()).await;
+                        child_execution_count -= 1;
+                    }
                 }
+                processed.push(join_set_id);
             }
-            processed.push(join_set_id);
         }
         // must be finished at this point
         assert_eq!(0, child_execution_count);
@@ -1799,8 +1835,6 @@ pub(crate) mod tests {
         let execution_log = db_connection.get(&execution_id).await.unwrap();
         assert!(execution_log.pending_state.is_finished());
         drop(db_connection);
-        workflow_exec_task.close().await;
-        drop(timers_watcher_task);
         (execution_id, execution_log)
     }
 

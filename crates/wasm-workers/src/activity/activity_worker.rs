@@ -394,7 +394,6 @@ pub(crate) mod tests {
         compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm)
     }
 
-    #[cfg_attr(madsim, allow(dead_code))]
     pub(crate) fn compile_activity_stub(wasm_path: &str) -> (WasmComponent, ComponentId) {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
         compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityStub)
@@ -412,7 +411,6 @@ pub(crate) mod tests {
         )
     }
 
-    #[cfg_attr(madsim, allow(dead_code))]
     fn new_activity_worker(
         wasm_path: &str,
         engine: Arc<Engine>,
@@ -471,14 +469,9 @@ pub(crate) mod tests {
             tick_sleep: Duration::ZERO,
             component_id,
             task_limiter: None,
+            executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(
-            worker,
-            exec_config,
-            clock_fn,
-            db_pool,
-            ExecutorId::generate(),
-        )
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool)
     }
 
     pub(crate) fn spawn_activity_fibo(
@@ -530,7 +523,6 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[cfg(not(madsim))] // Requires madsim support in wasmtime
     pub mod wasmtime_nosim {
         use super::*;
         use crate::engines::PoolingOptions;
@@ -661,14 +653,9 @@ pub(crate) mod tests {
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
+                executor_id: ExecutorId::generate(),
             };
-            let exec_task = ExecTask::spawn_new(
-                worker,
-                exec_config,
-                Now,
-                db_pool.clone(),
-                ExecutorId::generate(),
-            );
+            let exec_task = ExecTask::spawn_new(worker, exec_config, Now, db_pool.clone());
 
             // Create an execution.
             let stopwatch = std::time::Instant::now();
@@ -789,9 +776,7 @@ pub(crate) mod tests {
             );
             // simulate a scheduling problem where deadline < now
             let execution_deadline = sim_clock.now();
-            sim_clock
-                .move_time_forward(Duration::from_millis(100))
-                .await;
+            sim_clock.move_time_forward(Duration::from_millis(100));
             let version = Version::new(10);
             let ctx = WorkerContext {
                 execution_id: ExecutionId::generate(),
@@ -850,6 +835,7 @@ pub(crate) mod tests {
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
+                executor_id: ExecutorId::generate(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task = ExecTask::new(
@@ -899,7 +885,7 @@ pub(crate) mod tests {
             assert_eq!(
                 1,
                 exec_task
-                    .tick_test(sim_clock.now())
+                    .tick_test(sim_clock.now(), RunId::generate())
                     .await
                     .unwrap()
                     .wait_for_tasks()
@@ -971,6 +957,7 @@ pub(crate) mod tests {
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
+                executor_id: ExecutorId::generate(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task = ExecTask::new(
@@ -1020,7 +1007,7 @@ pub(crate) mod tests {
             assert_eq!(
                 1,
                 exec_task
-                    .tick_test(sim_clock.now())
+                    .tick_test(sim_clock.now(), RunId::generate())
                     .await
                     .unwrap()
                     .wait_for_tasks()
@@ -1097,6 +1084,7 @@ pub(crate) mod tests {
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
+                executor_id: ExecutorId::generate(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task = ExecTask::new(
@@ -1147,7 +1135,7 @@ pub(crate) mod tests {
                 assert_eq!(
                     1,
                     exec_task
-                        .tick_test(sim_clock.now())
+                        .tick_test(sim_clock.now(), RunId::generate())
                         .await
                         .unwrap()
                         .wait_for_tasks()
@@ -1200,14 +1188,14 @@ pub(crate) mod tests {
             assert_eq!(
                 0,
                 exec_task
-                    .tick_test(sim_clock.now())
+                    .tick_test(sim_clock.now(), RunId::generate())
                     .await
                     .unwrap()
                     .wait_for_tasks()
                     .await
                     .unwrap()
             );
-            sim_clock.move_time_forward(RETRY_EXP_BACKOFF).await;
+            sim_clock.move_time_forward(RETRY_EXP_BACKOFF);
             server.reset().await;
             if succeed_eventually {
                 // Reconfigure the server
@@ -1223,7 +1211,7 @@ pub(crate) mod tests {
             assert_eq!(
                 1,
                 exec_task
-                    .tick_test(sim_clock.now())
+                    .tick_test(sim_clock.now(), RunId::generate())
                     .await
                     .unwrap()
                     .wait_for_tasks()

@@ -64,6 +64,7 @@ impl DbConnection for DbConnectionProxy {
         component_id: ComponentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
     ) -> Result<LockPendingResponse, DbError> {
         self.0
             .lock_pending(
@@ -74,6 +75,7 @@ impl DbConnection for DbConnectionProxy {
                 component_id,
                 executor_id,
                 lock_expires_at,
+                run_id,
             )
             .await
     }

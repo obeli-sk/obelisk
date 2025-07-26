@@ -4,7 +4,6 @@ fn main() {
     divan::main();
 }
 
-#[cfg(not(madsim))] // Handle is missing in madsim
 mod bench {
     use assert_matches::assert_matches;
     use concepts::storage::DbPool;
@@ -95,14 +94,9 @@ mod bench {
             tick_sleep: TICK_SLEEP,
             component_id,
             task_limiter: None,
+            executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(
-            worker,
-            exec_config,
-            clock_fn,
-            db_pool,
-            ExecutorId::generate(),
-        )
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool)
     }
 
     fn new_activity_worker_with_config(
@@ -192,14 +186,9 @@ mod bench {
             tick_sleep: TICK_SLEEP,
             component_id,
             task_limiter: None,
+            executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(
-            worker,
-            exec_config,
-            clock_fn,
-            db_pool,
-            ExecutorId::generate(),
-        )
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool)
     }
 
     pub(crate) fn spawn_workflow_fibo(

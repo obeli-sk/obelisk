@@ -1,6 +1,7 @@
 use crate::worker::{Worker, WorkerContext, WorkerError, WorkerResult};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
+use concepts::prefixed_ulid::RunId;
 use concepts::storage::{
     AppendRequest, DbPool, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
     LockedExecution,
@@ -31,6 +32,7 @@ pub struct ExecConfig {
     pub batch_size: u32,
     pub component_id: ComponentId,
     pub task_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    pub executor_id: ExecutorId,
 }
 
 pub struct ExecTask<C: ClockFn> {
@@ -38,7 +40,6 @@ pub struct ExecTask<C: ClockFn> {
     config: ExecConfig,
     clock_fn: C, // Used for obtaining current time when the execution finishes.
     db_pool: Arc<dyn DbPool>,
-    executor_id: ExecutorId,
     ffqns: Arc<[FunctionFqn]>,
 }
 
@@ -71,7 +72,7 @@ pub struct ExecutorTaskHandle {
 }
 
 impl ExecutorTaskHandle {
-    #[instrument(level = Level::DEBUG, name = "executor.close", skip_all, fields(executor_id= %self.executor_id, component_id=%self.component_id))]
+    #[instrument(level = Level::DEBUG, name = "executor.close", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id))]
     pub async fn close(&self) {
         trace!("Gracefully closing");
         self.is_closing.store(true, Ordering::Relaxed);
@@ -83,12 +84,12 @@ impl ExecutorTaskHandle {
 }
 
 impl Drop for ExecutorTaskHandle {
-    #[instrument(level = Level::DEBUG, name = "executor.drop", skip_all, fields(executor_id= %self.executor_id, component_id=%self.component_id))]
+    #[instrument(level = Level::DEBUG, name = "executor.drop", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id))]
     fn drop(&mut self) {
         if self.abort_handle.is_finished() {
             return;
         }
-        warn!(executor_id= %self.executor_id, component_id=%self.component_id, "Aborting the executor task");
+        warn!("Aborting the executor task");
         self.abort_handle.abort();
     }
 }
@@ -118,10 +119,9 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         Self {
             worker,
             config,
-            executor_id: ExecutorId::generate(),
+            clock_fn,
             db_pool,
             ffqns,
-            clock_fn,
         }
     }
 
@@ -130,24 +130,23 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         config: ExecConfig,
         clock_fn: C,
         db_pool: Arc<dyn DbPool>,
-        executor_id: ExecutorId,
     ) -> ExecutorTaskHandle {
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let ffqns = extract_exported_ffqns_noext(worker.as_ref());
         let component_id = config.component_id.clone();
+        let executor_id = config.executor_id;
         let abort_handle = tokio::spawn(async move {
-            debug!(%executor_id, component_id = %config.component_id, "Spawned executor");
+            debug!(executor_id = %config.executor_id, component_id = %config.component_id, "Spawned executor");
             let task = Self {
                 worker,
                 config,
-                executor_id,
                 db_pool,
                 ffqns: ffqns.clone(),
                 clock_fn: clock_fn.clone(),
             };
             loop {
-                let _ = task.tick(clock_fn.now()).await;
+                let _ = task.tick(clock_fn.now(), RunId::generate()).await;
                 let executed_at = clock_fn.now();
                 task.db_pool
                     .connection()
@@ -188,12 +187,20 @@ impl<C: ClockFn + 'static> ExecTask<C> {
     }
 
     #[cfg(feature = "test")]
-    pub async fn tick_test(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
-        self.tick(executed_at).await
+    pub async fn tick_test(
+        &self,
+        executed_at: DateTime<Utc>,
+        run_id: RunId,
+    ) -> Result<ExecutionProgress, ()> {
+        self.tick(executed_at, run_id).await
     }
 
-    #[instrument(level = Level::TRACE, name = "executor.tick" skip_all, fields(executor_id = %self.executor_id, component_id = %self.config.component_id))]
-    async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
+    #[instrument(level = Level::TRACE, name = "executor.tick" skip_all, fields(executor_id = %self.config.executor_id, component_id = %self.config.component_id))]
+    async fn tick(
+        &self,
+        executed_at: DateTime<Utc>,
+        run_id: RunId,
+    ) -> Result<ExecutionProgress, ()> {
         let locked_executions = {
             let mut permits = self.acquire_task_permits();
             if permits.is_empty() {
@@ -208,12 +215,13 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                     self.ffqns.clone(),
                     executed_at, // created at
                     self.config.component_id.clone(),
-                    self.executor_id,
+                    self.config.executor_id,
                     lock_expires_at,
+                    run_id,
                 )
                 .await
                 .map_err(|err| {
-                    warn!(executor_id = %self.executor_id, component_id = %self.config.component_id, "lock_pending error {err:?}");
+                    warn!("lock_pending error {err:?}");
                 })?;
             // Drop permits if too many were allocated.
             while permits.len() > locked_executions.len() {
@@ -234,7 +242,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 let run_id = locked_execution.run_id;
                 let worker_span = info_span!(parent: None, "worker",
                     "otel.name" = format!("worker {}", locked_execution.ffqn),
-                    %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.executor_id, component_id = %self.config.component_id);
+                    %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.config.executor_id, component_id = %self.config.component_id);
                 locked_execution.metadata.enrich(&worker_span);
                 tokio::spawn({
                     let worker_span2 = worker_span.clone();
@@ -769,7 +777,7 @@ mod tests {
         trace!("Ticking with {worker:?}");
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
         let executor = ExecTask::new(worker, config, clock_fn, db_pool, ffqns);
-        let mut execution_progress = executor.tick(executed_at).await.unwrap();
+        let mut execution_progress = executor.tick(executed_at, RunId::generate()).await.unwrap();
         loop {
             execution_progress
                 .executions
@@ -789,7 +797,6 @@ mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[cfg(not(madsim))]
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based_sqlite() {
         let created_at = Now.now();
@@ -810,6 +817,7 @@ mod tests {
             tick_sleep: Duration::from_millis(100),
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
+            executor_id: ExecutorId::generate(),
         };
 
         let execution_log = create_and_tick(
@@ -856,6 +864,7 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
+            executor_id: ExecutorId::generate(),
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
@@ -868,7 +877,6 @@ mod tests {
             exec_config.clone(),
             clock_fn,
             db_pool.clone(),
-            ExecutorId::generate(),
         );
 
         let execution_log = create_and_tick(
@@ -884,7 +892,7 @@ mod tests {
             exec_config,
             worker,
             |_, _, _, _, _| async {
-                tokio::time::sleep(Duration::from_secs(1)).await; // non deterministic if not run in madsim
+                tokio::time::sleep(Duration::from_secs(1)).await; // FIXME: non determinism, possible race
                 ExecutionProgress::default()
             },
         )
@@ -985,6 +993,7 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
+            executor_id: ExecutorId::generate(),
         };
         let expected_reason = "error reason";
         let expected_detail = "error detail";
@@ -1063,7 +1072,7 @@ mod tests {
             .is_empty()
         );
         // tick again to finish the execution
-        sim_clock.move_time_forward(retry_exp_backoff).await;
+        sim_clock.move_time_forward(retry_exp_backoff);
         tick_fn(
             exec_config,
             sim_clock.clone(),
@@ -1114,6 +1123,7 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
+            executor_id: ExecutorId::generate(),
         };
 
         let expected_reason = "error reason";
@@ -1262,6 +1272,7 @@ mod tests {
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
+                executor_id: ExecutorId::generate(),
             },
             sim_clock.clone(),
             db_pool.clone(),
@@ -1342,6 +1353,7 @@ mod tests {
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
+                executor_id: ExecutorId::generate(),
             },
             sim_clock.clone(),
             db_pool.clone(),
@@ -1351,7 +1363,7 @@ mod tests {
         .await;
         if matches!(expected_child_err, FinishedExecutionError::PermanentTimeout) {
             // In case of timeout, let the timers watcher handle it
-            sim_clock.move_time_forward(LOCK_EXPIRY).await;
+            sim_clock.move_time_forward(LOCK_EXPIRY);
             expired_timers_watcher::tick(db_pool.connection().as_ref(), sim_clock.now())
                 .await
                 .unwrap();
@@ -1441,6 +1453,7 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
+            executor_id: ExecutorId::generate(),
         };
 
         let worker = Arc::new(SleepyWorker {
@@ -1483,15 +1496,21 @@ mod tests {
             db_pool.clone(),
             ffqns,
         );
-        let mut first_execution_progress = executor.tick(sim_clock.now()).await.unwrap();
+        let mut first_execution_progress = executor
+            .tick(sim_clock.now(), RunId::generate())
+            .await
+            .unwrap();
         assert_eq!(1, first_execution_progress.executions.len());
         // Started hanging, wait for lock expiry.
-        sim_clock.move_time_forward(lock_expiry).await;
+        sim_clock.move_time_forward(lock_expiry);
         // cleanup should be called
         let now_after_first_lock_expiry = sim_clock.now();
         {
             debug!(now = %now_after_first_lock_expiry, "Expecting an expired lock");
-            let cleanup_progress = executor.tick(now_after_first_lock_expiry).await.unwrap();
+            let cleanup_progress = executor
+                .tick(now_after_first_lock_expiry, RunId::generate())
+                .await
+                .unwrap();
             assert!(cleanup_progress.executions.is_empty());
         }
         {
@@ -1529,20 +1548,26 @@ mod tests {
             },
             execution_log.pending_state
         );
-        sim_clock.move_time_forward(timeout_duration).await;
+        sim_clock.move_time_forward(timeout_duration);
         let now_after_first_timeout = sim_clock.now();
         debug!(now = %now_after_first_timeout, "Second execution should hang again and result in a permanent timeout");
 
-        let mut second_execution_progress = executor.tick(now_after_first_timeout).await.unwrap();
+        let mut second_execution_progress = executor
+            .tick(now_after_first_timeout, RunId::generate())
+            .await
+            .unwrap();
         assert_eq!(1, second_execution_progress.executions.len());
 
         // Started hanging, wait for lock expiry.
-        sim_clock.move_time_forward(lock_expiry).await;
+        sim_clock.move_time_forward(lock_expiry);
         // cleanup should be called
         let now_after_second_lock_expiry = sim_clock.now();
         debug!(now = %now_after_second_lock_expiry, "Expecting the second lock to be expired");
         {
-            let cleanup_progress = executor.tick(now_after_second_lock_expiry).await.unwrap();
+            let cleanup_progress = executor
+                .tick(now_after_second_lock_expiry, RunId::generate())
+                .await
+                .unwrap();
             assert!(cleanup_progress.executions.is_empty());
         }
         {
