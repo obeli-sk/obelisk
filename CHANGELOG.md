@@ -3,6 +3,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.23.2](https://github.com/obeli-sk/obelisk/compare/v0.23.1...v0.23.2)
+
+### ⛰️ Features
+
+- *(grpc,cli)* Implement `stub` RPC - ([397ae90](https://github.com/obeli-sk/obelisk/commit/397ae9058f535d27d5c02580803a6157029e9bcf))
+- Add persistent handling of `-stub` calls - ([b7d85bd](https://github.com/obeli-sk/obelisk/commit/b7d85bda5438c5075b8c3a39ec44e65b46f5dca6))
+- Generate `-stub` interface when serializing to WIT - ([eae74b3](https://github.com/obeli-sk/obelisk/commit/eae74b3e009ebcd22267e042d2b0e6cf085fd00d))
+- Add `-stub` functions to `WasmComponent`'s `exim` - ([e84fcee](https://github.com/obeli-sk/obelisk/commit/e84fceeaa7dcc68f36a44dcfdf3401e1b26b3f3e))
+- Allow specifying stub activities in config - ([066fdd6](https://github.com/obeli-sk/obelisk/commit/066fdd6750e11c6339cfbef7e6151837da99c022))
+
+### 🐛 Bug Fixes
+
+- *(cli)* Pass retval as string, verify it is a JSON - ([a545760](https://github.com/obeli-sk/obelisk/commit/a54576093e2ae4fef323d8fe2f2e62ec78c94b06))
+- Mark `Schedule` event as `Processed` - ([07bc053](https://github.com/obeli-sk/obelisk/commit/07bc053a19dd1b14eb02b856311e54fb80220bab))
+
+### 🚜 Refactor
+
+- *(sqlite)* Use strict tables - ([125e0cc](https://github.com/obeli-sk/obelisk/commit/125e0cce550117519e0ce1428e06b059bf78ad9f))
+- *(webui)* Make `is_extension` detect stubs - ([7445d9e](https://github.com/obeli-sk/obelisk/commit/7445d9ec55b596ddcd46c35ca1b887908eeaa70b))
+- Support no return type for stubbed activities - ([b557b61](https://github.com/obeli-sk/obelisk/commit/b557b61248e90475169fc72e92178ead74e252a2))
+- Find stub function using `find_by_exported_ffqn_stub` - ([aa8cb2c](https://github.com/obeli-sk/obelisk/commit/aa8cb2c3a04760efdff75c79dd7f4fb055461ba1))
+- Unify stub req/resp into a single event - ([519d400](https://github.com/obeli-sk/obelisk/commit/519d400f2ebad96733b5a7900c1bf2432ac11074))
+- Add `StubRequest` - ([8e801da](https://github.com/obeli-sk/obelisk/commit/8e801dab484e86f70a6c0a91a16466aba478cea3))
+- Eagarly get fn metadata from `FunctionRegistry` into `EventCall` - ([342bfe0](https://github.com/obeli-sk/obelisk/commit/342bfe074e701a37792b2a4a5c09b0f0cad0295c))
+- Convert generic `DbPool` into `Arc`s - ([f75a8ac](https://github.com/obeli-sk/obelisk/commit/f75a8ac2e31d0031a48d194bcdb33e2950e91f56))
+- Make activity stub functions externally unsubmittable - ([445d3c3](https://github.com/obeli-sk/obelisk/commit/445d3c30fc97189f0d07492d7192b6087b07a9b2))
+- Compare `ClosingStrategy` when replaying log - ([26c2ff9](https://github.com/obeli-sk/obelisk/commit/26c2ff98bef390421d14bcb333e7618fc26ed77f))
+- Remove params and retvals from debug output - ([20b9f0b](https://github.com/obeli-sk/obelisk/commit/20b9f0bf9beacb9eef294d10026a1367d32658f4))
+- Render WIT of stub activities - ([d5b9bbe](https://github.com/obeli-sk/obelisk/commit/d5b9bbe9bf56298945f5216ea725f744b00f1be9))
+- Skip `-schedule` generation for activity stubs - ([c69a091](https://github.com/obeli-sk/obelisk/commit/c69a091a99e9ac8b0786091d328bc59019ebc214))
+- Replace `expect` with `WorkflowFunctionError` - ([07d5b4d](https://github.com/obeli-sk/obelisk/commit/07d5b4d4aaea082873b2002eaa38246e2130f610))
+- Simplify `imported_fn_to_event_call` - ([9955fcf](https://github.com/obeli-sk/obelisk/commit/9955fcf0f628264d00dc0ba67ec685bc7ccd5f92))
+- Allow multiple `EventCall`s from a single `ImportedFnCall` - ([ccd5ccd](https://github.com/obeli-sk/obelisk/commit/ccd5ccd511b123f59746c5ed0bce71b34f01eb65))
+
+
 ## [0.23.1](https://github.com/obeli-sk/obelisk/compare/v0.23.0...v0.23.1)
 
 ### ⛰️ Features
