@@ -133,9 +133,6 @@
                 src = ./.;
                 cargoLock = {
                   lockFile = ./Cargo.lock;
-                  outputHashes = {
-                    "getrandom-0.2.11" = "sha256-fBPB5ptPPBQqvsxTJd+LwKXBdChrVm75DQewyQUhM2Q=";
-                  };
                 };
 
                 nativeBuildInputs = with pkgs; [
