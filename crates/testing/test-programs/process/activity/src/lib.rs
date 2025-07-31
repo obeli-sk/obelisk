@@ -23,7 +23,7 @@ struct Component;
 export!(Component);
 
 fn touch() -> Result<(), anyhow::Error> {
-    // Idempotently create a file so that the activity works with `reuse-on-retry`.
+    // Idempotently create a file so that the activity works with `reuse_on_retry`.
     let proc = process_support::spawn(
         "touch",
         &process_support::SpawnOptions {

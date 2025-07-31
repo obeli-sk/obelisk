@@ -17,7 +17,7 @@ impl Guest for Component {
         if entries.is_empty() {
             // Should be retried and succeed..
             return Err(
-                "failing on first try, should be automatically fixed on the first retry if `reuse-on-retry` is enabled"
+                "failing on first try, should be automatically fixed on the first retry if `reuse_on_retry` is enabled"
                     .to_string(),
             );
         }
