@@ -1139,10 +1139,12 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
+    use chrono::DateTime;
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
-        AppendRequest, CreateRequest, DbPool, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        PendingState, PendingStateFinished, PendingStateFinishedResultKind,
+        AppendRequest, CreateRequest, DbPool, ExecutionEvent, ExecutionEventInner, HistoryEvent,
+        JoinSetRequest, JoinSetResponse, PendingState, PendingStateFinished,
+        PendingStateFinishedResultKind,
     };
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
     use concepts::time::{ClockFn, Now};
@@ -1156,10 +1158,11 @@ pub(crate) mod tests {
         expired_timers_watcher,
         worker::{Worker, WorkerContext, WorkerResult},
     };
+    use rand::SeedableRng as _;
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng as _};
-    use std::env::VarError;
+    use std::u32;
     use std::{fmt::Debug, sync::Arc, time::Duration};
+    use test_utils::get_seed;
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info, info_span};
     use utils::testing_fn_registry::fn_registry_dummy;
@@ -1397,31 +1400,177 @@ pub(crate) mod tests {
     // E. Remove a step
     // F. Change the final result
 
-    fn get_seed() -> u64 {
-        match std::env::var("TEST_SEED") {
-            Ok(seed) => seed.parse().unwrap(),
-            Err(VarError::NotPresent) => StdRng::from_entropy().r#gen(),
-            _ => unimplemented!(),
+    #[tokio::test]
+    async fn generate_steps_execute_twice_check_determinism() {
+        test_utils::set_up();
+        for seed in get_seed() {
+            let steps = generate_steps(seed);
+            let closure = |steps, mut sim_clock, seed| async move {
+                let (_guard, db_pool) = Database::Memory.set_up().await;
+                let res = execute_steps(steps, db_pool.clone(), &mut sim_clock, seed).await;
+                db_pool.close().await.unwrap();
+                res
+            };
+            println!("Run 1");
+            let res1 = closure(steps.clone(), SimClock::epoch(), seed).await;
+            println!("Run 2");
+            let res2 = closure(steps, SimClock::epoch(), seed).await;
+            assert_eq!(res1, res2);
         }
     }
 
     #[tokio::test]
-    async fn generate_steps_execute_twice_check_determinism() {
+    async fn generate_steps_execute_keep_responses_reexecute_should_generate_same_exec_log() {
         test_utils::set_up();
-        let seed = get_seed();
-        println!("Seed: {seed}");
-        let steps = generate_steps(seed);
-        let closure = |steps, sim_clock, seed| async move {
+        for seed in get_seed() {
+            let steps = generate_steps(seed);
+
+            println!("Run 1");
+            let (execution_id, execution_log) = {
+                let (_guard, db_pool) = Database::Memory.set_up().await;
+                let (execution_id, execution_log) =
+                    execute_steps(steps.clone(), db_pool.clone(), &mut SimClock::epoch(), seed)
+                        .await;
+                println!("{execution_log:?}");
+                (execution_id, execution_log)
+            };
+            println!("Run 2");
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let res = execute_steps(steps, db_pool.clone(), sim_clock, seed).await;
-            db_pool.close().await.unwrap();
-            res
-        };
-        println!("Run 1");
-        let res1 = closure(steps.clone(), SimClock::epoch(), seed).await;
-        println!("Run 2");
-        let res2 = closure(steps, SimClock::epoch(), seed).await;
-        assert_eq!(res1, res2);
+            let sim_clock = SimClock::epoch();
+            let fn_registry = steps_to_registry(&steps);
+            let workflow_exec = {
+                let worker = Arc::new(WorkflowWorkerMock::new(
+                    FFQN_MOCK,
+                    fn_registry.clone(),
+                    steps,
+                    sim_clock.clone(),
+                    db_pool.clone(),
+                ));
+                let exec_config = ExecConfig {
+                    batch_size: 1,
+                    lock_expiry: Duration::from_secs(1),
+                    tick_sleep: TICK_SLEEP,
+                    component_id: ComponentId::dummy_activity(),
+                    task_limiter: None,
+                    executor_id: ExecutorId::from_parts(0, 0), // only appears in Locked events
+                };
+                ExecTask::new(
+                    worker,
+                    exec_config,
+                    sim_clock.clone(),
+                    db_pool.clone(),
+                    Arc::new([FFQN_MOCK]),
+                )
+            };
+            // Create an execution.
+            let db_connection = db_pool.connection();
+            db_connection
+                .create(CreateRequest {
+                    created_at: sim_clock.now(),
+                    execution_id: execution_id.clone(),
+                    ffqn: FFQN_MOCK,
+                    params: Params::default(),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: sim_clock.now(),
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                    component_id: ComponentId::dummy_activity(),
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+            // Append responses
+            for response_event in execution_log.responses {
+                db_connection
+                    .append_response(
+                        response_event.created_at,
+                        execution_id.clone(),
+                        response_event.event,
+                    )
+                    .await
+                    .unwrap();
+            }
+            // Expect that the same steps + same responses produce same exec log (lock events and timestamps may differ)
+            loop {
+                workflow_exec
+                    .tick_test(
+                        sim_clock.now(),
+                        RunId::from_parts(
+                            u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
+                            0,
+                        ),
+                    )
+                    .await
+                    .unwrap()
+                    .wait_for_tasks()
+                    .await
+                    .unwrap();
+                let pending_state = db_connection
+                    .get_pending_state(&execution_id)
+                    .await
+                    .unwrap();
+                if pending_state.is_finished() {
+                    break;
+                }
+            }
+            let execution_log2 = db_connection.get(&execution_id).await.unwrap();
+            println!("{execution_log2:?}");
+
+            fn skip_locked<'a>(
+                events_iter: impl Iterator<Item = &'a ExecutionEvent>,
+            ) -> impl Iterator<Item = &'a ExecutionEventInner> {
+                events_iter.filter_map(|event| {
+                    if matches!(event.event, ExecutionEventInner::Locked { .. }) {
+                        None
+                    } else {
+                        Some(&event.event)
+                    }
+                })
+            }
+            assert_eq!(
+                skip_locked(execution_log.events.iter()).count(),
+                skip_locked(execution_log2.events.iter()).count()
+            );
+            let sanitize = |mut event| {
+                match &mut event {
+                    ExecutionEventInner::HistoryEvent {
+                        event: HistoryEvent::JoinNext { run_expires_at, .. },
+                        ..
+                    } => {
+                        *run_expires_at = DateTime::UNIX_EPOCH;
+                    }
+                    ExecutionEventInner::HistoryEvent {
+                        event:
+                            HistoryEvent::JoinSetRequest {
+                                request: JoinSetRequest::DelayRequest { expires_at, .. },
+                                ..
+                            },
+                    } => {
+                        *expires_at = DateTime::UNIX_EPOCH;
+                    }
+                    _ => {}
+                }
+                event
+            };
+
+            for (idx, (event, event2)) in skip_locked(execution_log.events.iter())
+                .cloned()
+                .map(sanitize)
+                .zip(
+                    skip_locked(execution_log2.events.iter())
+                        .cloned()
+                        .map(sanitize),
+                )
+                .enumerate()
+            {
+                println!("Comparing {idx}");
+                println!("{event:?}");
+                println!("{event2:?}");
+
+                assert_eq!(event, event2, "mismatch at {idx}");
+            }
+        }
     }
 
     #[tokio::test]
@@ -1436,9 +1585,10 @@ pub(crate) mod tests {
                 target_ffqn: FFQN_CHILD_MOCK,
             },
         ];
-        let seed = get_seed();
-        execute_steps(steps, db_pool.clone(), SimClock::epoch(), seed).await;
-        db_pool.close().await.unwrap();
+        for seed in get_seed() {
+            execute_steps(steps.clone(), db_pool.clone(), &mut SimClock::epoch(), seed).await;
+            db_pool.close().await.unwrap();
+        }
     }
 
     const FFQN_CHILD_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn-child");
@@ -1677,6 +1827,7 @@ pub(crate) mod tests {
             }
             _ => true,
         });
+        println!("Generated steps: {steps:?}");
         steps
     }
 
@@ -1695,7 +1846,7 @@ pub(crate) mod tests {
     async fn execute_steps(
         steps: Vec<WorkflowStep>,
         db_pool: Arc<dyn DbPool>,
-        sim_clock: SimClock,
+        sim_clock: &mut SimClock,
         seed: u64,
     ) -> (ExecutionId, ExecutionLog) {
         let mut seedable_rng = StdRng::seed_from_u64(seed);

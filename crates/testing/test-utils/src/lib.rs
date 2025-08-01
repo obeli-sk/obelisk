@@ -1,5 +1,7 @@
-use std::fmt;
+use rand::rngs::StdRng;
+use rand::{Rng as _, SeedableRng as _};
 use std::str::FromStr;
+use std::{env::VarError, fmt};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::{
     FmtContext, FormattedFields,
@@ -88,4 +90,23 @@ pub fn env_or_default<T: FromStr>(env_var: &str, default: T) -> T {
         .ok()
         .and_then(|val| str::parse(&val).ok())
         .unwrap_or(default)
+}
+
+pub fn get_seed() -> Box<dyn Iterator<Item = u64>> {
+    match std::env::var("TEST_SEED") {
+        Ok(seed) => Box::new(std::iter::once(seed.parse().unwrap())),
+        Err(VarError::NotPresent) => {
+            let count = env_or_default("TEST_SEED_NUM", 1);
+            let mut vec = Vec::with_capacity(count);
+            for _ in 0..count {
+                let seed = StdRng::from_entropy().r#gen();
+                vec.push(seed);
+            }
+            Box::new(vec.into_iter().map(|seed| {
+                println!("TEST_SEED={seed}");
+                seed
+            }))
+        }
+        _ => unreachable!(),
+    }
 }
