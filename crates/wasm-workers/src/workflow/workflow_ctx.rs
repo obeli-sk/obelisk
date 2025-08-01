@@ -1160,7 +1160,6 @@ pub(crate) mod tests {
     };
     use rand::SeedableRng as _;
     use rand::rngs::StdRng;
-    use std::u32;
     use std::{fmt::Debug, sync::Arc, time::Duration};
     use test_utils::get_seed;
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
@@ -1516,18 +1515,6 @@ pub(crate) mod tests {
             }
             let execution_log2 = db_connection.get(&execution_id).await.unwrap();
             println!("{execution_log2:?}");
-
-            fn skip_locked<'a>(
-                events_iter: impl Iterator<Item = &'a ExecutionEvent>,
-            ) -> impl Iterator<Item = &'a ExecutionEventInner> {
-                events_iter.filter_map(|event| {
-                    if matches!(event.event, ExecutionEventInner::Locked { .. }) {
-                        None
-                    } else {
-                        Some(&event.event)
-                    }
-                })
-            }
             assert_eq!(
                 skip_locked(execution_log.events.iter()).count(),
                 skip_locked(execution_log2.events.iter()).count()
@@ -2041,5 +2028,17 @@ pub(crate) mod tests {
         );
         let child_res = child_log.into_finished_result().unwrap();
         assert_matches!(child_res, Ok(SupportedFunctionReturnValue::None));
+    }
+
+    fn skip_locked<'a>(
+        events_iter: impl Iterator<Item = &'a ExecutionEvent>,
+    ) -> impl Iterator<Item = &'a ExecutionEventInner> {
+        events_iter.filter_map(|event| {
+            if matches!(event.event, ExecutionEventInner::Locked { .. }) {
+                None
+            } else {
+                Some(&event.event)
+            }
+        })
     }
 }
