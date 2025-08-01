@@ -1779,26 +1779,21 @@ pub(crate) mod tests {
                 .wait_for_tasks()
                 .await
                 .unwrap();
-            if let Some((join_set_id, join_set_req)) = match db_connection
+            let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
-                .unwrap()
-            {
-                PendingState::BlockedByJoinSet { join_set_id, .. } => {
-                    let execution_log = db_connection.get(&execution_id).await.unwrap();
-                    let join_set_req = execution_log
-                        .find_join_set_request(&join_set_id)
-                        .cloned()
-                        .expect("must be found");
-                    if processed.contains(&join_set_id) {
-                        None
-                    } else {
-                        Some((join_set_id, join_set_req))
-                    }
-                }
-                PendingState::Finished { .. } => break,
-                other => unreachable!("unexpected {other}"),
-            } {
+                .unwrap();
+            if pending_state.is_finished() {
+                break;
+            }
+
+            let join_set_id = assert_matches!(pending_state, PendingState::BlockedByJoinSet { join_set_id, .. } => join_set_id);
+            let execution_log = db_connection.get(&execution_id).await.unwrap();
+            let join_set_req = execution_log
+                .find_join_set_request(&join_set_id)
+                .cloned()
+                .expect("must be found");
+            if !processed.contains(&join_set_id) {
                 match join_set_req {
                     JoinSetRequest::DelayRequest {
                         delay_id,
