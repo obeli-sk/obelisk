@@ -564,7 +564,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     async fn persist_sleep(&mut self, duration: Duration) -> Result<(), WorkflowFunctionError> {
         let join_set_id = self.next_join_set_one_off();
-        let delay_id = DelayId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+        let delay_id = DelayId::from_parts(
+            self.execution_id.get_top_level().timestamp_part(),
+            self.next_u128(),
+        );
         self.event_history
             .apply(
                 EventCall::BlockingDelayRequest {
@@ -862,8 +865,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 // TODO(edge case): handle ExecutionId conflict: This does not have to be deterministicly generated.
                 // Remove execution_id from EventCall::ScheduleRequest and add retries.
                 // Or use ExecutionId::generate(), but ignore the id when checking determinism.
-                let execution_id =
-                    ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+                let execution_id = ExecutionId::from_parts(
+                    self.execution_id.get_top_level().timestamp_part(),
+                    self.next_u128(),
+                );
                 let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from fn_registry exports must be found");

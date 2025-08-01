@@ -933,9 +933,9 @@ pub mod prefixed_ulid {
         }
 
         #[must_use]
-        #[expect(clippy::cast_possible_truncation)]
-        pub fn random_part(&self) -> u64 {
-            self.ulid.random() as u64
+        /// Fills only the lower 80 bits of the returned 128-bit value.
+        pub fn random_part(&self) -> u128 {
+            self.ulid.random()
         }
     }
 
@@ -1215,21 +1215,22 @@ pub mod prefixed_ulid {
         }
 
         #[must_use]
-        pub fn timestamp_part(&self) -> u64 {
-            self.get_top_level().timestamp_part()
-        }
-
-        #[must_use]
         pub fn random_seed(&self) -> u64 {
             let mut hasher = fxhash::FxHasher::default();
-            hasher.write_u64(self.get_top_level().random_part());
-            hasher.write_u64(self.timestamp_part());
+            // `Self::random_part` uses only the lower 80 bits of a 128-bit value.
+            // Truncate to 64 bits, since including the remaining 16 bits
+            // would not increase the entropy of the 64-bit output.
+            #[expect(clippy::cast_possible_truncation)]
+            let random_part = self.get_top_level().random_part() as u64;
+            hasher.write_u64(random_part);
+            hasher.write_u64(self.get_top_level().timestamp_part());
             if let ExecutionId::Derived(ExecutionIdDerived {
                 top_level: _,
                 infix,
                 idx,
             }) = self
             {
+                // Each derived execution ID should return different seed.
                 hasher.write(infix.as_bytes());
                 hasher.write_u64(*idx);
             }
