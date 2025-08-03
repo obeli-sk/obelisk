@@ -1,11 +1,11 @@
 use assert_matches::assert_matches;
 use concepts::prefixed_ulid::{DelayId, RunId};
-use concepts::storage::JoinSetResponseEvent;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
     JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, PendingState, PersistKind,
     SpecificError, Version,
 };
+use concepts::storage::{HistoryEventScheduledAt, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::{ClosingStrategy, JoinSetId};
@@ -1017,6 +1017,7 @@ pub async fn lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
                         request: JoinSetRequest::DelayRequest {
                             delay_id: DelayId::generate(),
                             expires_at: sim_clock.now(),
+                            schedule_at: HistoryEventScheduledAt::Now,
                         },
                     },
                 },
@@ -1149,6 +1150,7 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
                         request: JoinSetRequest::DelayRequest {
                             delay_id,
                             expires_at: sim_clock.now() + lock_expiry,
+                            schedule_at: HistoryEventScheduledAt::In(lock_expiry),
                         },
                     },
                 },

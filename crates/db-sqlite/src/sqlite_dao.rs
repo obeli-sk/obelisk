@@ -1683,6 +1683,7 @@ impl<S: Sleep> SqlitePool<S> {
                             JoinSetRequest::DelayRequest {
                                 delay_id,
                                 expires_at,
+                                ..
                             },
                     },
             } => IndexAction::NoPendingStateChange(Some(DelayReq {

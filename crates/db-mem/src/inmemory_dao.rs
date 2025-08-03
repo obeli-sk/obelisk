@@ -437,6 +437,7 @@ mod index {
                             JoinSetRequest::DelayRequest {
                                 delay_id,
                                 expires_at,
+                                ..
                             },
                     } => Some(((join_set_id, delay_id), expires_at)),
                     _ => None,

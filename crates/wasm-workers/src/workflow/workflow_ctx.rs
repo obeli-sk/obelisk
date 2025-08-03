@@ -1,5 +1,10 @@
 use super::event_history::{ApplyError, ChildReturnValue, EventCall, EventHistory, HostResource};
-use super::host_exports::{self, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT};
+use super::host_exports::v1_1_0::{ClosingStrategy_1_1_0, DurationEnum_1_1_0};
+use super::host_exports::v2_0_0::{ClosingStrategy_2_0_0, ScheduleAt_2_0_0};
+use super::host_exports::{
+    self, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
+    history_event_schedule_at_from_wast_val,
+};
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
@@ -17,13 +22,10 @@ use concepts::{
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
 use executor::worker::FatalError;
-use host_exports::v1_1_0::obelisk::types::time::Duration as DurationEnum_1_1_0;
-use host_exports::v1_1_0::obelisk::workflow::workflow_support::ClosingStrategy as ClosingStrategy_1_1_0;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{Span, error, instrument, trace};
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, Val};
@@ -146,7 +148,7 @@ pub(crate) enum ImportedFnCall<'a> {
     },
     Schedule {
         target_ffqn: FunctionFqn,
-        scheduled_at: HistoryEventScheduledAt,
+        schedule_at: HistoryEventScheduledAt,
         #[debug(skip)]
         target_params: &'a [Val],
         #[debug(skip)]
@@ -313,7 +315,7 @@ impl<'a> ImportedFnCall<'a> {
                         });
                     }
                 };
-                let scheduled_at = match HistoryEventScheduledAt::try_from(&scheduled_at) {
+                let schedule_at = match history_event_schedule_at_from_wast_val(&scheduled_at) {
                     Ok(scheduled_at) => scheduled_at,
                     Err(detail) => {
                         return Err(WorkflowFunctionError::ImportedFunctionCallError {
@@ -326,7 +328,7 @@ impl<'a> ImportedFnCall<'a> {
 
                 Ok(ImportedFnCall::Schedule {
                     target_ffqn,
-                    scheduled_at,
+                    schedule_at,
                     target_params: params,
                     wasm_backtrace,
                 })
@@ -463,6 +465,33 @@ impl<C: ClockFn> WasiView for WorkflowCtx<C> {
     }
 }
 
+#[derive(Copy, Clone)]
+enum WorkflowSupportVersion {
+    Version1_1,
+    Version2,
+}
+impl WorkflowSupportVersion {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Version1_1 => IFC_FQN_WORKFLOW_SUPPORT_1_1,
+            Self::Version2 => IFC_FQN_WORKFLOW_SUPPORT_2,
+        }
+    }
+    const SLEEP_FFQN_1: FunctionFqn =
+        FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_1_1, "sleep");
+    const SLEEP_FFQN_2: FunctionFqn = FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_2, "sleep");
+
+    fn sleep_ffqn(&self) -> FunctionFqn {
+        match self {
+            Self::Version1_1 => Self::SLEEP_FFQN_1,
+            Self::Version2 => Self::SLEEP_FFQN_2,
+        }
+    }
+}
+
+const IFC_FQN_WORKFLOW_SUPPORT_1_1: &str = "obelisk:workflow/workflow-support@1.1.0";
+const IFC_FQN_WORKFLOW_SUPPORT_2: &str = "obelisk:workflow/workflow-support@2.0.0";
+
 impl<C: ClockFn> WorkflowCtx<C> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -524,16 +553,18 @@ impl<C: ClockFn> WorkflowCtx<C> {
         called_ffqn: FunctionFqn,
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<(), WorkflowFunctionError> {
-        trace!(?imported_fn_call, "call_imported_fn start");
-        let event = match self.imported_fn_to_event_call(imported_fn_call, fn_registry) {
+        let called_at = self.clock_fn.now();
+        trace!(?imported_fn_call, %called_at, "call_imported_fn start");
+        let event = match self.imported_fn_to_event_call(
+            imported_fn_call,
+            fn_registry,
+            called_at,
+            &called_ffqn,
+        ) {
             Ok(ok) => ok,
-            Err((reason, detail)) => {
-                error!(%called_ffqn, "{reason} - {detail}");
-                return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                    ffqn: called_ffqn,
-                    reason: reason.into(),
-                    detail: Some(detail),
-                });
+            Err(err) => {
+                error!(%called_ffqn, "{err:?}");
+                return Err(err);
             }
         };
         let res = self
@@ -562,18 +593,30 @@ impl<C: ClockFn> WorkflowCtx<C> {
         Ok(())
     }
 
-    async fn persist_sleep(&mut self, duration: Duration) -> Result<(), WorkflowFunctionError> {
+    async fn persist_sleep(
+        &mut self,
+        schedule_at: HistoryEventScheduledAt,
+        sleep_ffqn: FunctionFqn,
+    ) -> Result<(), WorkflowFunctionError> {
         let join_set_id = self.next_join_set_one_off();
         let delay_id = DelayId::from_parts(
             self.execution_id.get_top_level().timestamp_part(),
             self.next_u128(),
         );
+        let expires_at_if_new = schedule_at
+            .as_date_time(self.clock_fn.now())
+            .map_err(|()| WorkflowFunctionError::ImportedFunctionCallError {
+                ffqn: sleep_ffqn,
+                reason: "datetime overflow".into(),
+                detail: None,
+            })?;
         self.event_history
             .apply(
                 EventCall::BlockingDelayRequest {
                     join_set_id,
                     delay_id,
-                    expires_at_if_new: self.clock_fn.now() + duration, // FIXME: this can overflow when Duration is converted into TimeDelta
+                    expires_at_if_new,
+                    schedule_at,
                     wasm_backtrace: self.backtrace.take(),
                 },
                 self.db_pool.connection().as_ref(),
@@ -679,10 +722,15 @@ impl<C: ClockFn> WorkflowCtx<C> {
         )
         .map_err(linking_err)?;
 
-        // link workflow-support
+        // link workflow-support 1.1.0
         Self::add_to_linker_workflow_support::<ClosingStrategy_1_1_0, DurationEnum_1_1_0>(
             linker,
-            "obelisk:workflow/workflow-support@1.1.0",
+            WorkflowSupportVersion::Version1_1,
+        )?;
+        // link workflow-support 2.0.0
+        Self::add_to_linker_workflow_support::<ClosingStrategy_2_0_0, ScheduleAt_2_0_0>(
+            linker,
+            WorkflowSupportVersion::Version2,
         )?;
         if stub_wasi {
             super::wasi::add_to_linker_async(linker)?;
@@ -690,20 +738,22 @@ impl<C: ClockFn> WorkflowCtx<C> {
         Ok(())
     }
 
-    pub(crate) fn add_to_linker_workflow_support<
+    fn add_to_linker_workflow_support<
         ClosingStrategyType: wasmtime::component::Lift + 'static,
-        DurationEnumType: wasmtime::component::Lift + Into<Duration> + 'static,
+        SleepParamType: wasmtime::component::Lift + 'static,
     >(
         linker: &mut Linker<Self>,
-        ifc_fqn: &'static str,
-    ) -> Result<(), WasmFileError> {
-        let mut inst_workflow_support =
-            linker
-                .instance(ifc_fqn)
-                .map_err(|err| WasmFileError::LinkingError {
-                    context: StrVariant::Static(ifc_fqn),
-                    err: err.into(),
-                })?;
+        workflow_support_version: WorkflowSupportVersion,
+    ) -> Result<(), WasmFileError>
+    where
+        ScheduleAt_2_0_0: From<SleepParamType>,
+    {
+        let mut inst_workflow_support = linker
+            .instance(workflow_support_version.as_str())
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static(workflow_support_version.as_str()),
+                err: err.into(),
+            })?;
         inst_workflow_support
             .func_wrap_async(
                 "random-u64",
@@ -762,11 +812,14 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .func_wrap_async(
                 "sleep",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (duration,): (DurationEnumType,)| {
-                    let duration: Duration = duration.into();
+                      (schedule_at,): (SleepParamType,)| {
+                    let schedule_at = ScheduleAt_2_0_0::from(schedule_at);
+                    let schedule_at = HistoryEventScheduledAt::from(schedule_at);
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.sleep(duration).await;
+                        let result = host
+                            .sleep(schedule_at, workflow_support_version.sleep_ffqn())
+                            .await;
                         host.backtrace = None;
                         result
                     })
@@ -833,7 +886,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
         &mut self,
         imported_fn_call: ImportedFnCall,
         fn_registry: &dyn FunctionRegistry,
-    ) -> Result<EventCall, (&'static str, String)> {
+        called_at: DateTime<Utc>,
+        called_ffqn: &FunctionFqn,
+    ) -> Result<EventCall, WorkflowFunctionError> {
         match imported_fn_call {
             ImportedFnCall::Direct {
                 ffqn,
@@ -858,7 +913,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             }
             ImportedFnCall::Schedule {
                 target_ffqn,
-                scheduled_at,
+                schedule_at,
                 target_params,
                 wasm_backtrace,
             } => {
@@ -872,9 +927,16 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from fn_registry exports must be found");
-
+                let scheduled_at_if_new = schedule_at.as_date_time(called_at).map_err(|()| {
+                    WorkflowFunctionError::ImportedFunctionCallError {
+                        ffqn: called_ffqn.clone(),
+                        reason: "datetime overflow".into(),
+                        detail: None,
+                    }
+                })?;
                 Ok(EventCall::ScheduleRequest {
-                    scheduled_at,
+                    schedule_at,
+                    scheduled_at_if_new,
                     execution_id,
                     ffqn: target_ffqn,
                     fn_component_id,
@@ -930,17 +992,24 @@ impl<C: ClockFn> WorkflowCtx<C> {
                             return_value,
                             return_type.type_wrapper,
                         )
-                        .map_err(|err| ("cannot convert stub return value", format!("{err:?}")))
+                        .map_err(|err| {
+                            WorkflowFunctionError::ImportedFunctionCallError {
+                                ffqn: called_ffqn.clone(),
+                                reason: "cannot convert stub return value".into(),
+                                detail: Some(format!("{err:?}")),
+                            }
+                        })
                     }
                     (None, None) => Ok(SupportedFunctionReturnValue::None),
                     (return_value, ty) => {
                         let return_value = return_value.is_some();
-                        Err((
-                            "invalid combination of return value and return type",
-                            format!(
+                        Err(WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: called_ffqn.clone(),
+                            reason: "invalid combination of return value and return type".into(),
+                            detail: Some(format!(
                                 "invalid combination of return value (non-empty:{return_value}) and registered return type {ty:?}"
-                            ),
-                        ))
+                            )),
+                        })
                     }
                 }?;
                 Ok(EventCall::Stub {
@@ -958,8 +1027,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
 mod workflow_support {
     use super::host_exports::{self};
-    use super::{ClockFn, Duration, EventCall, WorkflowCtx, WorkflowFunctionError, assert_matches};
+    use super::{ClockFn, EventCall, WorkflowCtx, WorkflowFunctionError, assert_matches};
     use crate::workflow::event_history::ChildReturnValue;
+    use concepts::FunctionFqn;
+    use concepts::storage::HistoryEventScheduledAt;
     use concepts::{
         CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind,
         storage::{self, PersistKind},
@@ -1076,8 +1147,12 @@ mod workflow_support {
             Ok(value)
         }
 
-        pub(crate) async fn sleep(&mut self, duration: Duration) -> wasmtime::Result<()> {
-            Ok(self.persist_sleep(duration).await?)
+        pub(crate) async fn sleep(
+            &mut self,
+            schedule_at: HistoryEventScheduledAt,
+            sleep_ffqn: FunctionFqn,
+        ) -> wasmtime::Result<()> {
+            Ok(self.persist_sleep(schedule_at, sleep_ffqn).await?)
         }
 
         pub(crate) async fn new_join_set_named(
@@ -1132,7 +1207,7 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
-    use crate::workflow::workflow_ctx::ApplyError;
+    use crate::workflow::workflow_ctx::{ApplyError, WorkflowSupportVersion};
     use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
     use crate::{
         workflow::workflow_ctx::WorkflowCtx, workflow::workflow_worker::JoinNextBlockingStrategy,
@@ -1143,8 +1218,8 @@ pub(crate) mod tests {
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
         AppendRequest, CreateRequest, DbPool, ExecutionEvent, ExecutionEventInner, HistoryEvent,
-        JoinSetRequest, JoinSetResponse, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind,
+        HistoryEventScheduledAt, JoinSetRequest, JoinSetResponse, PendingState,
+        PendingStateFinished, PendingStateFinishedResultKind,
     };
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
     use concepts::time::{ClockFn, Now};
@@ -1187,7 +1262,7 @@ pub(crate) mod tests {
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
     enum WorkflowStep {
         Sleep {
-            millis: u32,
+            millis: u64,
         },
         Call {
             ffqn: FunctionFqn,
@@ -1283,7 +1358,10 @@ pub(crate) mod tests {
                 let res = match step {
                     WorkflowStep::Sleep { millis } => {
                         workflow_ctx
-                            .persist_sleep(Duration::from_millis(u64::from(*millis)))
+                            .persist_sleep(
+                                HistoryEventScheduledAt::In(Duration::from_millis(*millis)),
+                                WorkflowSupportVersion::SLEEP_FFQN_2,
+                            )
                             .await
                     }
                     WorkflowStep::Call { ffqn } => {
@@ -1941,6 +2019,7 @@ pub(crate) mod tests {
                     JoinSetRequest::DelayRequest {
                         delay_id,
                         expires_at,
+                        ..
                     } => {
                         info!("Moving time to {expires_at} - {delay_id}");
                         assert!(delay_request_count > 0);

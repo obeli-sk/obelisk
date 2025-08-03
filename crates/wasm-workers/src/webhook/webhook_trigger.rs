@@ -4,11 +4,12 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::workflow::host_exports::{
     SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, execution_id_into_val,
+    history_event_schedule_at_from_wast_val,
 };
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, ClientError, CreateRequest, DbError, DbPool, ExecutionEventInner,
-    HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
+    HistoryEvent, JoinSetRequest, Version,
 };
 use concepts::time::ClockFn;
 use concepts::{
@@ -487,7 +488,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                             "error running `-schedule` extension function: cannot convert to internal representation",
                         )
                     })?;
-                let scheduled_at = match HistoryEventScheduledAt::try_from(&scheduled_at) {
+                let scheduled_at = match history_event_schedule_at_from_wast_val(&scheduled_at) {
                     Ok(scheduled_at) => scheduled_at,
                     Err(err) => {
                         error!(
@@ -513,7 +514,9 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     execution_id: new_execution_id.clone(),
                     scheduled_at,
                 };
-                let scheduled_at = scheduled_at.as_date_time(created_at);
+                let scheduled_at = scheduled_at.as_date_time(created_at).map_err(|_| {
+                    WebhookEndpointFunctionError::UncategorizedError("datetime overflow")
+                })?;
                 let child_exec_req = AppendRequest {
                     event: ExecutionEventInner::HistoryEvent { event },
                     created_at,

@@ -480,7 +480,7 @@ pub(crate) fn from_execution_event_to_grpc(
                         HistoryEvent::JoinSetRequest { join_set_id, request } => grpc_gen::execution_event::history_event::Event::JoinSetRequest(grpc_gen::execution_event::history_event::JoinSetRequest {
                             join_set_id: Some(join_set_id.into()),
                             join_set_request: match request {
-                                JoinSetRequest::DelayRequest { delay_id, expires_at } => {
+                                JoinSetRequest::DelayRequest { delay_id, expires_at, .. } => {
                                     Some(grpc_gen::execution_event::history_event::join_set_request::JoinSetRequest::DelayRequest(
                                         grpc_gen::execution_event::history_event::join_set_request::DelayRequest {
                                             delay_id: Some(delay_id.into()),

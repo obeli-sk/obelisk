@@ -1,0 +1,33 @@
+package obelisk:workflow@2.0.0;
+
+interface workflow-support {
+    use obelisk:types/time@1.1.0.{schedule-at};
+    use obelisk:types/execution@1.1.0.{join-set-id};
+
+    /// The closing strategy of a join set. Join sets are closed when execution finishes.
+    enum closing-strategy {
+        /// All submitted executions that were not awaited are awaited.
+        complete,
+
+        // All submitted executions that were not awaited are cancelled.
+        // TODO: Implement cancel
+    }
+
+    /// Returns a random u64 in the range [min, max).
+    random-u64: func(min: u64, max-exclusive: u64) -> u64;
+    /// Returns a random u64 in the range [min, max].
+    random-u64-inclusive: func(min: u64, max-inclusive: u64) -> u64;
+
+    /// Returns a random string with a length in the range [min_length, max_length).
+    /// The string consists only of alphanumeric characters (lowercase and uppercase letters, digits).
+    random-string: func(min-length: u16, max-length-exclusive: u16) -> string;
+
+    /// Persistent sleep.
+    sleep: func(schedule-at: schedule-at);
+
+    /// Create a new completing join set.
+    new-join-set-named: func(name: string, closing-strategy: closing-strategy) -> join-set-id;
+
+    /// Create a new completing join set with a generated name.
+    new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set-id;
+}

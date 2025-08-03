@@ -14,20 +14,18 @@ use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::RunId;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
+use chrono::TimeDelta;
 use chrono::{DateTime, Utc};
 use http_client_trace::HttpClientTrace;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Display;
-use std::ops::Deref as _;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoStaticStr;
 use tracing::error;
-use val_json::wast_val::WastVal;
 
 /// Remote client representation of the execution journal.
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -445,7 +443,7 @@ pub enum HistoryEvent {
     #[display("Schedule({execution_id}, {scheduled_at})")]
     Schedule {
         execution_id: ExecutionId,
-        scheduled_at: HistoryEventScheduledAt,
+        scheduled_at: HistoryEventScheduledAt, // Stores intention to schedule an execution at a date/offset // FIXME: rename to `schedule_at`
     },
     #[display("Stub({target_execution_id})")]
     Stub {
@@ -466,77 +464,14 @@ pub enum HistoryEventScheduledAt {
 }
 impl HistoryEventScheduledAt {
     #[must_use]
-    pub fn as_date_time(&self, now: DateTime<Utc>) -> DateTime<Utc> {
+    pub fn as_date_time(&self, now: DateTime<Utc>) -> Result<DateTime<Utc>, ()> {
         match self {
-            Self::Now => now,
-            Self::At(date_time) => *date_time,
-            Self::In(duration) => now + *duration,
-        }
-    }
-}
-
-impl TryFrom<&WastVal> for HistoryEventScheduledAt {
-    type Error = &'static str;
-
-    fn try_from(scheduled_at: &WastVal) -> Result<Self, Self::Error> {
-        let WastVal::Variant(variant, val) = scheduled_at else {
-            return Err("wrong type");
-        };
-        match (variant.as_str(), val) {
-            ("now", None) => Ok(HistoryEventScheduledAt::Now),
-            ("in", Some(duration)) => {
-                if let &WastVal::Variant(key, value) = &duration.deref() {
-                    let duration = match (key.as_str(), value.as_deref()) {
-                        ("milliseconds", Some(WastVal::U64(value))) => {
-                            Duration::from_millis(*value)
-                        }
-                        ("seconds", Some(WastVal::U64(value))) => Duration::from_secs(*value),
-                        ("minutes", Some(WastVal::U64(value))) => Duration::from_secs(*value * 60),
-                        ("hours", Some(WastVal::U64(value))) => {
-                            Duration::from_secs(*value * 60 * 60)
-                        }
-                        ("days", Some(WastVal::U64(value))) => {
-                            Duration::from_secs(*value * 60 * 60 * 24)
-                        }
-                        _ => {
-                            return Err(
-                                "cannot convert `scheduled-at`, `in` variant: value must be one of the following keys: `milliseconds`(U64), `seconds`(U64), `minutes`(U32), `hours`(U32), `days`(U32)",
-                            );
-                        }
-                    };
-                    Ok(HistoryEventScheduledAt::In(duration))
-                } else {
-                    Err("cannot convert `scheduled-at`, `in` variant: value must be a variant")
-                }
+            Self::Now => Ok(now),
+            Self::At(date_time) => Ok(*date_time),
+            Self::In(duration) => {
+                let time_delta = TimeDelta::from_std(*duration).map_err(|_| ())?;
+                now.checked_add_signed(time_delta).ok_or(())
             }
-            ("at", Some(date_time)) if matches!(date_time.deref(), WastVal::Record(_)) => {
-                let date_time =
-                    assert_matches!(date_time.deref(), WastVal::Record(keys_vals) => keys_vals)
-                        .iter()
-                        .map(|(k, v)| (k.as_str(), v))
-                        .collect::<HashMap<_, _>>();
-                let seconds = date_time.get("seconds");
-                let nanos = date_time.get("nanoseconds");
-                match (date_time.len(), seconds, nanos) {
-                    (2, Some(WastVal::U64(seconds)), Some(WastVal::U32(nanos))) => {
-                        let Ok(seconds) = i64::try_from(*seconds) else {
-                            return Err(
-                                "cannot convert `scheduled-at`, cannot convert seconds from u64 to i64",
-                            );
-                        };
-                        let Some(date_time) = DateTime::from_timestamp(seconds, *nanos) else {
-                            return Err(
-                                "cannot convert `scheduled-at`, cannot convert seconds and nanos to DateTime",
-                            );
-                        };
-                        Ok(HistoryEventScheduledAt::At(date_time))
-                    }
-                    _ => Err(
-                        "cannot convert `scheduled-at`, `at` variant: record must have exactly two keys: `seconds`(U64), `nanoseconds`(U32)",
-                    ),
-                }
-            }
-            _ => Err("cannot convert `scheduled-at` variant, expected one of `now`, `in`, `at`"),
         }
     }
 }
@@ -550,6 +485,7 @@ pub enum JoinSetRequest {
     DelayRequest {
         delay_id: DelayId,
         expires_at: DateTime<Utc>,
+        schedule_at: HistoryEventScheduledAt,
     },
     // Must be created by the executor in `PendingState::Locked`.
     #[display("ChildExecutionRequest({child_execution_id})")]
@@ -1250,6 +1186,7 @@ pub mod http_client_trace {
 
 #[cfg(test)]
 mod tests {
+    use super::HistoryEventScheduledAt;
     use super::JoinSetResponse;
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
@@ -1259,10 +1196,13 @@ mod tests {
     use crate::SupportedFunctionReturnValue;
     use crate::storage::Version;
     use assert_matches::assert_matches;
+    use chrono::DateTime;
+    use chrono::Datelike;
     use chrono::Utc;
     use rstest::rstest;
     use serde_json::json;
     use std::str::FromStr;
+    use std::time::Duration;
     use strum::VariantArray as _;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::WastVal;
@@ -1358,5 +1298,26 @@ mod tests {
         insta::assert_snapshot!(ser);
         let deser: Vec<PendingStateFinishedResultKind> = serde_json::from_str(&ser).unwrap();
         assert_eq!(variants, deser);
+    }
+
+    #[test]
+    fn as_date_time_should_work_with_duration_u32_max_secs() {
+        let duration = Duration::from_secs(u64::from(u32::MAX));
+        let schedule_at = HistoryEventScheduledAt::In(duration);
+        let resolved = schedule_at.as_date_time(DateTime::UNIX_EPOCH).unwrap();
+        assert_eq!(2106, resolved.year());
+    }
+
+    const MILLIS_PER_SEC: i64 = 1000;
+    const TIMEDELTA_MAX_SECS: i64 = i64::MAX / MILLIS_PER_SEC;
+
+    #[test]
+    fn as_date_time_should_fail_on_duration_secs_greater_than_i64_max() {
+        // Fails on duration -> timedelta conversion, but a smaller duration can fail on datetime + timedelta
+        let duration = Duration::from_secs(
+            u64::try_from(TIMEDELTA_MAX_SECS).expect("positive number must not fail") + 1,
+        );
+        let schedule_at = HistoryEventScheduledAt::In(duration);
+        schedule_at.as_date_time(DateTime::UNIX_EPOCH).unwrap_err();
     }
 }

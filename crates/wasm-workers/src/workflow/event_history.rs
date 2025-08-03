@@ -609,6 +609,7 @@ impl<C: ClockFn> EventHistory<C> {
                 EventHistoryKey::DelayRequest {
                     join_set_id,
                     delay_id,
+                    schedule_at,
                 },
                 HistoryEvent::JoinSetRequest {
                     join_set_id: found_join_set_id,
@@ -616,9 +617,13 @@ impl<C: ClockFn> EventHistory<C> {
                         JoinSetRequest::DelayRequest {
                             delay_id: found_delay_id,
                             expires_at: _,
+                            schedule_at: found_schedule_at,
                         },
                 },
-            ) if *join_set_id == *found_join_set_id && *delay_id == *found_delay_id => {
+            ) if *join_set_id == *found_join_set_id
+                && *delay_id == *found_delay_id
+                && schedule_at == found_schedule_at =>
+            {
                 trace!(%delay_id, %join_set_id, "Matched JoinSetRequest::DelayRequest");
                 self.event_history[found_idx].1 = Processed;
                 // return delay id
@@ -807,12 +812,16 @@ impl<C: ClockFn> EventHistory<C> {
             (
                 EventHistoryKey::Schedule {
                     target_execution_id,
+                    schedule_at,
                 },
                 HistoryEvent::Schedule {
                     execution_id: found_execution_id,
+                    scheduled_at: found_schedule_at,
                     ..
                 },
-            ) if *target_execution_id == *found_execution_id => {
+            ) if *target_execution_id == *found_execution_id
+                && schedule_at == found_schedule_at =>
+            {
                 trace!(%target_execution_id, "Matched Schedule");
                 self.event_history[found_idx].1 = Processed;
                 // return execution id
@@ -1087,7 +1096,8 @@ impl<C: ClockFn> EventHistory<C> {
             }
 
             EventCall::ScheduleRequest {
-                scheduled_at,
+                schedule_at,
+                scheduled_at_if_new,
                 execution_id: new_execution_id,
                 ffqn,
                 fn_component_id,
@@ -1098,9 +1108,9 @@ impl<C: ClockFn> EventHistory<C> {
                 // Cacheable event.
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
-                    scheduled_at,
+                    scheduled_at: schedule_at,
                 };
-                let scheduled_at = scheduled_at.as_date_time(called_at);
+
                 let history_events = vec![event.clone()];
                 let child_exec_req = AppendRequest {
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -1114,7 +1124,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
-                    scheduled_at,
+                    scheduled_at: scheduled_at_if_new,
                     retry_exp_backoff: fn_retry_config.retry_exp_backoff,
                     max_retries: fn_retry_config.max_retries,
                     component_id: fn_component_id,
@@ -1290,6 +1300,7 @@ impl<C: ClockFn> EventHistory<C> {
             EventCall::BlockingDelayRequest {
                 join_set_id,
                 delay_id,
+                schedule_at,
                 expires_at_if_new,
                 wasm_backtrace,
             } => {
@@ -1312,6 +1323,7 @@ impl<C: ClockFn> EventHistory<C> {
                     request: JoinSetRequest::DelayRequest {
                         delay_id,
                         expires_at: expires_at_if_new,
+                        schedule_at,
                     },
                 };
                 history_events.push(event.clone());
@@ -1556,7 +1568,8 @@ pub(crate) enum EventCall {
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     ScheduleRequest {
-        scheduled_at: HistoryEventScheduledAt,
+        schedule_at: HistoryEventScheduledAt, // Intention that must be compared when checking determinism
+        scheduled_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
         execution_id: ExecutionId,
         ffqn: FunctionFqn, // TODO: rename to target_ffqn
         fn_component_id: ComponentId,
@@ -1598,7 +1611,8 @@ pub(crate) enum EventCall {
     BlockingDelayRequest {
         join_set_id: JoinSetId,
         delay_id: DelayId,
-        expires_at_if_new: DateTime<Utc>,
+        schedule_at: HistoryEventScheduledAt, // Intention that must be compared when checking determinism
+        expires_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
@@ -1668,6 +1682,7 @@ enum EventHistoryKey {
     DelayRequest {
         join_set_id: JoinSetId,
         delay_id: DelayId,
+        schedule_at: HistoryEventScheduledAt,
     },
     JoinNextChild {
         join_set_id: JoinSetId,
@@ -1679,6 +1694,7 @@ enum EventHistoryKey {
     },
     Schedule {
         target_execution_id: ExecutionId,
+        schedule_at: HistoryEventScheduledAt,
     },
     Stub {
         target_execution_id: ExecutionIdDerived,
@@ -1746,6 +1762,7 @@ impl EventCall {
             EventCall::BlockingDelayRequest {
                 join_set_id,
                 delay_id,
+                schedule_at,
                 ..
             } => vec![
                 EventHistoryKey::CreateJoinSet {
@@ -1755,14 +1772,20 @@ impl EventCall {
                 EventHistoryKey::DelayRequest {
                     join_set_id: join_set_id.clone(),
                     delay_id: *delay_id,
+                    schedule_at: schedule_at.clone(),
                 },
                 EventHistoryKey::JoinNextDelay {
                     join_set_id: join_set_id.clone(),
                 },
             ],
-            EventCall::ScheduleRequest { execution_id, .. } => {
+            EventCall::ScheduleRequest {
+                execution_id,
+                schedule_at,
+                ..
+            } => {
                 vec![EventHistoryKey::Schedule {
                     target_execution_id: execution_id.clone(),
+                    schedule_at: schedule_at.clone(),
                 }]
             }
             EventCall::Stub {
@@ -2144,7 +2167,8 @@ mod tests {
         event_history
             .apply(
                 EventCall::ScheduleRequest {
-                    scheduled_at: HistoryEventScheduledAt::Now,
+                    schedule_at: HistoryEventScheduledAt::Now,
+                    scheduled_at_if_new: sim_clock.now(),
                     execution_id: ExecutionId::generate(),
                     ffqn: MOCK_FFQN,
                     fn_component_id: ComponentId::dummy_activity(),

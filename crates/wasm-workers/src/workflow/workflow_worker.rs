@@ -727,8 +727,11 @@ pub(crate) mod tests {
     pub const FIBO_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA,
     ); // fiboa: func(n: u8, iterations: u32) -> u64;
-    const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqn =
+    const SLEEP1_HOST_ACTIVITY_FFQN: FunctionFqn =
         FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_HOST_ACTIVITY); // sleep-host-activity: func(millis: u64);
+
+    const SLEEP2_HOST_ACTIVITY_FFQN: FunctionFqn =
+        FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_SCHEDULE_AT); // sleep-host-activity: func(s: schedule-at);
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
@@ -994,14 +997,14 @@ pub(crate) mod tests {
                 ),
             ]),
         );
-        // simulate a scheduling problem where deadline < now
+        // simulate a scheduling problem where deadline < now, meaning there is no point in running the execution.
         let execution_deadline = sim_clock.now();
         sim_clock.move_time_forward(Duration::from_millis(100));
 
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
-            ffqn: SLEEP_HOST_ACTIVITY_FFQN,
+            ffqn: SLEEP1_HOST_ACTIVITY_FFQN,
             params: Params::from_json_values(vec![json!({"milliseconds": SLEEP_MILLIS})]),
             event_history: Vec::new(),
             responses: Vec::new(),
@@ -1012,7 +1015,125 @@ pub(crate) mod tests {
             worker_span: info_span!("worker-test"),
         };
         let worker_result = worker.run(ctx).await;
-        assert_matches!(worker_result, WorkerResult::DbUpdatedByWorkerOrWatcher);
+        assert_matches!(worker_result, WorkerResult::DbUpdatedByWorkerOrWatcher); // Do not write anything, let the watcher mark execution as timed out.
+    }
+
+    #[tokio::test]
+    async fn sleep2_happy_path() {
+        const LOCK_DURATION: Duration = Duration::from_secs(1);
+        let join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt;
+
+        test_utils::set_up();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let sim_clock = SimClock::epoch();
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection();
+        {
+            let params = Params::from_json_values(vec![json!("now")]);
+            db_connection
+                .create(CreateRequest {
+                    created_at: sim_clock.now(),
+                    execution_id: execution_id.clone(),
+                    ffqn: SLEEP2_HOST_ACTIVITY_FFQN,
+                    params,
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: sim_clock.now(),
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: u32::MAX,
+                    component_id: ComponentId::dummy_workflow(),
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+        }
+        let sim_clock = SimClock::epoch();
+        let sleep_exec = {
+            let fn_registry = TestingFnRegistry::new_from_components(vec![
+                compile_activity(
+                    test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                ), // not used here
+                compile_workflow(
+                    test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+                ),
+            ]);
+            let worker = compile_workflow_worker(
+                test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+                db_pool.clone(),
+                sim_clock.clone(),
+                TokioSleep,
+                join_next_blocking_strategy,
+                &fn_registry,
+            );
+            let exec_config = ExecConfig {
+                batch_size: 1,
+                lock_expiry: LOCK_DURATION,
+                tick_sleep: Duration::ZERO, // irrelevant here as we call tick manually
+                component_id: ComponentId::dummy_workflow(),
+                task_limiter: None,
+                executor_id: ExecutorId::generate(),
+            };
+            let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
+            ExecTask::new(
+                worker,
+                exec_config,
+                sim_clock.clone(),
+                db_pool.clone(),
+                ffqns,
+            )
+        };
+        {
+            let worker_tasks = sleep_exec
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap();
+            assert_eq!(1, worker_tasks);
+        }
+        let blocked_until = {
+            let pending_state = db_connection
+                .get_pending_state(&execution_id)
+                .await
+                .unwrap();
+            assert_matches!(pending_state, PendingState::BlockedByJoinSet {lock_expires_at, .. } => lock_expires_at)
+        };
+        assert_eq!(sim_clock.now(), blocked_until);
+        // expired_timers_watcher should see the AsyncDelay and send the response.
+        {
+            let timer = expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
+                .await
+                .unwrap();
+            assert_eq!(1, timer.expired_async_timers);
+        }
+        // Reexecute the worker
+        {
+            let worker_tasks = sleep_exec
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap();
+            assert_eq!(1, worker_tasks);
+        }
+        assert_matches!(
+            db_connection
+                .get_pending_state(&execution_id)
+                .await
+                .unwrap(),
+            PendingState::Finished {
+                finished: PendingStateFinished {
+                    result_kind: PendingStateFinishedResultKind(Ok(())),
+                    ..
+                },
+                ..
+            }
+        );
+
+        drop(db_connection);
+        db_pool.close().await.unwrap();
     }
 
     #[rstest]
@@ -1040,7 +1161,7 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id: execution_id.clone(),
-                ffqn: SLEEP_HOST_ACTIVITY_FFQN,
+                ffqn: SLEEP1_HOST_ACTIVITY_FFQN,
                 params: Params::from_json_values(vec![json!({"milliseconds": SLEEP_MILLIS})]),
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),

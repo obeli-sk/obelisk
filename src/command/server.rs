@@ -63,7 +63,6 @@ use concepts::storage::DbPool;
 use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionWithState;
-use concepts::storage::HistoryEventScheduledAt;
 use concepts::storage::JoinSetResponse;
 use concepts::storage::JoinSetResponseEvent;
 use concepts::storage::JoinSetResponseEventOuter;
@@ -121,6 +120,7 @@ use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointCompiled;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstance;
+use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 
@@ -254,7 +254,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     tonic::Status::invalid_argument(
                         format!("argument `params` must be an array with first value of type `schedule-at` - {serde_err}")
                     ))?;
-            let schedule_at = HistoryEventScheduledAt::try_from(&wast_val_with_type.value)
+            let schedule_at = history_event_schedule_at_from_wast_val(&wast_val_with_type.value)
                 .map_err(|serde_err| {
                     tonic::Status::invalid_argument(format!(
                         "cannot convert `schedule-at` - {serde_err}"
@@ -289,7 +289,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .2;
 
             (
-                schedule_at.as_date_time(created_at),
+                schedule_at
+                    .as_date_time(created_at)
+                    .map_err(|()| tonic::Status::invalid_argument("datetime overflow"))?,
                 Params::from_json_values(params),
                 fn_metadata,
             )
@@ -2162,7 +2164,10 @@ impl ComponentConfigRegistry {
                 // log + workflow(-support) + types
                 matches!(
                     import.ffqn.ifc_fqn.pkg_fqn_name().to_string().as_str(),
-                    "obelisk:log@1.0.0" | "obelisk:workflow@1.1.0" | "obelisk:types@1.1.0"
+                    "obelisk:log@1.0.0"
+                        | "obelisk:workflow@1.1.0"
+                        | "obelisk:workflow@2.0.0"
+                        | "obelisk:types@1.1.0"
                 )
             }
             ComponentType::WebhookEndpoint => {
