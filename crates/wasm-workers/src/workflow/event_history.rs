@@ -19,7 +19,7 @@ use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage;
 use concepts::storage::BacktraceInfo;
-use concepts::storage::HistoryEventScheduledAt;
+use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::JoinSetResponseEventOuter;
 use concepts::storage::PersistKind;
 use concepts::storage::SpecificError;
@@ -816,7 +816,7 @@ impl<C: ClockFn> EventHistory<C> {
                 },
                 HistoryEvent::Schedule {
                     execution_id: found_execution_id,
-                    scheduled_at: found_schedule_at,
+                    schedule_at: found_schedule_at,
                     ..
                 },
             ) if *target_execution_id == *found_execution_id
@@ -1108,7 +1108,7 @@ impl<C: ClockFn> EventHistory<C> {
                 // Cacheable event.
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
-                    scheduled_at: schedule_at,
+                    schedule_at: schedule_at,
                 };
 
                 let history_events = vec![event.clone()];
@@ -1568,7 +1568,7 @@ pub(crate) enum EventCall {
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     ScheduleRequest {
-        schedule_at: HistoryEventScheduledAt, // Intention that must be compared when checking determinism
+        schedule_at: HistoryEventScheduleAt, // Intention that must be compared when checking determinism
         scheduled_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
         execution_id: ExecutionId,
         ffqn: FunctionFqn, // TODO: rename to target_ffqn
@@ -1611,7 +1611,7 @@ pub(crate) enum EventCall {
     BlockingDelayRequest {
         join_set_id: JoinSetId,
         delay_id: DelayId,
-        schedule_at: HistoryEventScheduledAt, // Intention that must be compared when checking determinism
+        schedule_at: HistoryEventScheduleAt, // Intention that must be compared when checking determinism
         expires_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -1682,7 +1682,7 @@ enum EventHistoryKey {
     DelayRequest {
         join_set_id: JoinSetId,
         delay_id: DelayId,
-        schedule_at: HistoryEventScheduledAt,
+        schedule_at: HistoryEventScheduleAt,
     },
     JoinNextChild {
         join_set_id: JoinSetId,
@@ -1694,7 +1694,7 @@ enum EventHistoryKey {
     },
     Schedule {
         target_execution_id: ExecutionId,
-        schedule_at: HistoryEventScheduledAt,
+        schedule_at: HistoryEventScheduleAt,
     },
     Stub {
         target_execution_id: ExecutionIdDerived,
@@ -1772,7 +1772,7 @@ impl EventCall {
                 EventHistoryKey::DelayRequest {
                     join_set_id: join_set_id.clone(),
                     delay_id: *delay_id,
-                    schedule_at: schedule_at.clone(),
+                    schedule_at: *schedule_at,
                 },
                 EventHistoryKey::JoinNextDelay {
                     join_set_id: join_set_id.clone(),
@@ -1785,7 +1785,7 @@ impl EventCall {
             } => {
                 vec![EventHistoryKey::Schedule {
                     target_execution_id: execution_id.clone(),
-                    schedule_at: schedule_at.clone(),
+                    schedule_at: *schedule_at,
                 }]
             }
             EventCall::Stub {
@@ -1811,7 +1811,7 @@ mod tests {
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::ExecutionIdDerived;
-    use concepts::storage::{CreateRequest, HistoryEventScheduledAt};
+    use concepts::storage::{CreateRequest, HistoryEventScheduleAt};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::time::ClockFn;
     use concepts::{
@@ -2167,7 +2167,7 @@ mod tests {
         event_history
             .apply(
                 EventCall::ScheduleRequest {
-                    schedule_at: HistoryEventScheduledAt::Now,
+                    schedule_at: HistoryEventScheduleAt::Now,
                     scheduled_at_if_new: sim_clock.now(),
                     execution_id: ExecutionId::generate(),
                     ffqn: MOCK_FFQN,

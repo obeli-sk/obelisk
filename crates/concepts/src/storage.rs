@@ -440,10 +440,10 @@ pub enum HistoryEvent {
         /// Is the joinset being closed?
         closing: bool,
     },
-    #[display("Schedule({execution_id}, {scheduled_at})")]
+    #[display("Schedule({execution_id}, {schedule_at})")]
     Schedule {
         execution_id: ExecutionId,
-        scheduled_at: HistoryEventScheduledAt, // Stores intention to schedule an execution at a date/offset // FIXME: rename to `schedule_at`
+        schedule_at: HistoryEventScheduleAt, // Stores intention to schedule an execution at a date/offset
     },
     #[display("Stub({target_execution_id})")]
     Stub {
@@ -456,13 +456,13 @@ pub enum HistoryEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
-pub enum HistoryEventScheduledAt {
+pub enum HistoryEventScheduleAt {
     Now,
     At(DateTime<Utc>),
     #[display("In({_0:?})")]
     In(Duration),
 }
-impl HistoryEventScheduledAt {
+impl HistoryEventScheduleAt {
     #[must_use]
     pub fn as_date_time(&self, now: DateTime<Utc>) -> Result<DateTime<Utc>, ()> {
         match self {
@@ -481,11 +481,11 @@ impl HistoryEventScheduledAt {
 #[serde(tag = "type")]
 pub enum JoinSetRequest {
     // Must be created by the executor in `PendingState::Locked`.
-    #[display("DelayRequest({delay_id}, expires_at: `{expires_at}`)")]
+    #[display("DelayRequest({delay_id}, expires_at: `{expires_at}`, schedule_at: `{schedule_at}`)")]
     DelayRequest {
         delay_id: DelayId,
         expires_at: DateTime<Utc>,
-        schedule_at: HistoryEventScheduledAt,
+        schedule_at: HistoryEventScheduleAt,
     },
     // Must be created by the executor in `PendingState::Locked`.
     #[display("ChildExecutionRequest({child_execution_id})")]

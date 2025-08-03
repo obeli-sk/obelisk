@@ -5,7 +5,7 @@ use assert_matches::assert_matches;
 use chrono::DateTime;
 use concepts::JoinSetId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
-use concepts::storage::HistoryEventScheduledAt;
+use concepts::storage::HistoryEventScheduleAt;
 use concepts::{ExecutionId, prefixed_ulid::DelayId};
 use indexmap::indexmap;
 use val_json::wast_val::WastVal;
@@ -78,7 +78,7 @@ pub(crate) mod v2_0_0 {
 
     use chrono::DateTime;
     use chrono::Utc;
-    use concepts::storage::HistoryEventScheduledAt;
+    use concepts::storage::HistoryEventScheduleAt;
     use obelisk::types::time::Datetime;
     pub(crate) use obelisk::types::time::Duration as DurationEnum_2_0_0;
     pub(crate) use obelisk::types::time::ScheduleAt as ScheduleAt_2_0_0;
@@ -125,7 +125,7 @@ pub(crate) mod v2_0_0 {
         }
     }
 
-    impl From<ScheduleAt_2_0_0> for HistoryEventScheduledAt {
+    impl From<ScheduleAt_2_0_0> for HistoryEventScheduleAt {
         fn from(value: ScheduleAt_2_0_0) -> Self {
             match value {
                 ScheduleAt_2_0_0::Now => Self::Now,
@@ -138,12 +138,12 @@ pub(crate) mod v2_0_0 {
 
 pub fn history_event_schedule_at_from_wast_val(
     scheduled_at: &WastVal,
-) -> Result<HistoryEventScheduledAt, &'static str> {
+) -> Result<HistoryEventScheduleAt, &'static str> {
     let WastVal::Variant(variant, val) = scheduled_at else {
         return Err("wrong type");
     };
     match (variant.as_str(), val) {
-        ("now", None) => Ok(HistoryEventScheduledAt::Now),
+        ("now", None) => Ok(HistoryEventScheduleAt::Now),
         ("in", Some(duration)) => {
             if let &WastVal::Variant(key, value) = &duration.deref() {
                 let duration = match (key.as_str(), value.as_deref()) {
@@ -160,7 +160,7 @@ pub fn history_event_schedule_at_from_wast_val(
                         );
                     }
                 };
-                Ok(HistoryEventScheduledAt::In(duration))
+                Ok(HistoryEventScheduleAt::In(duration))
             } else {
                 Err("cannot convert `scheduled-at`, `in` variant: value must be a variant")
             }
@@ -180,7 +180,7 @@ pub fn history_event_schedule_at_from_wast_val(
                         nanoseconds: *nanoseconds,
                     };
                     let date_time = DateTime::from(date_time);
-                    Ok(HistoryEventScheduledAt::At(date_time))
+                    Ok(HistoryEventScheduleAt::At(date_time))
                 }
                 _ => Err(
                     "cannot convert `scheduled-at`, `at` variant: record must have exactly two keys: `seconds`(U64), `nanoseconds`(U32)",

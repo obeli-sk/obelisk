@@ -473,26 +473,26 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 debug!("Got `-schedule` extension for {ffqn}");
-                let Some((scheduled_at, params)) = params.split_first() else {
+                let Some((schedule_at, params)) = params.split_first() else {
                     error!(
-                        "Error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list"
+                        "Error running `-schedule` extension function: exepcted at least one parameter of type `schedule-at`, got empty parameter list"
                     );
                     return Err(WebhookEndpointFunctionError::UncategorizedError(
-                        "error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list",
+                        "error running `-schedule` extension function: exepcted at least one parameter of type `schedule-at`, got empty parameter list",
                     ));
                 };
-                let scheduled_at =
-                    WastVal::try_from(scheduled_at.clone()).map_err(|err| {
+                let schedule_at =
+                    WastVal::try_from(schedule_at.clone()).map_err(|err| {
                         error!("Error running `-schedule` extension function: cannot convert to internal representation - {err:?}");
                         WebhookEndpointFunctionError::UncategorizedError(
                             "error running `-schedule` extension function: cannot convert to internal representation",
                         )
                     })?;
-                let scheduled_at = match history_event_schedule_at_from_wast_val(&scheduled_at) {
-                    Ok(scheduled_at) => scheduled_at,
+                let schedule_at = match history_event_schedule_at_from_wast_val(&schedule_at) {
+                    Ok(ok) => ok,
                     Err(err) => {
                         error!(
-                            "Wrong type for the first `-scheduled-at` parameter, expected `scheduled-at`, got `{scheduled_at:?}` - {err:?}"
+                            "Wrong type for the first `-schedule` extension function parameter, expected `schedule-at`, got `{schedule_at:?}` - {err:?}"
                         );
                         return Err(WebhookEndpointFunctionError::UncategorizedError(
                             "error running `-schedule` extension function: wrong first parameter type",
@@ -512,9 +512,9 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
 
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
-                    scheduled_at,
+                    schedule_at,
                 };
-                let scheduled_at = scheduled_at.as_date_time(created_at).map_err(|_| {
+                let scheduled_at = schedule_at.as_date_time(created_at).map_err(|()| {
                     WebhookEndpointFunctionError::UncategorizedError("datetime overflow")
                 })?;
                 let child_exec_req = AppendRequest {

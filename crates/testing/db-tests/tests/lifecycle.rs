@@ -5,7 +5,7 @@ use concepts::storage::{
     JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, PendingState, PersistKind,
     SpecificError, Version,
 };
-use concepts::storage::{HistoryEventScheduledAt, JoinSetResponseEvent};
+use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::{ClosingStrategy, JoinSetId};
@@ -1017,7 +1017,7 @@ pub async fn lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
                         request: JoinSetRequest::DelayRequest {
                             delay_id: DelayId::generate(),
                             expires_at: sim_clock.now(),
-                            schedule_at: HistoryEventScheduledAt::Now,
+                            schedule_at: HistoryEventScheduleAt::Now,
                         },
                     },
                 },
@@ -1150,7 +1150,7 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
                         request: JoinSetRequest::DelayRequest {
                             delay_id,
                             expires_at: sim_clock.now() + lock_expiry,
-                            schedule_at: HistoryEventScheduledAt::In(lock_expiry),
+                            schedule_at: HistoryEventScheduleAt::In(lock_expiry),
                         },
                     },
                 },

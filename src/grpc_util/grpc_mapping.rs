@@ -6,7 +6,7 @@ use concepts::{
     prefixed_ulid::{DelayId, RunId},
     storage::{
         DbError, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, HistoryEvent,
-        HistoryEventScheduledAt, JoinSetRequest, Pagination, PendingState, PendingStateFinished,
+        HistoryEventScheduleAt, JoinSetRequest, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedError, PendingStateFinishedResultKind, SpecificError, VersionType,
         http_client_trace::HttpClientTrace,
     },
@@ -502,15 +502,15 @@ pub(crate) fn from_execution_event_to_grpc(
                             run_expires_at: Some(prost_wkt_types::Timestamp::from(run_expires_at)),
                             closing,
                         }),
-                        HistoryEvent::Schedule { execution_id, scheduled_at } => grpc_gen::execution_event::history_event::Event::Schedule(grpc_gen::execution_event::history_event::Schedule {
+                        HistoryEvent::Schedule { execution_id, schedule_at: scheduled_at } => grpc_gen::execution_event::history_event::Event::Schedule(grpc_gen::execution_event::history_event::Schedule {
                             execution_id: Some(grpc_gen::ExecutionId { id: execution_id.to_string() }),
                             scheduled_at: Some(grpc_gen::execution_event::history_event::schedule::ScheduledAt {
                                 variant: match scheduled_at {
-                                    HistoryEventScheduledAt::Now => Some(grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::Now(grpc_gen::execution_event::history_event::schedule::scheduled_at::Now {})),
-                                    HistoryEventScheduledAt::At( at) => Some(grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::At(grpc_gen::execution_event::history_event::schedule::scheduled_at::At {
+                                    HistoryEventScheduleAt::Now => Some(grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::Now(grpc_gen::execution_event::history_event::schedule::scheduled_at::Now {})),
+                                    HistoryEventScheduleAt::At( at) => Some(grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::At(grpc_gen::execution_event::history_event::schedule::scheduled_at::At {
                                         at: Some(prost_wkt_types::Timestamp::from(at)),
                                     })),
-                                    HistoryEventScheduledAt::In (r#in ) => Some(grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::In(grpc_gen::execution_event::history_event::schedule::scheduled_at::In {
+                                    HistoryEventScheduleAt::In (r#in ) => Some(grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::In(grpc_gen::execution_event::history_event::schedule::scheduled_at::In {
                                         r#in: prost_wkt_types::Duration::try_from(r#in).ok(),
                                     })),
                                 },

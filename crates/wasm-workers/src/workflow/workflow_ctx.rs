@@ -12,7 +12,7 @@ use crate::workflow::host_exports::SUFFIX_FN_STUB;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
-use concepts::storage::{self, DbError, DbPool, HistoryEventScheduledAt, Version, WasmBacktrace};
+use concepts::storage::{self, DbError, DbPool, HistoryEventScheduleAt, Version, WasmBacktrace};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
@@ -148,7 +148,7 @@ pub(crate) enum ImportedFnCall<'a> {
     },
     Schedule {
         target_ffqn: FunctionFqn,
-        schedule_at: HistoryEventScheduledAt,
+        schedule_at: HistoryEventScheduleAt,
         #[debug(skip)]
         target_params: &'a [Val],
         #[debug(skip)]
@@ -293,34 +293,34 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let Some((scheduled_at, params)) = params.split_first() else {
+                let Some((schedule_at, params)) = params.split_first() else {
                     return Err(WorkflowFunctionError::ImportedFunctionCallError {
                         ffqn: called_ffqn,
                         reason: StrVariant::Static(
-                            "exepcted at least one parameter of type `scheduled-at`",
+                            "exepcted at least one parameter of type `schedule-at`",
                         ),
                         detail: None,
                     });
                 };
-                let scheduled_at = match WastVal::try_from(scheduled_at.clone()) {
+                let schedule_at = match WastVal::try_from(schedule_at.clone()) {
                     Ok(ok) => ok,
                     Err(err) => {
                         return Err(WorkflowFunctionError::ImportedFunctionCallError {
                             ffqn: called_ffqn,
                             reason: format!(
-                                "cannot convert `scheduled-at` to internal representation - {err}"
+                                "cannot convert `schedule-at` to internal representation - {err}"
                             )
                             .into(),
                             detail: Some(format!("{err:?}")),
                         });
                     }
                 };
-                let schedule_at = match history_event_schedule_at_from_wast_val(&scheduled_at) {
-                    Ok(scheduled_at) => scheduled_at,
+                let schedule_at = match history_event_schedule_at_from_wast_val(&schedule_at) {
+                    Ok(ok) => ok,
                     Err(detail) => {
                         return Err(WorkflowFunctionError::ImportedFunctionCallError {
                             ffqn: called_ffqn,
-                            reason: "first parameter type must be `scheduled-at`".into(),
+                            reason: "first parameter type must be `schedule-at`".into(),
                             detail: Some(detail.to_string()),
                         });
                     }
@@ -595,7 +595,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     async fn persist_sleep(
         &mut self,
-        schedule_at: HistoryEventScheduledAt,
+        schedule_at: HistoryEventScheduleAt,
         sleep_ffqn: FunctionFqn,
     ) -> Result<(), WorkflowFunctionError> {
         let join_set_id = self.next_join_set_one_off();
@@ -814,7 +814,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (schedule_at,): (SleepParamType,)| {
                     let schedule_at = ScheduleAt_2_0_0::from(schedule_at);
-                    let schedule_at = HistoryEventScheduledAt::from(schedule_at);
+                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host
@@ -1030,7 +1030,7 @@ mod workflow_support {
     use super::{ClockFn, EventCall, WorkflowCtx, WorkflowFunctionError, assert_matches};
     use crate::workflow::event_history::ChildReturnValue;
     use concepts::FunctionFqn;
-    use concepts::storage::HistoryEventScheduledAt;
+    use concepts::storage::HistoryEventScheduleAt;
     use concepts::{
         CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind,
         storage::{self, PersistKind},
@@ -1149,7 +1149,7 @@ mod workflow_support {
 
         pub(crate) async fn sleep(
             &mut self,
-            schedule_at: HistoryEventScheduledAt,
+            schedule_at: HistoryEventScheduleAt,
             sleep_ffqn: FunctionFqn,
         ) -> wasmtime::Result<()> {
             Ok(self.persist_sleep(schedule_at, sleep_ffqn).await?)
@@ -1218,7 +1218,7 @@ pub(crate) mod tests {
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
         AppendRequest, CreateRequest, DbPool, ExecutionEvent, ExecutionEventInner, HistoryEvent,
-        HistoryEventScheduledAt, JoinSetRequest, JoinSetResponse, PendingState,
+        HistoryEventScheduleAt, JoinSetRequest, JoinSetResponse, PendingState,
         PendingStateFinished, PendingStateFinishedResultKind,
     };
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
@@ -1359,7 +1359,7 @@ pub(crate) mod tests {
                     WorkflowStep::Sleep { millis } => {
                         workflow_ctx
                             .persist_sleep(
-                                HistoryEventScheduledAt::In(Duration::from_millis(*millis)),
+                                HistoryEventScheduleAt::In(Duration::from_millis(*millis)),
                                 WorkflowSupportVersion::SLEEP_FFQN_2,
                             )
                             .await
