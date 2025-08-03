@@ -1,6 +1,6 @@
-cargo-binstall 1.14.1
+cargo-binstall 1.14.2
 cargo-edit-upgrade 0.13.6
-cargo-expand 1.0.113
+cargo-expand 1.0.114
 cargo-nextest 0.9.101
 cargo-semver-checks 0.42.0
 litecli Version: 1.12.3
