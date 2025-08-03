@@ -1262,7 +1262,7 @@ pub(crate) mod tests {
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
     enum WorkflowStep {
         Sleep {
-            millis: u64,
+            millis: u32, // Avoid ScheduleAtConversionError::OutOfRangeError
         },
         Call {
             ffqn: FunctionFqn,
@@ -1359,7 +1359,9 @@ pub(crate) mod tests {
                     WorkflowStep::Sleep { millis } => {
                         workflow_ctx
                             .persist_sleep(
-                                HistoryEventScheduleAt::In(Duration::from_millis(*millis)),
+                                HistoryEventScheduleAt::In(Duration::from_millis(u64::from(
+                                    *millis,
+                                ))),
                                 WorkflowSupportVersion::SLEEP_FFQN_2,
                             )
                             .await
