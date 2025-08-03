@@ -605,10 +605,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
         );
         let expires_at_if_new = schedule_at
             .as_date_time(self.clock_fn.now())
-            .map_err(|()| WorkflowFunctionError::ImportedFunctionCallError {
+            .map_err(|err| WorkflowFunctionError::ImportedFunctionCallError {
                 ffqn: sleep_ffqn,
-                reason: "datetime overflow".into(),
-                detail: None,
+                reason: "schedule-at conversion error".into(),
+                detail: Some(format!("{err:?}")),
             })?;
         self.event_history
             .apply(
@@ -927,11 +927,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from fn_registry exports must be found");
-                let scheduled_at_if_new = schedule_at.as_date_time(called_at).map_err(|()| {
+                let scheduled_at_if_new = schedule_at.as_date_time(called_at).map_err(|err| {
                     WorkflowFunctionError::ImportedFunctionCallError {
                         ffqn: called_ffqn.clone(),
-                        reason: "datetime overflow".into(),
-                        detail: None,
+                        reason: "schedule-at conversion error".into(),
+                        detail: Some(format!("{err:?}")),
                     }
                 })?;
                 Ok(EventCall::ScheduleRequest {

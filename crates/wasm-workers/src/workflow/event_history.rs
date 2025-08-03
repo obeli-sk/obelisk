@@ -1108,7 +1108,7 @@ impl<C: ClockFn> EventHistory<C> {
                 // Cacheable event.
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
-                    schedule_at: schedule_at,
+                    schedule_at,
                 };
 
                 let history_events = vec![event.clone()];

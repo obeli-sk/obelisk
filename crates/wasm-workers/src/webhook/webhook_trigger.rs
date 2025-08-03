@@ -514,8 +514,8 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     execution_id: new_execution_id.clone(),
                     schedule_at,
                 };
-                let scheduled_at = schedule_at.as_date_time(created_at).map_err(|()| {
-                    WebhookEndpointFunctionError::UncategorizedError("datetime overflow")
+                let schedule_at = schedule_at.as_date_time(created_at).map_err(|_err| {
+                    WebhookEndpointFunctionError::UncategorizedError("schedule-at conversion error")
                 })?;
                 let child_exec_req = AppendRequest {
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -529,7 +529,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
                     metadata: ExecutionMetadata::from_linked_span(&self.component_logger.span),
-                    scheduled_at,
+                    scheduled_at: schedule_at,
                     max_retries: import_retry_config.max_retries,
                     retry_exp_backoff: import_retry_config.retry_exp_backoff,
                     component_id,

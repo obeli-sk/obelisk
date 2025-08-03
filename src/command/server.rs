@@ -291,7 +291,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             (
                 schedule_at
                     .as_date_time(created_at)
-                    .map_err(|()| tonic::Status::invalid_argument("datetime overflow"))?,
+                    .map_err(|_| tonic::Status::invalid_argument("schedule-at conversion error"))?,
                 Params::from_json_values(params),
                 fn_metadata,
             )

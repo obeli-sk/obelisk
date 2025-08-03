@@ -462,15 +462,26 @@ pub enum HistoryEventScheduleAt {
     #[display("In({_0:?})")]
     In(Duration),
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ScheduleAtConversionError {
+    #[error("source duration value is out of range")]
+    OutOfRangeError,
+}
+
 impl HistoryEventScheduleAt {
-    #[must_use]
-    pub fn as_date_time(&self, now: DateTime<Utc>) -> Result<DateTime<Utc>, ()> {
+    pub fn as_date_time(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, ScheduleAtConversionError> {
         match self {
             Self::Now => Ok(now),
             Self::At(date_time) => Ok(*date_time),
             Self::In(duration) => {
-                let time_delta = TimeDelta::from_std(*duration).map_err(|_| ())?;
-                now.checked_add_signed(time_delta).ok_or(())
+                let time_delta = TimeDelta::from_std(*duration)
+                    .map_err(|_| ScheduleAtConversionError::OutOfRangeError)?;
+                now.checked_add_signed(time_delta)
+                    .ok_or(ScheduleAtConversionError::OutOfRangeError)
             }
         }
     }
@@ -1186,7 +1197,7 @@ pub mod http_client_trace {
 
 #[cfg(test)]
 mod tests {
-    use super::HistoryEventScheduledAt;
+    use super::HistoryEventScheduleAt;
     use super::JoinSetResponse;
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
@@ -1303,7 +1314,7 @@ mod tests {
     #[test]
     fn as_date_time_should_work_with_duration_u32_max_secs() {
         let duration = Duration::from_secs(u64::from(u32::MAX));
-        let schedule_at = HistoryEventScheduledAt::In(duration);
+        let schedule_at = HistoryEventScheduleAt::In(duration);
         let resolved = schedule_at.as_date_time(DateTime::UNIX_EPOCH).unwrap();
         assert_eq!(2106, resolved.year());
     }
@@ -1317,7 +1328,7 @@ mod tests {
         let duration = Duration::from_secs(
             u64::try_from(TIMEDELTA_MAX_SECS).expect("positive number must not fail") + 1,
         );
-        let schedule_at = HistoryEventScheduledAt::In(duration);
+        let schedule_at = HistoryEventScheduleAt::In(duration);
         schedule_at.as_date_time(DateTime::UNIX_EPOCH).unwrap_err();
     }
 }
