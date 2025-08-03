@@ -126,7 +126,7 @@ impl From<ApplyError> for WorkflowFunctionError {
 
 pub(crate) struct WorkflowCtx<C: ClockFn> {
     pub(crate) execution_id: ExecutionId,
-    event_history: EventHistory<C>,
+    event_history: EventHistory,
     rng: StdRng,
     pub(crate) clock_fn: C,
     pub(crate) db_pool: Arc<dyn DbPool>,
@@ -523,7 +523,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 responses,
                 join_next_blocking_strategy,
                 execution_deadline,
-                clock_fn.clone(),
                 worker_span.clone(),
                 forward_unhandled_child_errors_in_join_set_close,
             ),
@@ -541,7 +540,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     pub(crate) async fn flush(&mut self) -> Result<(), DbError> {
         self.event_history
-            .flush(self.db_pool.connection().as_ref())
+            .flush(self.db_pool.connection().as_ref(), self.clock_fn.now())
             .await
     }
 
@@ -569,7 +568,12 @@ impl<C: ClockFn> WorkflowCtx<C> {
         };
         let res = self
             .event_history
-            .apply(event, self.db_pool.connection().as_ref(), &mut self.version)
+            .apply(
+                event,
+                self.db_pool.connection().as_ref(),
+                &mut self.version,
+                called_at,
+            )
             .await?
             .into_wast_val();
 
@@ -621,6 +625,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 },
                 self.db_pool.connection().as_ref(),
                 &mut self.version,
+                self.clock_fn.now(),
             )
             .await?;
         Ok(())
@@ -671,6 +676,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     },
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
+                    self.clock_fn.now(),
                 )
                 .await
                 .map_err(WorkflowFunctionError::from)?;
@@ -871,7 +877,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     pub(crate) async fn close_opened_join_sets(&mut self) -> Result<(), ApplyError> {
         self.event_history
-            .close_opened_join_sets(self.db_pool.connection().as_ref(), &mut self.version)
+            .close_opened_join_sets(
+                self.db_pool.connection().as_ref(),
+                &mut self.version,
+                self.clock_fn.now(),
+            )
             .await
     }
 
@@ -1093,6 +1103,7 @@ mod workflow_support {
                     },
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
+                    self.clock_fn.now(),
                 )
                 .await
                 .map_err(WorkflowFunctionError::from)?;
@@ -1139,6 +1150,7 @@ mod workflow_support {
                     },
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
+                    self.clock_fn.now(),
                 )
                 .await
                 .map_err(WorkflowFunctionError::from)?;
