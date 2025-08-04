@@ -883,7 +883,7 @@ impl Params {
 }
 
 pub mod prefixed_ulid {
-    use crate::{JoinSetId, JoinSetIdParseError};
+    use crate::{JoinSetId, JoinSetIdParseError, JoinSetKind};
     use serde_with::{DeserializeFromStr, SerializeDisplay};
     use std::{
         fmt::{Debug, Display},
@@ -1028,7 +1028,7 @@ pub mod prefixed_ulid {
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
     pub type ExecutionIdTopLevel = PrefixedUlid<prefix::E>;
     pub type RunId = PrefixedUlid<prefix::Run>;
-    pub type DelayId = PrefixedUlid<prefix::Delay>;
+    pub type DelayIdTopLevel = PrefixedUlid<prefix::Delay>;
 
     #[cfg(any(test, feature = "test"))]
     impl<'a, T> arbitrary::Arbitrary<'a> for PrefixedUlid<T> {
@@ -1147,26 +1147,32 @@ pub mod prefixed_ulid {
         }
     }
     impl FromStr for ExecutionIdDerived {
-        type Err = ExecutionIdDerivedParseError;
+        type Err = DerivedIdParseError;
 
         fn from_str(input: &str) -> Result<Self, Self::Err> {
-            if let Some((prefix, suffix)) = input.split_once(EXECUTION_ID_INFIX) {
-                let top_level = PrefixedUlid::from_str(prefix)
-                    .map_err(ExecutionIdDerivedParseError::PrefixedUlidParseError)?;
-                let Some((infix, idx)) = suffix.rsplit_once(EXECUTION_ID_JOIN_SET_INFIX) else {
-                    return Err(ExecutionIdDerivedParseError::SecondDelimiterNotFound);
-                };
-                let infix = Arc::from(infix);
-                let idx =
-                    u64::from_str(idx).map_err(ExecutionIdDerivedParseError::ParseIndexError)?;
-                Ok(ExecutionIdDerived {
-                    top_level,
-                    infix,
-                    idx,
-                })
-            } else {
-                Err(ExecutionIdDerivedParseError::FirstDelimiterNotFound)
-            }
+            let (top_level, infix, idx) = derived_from_str(input)?;
+            Ok(ExecutionIdDerived {
+                top_level,
+                infix,
+                idx,
+            })
+        }
+    }
+
+    fn derived_from_str<T: 'static>(
+        input: &str,
+    ) -> Result<(PrefixedUlid<T>, Arc<str>, u64), DerivedIdParseError> {
+        if let Some((prefix, suffix)) = input.split_once(EXECUTION_ID_INFIX) {
+            let top_level = PrefixedUlid::from_str(prefix)
+                .map_err(DerivedIdParseError::PrefixedUlidParseError)?;
+            let Some((infix, idx)) = suffix.rsplit_once(EXECUTION_ID_JOIN_SET_INFIX) else {
+                return Err(DerivedIdParseError::SecondDelimiterNotFound);
+            };
+            let infix = Arc::from(infix);
+            let idx = u64::from_str(idx).map_err(DerivedIdParseError::ParseIndexError)?;
+            Ok((top_level, infix, idx))
+        } else {
+            Err(DerivedIdParseError::FirstDelimiterNotFound)
         }
     }
 
@@ -1180,17 +1186,15 @@ pub mod prefixed_ulid {
     }
 
     #[derive(Debug, thiserror::Error)]
-    pub enum ExecutionIdDerivedParseError {
+    pub enum DerivedIdParseError {
         #[error(transparent)]
         PrefixedUlidParseError(PrefixedUlidParseError),
-        #[error("cannot parse derived execution id - delimiter `{EXECUTION_ID_INFIX}` not found")]
+        #[error("cannot parse derived id - delimiter `{EXECUTION_ID_INFIX}` not found")]
         FirstDelimiterNotFound,
-        #[error(
-            "cannot parse derived execution id - delimiter `{EXECUTION_ID_JOIN_SET_INFIX}` not found"
-        )]
+        #[error("cannot parse derived id - delimiter `{EXECUTION_ID_JOIN_SET_INFIX}` not found")]
         SecondDelimiterNotFound,
         #[error(
-            "cannot parse derived execution id - suffix after `{EXECUTION_ID_JOIN_SET_INFIX}` must be a number"
+            "cannot parse derived id - suffix after `{EXECUTION_ID_JOIN_SET_INFIX}` must be a number"
         )]
         ParseIndexError(ParseIntError),
     }
@@ -1291,16 +1295,16 @@ pub mod prefixed_ulid {
                 ExecutionIdDerived::from_str(input)
                     .map(ExecutionId::Derived)
                     .map_err(|err| match err {
-                        ExecutionIdDerivedParseError::FirstDelimiterNotFound => {
+                        DerivedIdParseError::FirstDelimiterNotFound => {
                             unreachable!("first delimiter checked")
                         }
-                        ExecutionIdDerivedParseError::SecondDelimiterNotFound => {
+                        DerivedIdParseError::SecondDelimiterNotFound => {
                             ExecutionIdParseError::SecondDelimiterNotFound
                         }
-                        ExecutionIdDerivedParseError::PrefixedUlidParseError(err) => {
+                        DerivedIdParseError::PrefixedUlidParseError(err) => {
                             ExecutionIdParseError::PrefixedUlidParseError(err)
                         }
-                        ExecutionIdDerivedParseError::ParseIndexError(err) => {
+                        DerivedIdParseError::ParseIndexError(err) => {
                             ExecutionIdParseError::ParseIndexError(err)
                         }
                     })
@@ -1352,6 +1356,94 @@ pub mod prefixed_ulid {
     impl<'a> arbitrary::Arbitrary<'a> for ExecutionId {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
             Ok(ExecutionId::TopLevel(PrefixedUlid::arbitrary(u)?))
+        }
+    }
+
+    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, SerializeDisplay, DeserializeFromStr)]
+    pub struct DelayId {
+        top_level: DelayIdTopLevel,
+        infix: Arc<str>,
+        idx: u64,
+    }
+    impl DelayId {
+        #[must_use]
+        pub fn new_oneoff(execution_id: &ExecutionId, join_set_id: &JoinSetId) -> DelayId {
+            assert!(join_set_id.kind == JoinSetKind::OneOff);
+            let ExecutionIdDerived {
+                top_level,
+                infix,
+                idx,
+            } = execution_id.next_level(join_set_id);
+            let top_level = DelayIdTopLevel::new(top_level.ulid);
+            DelayId {
+                top_level,
+                infix,
+                idx,
+            }
+        }
+
+        #[must_use]
+        pub fn get_incremented(&self) -> Self {
+            Self {
+                top_level: self.top_level,
+                infix: self.infix.clone(),
+                idx: self.idx + 1,
+            }
+        }
+
+        fn display_or_debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let DelayId {
+                top_level,
+                infix,
+                idx,
+            } = self;
+            write!(
+                f,
+                "{top_level}{EXECUTION_ID_INFIX}{infix}{EXECUTION_ID_JOIN_SET_INFIX}{idx}"
+            )
+        }
+    }
+
+    pub mod delay_impl {
+        use super::{DelayId, DerivedIdParseError, derived_from_str};
+        use std::{
+            fmt::{Debug, Display},
+            str::FromStr,
+        };
+
+        impl Debug for DelayId {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.display_or_debug(f)
+            }
+        }
+
+        impl Display for DelayId {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.display_or_debug(f)
+            }
+        }
+
+        impl FromStr for DelayId {
+            type Err = DerivedIdParseError;
+
+            fn from_str(input: &str) -> Result<Self, Self::Err> {
+                let (top_level, infix, idx) = derived_from_str(input)?;
+                Ok(DelayId {
+                    top_level,
+                    infix,
+                    idx,
+                })
+            }
+        }
+
+        #[cfg(any(test, feature = "test"))]
+        impl<'a> arbitrary::Arbitrary<'a> for DelayId {
+            fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+                use super::{ExecutionId, JoinSetId};
+                let execution_id = ExecutionId::arbitrary(u)?;
+                let join_set_id = JoinSetId::arbitrary(u)?;
+                Ok(DelayId::new_oneoff(&execution_id, &join_set_id))
+            }
         }
     }
 }

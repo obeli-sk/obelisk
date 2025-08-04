@@ -203,29 +203,6 @@ pub enum JoinSetResponse {
     },
 }
 
-impl JoinSetResponse {
-    #[must_use]
-    pub fn delay_id(&self) -> Option<DelayId> {
-        if let JoinSetResponse::DelayFinished { delay_id } = self {
-            Some(*delay_id)
-        } else {
-            None
-        }
-    }
-
-    #[must_use]
-    pub fn child_execution_id(&self) -> Option<ExecutionIdDerived> {
-        if let JoinSetResponse::ChildExecutionFinished {
-            child_execution_id, ..
-        } = self
-        {
-            Some(child_execution_id.clone())
-        } else {
-            None
-        }
-    }
-}
-
 pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     ffqn: FunctionFqn::new_static("", ""),
     params: Params::empty(),

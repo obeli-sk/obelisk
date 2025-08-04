@@ -236,7 +236,6 @@ type ResponseSubscribers = Arc<
 struct PrefixedUlidWrapper<T: 'static>(PrefixedUlid<T>);
 type ExecutorIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::Exr>;
 type RunIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::Run>;
-type DelayIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::Delay>;
 
 impl<T: 'static> FromSql for PrefixedUlidWrapper<T> {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
@@ -1688,7 +1687,7 @@ impl<S: Sleep> SqlitePool<S> {
                     },
             } => IndexAction::NoPendingStateChange(Some(DelayReq {
                 join_set_id: join_set_id.clone(),
-                delay_id: *delay_id,
+                delay_id: delay_id.clone(),
                 expires_at: *expires_at,
             })),
 
@@ -2094,13 +2093,13 @@ impl<S: Sleep> SqlitePool<S> {
         let created_at: DateTime<Utc> = row.get("created_at")?;
         let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
         let inner_res = match (
-            row.get::<_, Option<DelayIdW>>("delay_id")?,
+            row.get::<_, Option<DelayId>>("delay_id")?,
             row.get::<_, Option<ExecutionIdDerived>>("child_execution_id")?,
             row.get::<_, Option<VersionType>>("finished_version")?,
             row.get::<_, Option<JsonWrapper<ExecutionEventInner>>>("json_value")?,
         ) {
             (Some(delay_id), None, None, None) => Ok(JoinSetResponse::DelayFinished {
-                delay_id: delay_id.0,
+                delay_id,
             }),
             (None, Some(child_execution_id), Some(finished_version), Some(result)) => {
                 match result.0 {
@@ -2117,7 +2116,7 @@ impl<S: Sleep> SqlitePool<S> {
                 }
             }
             (delay, child, finished, result) => {
-                error!("Invalid row in t_join_set_response {id} - {:?} {child:?} {finished:?} {:?}", delay.map(|it|it.0), result.map(|it| it.0));
+                error!("Invalid row in t_join_set_response {id} - {:?} {child:?} {finished:?} {:?}", delay, result.map(|it| it.0));
                 Err(DbError::Specific(SpecificError::ConsistencyError(
                 StrVariant::Static("invalid row in t_join_set_response"),
             )))},
@@ -2779,7 +2778,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                         |row| {
                             let execution_id = row.get("execution_id")?;
                             let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
-                            let delay_id = row.get::<_, DelayIdW>("delay_id")?.0;
+                            let delay_id = row.get::<_, DelayId>("delay_id")?;
                             Ok(ExpiredTimer::Delay { execution_id, join_set_id, delay_id })
                         },
                     ).map_err(convert_err)?

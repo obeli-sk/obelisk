@@ -603,10 +603,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         sleep_ffqn: FunctionFqn,
     ) -> Result<(), WorkflowFunctionError> {
         let join_set_id = self.next_join_set_one_off();
-        let delay_id = DelayId::from_parts(
-            self.execution_id.get_top_level().timestamp_part(),
-            self.next_u128(),
-        );
+        let delay_id = DelayId::new_oneoff(&self.execution_id, &join_set_id);
         let expires_at_if_new = schedule_at
             .as_date_time(self.clock_fn.now())
             .map_err(|err| WorkflowFunctionError::ImportedFunctionCallError {

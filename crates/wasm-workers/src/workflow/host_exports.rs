@@ -209,6 +209,6 @@ pub(crate) fn join_set_id_into_wast_val(join_set_id: &JoinSetId) -> WastVal {
     WastVal::Record(indexmap! {"id".to_string() => WastVal::String(join_set_id.to_string())})
 }
 
-pub(crate) fn delay_id_into_wast_val(delay_id: DelayId) -> WastVal {
+pub(crate) fn delay_id_into_wast_val(delay_id: &DelayId) -> WastVal {
     WastVal::Record(indexmap! {"id".to_string() => WastVal::String(delay_id.to_string())})
 }

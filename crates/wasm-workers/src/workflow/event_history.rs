@@ -626,7 +626,7 @@ impl EventHistory {
                 self.event_history[found_idx].1 = Processed;
                 // return delay id
                 Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                    delay_id_into_wast_val(*delay_id),
+                    delay_id_into_wast_val(delay_id),
                 )))
             }
 
@@ -1773,7 +1773,7 @@ impl EventCall {
                 },
                 EventHistoryKey::DelayRequest {
                     join_set_id: join_set_id.clone(),
-                    delay_id: *delay_id,
+                    delay_id: delay_id.clone(),
                     schedule_at: *schedule_at,
                 },
                 EventHistoryKey::JoinNextDelay {

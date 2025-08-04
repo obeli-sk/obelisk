@@ -1,4 +1,7 @@
-use crate::{ExecutionId, JoinSetId, prefixed_ulid::ExecutionIdDerived};
+use crate::{
+    ExecutionId, JoinSetId,
+    prefixed_ulid::{DelayId, ExecutionIdDerived},
+};
 use rusqlite::{
     ToSql,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -53,6 +56,24 @@ impl FromSql for JoinSetId {
             error!(
                 backtrace = %std::backtrace::Backtrace::capture(),
                 "Cannot convert to JoinSetId value:`{str}` - {err:?}"
+            );
+            FromSqlError::InvalidType
+        })
+    }
+}
+
+impl ToSql for DelayId {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
+    }
+}
+impl FromSql for DelayId {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let str = value.as_str()?;
+        str.parse::<DelayId>().map_err(|err| {
+            error!(
+                backtrace = %std::backtrace::Backtrace::capture(),
+                "Cannot convert to DelayId value:`{str}` - {err:?}"
             );
             FromSqlError::InvalidType
         })

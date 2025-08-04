@@ -1001,30 +1001,30 @@ pub async fn lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         .await
         .unwrap();
     // Append an event that does not change Pending state but must update the version.
-    let version = db_connection
-        .append(
-            execution_id.clone(),
-            version,
-            AppendRequest {
-                created_at: sim_clock.now(),
-                event: ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinSetRequest {
-                        join_set_id: JoinSetId::new(
-                            concepts::JoinSetKind::OneOff,
-                            StrVariant::empty(),
-                        )
-                        .unwrap(),
-                        request: JoinSetRequest::DelayRequest {
-                            delay_id: DelayId::generate(),
-                            expires_at: sim_clock.now(),
-                            schedule_at: HistoryEventScheduleAt::Now,
+    let version = {
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        db_connection
+            .append(
+                execution_id.clone(),
+                version,
+                AppendRequest {
+                    created_at: sim_clock.now(),
+                    event: ExecutionEventInner::HistoryEvent {
+                        event: HistoryEvent::JoinSetRequest {
+                            request: JoinSetRequest::DelayRequest {
+                                delay_id: DelayId::new_oneoff(&execution_id, &join_set_id),
+                                expires_at: sim_clock.now(),
+                                schedule_at: HistoryEventScheduleAt::Now,
+                            },
+                            join_set_id,
                         },
                     },
                 },
-            },
-        )
-        .await
-        .unwrap();
+            )
+            .await
+            .unwrap()
+    };
     let locked_at = sim_clock.now();
     let (_, _version) = db_connection
         .lock(
@@ -1137,7 +1137,7 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
         .unwrap();
 
     let join_set_id = JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
-    let delay_id = DelayId::generate();
+    let delay_id = DelayId::new_oneoff(&execution_id, &join_set_id);
     db_connection
         .append(
             execution_id.clone(),
@@ -1148,7 +1148,7 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),
                         request: JoinSetRequest::DelayRequest {
-                            delay_id,
+                            delay_id: delay_id.clone(),
                             expires_at: sim_clock.now() + lock_expiry,
                             schedule_at: HistoryEventScheduleAt::In(lock_expiry),
                         },

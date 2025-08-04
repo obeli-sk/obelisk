@@ -173,8 +173,8 @@ pub(crate) async fn tick(
                 join_set_id,
                 delay_id,
             } => {
-                let event = JoinSetResponse::DelayFinished { delay_id };
                 debug!(%execution_id, %join_set_id, %delay_id, "Appending DelayFinishedAsyncResponse");
+                let event = JoinSetResponse::DelayFinished { delay_id };
                 let res = db_connection
                     .append_response(
                         executed_at,
@@ -183,7 +183,7 @@ pub(crate) async fn tick(
                     )
                     .await;
                 if let Err(err) = res {
-                    debug!(%execution_id, %delay_id, "Failed to update expired async timer - {err:?}");
+                    debug!(%execution_id, "Failed to update expired async timer - {err:?}");
                 } else {
                     expired_async_timers += 1;
                 }

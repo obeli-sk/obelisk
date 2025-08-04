@@ -445,8 +445,8 @@ mod index {
                 .collect::<HashMap<_, _>>();
             // Keep only open
             for responded in journal.responses.iter().filter_map(|e| {
-                if let JoinSetResponse::DelayFinished { delay_id } = e.event.event {
-                    Some((e.event.join_set_id.clone(), delay_id))
+                if let JoinSetResponse::DelayFinished { delay_id } = &e.event.event {
+                    Some((e.event.join_set_id.clone(), delay_id.clone()))
                 } else {
                     None
                 }
