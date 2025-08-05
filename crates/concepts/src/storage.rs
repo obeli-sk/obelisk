@@ -387,10 +387,11 @@ pub fn from_bytes_to_u64(bytes: [u8; 8]) -> u64 {
 #[serde(tag = "type")]
 /// Must be created by the executor in [`PendingState::Locked`].
 pub enum HistoryEvent {
+    /// Persist a generated pseudorandom value.
     #[display("Persist")]
     Persist {
         #[debug(skip)]
-        value: Vec<u8>,
+        value: Vec<u8>, // Only stored for nondeterminism checks. TODO: Consider using a hashed value or just the intention.
         kind: PersistKind,
     },
     #[display("JoinSetCreate({join_set_id})")]
@@ -426,7 +427,7 @@ pub enum HistoryEvent {
     Stub {
         target_execution_id: ExecutionIdDerived,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = StubReturnValue::None))]
-        return_value: StubReturnValue,
+        return_value: StubReturnValue, // Only stored for nondeterminism checks. TODO: Consider using a hashed value.
         target_result: Result<(), ()>, // Is the Row (target_execution_id,Version:1) what is expected?
     },
 }
