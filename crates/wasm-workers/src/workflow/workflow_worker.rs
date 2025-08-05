@@ -669,14 +669,13 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for WorkflowWorker<C, S> {
     }
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
-        trace!("Run with ctx: {ctx:?}");
+        ctx.worker_span.in_scope(|| info!("Execution run started"));
         if !ctx.can_be_retried {
             warn!(
                 "Workflow configuration set to not retry anymore. This can lead to nondeterministic results."
             );
         }
         let worker_span = ctx.worker_span.clone();
-        worker_span.in_scope(|| info!("Execution run started"));
         let execution_deadline = ctx.execution_deadline;
         let (store, func, params) = match self.prepare_func(ctx).await {
             Ok(ok) => ok,
