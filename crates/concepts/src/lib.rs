@@ -94,6 +94,8 @@ pub enum PermanentFailureKind {
     JoinSetNameConflict,
     /// Applicable to webhook endpoint
     WebhookEndpointError,
+    /// Applicable to Stub Activity
+    StubbedError,
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
@@ -654,8 +656,6 @@ impl Default for Params {
         Self(ParamsInternal::Empty)
     }
 }
-
-pub type StubReturnValue = SupportedFunctionReturnValue;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum FunctionExtension {
@@ -1368,7 +1368,7 @@ pub mod prefixed_ulid {
     impl DelayId {
         #[must_use]
         pub fn new_oneoff(execution_id: &ExecutionId, join_set_id: &JoinSetId) -> DelayId {
-            assert!(join_set_id.kind == JoinSetKind::OneOff);
+            assert_eq!(join_set_id.kind, JoinSetKind::OneOff);
             let ExecutionIdDerived {
                 top_level,
                 infix,
@@ -1441,7 +1441,8 @@ pub mod prefixed_ulid {
             fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
                 use super::{ExecutionId, JoinSetId};
                 let execution_id = ExecutionId::arbitrary(u)?;
-                let join_set_id = JoinSetId::arbitrary(u)?;
+                let mut join_set_id = JoinSetId::arbitrary(u)?;
+                join_set_id.kind = crate::JoinSetKind::OneOff;
                 Ok(DelayId::new_oneoff(&execution_id, &join_set_id))
             }
         }

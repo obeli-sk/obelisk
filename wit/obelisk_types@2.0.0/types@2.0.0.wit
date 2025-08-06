@@ -1,4 +1,4 @@
-package obelisk:types@1.1.0;
+package obelisk:types@2.0.0;
 
 interface time {
 
@@ -39,10 +39,14 @@ interface execution {
     }
 
     variant execution-error {
-        // FIXME: keep only one variant `unknown`
-        // NB: Update wasm_tools' error_tuple as well.
-        activity-trap(string),
-        permanent-timeout,
+        execution-failed,
+    }
+
+    variant get-response-error {
+        execution-error(execution-error),
+        /// Mismatch between extension function (-await-next, -get) and the actual execution result.
+        /// This can happen when join set contains responses of multiple functions or delay requests.
+        function-mismatch,
     }
 
     variant stub-error {

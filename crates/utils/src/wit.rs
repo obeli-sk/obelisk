@@ -14,8 +14,8 @@ use wit_parser::{
     TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup,
 };
 
-const OBELISK_TYPES_VERSION_MAJOR: u64 = 1;
-const OBELISK_TYPES_VERSION_MINOR: u64 = 1;
+const OBELISK_TYPES_VERSION_MAJOR: u64 = 2;
+const OBELISK_TYPES_VERSION_MINOR: u64 = 0;
 const OBELISK_TYPES_VERSION_PATCH: u64 = 0;
 const OBELISK_TYPES_VERSION: &str = formatcp!(
     "{OBELISK_TYPES_VERSION_MAJOR}.{OBELISK_TYPES_VERSION_MINOR}.{OBELISK_TYPES_VERSION_PATCH}"
@@ -24,7 +24,7 @@ const OBELISK_TYPES_PACKAGE_NAME: &str = formatcp!("obelisk:types@{OBELISK_TYPES
 
 const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@1.1.0/types@1.1.0.wit"
+    "/wit/obelisk_types@2.0.0/types@2.0.0.wit"
 ));
 
 pub(crate) fn wit(

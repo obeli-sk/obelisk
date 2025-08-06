@@ -42,8 +42,7 @@ expression: exports
               },
               {
                 "variant": {
-                  "activity-trap": "string",
-                  "permanent-timeout": null
+                  "execution-failed": null
                 }
               }
             ]
@@ -94,8 +93,7 @@ expression: exports
               },
               {
                 "variant": {
-                  "activity-trap": "string",
-                  "permanent-timeout": null
+                  "execution-failed": null
                 }
               }
             ]
@@ -258,8 +256,7 @@ expression: exports
               },
               {
                 "variant": {
-                  "activity-trap": "string",
-                  "permanent-timeout": null
+                  "execution-failed": null
                 }
               }
             ]
@@ -403,8 +400,7 @@ expression: exports
               },
               {
                 "variant": {
-                  "activity-trap": "string",
-                  "permanent-timeout": null
+                  "execution-failed": null
                 }
               }
             ]
@@ -457,8 +453,7 @@ expression: exports
               },
               {
                 "variant": {
-                  "activity-trap": "string",
-                  "permanent-timeout": null
+                  "execution-failed": null
                 }
               }
             ]
@@ -560,8 +555,7 @@ expression: exports
               },
               {
                 "variant": {
-                  "activity-trap": "string",
-                  "permanent-timeout": null
+                  "execution-failed": null
                 }
               }
             ]

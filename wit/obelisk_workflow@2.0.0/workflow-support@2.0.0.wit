@@ -1,8 +1,8 @@
 package obelisk:workflow@2.0.0;
 
 interface workflow-support {
-    use obelisk:types/time@1.1.0.{schedule-at};
-    use obelisk:types/execution@1.1.0.{join-set-id};
+    use obelisk:types/time@2.0.0.{schedule-at};
+    use obelisk:types/execution@2.0.0.{join-set-id, delay-id, execution-id};
 
     /// The closing strategy of a join set. Join sets are closed when execution finishes.
     enum closing-strategy {
@@ -22,12 +22,25 @@ interface workflow-support {
     /// The string consists only of alphanumeric characters (lowercase and uppercase letters, digits).
     random-string: func(min-length: u16, max-length-exclusive: u16) -> string;
 
-    /// Persistent sleep.
+    /// Block execution for given time.
     sleep: func(schedule-at: schedule-at);
+
+    request-delay: func(join-set-id: borrow<join-set-id>, timeout: schedule-at) -> delay-id;
 
     /// Create a new completing join set.
     new-join-set-named: func(name: string, closing-strategy: closing-strategy) -> join-set-id;
 
     /// Create a new completing join set with a generated name.
     new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set-id;
+
+    variant await-next-response {
+        execution(execution-id),
+        delay(delay-id),
+    }
+
+    /// Block the workflow execution until next response associated with the join set arrives.
+    /// The response is marked as processed.
+    /// Child execution result can then be obtained using `-get` extension function.
+    /// If there are no more unprocessed resonses, return `none`.
+    await-next: func(join-set-id: borrow<join-set-id>) -> option<await-next-response>;
 }

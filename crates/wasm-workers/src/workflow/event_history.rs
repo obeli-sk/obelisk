@@ -11,10 +11,10 @@ use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
 use concepts::ExecutionMetadata;
 use concepts::FinishedExecutionError;
+use concepts::FinishedExecutionResult;
 use concepts::JoinSetId;
 use concepts::JoinSetKind;
 use concepts::PermanentFailureKind;
-use concepts::StubReturnValue;
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage;
@@ -1395,7 +1395,7 @@ impl EventHistory {
                     let finished_req = AppendRequest {
                         created_at: called_at,
                         event: ExecutionEventInner::Finished {
-                            result: Ok(return_value.clone()),
+                            result: return_value.clone(),
                             http_client_traces: None,
                         },
                     };
@@ -1413,7 +1413,7 @@ impl EventHistory {
                                     event: JoinSetResponse::ChildExecutionFinished {
                                         child_execution_id: target_execution_id.clone(),
                                         finished_version: stub_finished_version.clone(),
-                                        result: Ok(return_value.clone()),
+                                        result: return_value.clone(),
                                     },
                                 },
                             },
@@ -1437,9 +1437,11 @@ impl EventHistory {
                             )
                             .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
                         match found.event {
-                            ExecutionEventInner::Finished {
-                                result: Ok(result), ..
-                            } if result == return_value => Ok(()),
+                            ExecutionEventInner::Finished { result, .. }
+                                if result == return_value =>
+                            {
+                                Ok(())
+                            }
                             ExecutionEventInner::Finished { .. } => {
                                 info!(%target_ffqn, %target_execution_id, "Different value found in stubbed execution's finished event");
                                 Err(())
@@ -1587,7 +1589,7 @@ pub(crate) enum EventCall {
         parent_id: ExecutionId,
         join_set_id: JoinSetId,
         #[debug(skip)]
-        return_value: SupportedFunctionReturnValue,
+        return_value: FinishedExecutionResult,
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
@@ -1700,7 +1702,7 @@ enum EventHistoryKey {
     },
     Stub {
         target_execution_id: ExecutionIdDerived,
-        return_value: StubReturnValue,
+        return_value: FinishedExecutionResult,
     },
 }
 
@@ -2247,7 +2249,7 @@ mod tests {
                         target_execution_id: child_execution_id.clone(),
                         parent_id: execution_id.clone(),
                         join_set_id: join_set_id.clone(),
-                        return_value: SupportedFunctionReturnValue::None,
+                        return_value: Ok(SupportedFunctionReturnValue::None),
                         wasm_backtrace: None,
                     },
                     db_connection,
@@ -2321,7 +2323,7 @@ mod tests {
                         target_execution_id: child_execution_id.clone(),
                         parent_id: execution_id.clone(),
                         join_set_id: join_set_id.clone(),
-                        return_value: SupportedFunctionReturnValue::None,
+                        return_value: Ok(SupportedFunctionReturnValue::None),
                         wasm_backtrace: None,
                     },
                     db_connection,
@@ -2338,7 +2340,7 @@ mod tests {
                         target_execution_id: child_execution_id.clone(),
                         parent_id: execution_id.clone(),
                         join_set_id: join_set_id.clone(),
-                        return_value: SupportedFunctionReturnValue::None,
+                        return_value: Ok(SupportedFunctionReturnValue::None),
                         wasm_backtrace: None,
                     },
                     db_connection,

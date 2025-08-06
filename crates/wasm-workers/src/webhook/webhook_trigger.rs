@@ -30,8 +30,8 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{Instrument, Level, Span, debug, error, info, info_span, instrument, trace};
-use types_v1_1_0::obelisk::types::execution::Host as ExecutionHost_1_1_0;
-use types_v1_1_0::obelisk::types::execution::HostJoinSetId as HostJoinSetId_1_1_0;
+use types_v2_0_0::obelisk::types::execution::Host as ExecutionHost;
+use types_v2_0_0::obelisk::types::execution::HostJoinSetId;
 use utils::wasm_tools::{ExIm, HTTP_HANDLER_FFQN, WasmComponent};
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Val};
@@ -43,15 +43,14 @@ use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
-// Generate `obelisk:types@1.1.0`
-pub(crate) mod types_v1_1_0 {
+pub(crate) mod types_v2_0_0 {
     wasmtime::component::bindgen!({
         path: "host-wit-webhook/",
         async: true,
         inline: "package any:any;
                 world bindings {
-                    import obelisk:types/time@1.1.0;
-                    import obelisk:types/execution@1.1.0;
+                    import obelisk:types/time@2.0.0;
+                    import obelisk:types/execution@2.0.0;
                 }",
         world: "any:any/bindings",
         trappable_imports: true,
@@ -372,7 +371,7 @@ struct WebhookEndpointCtx<C: ClockFn> {
     component_logger: ComponentLogger,
 }
 
-impl<C: ClockFn> HostJoinSetId_1_1_0 for WebhookEndpointCtx<C> {
+impl<C: ClockFn> HostJoinSetId for WebhookEndpointCtx<C> {
     async fn id(
         &mut self,
         _resource: wasmtime::component::Resource<JoinSetId>,
@@ -385,7 +384,7 @@ impl<C: ClockFn> HostJoinSetId_1_1_0 for WebhookEndpointCtx<C> {
     }
 }
 
-impl<C: ClockFn> ExecutionHost_1_1_0 for WebhookEndpointCtx<C> {}
+impl<C: ClockFn> ExecutionHost for WebhookEndpointCtx<C> {}
 
 #[derive(thiserror::Error, Debug, Clone)]
 #[expect(clippy::enum_variant_names)]
@@ -685,13 +684,13 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 context: StrVariant::Static("linking log activities"),
                 err: err.into(),
             })?;
-        // link obelisk:types@1.1.0
-        types_v1_1_0::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<C>>(
+        // link obelisk:types@2.0.0
+        types_v2_0_0::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<C>>(
             linker,
             |x| x,
         )
         .map_err(|err| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking obelisk:types/execution@1.1.0"),
+            context: StrVariant::Static("linking obelisk:types"),
             err: err.into(),
         })?;
         Ok(())

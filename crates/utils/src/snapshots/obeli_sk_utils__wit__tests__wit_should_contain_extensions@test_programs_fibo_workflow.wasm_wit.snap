@@ -5,8 +5,8 @@ expression: wit
 package root:component;
 
 world root {
-  import obelisk:types/execution@1.1.0;
-  import obelisk:workflow/workflow-support@1.1.0;
+  import obelisk:types/execution@2.0.0;
+  import obelisk:workflow/workflow-support@2.0.0;
   import testing:fibo-obelisk-ext/fibo;
   import testing:fibo-workflow-obelisk-ext/workflow;
   import testing:fibo-workflow/workflow-nesting;
@@ -15,7 +15,7 @@ world root {
   export testing:fibo-workflow/workflow-nesting;
   export testing:fibo-workflow/workflow;
 }
-package obelisk:types@1.1.0 {
+package obelisk:types@2.0.0 {
   interface time {
     variant duration {
       milliseconds(u64),
@@ -52,10 +52,14 @@ package obelisk:types@1.1.0 {
     }
 
     variant execution-error {
-      /// FIXME: keep only one variant `unknown`
-      /// NB: Update wasm_tools' error_tuple as well.
-      activity-trap(string),
-      permanent-timeout,
+      execution-failed,
+    }
+
+    variant get-response-error {
+      execution-error(execution-error),
+      /// Mismatch between extension function (-await-next, -get) and the actual execution result.
+      /// This can happen when join set contains responses of multiple functions or delay requests.
+      function-mismatch,
     }
 
     variant stub-error {
@@ -66,9 +70,9 @@ package obelisk:types@1.1.0 {
 }
 
 
-package obelisk:workflow@1.1.0 {
+package obelisk:workflow@2.0.0 {
   interface workflow-support {
-    use obelisk:types/execution@1.1.0.{join-set-id};
+    use obelisk:types/execution@2.0.0.{join-set-id};
 
     enum closing-strategy {
       complete,
@@ -81,7 +85,7 @@ package obelisk:workflow@1.1.0 {
 
 package testing:fibo-obelisk-ext {
   interface fibo {
-    use obelisk:types/execution@1.1.0.{join-set-id, execution-id, execution-error};
+    use obelisk:types/execution@2.0.0.{join-set-id, execution-id, execution-error};
 
     fibo-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
 
@@ -92,9 +96,9 @@ package testing:fibo-obelisk-ext {
 
 package testing:fibo-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@1.1.0.{execution-id, join-set-id};
-    use obelisk:types/time@1.1.0.{schedule-at};
-    use obelisk:types/execution@1.1.0.{execution-error};
+    use obelisk:types/execution@2.0.0.{execution-id, join-set-id};
+    use obelisk:types/time@2.0.0.{schedule-at};
+    use obelisk:types/execution@2.0.0.{execution-error};
 
     fibow-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
 
@@ -115,9 +119,9 @@ package testing:fibo-workflow-obelisk-ext {
     fiboa-concurrent-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
   }
   interface workflow-nesting {
-    use obelisk:types/execution@1.1.0.{execution-id, join-set-id};
-    use obelisk:types/time@1.1.0.{schedule-at};
-    use obelisk:types/execution@1.1.0.{execution-error};
+    use obelisk:types/execution@2.0.0.{execution-id, join-set-id};
+    use obelisk:types/time@2.0.0.{schedule-at};
+    use obelisk:types/execution@2.0.0.{execution-error};
 
     fibo-nested-workflow-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
 

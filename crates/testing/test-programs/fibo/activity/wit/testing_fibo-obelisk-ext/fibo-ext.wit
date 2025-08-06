@@ -1,7 +1,7 @@
 package testing:fibo-obelisk-ext;
 
 interface fibo {
-    use obelisk:types/execution@1.1.0.{execution-id, join-set-id, execution-error};
+    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, execution-error};
 
     fibo-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
 

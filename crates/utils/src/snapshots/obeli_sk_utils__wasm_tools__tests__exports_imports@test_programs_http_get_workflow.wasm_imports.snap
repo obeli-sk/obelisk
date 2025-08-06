@@ -3,9 +3,9 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:types/execution@1.1.0.[method]join-set-id.id": {
+  "obelisk:types/execution@2.0.0.[method]join-set-id.id": {
     "ffqn": {
-      "ifc_fqn": "obelisk:types/execution@1.1.0",
+      "ifc_fqn": "obelisk:types/execution@2.0.0",
       "function_name": "[method]join-set-id.id"
     },
     "parameter_types": [
@@ -22,9 +22,9 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@1.1.0.new-join-set-generated": {
+  "obelisk:workflow/workflow-support@2.0.0.new-join-set-generated": {
     "ffqn": {
-      "ifc_fqn": "obelisk:workflow/workflow-support@1.1.0",
+      "ifc_fqn": "obelisk:workflow/workflow-support@2.0.0",
       "function_name": "new-join-set-generated"
     },
     "parameter_types": [
@@ -84,8 +84,7 @@ expression: imports
               },
               {
                 "variant": {
-                  "activity-trap": "string",
-                  "permanent-timeout": null
+                  "execution-failed": null
                 }
               }
             ]

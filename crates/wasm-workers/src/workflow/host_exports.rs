@@ -16,73 +16,17 @@ pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 pub(crate) const SUFFIX_FN_SCHEDULE: &str = "-schedule";
 pub(crate) const SUFFIX_FN_STUB: &str = "-stub";
 
-// Generate `obelisk:workflow:workflow-support@1.1.0`
-pub(crate) mod v1_1_0 {
-    use super::v2_0_0::{DurationEnum_2_0_0, ScheduleAt_2_0_0};
-    pub(crate) use obelisk::types::time::Duration as DurationEnum_1_1_0;
-    pub(crate) use obelisk::workflow1_1_0::workflow_support::ClosingStrategy as ClosingStrategy_1_1_0;
-    use std::time::Duration;
-
-    wasmtime::component::bindgen!({
-        path: "host-wit-workflow/",
-        async: true,
-        inline: "package any:any;
-                world bindings {
-                    import obelisk:workflow/workflow-support@1.1.0;
-                }",
-        world: "any:any/bindings",
-        trappable_imports: true,
-        with: {
-            "obelisk:types/execution/join-set-id": concepts::JoinSetId,
-        }
-    });
-
-    impl From<DurationEnum_1_1_0> for Duration {
-        fn from(value: DurationEnum_1_1_0) -> Self {
-            match value {
-                DurationEnum_1_1_0::Milliseconds(millis) => Duration::from_millis(millis),
-                DurationEnum_1_1_0::Seconds(secs) => Duration::from_secs(secs),
-                DurationEnum_1_1_0::Minutes(mins) => Duration::from_secs(u64::from(mins * 60)),
-                DurationEnum_1_1_0::Hours(hours) => Duration::from_secs(u64::from(hours * 60 * 60)),
-                DurationEnum_1_1_0::Days(days) => {
-                    Duration::from_secs(u64::from(days * 24 * 60 * 60))
-                }
-            }
-        }
-    }
-
-    impl From<DurationEnum_1_1_0> for ScheduleAt_2_0_0 {
-        fn from(duration: DurationEnum_1_1_0) -> Self {
-            let duration = DurationEnum_2_0_0::from(duration);
-            ScheduleAt_2_0_0::In(duration)
-        }
-    }
-
-    impl From<DurationEnum_1_1_0> for DurationEnum_2_0_0 {
-        fn from(value: DurationEnum_1_1_0) -> Self {
-            match value {
-                DurationEnum_1_1_0::Milliseconds(millis) => Self::Milliseconds(millis),
-                DurationEnum_1_1_0::Seconds(secs) => Self::Seconds(secs),
-                DurationEnum_1_1_0::Minutes(mins) => Self::Minutes(mins),
-                DurationEnum_1_1_0::Hours(hours) => Self::Hours(hours),
-                DurationEnum_1_1_0::Days(days) => Self::Days(days),
-            }
-        }
-    }
-}
-
 // Generate `obelisk:workflow:workflow-support@2.0.0`
 pub(crate) mod v2_0_0 {
-    use std::time::Duration;
-    use std::time::UNIX_EPOCH;
-
     use chrono::DateTime;
     use chrono::Utc;
     use concepts::storage::HistoryEventScheduleAt;
     use obelisk::types::time::Datetime;
     pub(crate) use obelisk::types::time::Duration as DurationEnum_2_0_0;
     pub(crate) use obelisk::types::time::ScheduleAt as ScheduleAt_2_0_0;
-    pub(crate) use obelisk::workflow2_0_0::workflow_support::ClosingStrategy as ClosingStrategy_2_0_0;
+    pub(crate) use obelisk::workflow::workflow_support::ClosingStrategy as ClosingStrategy_2_0_0;
+    use std::time::Duration;
+    use std::time::UNIX_EPOCH;
 
     wasmtime::component::bindgen!({
         path: "host-wit-workflow/",

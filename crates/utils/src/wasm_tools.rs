@@ -397,8 +397,7 @@ impl ExIm {
         let execution_id_and_error_tuple_type_wrapper = TypeWrapper::Tuple(Box::new([
             execution_id_type_wrapper.clone(),
             TypeWrapper::Variant(indexmap! {
-                Box::from("activity-trap") => Some(TypeWrapper::String),
-                Box::from("permanent-timeout") => None,
+                Box::from("execution-failed") => None,
             }),
         ]));
         let stub_error_type_wrapper = TypeWrapper::Variant(indexmap! {
@@ -570,9 +569,21 @@ impl ExIm {
                             let mut params = vec![param_type_execution_id.clone()];
                             if let Some(original_ret) = &exported_fn_metadata.return_type {
                                 params.push(ParameterType {
-                                    type_wrapper: original_ret.type_wrapper.clone(),
-                                    name: StrVariant::Static("return-value"),
-                                    wit_type: original_ret.wit_type.clone(),
+                                    type_wrapper: TypeWrapper::Result {
+                                        ok: Some(Box::new(original_ret.type_wrapper.clone())),
+                                        err: None,
+                                    },
+                                    name: StrVariant::Static("execution-result"),
+                                    wit_type: format!("result<{}>", original_ret.wit_type).into(),
+                                });
+                            } else {
+                                params.push(ParameterType {
+                                    type_wrapper: TypeWrapper::Result {
+                                        ok: None,
+                                        err: None,
+                                    },
+                                    name: StrVariant::Static("execution-result"),
+                                    wit_type: "result".into(),
                                 });
                             }
                             ParameterTypes(params)

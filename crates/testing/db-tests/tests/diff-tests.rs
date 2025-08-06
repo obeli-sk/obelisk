@@ -13,9 +13,6 @@ use concepts::time::ClockFn as _;
 use concepts::time::Now;
 use db_tests::Database;
 use db_tests::SOME_FFQN;
-use rand::Rng as _;
-use rand::SeedableRng as _;
-use rand::rngs::StdRng;
 use std::sync::Arc;
 use std::time::Duration;
 use test_utils::arbitrary::UnstructuredHolder;
@@ -26,8 +23,12 @@ use val_json::wast_val::WastValWithType;
 #[tokio::test]
 async fn diff_proptest() {
     set_up();
-    let seed = StdRng::from_entropy().r#gen();
-    println!("Seed: {seed}");
+    for seed in test_utils::get_seed() {
+        diff_proptest_inner(seed).await;
+    }
+}
+
+async fn diff_proptest_inner(seed: u64) {
     let unstructured_holder = UnstructuredHolder::new(seed);
     let mut unstructured = unstructured_holder.unstructured();
     let execution_id = ExecutionId::generate();

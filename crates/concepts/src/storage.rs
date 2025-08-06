@@ -7,7 +7,6 @@ use crate::FunctionFqn;
 use crate::JoinSetId;
 use crate::Params;
 use crate::StrVariant;
-use crate::StubReturnValue;
 use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
@@ -426,8 +425,8 @@ pub enum HistoryEvent {
     #[display("Stub({target_execution_id})")]
     Stub {
         target_execution_id: ExecutionIdDerived,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StubReturnValue::None))]
-        return_value: StubReturnValue, // Only stored for nondeterminism checks. TODO: Consider using a hashed value.
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(crate::SupportedFunctionReturnValue::None)))]
+        return_value: FinishedExecutionResult, // Only stored for nondeterminism checks. TODO: Consider using a hashed value.
         target_result: Result<(), ()>, // Is the Row (target_execution_id,Version:1) what is expected?
     },
 }

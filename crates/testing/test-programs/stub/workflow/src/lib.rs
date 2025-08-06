@@ -1,8 +1,9 @@
+use crate::exports::testing::stub_workflow::workflow::Guest;
+use crate::obelisk::workflow::workflow_support::{self, ClosingStrategy};
 use crate::testing::stub_activity::activity;
 use crate::testing::stub_activity_obelisk_ext::activity as activity_ext;
 use crate::testing::stub_activity_obelisk_stub::activity as activity_stub;
-use exports::testing::stub_workflow::workflow::Guest;
-use obelisk::workflow::workflow_support::{self, ClosingStrategy};
+use obelisk::types::execution::{ExecutionId, StubError};
 use wit_bindgen::generate;
 
 generate!({ generate_all });
@@ -13,7 +14,7 @@ impl Guest for Component {
     fn submit_stub_await(arg: String) -> String {
         let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
         let execution_id = activity_ext::foo_submit(&join_set, &arg);
-        activity_stub::foo_stub(&execution_id, &format!("stubbing {arg}"))
+        activity_stub::foo_stub(&execution_id, Ok(&format!("stubbing {arg}")))
             .expect("stubbed activity must accept returned value once");
         let (actual_execution_id, ret_val) =
             activity_ext::foo_await_next(&join_set).expect("stubbed activity must resolve");
@@ -27,5 +28,42 @@ impl Guest for Component {
 
     fn noret_submit_await() {
         activity::noret();
+    }
+
+    fn submit_race() -> String {
+        // let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+        // let execution_id = activity_ext::foo_submit(&join_set, "some param");
+        // let delay_id = workflow_support::request_delay(
+        //     &join_set,
+        //     obelisk::types::time::ScheduleAt::In(obelisk::types::time::Duration::Seconds(1)),
+        // );
+        // match workflow_support::await_next(&join_set)
+        //     .expect("two submissions and no response was processed yet")
+        // {
+        //     AwaitNextResponse::Execution(found_id) => {
+        //         assert_eq!(found_id.id, execution_id.id);
+        //         "TODO".to_string()
+        //         // match activity_ext::foo_get(&execution_id)
+        //         //     .expect("this execution response must have been processed")
+        //         // {
+        //         //     Ok(ok) => format!("execution won: {ok}"),
+        //         //     Err(GetResponseError::FunctionMismatch) => {
+        //         //         unreachable!("no other functions were submitted")
+        //         //     }
+        //         //     Err(GetResponseError::ExecutionError(_)) => {
+        //         //         format!("got execution error :(")
+        //         //     }
+        //         // }
+        //     }
+        //     AwaitNextResponse::Delay(found_id) => {
+        //         assert_eq!(found_id.id, delay_id.id);
+        //         "delay won".to_string()
+        //     }
+        // }
+        todo!()
+    }
+
+    fn stub_subworkflow(execution_id: ExecutionId, retval: String) -> Result<(), StubError> {
+        activity_stub::foo_stub(&execution_id, Ok(&format!("stubbing {retval}")))
     }
 }

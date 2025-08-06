@@ -1,5 +1,4 @@
 use super::event_history::{ApplyError, ChildReturnValue, EventCall, EventHistory, HostResource};
-use super::host_exports::v1_1_0::{ClosingStrategy_1_1_0, DurationEnum_1_1_0};
 use super::host_exports::v2_0_0::{ClosingStrategy_2_0_0, ScheduleAt_2_0_0};
 use super::host_exports::{
     self, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
@@ -16,8 +15,8 @@ use concepts::storage::{self, DbError, DbPool, HistoryEventScheduleAt, Version, 
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
-    ClosingStrategy, ComponentId, ExecutionId, FunctionRegistry, IfcFqnName, StrVariant,
-    SupportedFunctionReturnValue,
+    ClosingStrategy, ComponentId, ExecutionId, FinishedExecutionError, FunctionRegistry,
+    IfcFqnName, PermanentFailureKind, StrVariant, SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
@@ -27,7 +26,7 @@ use rand::rngs::StdRng;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tracing::{Span, error, instrument, trace};
-use val_json::wast_val::WastVal;
+use val_json::wast_val::{WastVal, WastValWithType};
 use wasmtime::component::{Linker, Resource, Val};
 use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi::{ResourceTable, ResourceTableError};
@@ -174,7 +173,7 @@ pub(crate) enum ImportedFnCall<'a> {
         parent_id: ExecutionId,
         join_set_id: JoinSetId,
         #[debug(skip)]
-        return_value: Option<wasmtime::component::Val>,
+        return_value: wasmtime::component::Val,
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
@@ -354,15 +353,20 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let Some((target_execution_id, return_value)) = params.split_first() else {
-                    return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                        ffqn: called_ffqn,
-                        reason: StrVariant::Static(
-                            "exepcted at least one parameter of type `execution-id`",
-                        ),
-                        detail: None,
-                    });
+
+                let (target_execution_id, return_value) = match params.split_first() {
+                    Some((target_execution_id, [return_value])) => {
+                        (target_execution_id, return_value.clone())
+                    }
+                    _ => {
+                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: called_ffqn,
+                            reason: StrVariant::Static("-stub function exepcts two parameters"),
+                            detail: None,
+                        });
+                    }
                 };
+
                 let target_execution_id = match ExecutionId::try_from(target_execution_id) {
                     Ok(ExecutionId::Derived(derived)) => derived,
                     Ok(ExecutionId::TopLevel(_)) => {
@@ -384,17 +388,6 @@ impl<'a> ImportedFnCall<'a> {
                     }
                 };
 
-                let return_value = match return_value {
-                    [] => None,
-                    [return_value] => Some(return_value.clone()),
-                    _ => {
-                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                            ffqn: called_ffqn,
-                            reason: "exepcted at most two parameters for `-stub` function".into(),
-                            detail: None,
-                        });
-                    }
-                };
                 let (parent_id, join_set_id) = match target_execution_id.split_to_parts() {
                     Ok(ok) => ok,
                     Err(err) => {
@@ -467,29 +460,23 @@ impl<C: ClockFn> WasiView for WorkflowCtx<C> {
 
 #[derive(Copy, Clone)]
 enum WorkflowSupportVersion {
-    Version1_1,
     Version2,
 }
 impl WorkflowSupportVersion {
     fn as_str(&self) -> &'static str {
         match self {
-            Self::Version1_1 => IFC_FQN_WORKFLOW_SUPPORT_1_1,
             Self::Version2 => IFC_FQN_WORKFLOW_SUPPORT_2,
         }
     }
-    const SLEEP_FFQN_1: FunctionFqn =
-        FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_1_1, "sleep");
     const SLEEP_FFQN_2: FunctionFqn = FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_2, "sleep");
 
     fn sleep_ffqn(&self) -> FunctionFqn {
         match self {
-            Self::Version1_1 => Self::SLEEP_FFQN_1,
             Self::Version2 => Self::SLEEP_FFQN_2,
         }
     }
 }
 
-const IFC_FQN_WORKFLOW_SUPPORT_1_1: &str = "obelisk:workflow/workflow-support@1.1.0";
 const IFC_FQN_WORKFLOW_SUPPORT_2: &str = "obelisk:workflow/workflow-support@2.0.0";
 
 impl<C: ClockFn> WorkflowCtx<C> {
@@ -718,18 +705,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
             |state: &mut Self| state,
         )
         .map_err(linking_err)?;
-        // link obelisk:types@1.0.0
-        host_exports::v1_1_0::obelisk::types::execution::add_to_linker::<_, WorkflowCtx<C>>(
+        // link obelisk:types@2.0.0
+        host_exports::v2_0_0::obelisk::types::execution::add_to_linker::<_, WorkflowCtx<C>>(
             linker,
             |state: &mut Self| state,
         )
         .map_err(linking_err)?;
 
-        // link workflow-support 1.1.0
-        Self::add_to_linker_workflow_support::<ClosingStrategy_1_1_0, DurationEnum_1_1_0>(
-            linker,
-            WorkflowSupportVersion::Version1_1,
-        )?;
         // link workflow-support 2.0.0
         Self::add_to_linker_workflow_support::<ClosingStrategy_2_0_0, ScheduleAt_2_0_0>(
             linker,
@@ -992,39 +974,48 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 let (fn_meta, _, _) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from fn_registry exports must be found");
-                // Convert Val to StubReturnValue
-                let return_value = match (return_value, fn_meta.return_type) {
-                    (Some(return_value), Some(return_type)) => {
-                        SupportedFunctionReturnValue::from_val_and_type_wrapper(
-                            return_value,
-                            return_type.type_wrapper,
-                        )
-                        .map_err(|err| {
-                            WorkflowFunctionError::ImportedFunctionCallError {
-                                ffqn: called_ffqn.clone(),
-                                reason: "cannot convert stub return value".into(),
-                                detail: Some(format!("{err:?}")),
-                            }
+
+                let return_value_or_err = WastVal::try_from(return_value).map_err(|err| {
+                    WorkflowFunctionError::ImportedFunctionCallError {
+                        ffqn: called_ffqn.clone(),
+                        reason: "cannot convert stub return value".into(),
+                        detail: Some(format!("{err:?}")),
+                    }
+                })?;
+
+                let return_value = match (return_value_or_err, fn_meta.return_type) {
+                    (WastVal::Result(Err(None)), _) => {
+                        Err(FinishedExecutionError::PermanentFailure {
+                            reason_inner: String::new(),
+                            reason_full: String::new(),
+                            kind: PermanentFailureKind::StubbedError,
+                            detail: None,
                         })
                     }
-                    (None, None) => Ok(SupportedFunctionReturnValue::None),
-                    (return_value, ty) => {
-                        let return_value = return_value.is_some();
-                        Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    (WastVal::Result(Ok(Some(return_value))), Some(return_type)) => {
+                        // TODO: type check
+                        Ok(SupportedFunctionReturnValue::from(WastValWithType {
+                            r#type: return_type.type_wrapper,
+                            value: *return_value,
+                        }))
+                    }
+                    (WastVal::Result(Ok(None)), None) => Ok(SupportedFunctionReturnValue::None),
+                    other => {
+                        error!("Unexpected stub return value {other:?}");
+                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
                             ffqn: called_ffqn.clone(),
-                            reason: "invalid combination of return value and return type".into(),
-                            detail: Some(format!(
-                                "invalid combination of return value (non-empty:{return_value}) and registered return type {ty:?}"
-                            )),
-                        })
+                            reason: "unexpected stub return value".into(),
+                            detail: None,
+                        });
                     }
-                }?;
+                };
+
                 Ok(EventCall::Stub {
                     target_ffqn: target_ffqn.clone(),
                     target_execution_id: target_execution_id.clone(),
                     parent_id,
                     join_set_id,
-                    return_value: return_value.clone(),
+                    return_value,
                     wasm_backtrace,
                 })
             }
@@ -1033,22 +1024,21 @@ impl<C: ClockFn> WorkflowCtx<C> {
 }
 
 mod workflow_support {
-    use super::host_exports::{self};
     use super::{ClockFn, EventCall, WorkflowCtx, WorkflowFunctionError, assert_matches};
     use crate::workflow::event_history::ChildReturnValue;
+    use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
+    use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::HostJoinSetId;
     use concepts::FunctionFqn;
     use concepts::storage::HistoryEventScheduleAt;
     use concepts::{
         CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind,
         storage::{self, PersistKind},
     };
-    use host_exports::v1_1_0::obelisk::types::execution::Host as ExecutionHost_1_1_0;
-    use host_exports::v1_1_0::obelisk::types::execution::HostJoinSetId as HostJoinSetId_1_1_0;
     use tracing::trace;
     use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
 
-    impl<C: ClockFn> HostJoinSetId_1_1_0 for WorkflowCtx<C> {
+    impl<C: ClockFn> HostJoinSetId for WorkflowCtx<C> {
         async fn id(
             &mut self,
             resource: wasmtime::component::Resource<JoinSetId>,
@@ -1062,7 +1052,7 @@ mod workflow_support {
         }
     }
 
-    impl<C: ClockFn> ExecutionHost_1_1_0 for WorkflowCtx<C> {}
+    impl<C: ClockFn> ExecutionIfcHost for WorkflowCtx<C> {}
 
     // Functions dynamically linked for Workflow Support 1.0.0 and 1.1.0
     impl<C: ClockFn> WorkflowCtx<C> {
