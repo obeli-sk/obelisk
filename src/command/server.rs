@@ -22,6 +22,7 @@ use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookComponentVerified;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
+use crate::grpc_gen::stub_request;
 use crate::grpc_util::TonicRespResult;
 use crate::grpc_util::TonicResult;
 use crate::grpc_util::extractor::accept_trace;
@@ -340,11 +341,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .await
             .to_status()?;
 
-        let resp = grpc_gen::SubmitResponse {
-            execution_id: Some(grpc_gen::ExecutionId {
-                id: execution_id.to_string(),
-            }),
-        };
+        let resp = grpc_gen::SubmitResponse {};
         Ok(tonic::Response::new(resp))
     }
 
@@ -399,11 +396,34 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 "argument `ffqn` must be the target, not the extension".to_string(),
             ));
         }
-        // Type check `return_value`
-        let return_value = match (request.return_value, fn_metadata.return_type.clone()) {
-            (Some(return_value), Some(return_type)) => {
-                match deserialize_slice(&return_value.value, return_type.type_wrapper) {
-                    Ok(return_value) => SupportedFunctionReturnValue::from(return_value),
+        let finished_result = request
+            .finished_result
+            .argument_must_exist("finished_result")?;
+
+        let result = match (finished_result, fn_metadata.return_type.clone()) {
+            (stub_request::FinishedResult::ExecutionError(_), _) => {
+                Err(concepts::FinishedExecutionError::PermanentFailure {
+                    reason_inner: String::new(),
+                    reason_full: String::new(),
+                    kind: concepts::PermanentFailureKind::StubbedError,
+                    detail: None,
+                })
+            }
+            (
+                stub_request::FinishedResult::ReturnValue(stub_request::ReturnValue {
+                    return_value: None,
+                }),
+                None,
+            ) => Ok(SupportedFunctionReturnValue::None),
+            (
+                stub_request::FinishedResult::ReturnValue(stub_request::ReturnValue {
+                    return_value: Some(return_value),
+                }),
+                Some(ReturnType { type_wrapper, .. }),
+            ) => {
+                // Type check `return_value`
+                match deserialize_slice(&return_value.value, type_wrapper) {
+                    Ok(return_value) => Ok(SupportedFunctionReturnValue::from(return_value)),
                     Err(err) => {
                         return Err(tonic::Status::invalid_argument(format!(
                             "cannot deserialize return value according to its type - {err}"
@@ -411,7 +431,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     }
                 }
             }
-            (None, None) => SupportedFunctionReturnValue::None,
             (_return_value, _ty) => {
                 return Err(tonic::Status::invalid_argument(
                     "mismatch between return value and its type",
@@ -425,7 +444,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             let finished_req = AppendRequest {
                 created_at,
                 event: ExecutionEventInner::Finished {
-                    result: Ok(return_value.clone()),
+                    result: result.clone(),
                     http_client_traces: None,
                 },
             };
@@ -443,7 +462,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                             event: JoinSetResponse::ChildExecutionFinished {
                                 child_execution_id: execution_id.clone(),
                                 finished_version: stub_finished_version.clone(),
-                                result: Ok(return_value.clone()),
+                                result: result.clone(),
                             },
                         },
                     },
@@ -460,8 +479,11 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .to_status()?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
             match found.event {
                 ExecutionEventInner::Finished {
-                    result: Ok(result), ..
-                } if result == return_value => {}
+                    result: found_result,
+                    ..
+                } if result == found_result => {
+                    // Same value has already be written, RPC is successful.
+                }
                 ExecutionEventInner::Finished { .. } => {
                     return Err(tonic::Status::already_exists(
                         "different value found in stubbed execution's finished event",

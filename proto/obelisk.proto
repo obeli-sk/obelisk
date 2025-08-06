@@ -166,12 +166,21 @@ message SubmitRequest {
 }
 
 message SubmitResponse {
-    ExecutionId execution_id = 1; // TODO: remove
 }
 
 message StubRequest {
+    message ReturnValue {
+        google.protobuf.Any return_value = 1;
+    }
+    message ExecutionError {
+    }
+
     ExecutionId execution_id = 1;
-    google.protobuf.Any return_value = 2;
+
+    oneof finished_result {
+        ReturnValue return_value = 2;
+        ExecutionError execution_error = 3;
+    }
 }
 
 message StubResponse {

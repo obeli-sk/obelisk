@@ -1,4 +1,5 @@
 use crate::ExecutionRepositoryClient;
+use crate::grpc_gen::stub_request;
 use crate::grpc_util::grpc_gen;
 use crate::grpc_util::grpc_gen::execution_status::BlockedByJoinSet;
 use crate::grpc_util::grpc_gen::execution_status::Finished;
@@ -71,21 +72,33 @@ pub(crate) async fn submit(
 pub(crate) async fn stub(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionIdDerived,
-    return_value: Option<String>,
+    finished_result: Result<Option<String>, ()>,
 ) -> anyhow::Result<()> {
     let execution_id = ExecutionId::Derived(execution_id);
-    // Make sure `return_value` is a JSON string.
-    if let Some(return_value) = &return_value {
-        serde_json::from_str::<serde_json::Value>(return_value)
-            .context("`RETURN_VALUE` must be a JSON-encoded string")?;
-    }
+
+    let finished_result = match finished_result {
+        Err(()) => stub_request::FinishedResult::ExecutionError(stub_request::ExecutionError {}),
+        Ok(None) => stub_request::FinishedResult::ReturnValue(stub_request::ReturnValue {
+            return_value: None,
+        }),
+        Ok(Some(return_value)) => {
+            // Make sure `return_value` is a JSON string.
+            serde_json::from_str::<serde_json::Value>(&return_value)
+                .context("`RETURN_VALUE` must be a JSON-encoded string")?;
+
+            stub_request::FinishedResult::ReturnValue(stub_request::ReturnValue {
+                return_value: Some(prost_wkt_types::Any {
+                    type_url: "urn:obelisk:json:retval:TBD".to_string(),
+                    value: return_value.into_bytes(),
+                }),
+            })
+        }
+    };
+
     client
         .stub(tonic::Request::new(grpc_gen::StubRequest {
             execution_id: Some(execution_id.clone().into()),
-            return_value: return_value.map(|return_value| prost_wkt_types::Any {
-                type_url: "urn:obelisk:json:retval:TBD".to_string(),
-                value: return_value.into_bytes(),
-            }),
+            finished_result: Some(finished_result),
         }))
         .await?
         .into_inner();

@@ -3,7 +3,7 @@ use crate::{
     components::{code::code_block::CodeBlock, ffqn_with_links::FfqnWithLinks},
     grpc::{
         ffqn::FunctionFqn,
-        grpc_client::{self, ExecutionId},
+        grpc_client::{self, ExecutionId, stub_request},
     },
     util::wit_highlighter,
 };
@@ -24,6 +24,9 @@ pub struct ExecutionStubResultPageProps {
 pub fn execution_stub_result_page(
     ExecutionStubResultPageProps { ffqn, execution_id }: &ExecutionStubResultPageProps,
 ) -> Html {
+    const SUBMIT_RETVAL: &str = "submit_retval";
+    const SUBMIT_ERROR: &str = "submit_error";
+
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
 
@@ -80,34 +83,53 @@ pub fn execution_stub_result_page(
         let execution_id = execution_id.clone();
         let input_ref = input_ref.clone();
         let is_ret_some = maybe_return_type.is_some();
-        Callback::from(move |e: SubmitEvent| {
-            e.prevent_default(); // prevent form submission
-            let input = if is_ret_some {
-                let input = input_ref.cast::<HtmlInputElement>().unwrap().value();
-                match serde_json::from_str::<serde_json::Value>(&input) {
-                    Ok(_) => {
-                        debug!("serde ok")
-                    }
-                    Err(serde_err) => {
-                        error!("Cannot serialize input - {serde_err:?}");
-                        err_state.set(Some(format!("cannot serialize input - {serde_err}")));
-                        return;
-                    }
-                };
-                Some(input)
+        Callback::from(move |event: SubmitEvent| {
+            event.prevent_default(); // prevent form submission
+            let Some(submitter) = event.submitter() else {
+                unreachable!("both submit buttons have id")
+            };
+            let is_ok = if submitter.id() == SUBMIT_RETVAL {
+                true
+            } else if submitter.id() == SUBMIT_ERROR {
+                false
             } else {
-                None
+                unreachable!("unexpected id {}", submitter.id())
+            };
+            let finished_result = if is_ok {
+                let input = if is_ret_some {
+                    let input = input_ref.cast::<HtmlInputElement>().unwrap().value();
+                    match serde_json::from_str::<serde_json::Value>(&input) {
+                        Ok(_) => {
+                            debug!("serde ok")
+                        }
+                        Err(serde_err) => {
+                            error!("Cannot serialize input - {serde_err:?}");
+                            err_state.set(Some(format!("cannot serialize input - {serde_err}")));
+                            return;
+                        }
+                    };
+                    Some(input)
+                } else {
+                    None
+                };
+                stub_request::FinishedResult::ReturnValue(stub_request::ReturnValue {
+                    return_value: input.map(|input| prost_wkt_types::Any {
+                        type_url: format!("urn:obelisk:json:retval:{ffqn}"),
+                        value: input.into_bytes(),
+                    }),
+                })
+            } else {
+                stub_request::FinishedResult::ExecutionError(stub_request::ExecutionError {})
             };
 
-            debug!("Input: {input:?}");
+            debug!("finished_result: {finished_result:?}");
             {
                 err_state.set(None);
                 request_processing_state.set(true); // disable the submit button
             }
 
             wasm_bindgen_futures::spawn_local({
-                let input = input.clone();
-                let ffqn = ffqn.clone();
+                let finished_result = finished_result.clone();
                 let execution_id = execution_id.clone();
                 let err_state = err_state.clone();
                 let navigator = navigator.clone();
@@ -121,10 +143,7 @@ pub fn execution_stub_result_page(
                     let response = client
                         .stub(grpc_client::StubRequest {
                             execution_id: Some(execution_id.clone()),
-                            return_value: input.map(|input| prost_wkt_types::Any {
-                                type_url: format!("urn:obelisk:json:retval:{ffqn}"),
-                                value: input.into_bytes(),
-                            }),
+                            finished_result: Some(finished_result),
                         })
                         .await;
                     request_processing_state.set(false); // reenable the submit button
@@ -202,13 +221,17 @@ pub fn execution_stub_result_page(
             if let Some(return_type) = maybe_return_type {
                 <p>
                     <label for="input">{return_type.wit_type.as_str()}</label>
-                    <input id="input" type="text" ref={input_ref.clone()} oninput = {oninput}/>
+                    <input id="input" type="text" ref={input_ref.clone()} {oninput}/>
                 </p>
             } else {
                 <p>{"(no return value)"}</p>
             }
-            <button type="submit" disabled={*request_processing_state}>
-                {"Submit response"}
+            <button type="submit" id={SUBMIT_RETVAL} disabled={*request_processing_state}>
+                {"Submit execution result"}
+            </button>
+
+            <button type="submit" id={SUBMIT_ERROR} disabled={*request_processing_state}>
+                {"Submit error"}
             </button>
         </form>
         if let Some(err) = err_state.deref() {
