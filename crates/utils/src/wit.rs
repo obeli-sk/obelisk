@@ -380,7 +380,29 @@ fn add_ext_exports(
                     let mut params =
                         vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
                     if let Some(actual_return_type_id) = &original_fn.result {
-                        params.push(("return-value".to_string(), *actual_return_type_id));
+                        let type_id_result_orig_none = Type::Id(resolve.types.alloc(TypeDef {
+                            name: None,
+                            kind: TypeDefKind::Result(wit_parser::Result_ {
+                                ok: Some(*actual_return_type_id),
+                                err: None,
+                            }),
+                            owner: TypeOwner::None,
+                            docs: wit_parser::Docs::default(),
+                            stability: wit_parser::Stability::default(),
+                        }));
+                        params.push(("execution-result".to_string(), type_id_result_orig_none));
+                    } else {
+                        let type_id_result_none_none = Type::Id(resolve.types.alloc(TypeDef {
+                            name: None,
+                            kind: TypeDefKind::Result(wit_parser::Result_ {
+                                ok: None,
+                                err: None,
+                            }),
+                            owner: TypeOwner::None,
+                            docs: wit_parser::Docs::default(),
+                            stability: wit_parser::Stability::default(),
+                        }));
+                        params.push(("execution-result".to_string(), type_id_result_none_none));
                     }
 
                     let fn_stub = Function {
