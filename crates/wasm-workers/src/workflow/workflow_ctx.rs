@@ -983,7 +983,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     }
                 })?;
 
-                let return_value = match (return_value_or_err, fn_meta.return_type) {
+                let result = match (return_value_or_err, fn_meta.return_type) {
                     (WastVal::Result(Err(None)), _) => {
                         Err(FinishedExecutionError::PermanentFailure {
                             reason_inner: String::new(),
@@ -1015,7 +1015,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     target_execution_id: target_execution_id.clone(),
                     parent_id,
                     join_set_id,
-                    return_value,
+                    result,
                     wasm_backtrace,
                 })
             }

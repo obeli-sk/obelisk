@@ -835,12 +835,10 @@ impl EventHistory {
                 },
                 HistoryEvent::Stub {
                     target_execution_id: found_execution_id,
-                    return_value: found_return_value,
-                    target_result,
+                    result: found_result,
+                    persist_result: target_result,
                 },
-            ) if target_execution_id == found_execution_id
-                && return_value == found_return_value =>
-            {
+            ) if target_execution_id == found_execution_id && return_value == found_result => {
                 trace!(%target_execution_id, "Matched Stub");
                 let ret = match target_result {
                     Ok(()) => Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
@@ -1370,7 +1368,7 @@ impl EventHistory {
                 target_execution_id,
                 parent_id,
                 join_set_id,
-                return_value,
+                result,
                 wasm_backtrace,
             } => {
                 // Attempt to write to target_execution_id, will continue on conflict.
@@ -1395,7 +1393,7 @@ impl EventHistory {
                     let finished_req = AppendRequest {
                         created_at: called_at,
                         event: ExecutionEventInner::Finished {
-                            result: return_value.clone(),
+                            result: result.clone(),
                             http_client_traces: None,
                         },
                     };
@@ -1413,7 +1411,7 @@ impl EventHistory {
                                     event: JoinSetResponse::ChildExecutionFinished {
                                         child_execution_id: target_execution_id.clone(),
                                         finished_version: stub_finished_version.clone(),
-                                        result: return_value.clone(),
+                                        result: result.clone(),
                                     },
                                 },
                             },
@@ -1422,7 +1420,7 @@ impl EventHistory {
                 };
                 debug!(%target_ffqn, %target_execution_id, "Executed append_batch_respond_to_parent: {write_attempt:?}");
                 // The server might crash at this point, and restart processing.
-                let target_result = match write_attempt {
+                let persist_result = match write_attempt {
                     Ok(_) => Ok(()),
                     Err(err) => {
                         // TODO: check error == conflict
@@ -1437,11 +1435,10 @@ impl EventHistory {
                             )
                             .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
                         match found.event {
-                            ExecutionEventInner::Finished { result, .. }
-                                if result == return_value =>
-                            {
-                                Ok(())
-                            }
+                            ExecutionEventInner::Finished {
+                                result: found_result,
+                                ..
+                            } if result == found_result => Ok(()),
                             ExecutionEventInner::Finished { .. } => {
                                 info!(%target_ffqn, %target_execution_id, "Different value found in stubbed execution's finished event");
                                 Err(())
@@ -1459,8 +1456,8 @@ impl EventHistory {
                 // Second write tx: Append the HistoryEvent with target_result.
                 let event = HistoryEvent::Stub {
                     target_execution_id: target_execution_id.clone(),
-                    return_value,
-                    target_result,
+                    result,
+                    persist_result,
                 };
                 let history_events = vec![event.clone()];
                 let history_event_req = AppendRequest {
@@ -1589,7 +1586,7 @@ pub(crate) enum EventCall {
         parent_id: ExecutionId,
         join_set_id: JoinSetId,
         #[debug(skip)]
-        return_value: FinishedExecutionResult,
+        result: FinishedExecutionResult,
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
@@ -1794,7 +1791,7 @@ impl EventCall {
             }
             EventCall::Stub {
                 target_execution_id,
-                return_value,
+                result: return_value,
                 ..
             } => {
                 vec![EventHistoryKey::Stub {
@@ -2249,7 +2246,7 @@ mod tests {
                         target_execution_id: child_execution_id.clone(),
                         parent_id: execution_id.clone(),
                         join_set_id: join_set_id.clone(),
-                        return_value: Ok(SupportedFunctionReturnValue::None),
+                        result: Ok(SupportedFunctionReturnValue::None),
                         wasm_backtrace: None,
                     },
                     db_connection,
@@ -2323,7 +2320,7 @@ mod tests {
                         target_execution_id: child_execution_id.clone(),
                         parent_id: execution_id.clone(),
                         join_set_id: join_set_id.clone(),
-                        return_value: Ok(SupportedFunctionReturnValue::None),
+                        result: Ok(SupportedFunctionReturnValue::None),
                         wasm_backtrace: None,
                     },
                     db_connection,
@@ -2340,7 +2337,7 @@ mod tests {
                         target_execution_id: child_execution_id.clone(),
                         parent_id: execution_id.clone(),
                         join_set_id: join_set_id.clone(),
-                        return_value: Ok(SupportedFunctionReturnValue::None),
+                        result: Ok(SupportedFunctionReturnValue::None),
                         wasm_backtrace: None,
                     },
                     db_connection,

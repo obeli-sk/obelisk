@@ -516,7 +516,7 @@ pub(crate) fn from_execution_event_to_grpc(
                                 },
                             }),
                         }),
-                        HistoryEvent::Stub {  target_execution_id, target_result, .. } => grpc_gen::execution_event::history_event::Event::Stub(Stub {
+                        HistoryEvent::Stub {  target_execution_id, persist_result: target_result, .. } => grpc_gen::execution_event::history_event::Event::Stub(Stub {
                             execution_id: Some(ExecutionId::Derived(target_execution_id).into()),
                             success: target_result.is_ok()
                         }),
