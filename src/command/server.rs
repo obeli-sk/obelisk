@@ -402,12 +402,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         let result = match (finished_result, fn_metadata.return_type.clone()) {
             (stub_request::FinishedResult::ExecutionError(_), _) => {
-                Err(concepts::FinishedExecutionError::PermanentFailure {
-                    reason_inner: String::new(),
-                    reason_full: String::new(),
-                    kind: concepts::PermanentFailureKind::StubbedError,
-                    detail: None,
-                })
+                Err(concepts::FinishedExecutionError::new_stubbed_error())
             }
             (
                 stub_request::FinishedResult::ReturnValue(stub_request::ReturnValue {

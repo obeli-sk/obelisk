@@ -16,7 +16,7 @@ use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
     ClosingStrategy, ComponentId, ExecutionId, FinishedExecutionError, FunctionRegistry,
-    IfcFqnName, PermanentFailureKind, StrVariant, SupportedFunctionReturnValue,
+    IfcFqnName, StrVariant, SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
@@ -985,12 +985,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
                 let result = match (return_value_or_err, fn_meta.return_type) {
                     (WastVal::Result(Err(None)), _) => {
-                        Err(FinishedExecutionError::PermanentFailure {
-                            reason_inner: String::new(),
-                            reason_full: String::new(),
-                            kind: PermanentFailureKind::StubbedError,
-                            detail: None,
-                        })
+                        Err(FinishedExecutionError::new_stubbed_error())
                     }
                     (WastVal::Result(Ok(Some(return_value))), Some(return_type)) => {
                         // TODO: type check

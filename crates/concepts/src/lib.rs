@@ -51,7 +51,7 @@ pub enum FinishedExecutionError {
     #[error("permanent failure: {reason_full}")]
     PermanentFailure {
         // Exists just for extracting reason of an activity trap, to avoid "activity trap: " prefix.
-        reason_inner: String,
+        reason_inner: String, // FIXME: remove
         // Contains reason_inner embedded in the error message
         reason_full: String,
         kind: PermanentFailureKind,
@@ -69,6 +69,16 @@ impl FinishedExecutionError {
             FinishedExecutionError::PermanentFailure { .. } => {
                 PendingStateFinishedError::ExecutionFailure
             }
+        }
+    }
+
+    pub fn new_stubbed_error() -> Self {
+        let reason = "stubbed error".to_string();
+        Self::PermanentFailure {
+            reason_inner: reason.clone(),
+            reason_full: reason,
+            kind: PermanentFailureKind::StubbedError,
+            detail: None,
         }
     }
 }
