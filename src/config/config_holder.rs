@@ -2,8 +2,9 @@ use super::toml::ConfigToml;
 use anyhow::{Context as _, bail};
 use config::{ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
 use directories::{BaseDirs, ProjectDirs};
-use std::path::{Path, PathBuf};
-use tracing::debug;
+use std::path::Path;
+use std::path::PathBuf;
+use tracing::{debug, warn};
 
 // release: Include real file
 #[cfg(not(debug_assertions))]
@@ -11,10 +12,125 @@ const EXAMPLE_TOML: &[u8] = include_bytes!("../../obelisk.toml");
 #[cfg(debug_assertions)]
 const EXAMPLE_TOML: &[u8] = b"not available in debug builds";
 
+// Path prefixes
+const HOME_DIR_PREFIX: &str = "~/";
+pub(crate) const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
+pub(crate) const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
+const CONFIG_DIR_PREFIX: &str = "${CONFIG_DIR}/";
+const OBELISK_TOML_DIR_PREFIX: &str = "${OBELISK_TOML_DIR}/";
+const TEMP_DIR_PREFIX: &str = "${TEMP_DIR}/";
+
 pub(crate) struct PathPrefixes {
     pub(crate) obelisk_toml_dir: PathBuf,
     pub(crate) project_dirs: Option<ProjectDirs>,
     pub(crate) base_dirs: Option<BaseDirs>,
+}
+
+impl PathPrefixes {
+    pub(crate) fn replace_file_prefix_verify_exists(
+        &self,
+        input_path: &str,
+    ) -> Result<PathBuf, anyhow::Error> {
+        let path =
+            if let (Some(project_dirs), Some(base_dirs)) = (&self.project_dirs, &self.base_dirs) {
+                if let Some(suffix) = input_path.strip_prefix(HOME_DIR_PREFIX) {
+                    base_dirs.home_dir().join(suffix)
+                } else if let Some(suffix) = input_path.strip_prefix(DATA_DIR_PREFIX) {
+                    project_dirs.data_dir().join(suffix)
+                } else if let Some(suffix) = input_path.strip_prefix(CACHE_DIR_PREFIX) {
+                    project_dirs.cache_dir().join(suffix)
+                } else if let Some(suffix) = input_path.strip_prefix(CONFIG_DIR_PREFIX) {
+                    project_dirs.config_dir().join(suffix)
+                } else if let Some(suffix) = input_path.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
+                    self.obelisk_toml_dir.join(suffix)
+                } else {
+                    PathBuf::from(input_path)
+                }
+            } else {
+                if input_path.starts_with(HOME_DIR_PREFIX)
+                    || input_path.starts_with(DATA_DIR_PREFIX)
+                    || input_path.starts_with(CACHE_DIR_PREFIX)
+                    || input_path.starts_with(CONFIG_DIR_PREFIX)
+                    || input_path.starts_with(OBELISK_TOML_DIR_PREFIX)
+                {
+                    warn!("Not expanding prefix of `{input_path}`");
+                }
+
+                PathBuf::from(input_path)
+            };
+        if path.exists() {
+            Ok(path)
+        } else {
+            bail!("file does not exist: {path:?}")
+        }
+    }
+    pub(crate) fn replace_file_prefix_no_verify(&self, input_path: &str) -> String {
+        let path =
+            if let (Some(project_dirs), Some(base_dirs)) = (&self.project_dirs, &self.base_dirs) {
+                if let Some(suffix) = input_path.strip_prefix(HOME_DIR_PREFIX) {
+                    base_dirs.home_dir().join(suffix)
+                } else if let Some(suffix) = input_path.strip_prefix(DATA_DIR_PREFIX) {
+                    project_dirs.data_dir().join(suffix)
+                } else if let Some(suffix) = input_path.strip_prefix(CACHE_DIR_PREFIX) {
+                    project_dirs.cache_dir().join(suffix)
+                } else if let Some(suffix) = input_path.strip_prefix(CONFIG_DIR_PREFIX) {
+                    project_dirs.config_dir().join(suffix)
+                } else if let Some(suffix) = input_path.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
+                    self.obelisk_toml_dir.join(suffix)
+                } else {
+                    PathBuf::from(input_path)
+                }
+            } else {
+                if input_path.starts_with(HOME_DIR_PREFIX)
+                    || input_path.starts_with(DATA_DIR_PREFIX)
+                    || input_path.starts_with(CACHE_DIR_PREFIX)
+                    || input_path.starts_with(CONFIG_DIR_PREFIX)
+                    || input_path.starts_with(OBELISK_TOML_DIR_PREFIX)
+                {
+                    warn!("Not expanding prefix of `{input_path}`");
+                }
+
+                PathBuf::from(input_path)
+            };
+        path.to_string_lossy().into_owned()
+    }
+
+    pub(crate) async fn replace_path_prefix_mkdir(
+        &self,
+        dir: &str,
+    ) -> Result<PathBuf, anyhow::Error> {
+        let path =
+            if let (Some(project_dirs), Some(base_dirs)) = (&self.project_dirs, &self.base_dirs) {
+                if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
+                    base_dirs.home_dir().join(suffix)
+                } else if let Some(suffix) = dir.strip_prefix(DATA_DIR_PREFIX) {
+                    project_dirs.data_dir().join(suffix)
+                } else if let Some(suffix) = dir.strip_prefix(CACHE_DIR_PREFIX) {
+                    project_dirs.cache_dir().join(suffix)
+                } else if let Some(suffix) = dir.strip_prefix(CONFIG_DIR_PREFIX) {
+                    project_dirs.config_dir().join(suffix)
+                } else if let Some(suffix) = dir.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
+                    self.obelisk_toml_dir.join(suffix)
+                } else if let Some(suffix) = dir.strip_prefix(TEMP_DIR_PREFIX) {
+                    std::env::temp_dir().join(suffix)
+                } else {
+                    PathBuf::from(dir)
+                }
+            } else {
+                if dir.starts_with(HOME_DIR_PREFIX)
+                    || dir.starts_with(DATA_DIR_PREFIX)
+                    || dir.starts_with(CACHE_DIR_PREFIX)
+                    || dir.starts_with(CONFIG_DIR_PREFIX)
+                    || dir.starts_with(OBELISK_TOML_DIR_PREFIX)
+                {
+                    warn!("Not expanding prefix of `{dir}`");
+                }
+
+                PathBuf::from(dir)
+            };
+        tokio::fs::create_dir_all(&path).await?;
+        Ok(path)
+    }
 }
 
 pub(crate) struct ConfigHolder {

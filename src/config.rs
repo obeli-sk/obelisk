@@ -9,6 +9,7 @@ use concepts::ComponentRetryConfig;
 use concepts::ContentDigest;
 use concepts::FunctionMetadata;
 use concepts::PackageIfcFns;
+use config_holder::PathPrefixes;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_with::serde_as;
@@ -46,7 +47,7 @@ pub(crate) struct ConfigStoreCommon {
 #[derive(Debug, Clone, Hash, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ComponentLocation {
-    Path(PathBuf),
+    Path(String),
     Oci(
         #[serde_as(as = "serde_with::DisplayFromStr")]
         #[schemars(with = "String")]
@@ -60,12 +61,11 @@ impl ComponentLocation {
         &self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
+        path_prefixes: &PathPrefixes,
     ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
         match self {
             ComponentLocation::Path(wasm_path) => {
-                let wasm_path = wasm_path
-                    .canonicalize()
-                    .with_context(|| format!("cannot find or canonicalize file `{wasm_path:?}`"))?;
+                let wasm_path = path_prefixes.replace_file_prefix_verify_exists(wasm_path)?;
                 // Future optimization: If the sha256 is in the config file and wasm is already in the cache dir, do not recalculate it.
                 let content_digest = calculate_sha256_file(&wasm_path)
                     .await

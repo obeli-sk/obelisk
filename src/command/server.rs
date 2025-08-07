@@ -1630,40 +1630,35 @@ impl ConfigVerified {
             }
             http_servers_to_webhook_names
         };
+        let path_prefixes = Arc::new(path_prefixes);
         // Download WASM files from OCI registries if needed.
         // TODO!: Switch to `JoinSet` when madsim supports it.
         let activities = wasm_activities
             .into_iter()
             .map(|activity| {
                 tokio::spawn({
-                    let wasm_cache_dir = wasm_cache_dir.clone();
-                    let metadata_dir = metadata_dir.clone();
-                    let parent_preopen_dir = parent_preopen_dir.clone();
-                    async move {
-                        activity
-                            .fetch_and_verify(
-                                wasm_cache_dir.clone(),
-                                metadata_dir.clone(),
-                                ignore_missing_env_vars,
-                                parent_preopen_dir,
-                            )
-                            .await
-                    }
-                    .in_current_span()
+                    activity
+                        .fetch_and_verify(
+                            wasm_cache_dir.clone(),
+                            metadata_dir.clone(),
+                            path_prefixes.clone(),
+                            ignore_missing_env_vars,
+                            parent_preopen_dir.clone(),
+                        )
+                        .in_current_span()
                 })
             })
             .collect::<Vec<_>>();
-        let path_prefixes = Arc::new(path_prefixes);
+
         let workflows = workflows
             .into_iter()
             .map(|workflow| {
-                let path_prefixes = path_prefixes.clone();
                 tokio::spawn(
                     workflow
                         .fetch_and_verify(
                             wasm_cache_dir.clone(),
                             metadata_dir.clone(),
-                            path_prefixes,
+                            path_prefixes.clone(),
                             global_backtrace_persist,
                         )
                         .in_current_span(),
@@ -1677,19 +1672,14 @@ impl ConfigVerified {
                     let wasm_cache_dir = wasm_cache_dir.clone();
                     let metadata_dir = metadata_dir.clone();
                     let path_prefixes = path_prefixes.clone();
-                    async move {
-                        let name = webhook.common.name.clone();
-                        let webhook = webhook
-                            .fetch_and_verify(
-                                wasm_cache_dir.clone(),
-                                metadata_dir.clone(),
-                                ignore_missing_env_vars,
-                                path_prefixes,
-                            )
-                            .await?;
-                        Ok::<_, anyhow::Error>((name, webhook))
-                    }
-                    .in_current_span()
+                    webhook
+                        .fetch_and_verify(
+                            wasm_cache_dir,
+                            metadata_dir,
+                            ignore_missing_env_vars,
+                            path_prefixes,
+                        )
+                        .in_current_span()
                 })
             })
             .collect::<Vec<_>>();

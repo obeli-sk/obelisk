@@ -1,6 +1,7 @@
 use super::{
     ComponentLocation, ConfigStoreCommon, config_holder::PathPrefixes, env_var::EnvVarConfig,
 };
+use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
 use anyhow::{anyhow, bail};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, InvalidNameError, StrVariant,
@@ -17,9 +18,6 @@ use std::{
     time::Duration,
 };
 use tracing::{instrument, warn};
-use util::{
-    replace_file_prefix_no_verify, replace_file_prefix_verify_exists, replace_path_prefix_mkdir,
-};
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
     activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig, ProcessProvider},
@@ -29,14 +27,6 @@ use wasm_workers::{
     },
 };
 use webhook::{HttpServer, WebhookComponentConfigToml};
-
-// Path prefixes
-const HOME_DIR_PREFIX: &str = "~/";
-const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
-const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
-const CONFIG_DIR_PREFIX: &str = "${CONFIG_DIR}/";
-const OBELISK_TOML_DIR_PREFIX: &str = "${OBELISK_TOML_DIR}/";
-const TEMP_DIR_PREFIX: &str = "${TEMP_DIR}/";
 
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
@@ -120,7 +110,7 @@ impl SqliteConfigToml {
                 DEFAULT_SQLITE_DIR
             }
         });
-        replace_path_prefix_mkdir(sqlite_file, path_prefixes).await
+        path_prefixes.replace_path_prefix_mkdir(sqlite_file).await
     }
 
     pub(crate) fn as_sqlite_config(&self) -> SqliteConfig {
@@ -161,7 +151,9 @@ impl WasmGlobalConfigToml {
                 DEFAULT_WASM_DIRECTORY
             }
         });
-        replace_path_prefix_mkdir(wasm_directory, path_prefixes).await
+        path_prefixes
+            .replace_path_prefix_mkdir(wasm_directory)
+            .await
     }
 }
 
@@ -220,7 +212,8 @@ impl ActivitiesDirectoriesGlobalConfigToml {
         path_prefixes: &PathPrefixes,
     ) -> Result<Arc<Path>, anyhow::Error> {
         assert!(self.enabled); // see `ActivitiesGlobalConfigToml::get_directories`
-        replace_path_prefix_mkdir(&self.parent_directory, path_prefixes)
+        path_prefixes
+            .replace_path_prefix_mkdir(&self.parent_directory)
             .await
             .map(Arc::from)
     }
@@ -286,7 +279,8 @@ impl CodegenCache {
                     DEFAULT_CODEGEN_CACHE_DIRECTORY
                 }
             });
-            replace_path_prefix_mkdir(directory, path_prefixes)
+            path_prefixes
+                .replace_path_prefix_mkdir(directory)
                 .await
                 .map(Some)
         } else {
@@ -333,10 +327,11 @@ impl ComponentCommon {
         self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
+        path_prefixes: &PathPrefixes,
     ) -> Result<(ConfigStoreCommon, PathBuf), anyhow::Error> {
         let (actual_content_digest, wasm_path) = self
             .location
-            .obtain_wasm(wasm_cache_dir, metadata_dir)
+            .obtain_wasm(wasm_cache_dir, metadata_dir, path_prefixes)
             .await?;
         let verified = ConfigStoreCommon {
             name: self.name,
@@ -460,6 +455,7 @@ impl ActivityComponentConfigToml {
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
+        path_prefixes: Arc<PathPrefixes>,
         ignore_missing_env_vars: bool,
         parent_preopen_dir: Option<Arc<Path>>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
@@ -475,7 +471,7 @@ impl ActivityComponentConfigToml {
 
         let (common, wasm_path) = self
             .common
-            .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
+            .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
 
         let env_vars = resolve_env_vars(self.env_vars, ignore_missing_env_vars)?;
@@ -622,8 +618,9 @@ fn verify_frame_files_to_sources(
         .into_iter()
         .filter_map(|(key, value)| {
             // Remove all entries where destination file is not found.
-            match replace_file_prefix_verify_exists(&value, path_prefixes)
-                .map(|value| (replace_file_prefix_no_verify(&key, path_prefixes), value))
+            match path_prefixes
+                .replace_file_prefix_verify_exists(&value)
+                .map(|value| (path_prefixes.replace_file_prefix_no_verify(&key), value)) // the key points to source path found in WASM
             {
                 Ok((k, v)) => Some((k, v)),
                 Err(err) => {
@@ -647,7 +644,7 @@ impl WorkflowComponentConfigToml {
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        path_prefixes: impl AsRef<PathPrefixes>,
+        path_prefixes: Arc<PathPrefixes>,
         global_backtrace_persist: bool,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
         let component_id = ComponentId::new(
@@ -665,7 +662,7 @@ impl WorkflowComponentConfigToml {
         }
         let (common, wasm_path) = self
             .common
-            .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
+            .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
         let wasm_path = if self.convert_core_module {
             WasmComponent::convert_core_module_to_component(&wasm_path, &wasm_cache_dir)
@@ -684,10 +681,8 @@ impl WorkflowComponentConfigToml {
             backtrace_persist: global_backtrace_persist,
             stub_wasi: self.stub_wasi,
         };
-        let frame_files_to_sources = verify_frame_files_to_sources(
-            self.backtrace.frame_files_to_sources,
-            path_prefixes.as_ref(),
-        );
+        let frame_files_to_sources =
+            verify_frame_files_to_sources(self.backtrace.frame_files_to_sources, &path_prefixes);
         Ok(WorkflowConfigVerified {
             content_digest: common.content_digest,
             wasm_path,
@@ -1026,8 +1021,8 @@ pub(crate) mod webhook {
             wasm_cache_dir: Arc<Path>,
             metadata_dir: Arc<Path>,
             ignore_missing_env_vars: bool,
-            path_prefixes: impl AsRef<PathPrefixes>,
-        ) -> Result<WebhookComponentVerified, anyhow::Error> {
+            path_prefixes: Arc<PathPrefixes>,
+        ) -> Result<(ConfigName /* name */, WebhookComponentVerified), anyhow::Error> {
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(self.common.name.clone()),
@@ -1036,27 +1031,30 @@ pub(crate) mod webhook {
 
             let (common, wasm_path) = self
                 .common
-                .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
+                .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
                 .await?;
             let frame_files_to_sources = verify_frame_files_to_sources(
                 self.backtrace.frame_files_to_sources,
-                path_prefixes.as_ref(),
+                &path_prefixes,
             );
 
-            Ok(WebhookComponentVerified {
-                component_id,
-                wasm_path,
-                routes: self
-                    .routes
-                    .into_iter()
-                    .map(WebhookRouteVerified::try_from)
-                    .collect::<Result<Vec<_>, _>>()?,
-                forward_stdout: self.forward_stdout.into(),
-                forward_stderr: self.forward_stderr.into(),
-                env_vars: resolve_env_vars(self.env_vars, ignore_missing_env_vars)?,
-                content_digest: common.content_digest,
-                frame_files_to_sources,
-            })
+            Ok((
+                common.name,
+                WebhookComponentVerified {
+                    component_id,
+                    wasm_path,
+                    routes: self
+                        .routes
+                        .into_iter()
+                        .map(WebhookRouteVerified::try_from)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    forward_stdout: self.forward_stdout.into(),
+                    forward_stderr: self.forward_stderr.into(),
+                    env_vars: resolve_env_vars(self.env_vars, ignore_missing_env_vars)?,
+                    content_digest: common.content_digest,
+                    frame_files_to_sources,
+                },
+            ))
         }
     }
 
@@ -1153,129 +1151,6 @@ impl From<InflightSemaphore> for Option<Arc<tokio::sync::Semaphore>> {
                 usize::try_from(permits).expect("usize >= u32"),
             ))),
         }
-    }
-}
-
-mod util {
-    use crate::config::config_holder::PathPrefixes;
-    use anyhow::bail;
-    use std::path::PathBuf;
-    use tracing::warn;
-
-    use super::{
-        CACHE_DIR_PREFIX, CONFIG_DIR_PREFIX, DATA_DIR_PREFIX, HOME_DIR_PREFIX,
-        OBELISK_TOML_DIR_PREFIX, TEMP_DIR_PREFIX,
-    };
-
-    pub(crate) fn replace_file_prefix_verify_exists(
-        input_path: &str,
-        path_prefixes: &PathPrefixes,
-    ) -> Result<PathBuf, anyhow::Error> {
-        let path = if let (Some(project_dirs), Some(base_dirs)) =
-            (&path_prefixes.project_dirs, &path_prefixes.base_dirs)
-        {
-            if let Some(suffix) = input_path.strip_prefix(HOME_DIR_PREFIX) {
-                base_dirs.home_dir().join(suffix)
-            } else if let Some(suffix) = input_path.strip_prefix(DATA_DIR_PREFIX) {
-                project_dirs.data_dir().join(suffix)
-            } else if let Some(suffix) = input_path.strip_prefix(CACHE_DIR_PREFIX) {
-                project_dirs.cache_dir().join(suffix)
-            } else if let Some(suffix) = input_path.strip_prefix(CONFIG_DIR_PREFIX) {
-                project_dirs.config_dir().join(suffix)
-            } else if let Some(suffix) = input_path.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
-                path_prefixes.obelisk_toml_dir.join(suffix)
-            } else {
-                PathBuf::from(input_path)
-            }
-        } else {
-            if input_path.starts_with(HOME_DIR_PREFIX)
-                || input_path.starts_with(DATA_DIR_PREFIX)
-                || input_path.starts_with(CACHE_DIR_PREFIX)
-                || input_path.starts_with(CONFIG_DIR_PREFIX)
-                || input_path.starts_with(OBELISK_TOML_DIR_PREFIX)
-            {
-                warn!("Not expanding prefix of `{input_path}`");
-            }
-
-            PathBuf::from(input_path)
-        };
-        if path.exists() {
-            Ok(path)
-        } else {
-            bail!("file does not exist: {path:?}")
-        }
-    }
-    pub(crate) fn replace_file_prefix_no_verify(
-        input_path: &str,
-        path_prefixes: &PathPrefixes,
-    ) -> String {
-        let path = if let (Some(project_dirs), Some(base_dirs)) =
-            (&path_prefixes.project_dirs, &path_prefixes.base_dirs)
-        {
-            if let Some(suffix) = input_path.strip_prefix(HOME_DIR_PREFIX) {
-                base_dirs.home_dir().join(suffix)
-            } else if let Some(suffix) = input_path.strip_prefix(DATA_DIR_PREFIX) {
-                project_dirs.data_dir().join(suffix)
-            } else if let Some(suffix) = input_path.strip_prefix(CACHE_DIR_PREFIX) {
-                project_dirs.cache_dir().join(suffix)
-            } else if let Some(suffix) = input_path.strip_prefix(CONFIG_DIR_PREFIX) {
-                project_dirs.config_dir().join(suffix)
-            } else if let Some(suffix) = input_path.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
-                path_prefixes.obelisk_toml_dir.join(suffix)
-            } else {
-                PathBuf::from(input_path)
-            }
-        } else {
-            if input_path.starts_with(HOME_DIR_PREFIX)
-                || input_path.starts_with(DATA_DIR_PREFIX)
-                || input_path.starts_with(CACHE_DIR_PREFIX)
-                || input_path.starts_with(CONFIG_DIR_PREFIX)
-                || input_path.starts_with(OBELISK_TOML_DIR_PREFIX)
-            {
-                warn!("Not expanding prefix of `{input_path}`");
-            }
-
-            PathBuf::from(input_path)
-        };
-        path.to_string_lossy().into_owned()
-    }
-
-    pub(crate) async fn replace_path_prefix_mkdir(
-        dir: &str,
-        path_prefixes: &PathPrefixes,
-    ) -> Result<PathBuf, anyhow::Error> {
-        let path = if let (Some(project_dirs), Some(base_dirs)) =
-            (&path_prefixes.project_dirs, &path_prefixes.base_dirs)
-        {
-            if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
-                base_dirs.home_dir().join(suffix)
-            } else if let Some(suffix) = dir.strip_prefix(DATA_DIR_PREFIX) {
-                project_dirs.data_dir().join(suffix)
-            } else if let Some(suffix) = dir.strip_prefix(CACHE_DIR_PREFIX) {
-                project_dirs.cache_dir().join(suffix)
-            } else if let Some(suffix) = dir.strip_prefix(CONFIG_DIR_PREFIX) {
-                project_dirs.config_dir().join(suffix)
-            } else if let Some(suffix) = dir.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
-                path_prefixes.obelisk_toml_dir.join(suffix)
-            } else if let Some(suffix) = dir.strip_prefix(TEMP_DIR_PREFIX) {
-                std::env::temp_dir().join(suffix)
-            } else {
-                PathBuf::from(dir)
-            }
-        } else {
-            if dir.starts_with(HOME_DIR_PREFIX)
-                || dir.starts_with(DATA_DIR_PREFIX)
-                || dir.starts_with(CACHE_DIR_PREFIX)
-                || dir.starts_with(CONFIG_DIR_PREFIX)
-                || dir.starts_with(OBELISK_TOML_DIR_PREFIX)
-            {
-                warn!("Not expanding prefix of `{dir}`");
-            }
-
-            PathBuf::from(dir)
-        };
-        tokio::fs::create_dir_all(&path).await?;
-        Ok(path)
     }
 }
 
