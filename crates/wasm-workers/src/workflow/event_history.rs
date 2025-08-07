@@ -1373,6 +1373,7 @@ impl EventHistory {
             } => {
                 // Attempt to write to target_execution_id, will continue on conflict.
                 // Non-cacheable event. (could be turned into one)
+                // The idempotent write is needed to avoid race with stub requests originating from gRPC.
                 debug!(%target_execution_id, "StubRequest: Flushing and appending");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
