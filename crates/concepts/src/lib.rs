@@ -72,6 +72,7 @@ impl FinishedExecutionError {
         }
     }
 
+    #[must_use]
     pub fn new_stubbed_error() -> Self {
         let reason = "stubbed error".to_string();
         Self::PermanentFailure {
