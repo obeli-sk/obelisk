@@ -439,17 +439,16 @@ pub fn debugger_view(
                 // Print source file.
                 if let (Some(file), Some(line)) = (&symbol.file, symbol.line) {
                     let new_position = seen_positions.insert((file.clone(), line));
-                    if new_position {
-                        if let Some(SourceCodeState::Found(source)) = sources_state
+                    if new_position
+                        && let Some(SourceCodeState::Found(source)) = sources_state
                             .deref()
                             .0
                             .get(&(component_id.clone(), file.clone()))
-                        {
-                            frame_html.push(html! {<>
+                    {
+                        frame_html.push(html! {<>
                                 <br/>
                                 <SyntectCodeBlock source={source.clone()} focus_line={Some(line as usize)}/>
                             </>});
-                        }
                     }
                 }
             }

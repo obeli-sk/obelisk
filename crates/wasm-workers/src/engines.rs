@@ -84,10 +84,10 @@ impl EngineConfig {
             if let Some(limit) = opts.pooling_max_memory_size {
                 cfg.max_memory_size(limit);
             }
-            if let Some(enable) = opts.memory_protection_keys {
-                if enable {
-                    cfg.memory_protection_keys(wasmtime::MpkEnabled::Enable);
-                }
+            if let Some(enable) = opts.memory_protection_keys
+                && enable
+            {
+                cfg.memory_protection_keys(wasmtime::MpkEnabled::Enable);
             }
             wasmtime::InstanceAllocationStrategy::Pooling(cfg)
         } else {

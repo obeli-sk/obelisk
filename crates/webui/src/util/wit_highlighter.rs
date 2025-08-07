@@ -125,16 +125,16 @@ fn print_interface_with_imported_types(
                     let iface = &resolve.interfaces[ifc_id];
                     if let Some(imported_pkg_id) = iface.package {
                         let imported_pkg = &resolve.packages[imported_pkg_id];
-                        if let Ok(ifc_fqn) = PkgFqn::from(&imported_pkg.name).ifc_fqn(iface) {
-                            if additional_ifc_fqn.insert(ifc_fqn.clone()) {
-                                print_interface_with_imported_types(
-                                    printer,
-                                    resolve,
-                                    &ifc_fqn,
-                                    additional_ifc_fqn,
-                                    false,
-                                )?;
-                            }
+                        if let Ok(ifc_fqn) = PkgFqn::from(&imported_pkg.name).ifc_fqn(iface)
+                            && additional_ifc_fqn.insert(ifc_fqn.clone())
+                        {
+                            print_interface_with_imported_types(
+                                printer,
+                                resolve,
+                                &ifc_fqn,
+                                additional_ifc_fqn,
+                                false,
+                            )?;
                         }
                     }
                 }

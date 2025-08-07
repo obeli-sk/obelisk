@@ -411,15 +411,15 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
         let result_types = func.results(&mut store);
         let mut results = vec![Val::Bool(false); result_types.len()];
         let func_call_result = func.call_async(&mut store, &params, &mut results).await;
-        if func_call_result.is_ok() {
-            if let Err(post_return_err) = func.post_return_async(&mut store).await {
-                return Err(RunError::Trap {
-                    reason: post_return_err.to_string(),
-                    detail: format!("{post_return_err:?}"),
-                    workflow_ctx: store.into_data(),
-                    kind: TrapKind::PostReturnTrap,
-                });
-            }
+        if func_call_result.is_ok()
+            && let Err(post_return_err) = func.post_return_async(&mut store).await
+        {
+            return Err(RunError::Trap {
+                reason: post_return_err.to_string(),
+                detail: format!("{post_return_err:?}"),
+                workflow_ctx: store.into_data(),
+                kind: TrapKind::PostReturnTrap,
+            });
         }
         let workflow_ctx = store.into_data();
 

@@ -530,10 +530,10 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                     Ok(WastVal::List(vec))
                 } else if let TypeWrapper::Tuple(type_sequence) = self.0 {
                     let expected_size = type_sequence.len();
-                    if let Some(actual_size) = seq.size_hint() {
-                        if actual_size != expected_size {
-                            return Err(Error::invalid_length(actual_size, &self));
-                        }
+                    if let Some(actual_size) = seq.size_hint()
+                        && actual_size != expected_size
+                    {
+                        return Err(Error::invalid_length(actual_size, &self));
                     }
                     let mut vec = Vec::new();
                     for (idx, seed) in type_sequence.iter().enumerate() {

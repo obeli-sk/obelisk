@@ -1084,21 +1084,17 @@ async fn verify_internal(
             .or_else(ignore_not_found)
             .with_context(|| format!("cannot delete wasm cache directory {wasm_cache_dir:?}"))?;
     }
-    if params.clean_cache || params.clean_codegen_cache {
-        if let Some(codegen_cache) = &codegen_cache {
-            // delete codegen_cache
-            tokio::fs::remove_dir_all(codegen_cache)
-                .await
-                .or_else(ignore_not_found)
-                .with_context(|| {
-                    format!("cannot delete codegen cache directory {codegen_cache:?}")
-                })?;
-            tokio::fs::create_dir_all(codegen_cache)
-                .await
-                .with_context(|| {
-                    format!("cannot create codegen cache directory {codegen_cache:?}")
-                })?;
-        }
+    if (params.clean_cache || params.clean_codegen_cache)
+        && let Some(codegen_cache) = &codegen_cache
+    {
+        // delete codegen_cache
+        tokio::fs::remove_dir_all(codegen_cache)
+            .await
+            .or_else(ignore_not_found)
+            .with_context(|| format!("cannot delete codegen cache directory {codegen_cache:?}"))?;
+        tokio::fs::create_dir_all(codegen_cache)
+            .await
+            .with_context(|| format!("cannot create codegen cache directory {codegen_cache:?}"))?;
     }
     tokio::fs::create_dir_all(&wasm_cache_dir)
         .await

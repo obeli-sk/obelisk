@@ -660,8 +660,8 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             (db_connection, version_min_including, version_max_excluding)
         };
 
-        if let Some(wasm_backtrace) = wasm_backtrace {
-            if let Err(err) = db_connection
+        if let Some(wasm_backtrace) = wasm_backtrace
+            && let Err(err) = db_connection
                 .append_backtrace(BacktraceInfo {
                     execution_id: ExecutionId::TopLevel(self.execution_id),
                     component_id: self.component_id.clone(),
@@ -670,9 +670,8 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     wasm_backtrace,
                 })
                 .await
-            {
-                debug!("Ignoring error while appending backtrace: {err:?}");
-            }
+        {
+            debug!("Ignoring error while appending backtrace: {err:?}");
         }
         Ok(())
     }

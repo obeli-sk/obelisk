@@ -333,11 +333,11 @@ impl<'a> ImportedFnCall<'a> {
                 })
             } else {
                 error!("Unrecognized `-obelisk-ext` interface function {called_ffqn}");
-                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                Err(WorkflowFunctionError::ImportedFunctionCallError {
                     ffqn: called_ffqn,
                     reason: StrVariant::Static("unrecognized `-obelisk-ext` interface function"),
                     detail: None,
-                });
+                })
             }
         } else if let Some(target_package_name) =
             called_ffqn.ifc_fqn.package_strip_obelisk_stub_suffix()
@@ -409,11 +409,11 @@ impl<'a> ImportedFnCall<'a> {
                 })
             } else {
                 error!("Unrecognized `-obelisk-stub` interface function {called_ffqn}");
-                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                Err(WorkflowFunctionError::ImportedFunctionCallError {
                     ffqn: called_ffqn,
                     reason: StrVariant::Static("unrecognized `-obelisk-stub` interface function"),
                     detail: None,
-                });
+                })
             }
         } else {
             Ok(ImportedFnCall::Direct {

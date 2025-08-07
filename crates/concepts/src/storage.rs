@@ -678,7 +678,7 @@ pub trait DbConnection: Send + Sync {
         include_backtrace_id: bool,
     ) -> Result<Vec<ExecutionEvent>, DbError>;
 
-    /// Get a single event without backtrace_id
+    /// Get a single event without `backtrace_id`
     async fn get_execution_event(
         &self,
         execution_id: &ExecutionId,

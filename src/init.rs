@@ -168,11 +168,10 @@ impl Drop for Guard {
     fn drop(&mut self) {
         cfg_if::cfg_if! {
             if #[cfg(feature = "otlp")] {
-                if let Some(tracer_provider) = self.tracer_provider.take() {
-                    if let Err(err) = tracer_provider.shutdown() {
+                if let Some(tracer_provider) = self.tracer_provider.take()
+                    && let Err(err) = tracer_provider.shutdown() {
                         warn!("Error shutting down the tracing provider - {err:?}");
                     }
-                }
             }
         }
     }

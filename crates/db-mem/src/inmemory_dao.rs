@@ -593,10 +593,10 @@ impl DbHolder {
             old_val.is_none(),
             "journals cannot contain the new execution"
         );
-        if scheduled_at <= created_at {
-            if let Some(subscription) = subscription {
-                let _ = subscription.try_send(());
-            }
+        if scheduled_at <= created_at
+            && let Some(subscription) = subscription
+        {
+            let _ = subscription.try_send(());
         }
         Ok(version)
     }
@@ -649,10 +649,10 @@ impl DbHolder {
         }
         let new_version = journal.append(created_at, event)?;
         self.index.update(journal);
-        if matches!(journal.pending_state, PendingState::PendingAt { .. }) {
-            if let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn()) {
-                let _ = subscription.try_send(());
-            }
+        if matches!(journal.pending_state, PendingState::PendingAt { .. })
+            && let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn())
+        {
+            let _ = subscription.try_send(());
         }
         Ok(new_version)
     }
@@ -738,10 +738,10 @@ impl DbHolder {
         }
         let version = journal.version();
         self.index.update(journal);
-        if matches!(journal.pending_state, PendingState::PendingAt { .. }) {
-            if let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn()) {
-                let _ = subscription.try_send(());
-            }
+        if matches!(journal.pending_state, PendingState::PendingAt { .. })
+            && let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn())
+        {
+            let _ = subscription.try_send(());
         }
         Ok(version)
     }
@@ -784,10 +784,10 @@ impl DbHolder {
         };
         journal.append_response(response_event.created_at, response_event.event);
         self.index.update(journal);
-        if matches!(journal.pending_state, PendingState::PendingAt { .. }) {
-            if let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn()) {
-                let _ = subscription.try_send(());
-            }
+        if matches!(journal.pending_state, PendingState::PendingAt { .. })
+            && let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn())
+        {
+            let _ = subscription.try_send(());
         }
         Ok(())
     }

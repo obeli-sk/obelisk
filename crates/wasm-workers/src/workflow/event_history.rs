@@ -241,30 +241,27 @@ impl EventHistory {
             } else {
                 self.execution_deadline
             };
-        let poll_variant = match event_call.poll_variant() {
-            None => {
-                // Events that cannot block, e.g. creating new join sets.
-                // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
-                let cloned_non_blocking = event_call.clone();
-                let history_events = self
-                    .append_to_db(
-                        event_call,
-                        db_connection,
-                        called_at,
-                        lock_expires_at,
-                        version,
-                    )
-                    .await
-                    .map_err(ApplyError::DbError)?;
-                self.event_history
-                    .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
-                trace!("find_matching_atomic must mark the non-blocking event as Processed");
-                let non_blocking_resp = self
-                    .find_matching_atomic(&cloned_non_blocking)?
-                    .expect("just stored the event as Unprocessed, it must be found");
-                return Ok(non_blocking_resp);
-            }
-            Some(poll_variant) => poll_variant,
+        let Some(poll_variant) = event_call.poll_variant() else {
+            // Events that cannot block, e.g. creating new join sets.
+            // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
+            let cloned_non_blocking = event_call.clone();
+            let history_events = self
+                .append_to_db(
+                    event_call,
+                    db_connection,
+                    called_at,
+                    lock_expires_at,
+                    version,
+                )
+                .await
+                .map_err(ApplyError::DbError)?;
+            self.event_history
+                .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
+            trace!("find_matching_atomic must mark the non-blocking event as Processed");
+            let non_blocking_resp = self
+                .find_matching_atomic(&cloned_non_blocking)?
+                .expect("just stored the event as Unprocessed, it must be found");
+            return Ok(non_blocking_resp);
         };
 
         let keys = event_call.as_keys();
@@ -285,11 +282,11 @@ impl EventHistory {
         let last_key_idx = keys.len() - 1;
         for (idx, key) in keys.into_iter().enumerate() {
             let res = self.process_event_by_key(&key)?;
-            if idx == last_key_idx {
-                if let FindMatchingResponse::Found(res) = res {
-                    // Last key was replayed.
-                    return Ok(res);
-                }
+            if idx == last_key_idx
+                && let FindMatchingResponse::Found(res) = res
+            {
+                // Last key was replayed.
+                return Ok(res);
             }
         }
         // Now either wait or interrupt.
@@ -1076,8 +1073,8 @@ impl EventHistory {
                                 vec![child_req],
                             )
                             .await?;
-                        if let Some(wasm_backtrace) = wasm_backtrace {
-                            if let Err(err) = db_connection
+                        if let Some(wasm_backtrace) = wasm_backtrace
+                            && let Err(err) = db_connection
                                 .append_backtrace(BacktraceInfo {
                                     execution_id: self.execution_id.clone(),
                                     component_id: self.component_id.clone(),
@@ -1086,9 +1083,8 @@ impl EventHistory {
                                     wasm_backtrace,
                                 })
                                 .await
-                            {
-                                debug!("Ignoring error while appending backtrace: {err:?}");
-                            }
+                        {
+                            debug!("Ignoring error while appending backtrace: {err:?}");
                         }
                         next_version
                     };
@@ -1162,8 +1158,8 @@ impl EventHistory {
                                 vec![child_req],
                             )
                             .await?;
-                        if let Some(wasm_backtrace) = wasm_backtrace {
-                            if let Err(err) = db_connection
+                        if let Some(wasm_backtrace) = wasm_backtrace
+                            && let Err(err) = db_connection
                                 .append_backtrace(BacktraceInfo {
                                     execution_id: self.execution_id.clone(),
                                     component_id: self.component_id.clone(),
@@ -1172,9 +1168,8 @@ impl EventHistory {
                                     wasm_backtrace,
                                 })
                                 .await
-                            {
-                                debug!("Ignoring error while appending backtrace: {err:?}");
-                            }
+                        {
+                            debug!("Ignoring error while appending backtrace: {err:?}");
                         }
                         next_version
                     };
