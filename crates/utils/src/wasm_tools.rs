@@ -394,12 +394,15 @@ impl ExIm {
             name: StrVariant::Static("scheduled-at"),
             wit_type: StrVariant::Static("schedule-at"),
         };
-        let execution_id_and_error_tuple_type_wrapper = TypeWrapper::Tuple(Box::new([
-            execution_id_type_wrapper.clone(),
-            TypeWrapper::Variant(indexmap! {
-                Box::from("execution-failed") => None,
-            }),
-        ]));
+
+        let execution_error_type_wrapper = TypeWrapper::Variant(indexmap! {
+            Box::from("execution-failed") => Some(TypeWrapper::Record(indexmap! {
+                Box::from("execution-id") => execution_id_type_wrapper.clone()
+            })),
+            Box::from("function-mismatch") => Some(TypeWrapper::Record(indexmap! {
+                Box::from("execution-id") => execution_id_type_wrapper.clone()
+            })),
+        });
         let stub_error_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("conflict") => None,
         });
@@ -499,9 +502,7 @@ impl ExIm {
                                             execution_id_type_wrapper.clone(),
                                             original_ret.type_wrapper.clone(),
                                         ])))), // (execution-id, original_ret)
-                                        err: Some(Box::new(
-                                            execution_id_and_error_tuple_type_wrapper.clone(),
-                                        )),
+                                        err: Some(Box::new(execution_error_type_wrapper.clone())),
                                     },
                                 )
                             } else {
@@ -509,16 +510,14 @@ impl ExIm {
                                     Cow::Borrowed("execution-id"),
                                     TypeWrapper::Result {
                                         ok: Some(Box::new(execution_id_type_wrapper.clone())),
-                                        err: Some(Box::new(
-                                            execution_id_and_error_tuple_type_wrapper.clone(),
-                                        )),
+                                        err: Some(Box::new(execution_error_type_wrapper.clone())),
                                     },
                                 )
                             };
                         Some(ReturnType {
                             type_wrapper,
                             wit_type: StrVariant::from(format!(
-                                "result<{ok_part}, tuple<execution-id, execution-error>>"
+                                "result<{ok_part}, execution-error>"
                             )),
                         })
                     },

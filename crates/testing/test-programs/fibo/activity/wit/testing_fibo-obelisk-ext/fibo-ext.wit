@@ -5,5 +5,5 @@ interface fibo {
 
     fibo-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
 
-    fibo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
+    fibo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, execution-error>;
 }

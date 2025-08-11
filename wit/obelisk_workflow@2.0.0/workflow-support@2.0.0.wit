@@ -25,6 +25,7 @@ interface workflow-support {
     /// Block execution for given time.
     sleep: func(schedule-at: schedule-at);
 
+    /// Add a delay request to the join set. The delay can be later polled using `await-next`.
     request-delay: func(join-set-id: borrow<join-set-id>, timeout: schedule-at) -> delay-id;
 
     /// Create a new completing join set.
@@ -40,7 +41,8 @@ interface workflow-support {
 
     /// Block the workflow execution until next response associated with the join set arrives.
     /// The response is marked as processed.
-    /// Child execution result can then be obtained using `-get` extension function.
-    /// If there are no more unprocessed resonses, return `none`.
+    /// Child execution result can be obtained using `-get` extension function using the
+    /// returned execution ID.
+    /// Return `none` if the join set has all requests matched with responses.
     await-next: func(join-set-id: borrow<join-set-id>) -> option<await-next-response>;
 }

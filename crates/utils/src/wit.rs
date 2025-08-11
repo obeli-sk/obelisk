@@ -188,18 +188,7 @@ fn add_ext_exports(
             stability: wit_parser::Stability::default(),
         })
     };
-    let type_id_await_next_err_part = resolve.types.alloc(TypeDef {
-        name: None,
-        kind: TypeDefKind::Tuple(wit_parser::Tuple {
-            types: vec![
-                Type::Id(type_id_execution_id),
-                Type::Id(type_id_execution_error),
-            ],
-        }),
-        owner: TypeOwner::None,
-        docs: wit_parser::Docs::default(),
-        stability: wit_parser::Stability::default(),
-    });
+    let type_id_await_next_err_part = type_id_execution_error;
     let type_id_schedule_at = {
         // obelisk:types/time.{schedule-at}
         let actual_type_id = *time_ifc
@@ -304,9 +293,9 @@ fn add_ext_exports(
                     ext_ifc.functions.insert(fn_name, fn_ext);
                 }
                 // -await-next: func(join-set-id: borrow<join-set-id>) ->
-                //  result<tuple<execution-id, <return-type>>, tuple<execution-id, execution-error>>;
+                //  result<tuple<execution-id, return-type>, execution-error>;
                 // or if the function does not return anything:
-                //  result<execution-id, tuple<execution-id, execution-error>>;
+                //  result<execution-id, execution-error>;
                 {
                     let fn_name = format!("{fn_name}-await-next");
                     let params = vec![(
@@ -338,7 +327,7 @@ fn add_ext_exports(
                         let type_id_result = resolve.types.alloc(TypeDef {
                             name: None,
                             kind: TypeDefKind::Result(wit_parser::Result_ {
-                                ok: Some(Type::Id(type_id_execution_id)),
+                                ok: Some(Type::Id(type_id_execution_id)), // TODO add tuple?
                                 err: Some(Type::Id(type_id_await_next_err_part)),
                             }),
                             owner: TypeOwner::None,

@@ -38,19 +38,24 @@ interface execution {
         id: string,
     }
 
-    variant execution-error {
-        execution-failed,
+    record execution-failed {
+        execution-id: execution-id,
     }
 
-    variant get-response-error {
-        execution-error(execution-error),
+    record function-mismatch {
+        execution-id: execution-id,
+    }
+
+    variant execution-error {
+        execution-failed(execution-failed),
         /// Mismatch between extension function (-await-next, -get) and the actual execution result.
         /// This can happen when join set contains responses of multiple functions or delay requests.
-        function-mismatch,
+        function-mismatch(function-mismatch),
     }
 
     variant stub-error {
-        // stubbed execution must not contain any execution log entries except for the `Created` event.
+        /// Conflict can happen when a second writer attempts to stub a value, while the
+        /// value is not equal to the already stubbed value.
         conflict,
     }
 }

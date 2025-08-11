@@ -5,9 +5,9 @@ interface workflow {
     use obelisk:types/time@2.0.0.{schedule-at};
 
     fiboa-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
-    fiboa-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
+    fiboa-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, execution-error>;
     fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
 
     fiboa-concurrent-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
-    fiboa-concurrent-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
+    fiboa-concurrent-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, execution-error>;
 }

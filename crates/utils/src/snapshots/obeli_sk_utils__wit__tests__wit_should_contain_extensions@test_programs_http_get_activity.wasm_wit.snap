@@ -59,15 +59,19 @@ package obelisk:types@2.0.0 {
       id: string,
     }
 
-    variant execution-error {
-      execution-failed,
+    record execution-failed {
+      execution-id: execution-id,
     }
 
-    variant get-response-error {
-      execution-error(execution-error),
+    record function-mismatch {
+      execution-id: execution-id,
+    }
+
+    variant execution-error {
+      execution-failed(execution-failed),
       /// Mismatch between extension function (-await-next, -get) and the actual execution result.
       /// This can happen when join set contains responses of multiple functions or delay requests.
-      function-mismatch,
+      function-mismatch(function-mismatch),
     }
 
     variant stub-error {
@@ -423,25 +427,25 @@ package testing:http-obelisk-ext {
 
     get-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
-    get-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, tuple<execution-id, execution-error>>;
+    get-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, execution-error>;
 
     get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
     get-resp-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
-    get-resp-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<response, string>>, tuple<execution-id, execution-error>>;
+    get-resp-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<response, string>>, execution-error>;
 
     get-resp-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
     get-stargazers-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
-    get-stargazers-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<stargazers, string>>, tuple<execution-id, execution-error>>;
+    get-stargazers-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<stargazers, string>>, execution-error>;
 
     get-stargazers-schedule: func(schedule-at: schedule-at) -> execution-id;
 
     get-successful-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
-    get-successful-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, tuple<execution-id, execution-error>>;
+    get-successful-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, execution-error>;
 
     get-successful-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
   }

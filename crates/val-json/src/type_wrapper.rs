@@ -70,12 +70,13 @@ impl PartialEq for TypeWrapper {
             (Self::Borrow, Self::Borrow) => true,
             (Self::Borrow, _) => false,
 
-            // IndexMap equality only if ordering is the same!
             (Self::Record(left_map), Self::Record(right_map)) => {
+                // IndexMap equality only if ordering is the same!
                 left_map.as_slice() == right_map.as_slice()
             }
             (Self::Record(_), _) => false,
             (Self::Variant(left_map), Self::Variant(right_map)) => {
+                // IndexMap equality only if ordering is the same!
                 left_map.as_slice() == right_map.as_slice()
             }
             (Self::Variant(_), _) => false,

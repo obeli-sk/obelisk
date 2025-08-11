@@ -54,15 +54,19 @@ package obelisk:types@2.0.0 {
       id: string,
     }
 
-    variant execution-error {
-      execution-failed,
+    record execution-failed {
+      execution-id: execution-id,
     }
 
-    variant get-response-error {
-      execution-error(execution-error),
+    record function-mismatch {
+      execution-id: execution-id,
+    }
+
+    variant execution-error {
+      execution-failed(execution-failed),
       /// Mismatch between extension function (-await-next, -get) and the actual execution result.
       /// This can happen when join set contains responses of multiple functions or delay requests.
-      function-mismatch,
+      function-mismatch(function-mismatch),
     }
 
     variant stub-error {
@@ -233,7 +237,7 @@ package testing:fibo-obelisk-ext {
 
     fibo-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
 
-    fibo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
+    fibo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, execution-error>;
 
     fibo-schedule: func(schedule-at: schedule-at, n: u8) -> execution-id;
   }

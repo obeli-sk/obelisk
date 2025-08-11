@@ -31,6 +31,7 @@ use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use indexmap::IndexMap;
+use indexmap::indexmap;
 use std::fmt::Debug;
 use std::fmt::Display;
 use strum::IntoStaticStr;
@@ -681,7 +682,7 @@ impl EventHistory {
                             JoinNextKind::AwaitNext => {
                                 match result {
                                     Ok(SupportedFunctionReturnValue::None) => {
-                                        // result<execution-id, tuple<execution-id, execution-error>>
+                                        // result<execution-id, execution-error>
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                                             WastVal::Result(Ok(Some(Box::new(
                                                 execution_id_derived_into_wast_val(
@@ -694,7 +695,7 @@ impl EventHistory {
                                         SupportedFunctionReturnValue::InfallibleOrResultOk(v)
                                         | SupportedFunctionReturnValue::FallibleResultErr(v),
                                     ) => {
-                                        // result<(execution-id, inner>, tuple<execution-id, execution-error>>
+                                        // result<(execution-id, inner>, execution-error>
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                                             WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(
                                                 vec![
@@ -706,42 +707,27 @@ impl EventHistory {
                                             ))))),
                                         )))
                                     }
-                                    // Transform timeout to WastVal
+                                    // Transform timeout to execution-error::execution-failed
                                     Err(FinishedExecutionError::PermanentTimeout) => {
-                                        let variant =
-                                            WastVal::Variant("permanent-timeout".to_string(), None);
+                                        let execution_failed = execution_error(
+                                            ExecutionErrorVariant::ExecutionFailed,
+                                            child_execution_id,
+                                        );
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                                            WastVal::Result(Err(Some(Box::new(WastVal::Tuple(
-                                                vec![
-                                                    execution_id_derived_into_wast_val(
-                                                        child_execution_id,
-                                                    ),
-                                                    variant,
-                                                ],
-                                            ))))),
+                                            WastVal::Result(Err(Some(Box::new(execution_failed)))),
                                         )))
                                     }
-                                    // Transform activity trap to WastVal
+                                    // Transform activity trap to execution-error::execution-failed
                                     Err(FinishedExecutionError::PermanentFailure {
-                                        reason_inner,
                                         kind: PermanentFailureKind::ActivityTrap,
                                         ..
                                     }) => {
-                                        let variant = WastVal::Variant(
-                                            "activity-trap".to_string(),
-                                            Some(Box::new(WastVal::String(
-                                                reason_inner.to_string(),
-                                            ))),
+                                        let execution_failed = execution_error(
+                                            ExecutionErrorVariant::ExecutionFailed,
+                                            child_execution_id,
                                         );
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                                            WastVal::Result(Err(Some(Box::new(WastVal::Tuple(
-                                                vec![
-                                                    execution_id_derived_into_wast_val(
-                                                        child_execution_id,
-                                                    ),
-                                                    variant,
-                                                ],
-                                            ))))),
+                                            WastVal::Result(Err(Some(Box::new(execution_failed)))),
                                         )))
                                     }
                                     // Copy root cause of UnhandledChildExecutionError
@@ -1515,6 +1501,28 @@ impl EventHistory {
             }
         }
     }
+}
+
+#[derive(Copy, Clone, derive_more::Display)]
+enum ExecutionErrorVariant {
+    #[display("execution-failed")]
+    ExecutionFailed,
+    // #[display("function-mismatch")]
+    // FunctionMismatch,
+}
+
+fn execution_error(
+    variant: ExecutionErrorVariant,
+    child_execution_id: &ExecutionIdDerived,
+) -> WastVal {
+    WastVal::Variant(
+        variant.to_string(),
+        Some(Box::new(WastVal::Record(indexmap! {
+            "execution-id".to_string() => execution_id_derived_into_wast_val(
+                    child_execution_id,
+                )
+        }))),
+    )
 }
 
 #[derive(Debug)]

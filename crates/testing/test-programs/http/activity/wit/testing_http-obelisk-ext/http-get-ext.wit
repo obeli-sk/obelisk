@@ -5,5 +5,5 @@ interface http-get {
 
     get-successful-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
-    get-successful-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, tuple<execution-id, execution-error>>;
+    get-successful-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, execution-error>;
 }

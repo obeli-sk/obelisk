@@ -29,22 +29,30 @@ expression: exports
             ]
           },
           "err": {
-            "tuple": [
-              {
+            "variant": {
+              "execution-failed": {
                 "record": {
-                  "id": "string"
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
                 }
               },
-              {
-                "variant": {
-                  "execution-failed": null
+              "function-mismatch": {
+                "record": {
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
                 }
               }
-            ]
+            }
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
+      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -150,22 +158,30 @@ expression: exports
             ]
           },
           "err": {
-            "tuple": [
-              {
+            "variant": {
+              "execution-failed": {
                 "record": {
-                  "id": "string"
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
                 }
               },
-              {
-                "variant": {
-                  "execution-failed": null
+              "function-mismatch": {
+                "record": {
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
                 }
               }
-            ]
+            }
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
+      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -291,22 +307,30 @@ expression: exports
             ]
           },
           "err": {
-            "tuple": [
-              {
+            "variant": {
+              "execution-failed": {
                 "record": {
-                  "id": "string"
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
                 }
               },
-              {
-                "variant": {
-                  "execution-failed": null
+              "function-mismatch": {
+                "record": {
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
                 }
               }
-            ]
+            }
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
+      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -337,22 +361,30 @@ expression: exports
             ]
           },
           "err": {
-            "tuple": [
-              {
+            "variant": {
+              "execution-failed": {
                 "record": {
-                  "id": "string"
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
                 }
               },
-              {
-                "variant": {
-                  "execution-failed": null
+              "function-mismatch": {
+                "record": {
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
                 }
               }
-            ]
+            }
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
+      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -553,22 +585,30 @@ expression: exports
             ]
           },
           "err": {
-            "tuple": [
-              {
+            "variant": {
+              "execution-failed": {
                 "record": {
-                  "id": "string"
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
                 }
               },
-              {
-                "variant": {
-                  "execution-failed": null
+              "function-mismatch": {
+                "record": {
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
                 }
               }
-            ]
+            }
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
+      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
