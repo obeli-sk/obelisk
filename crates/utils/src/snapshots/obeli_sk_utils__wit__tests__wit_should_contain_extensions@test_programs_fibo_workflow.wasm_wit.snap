@@ -67,7 +67,8 @@ package obelisk:types@2.0.0 {
     }
 
     variant stub-error {
-      /// stubbed execution must not contain any execution log entries except for the `Created` event.
+      /// Conflict can happen when a second writer attempts to stub a value, while the
+      /// value is not equal to the already stubbed value.
       conflict,
     }
   }
