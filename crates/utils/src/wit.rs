@@ -278,7 +278,7 @@ fn add_ext_exports(
                 {
                     let fn_name = format!("{fn_name}-submit");
                     let mut params = vec![(
-                        "join-set-id".to_string(),
+                        generate_param_name("join-set-id", &original_fn.params),
                         Type::Id(type_id_join_set_id_borrow_handle),
                     )];
                     params.extend_from_slice(&original_fn.params);
@@ -348,10 +348,13 @@ fn add_ext_exports(
                 }
                 if component_type != ComponentType::ActivityStub {
                     // -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
-
                     let fn_name = format!("{fn_name}-schedule");
-                    let mut params =
-                        vec![("schedule-at".to_string(), Type::Id(type_id_schedule_at))];
+                    let schedule_at_param_name =
+                        generate_param_name("schedule-at", &original_fn.params);
+                    let mut params = vec![(
+                        schedule_at_param_name.to_string(),
+                        Type::Id(type_id_schedule_at),
+                    )];
                     params.extend_from_slice(&original_fn.params);
                     let fn_ext = Function {
                         name: fn_name.clone(),
@@ -452,6 +455,29 @@ fn add_ext_exports(
     let mut printer = WitPrinter::default();
     printer.print(&resolve, main_id, &ids)?;
     Ok(printer.output.to_string())
+}
+
+fn generate_param_name(param_name: &str, params: &[(String, Type)]) -> String {
+    let orig_param_names: hashbrown::HashSet<&str> =
+        params.iter().map(|(name, _)| name.as_str()).collect();
+    if orig_param_names.contains(param_name) {
+        let mut my_char = 'a';
+        loop {
+            let name = format!("{param_name}-{my_char}");
+            if !orig_param_names.contains(name.as_str()) {
+                break name;
+            }
+            if my_char != 'z' {
+                my_char =
+                    std::char::from_u32(my_char as u32 + 1).expect("checked that my_char < 'z'");
+            } else {
+                warn!("Generated name `{name}` collides with other params {orig_param_names:?}");
+                break name;
+            }
+        }
+    } else {
+        param_name.to_string()
+    }
 }
 
 fn copy_original_types(
@@ -620,6 +646,8 @@ mod tests {
     use concepts::ComponentType;
     use rstest::rstest;
     use std::path::PathBuf;
+    use wit_component::WitPrinter;
+    use wit_parser::{Resolve, UnresolvedPackageGroup};
 
     #[rstest]
     #[test]
@@ -643,9 +671,14 @@ mod tests {
         test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY,
         ComponentType::ActivityStub
     )]
+    #[case(
+        test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+        ComponentType::Workflow
+    )]
     fn wit_should_contain_extensions(
         #[case] wasm_path: &'static str,
         #[case] component_type: ComponentType,
+        #[values(false, true)] print: bool,
     ) {
         test_utils::set_up();
 
@@ -654,6 +687,24 @@ mod tests {
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
         let wit = component.wit().unwrap();
-        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit")}, {insta::assert_snapshot!(wit)});
+        if print {
+            // Verify that the generated WIT parses.
+            let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit).unwrap();
+            let mut resolve = Resolve::new();
+            let main_id = resolve.push_group(group).unwrap();
+            let ids = resolve
+                .packages
+                .iter()
+                .map(|(id, _)| id)
+                // The main package would show as a nested package as well
+                .filter(|id| *id != main_id)
+                .collect::<Vec<_>>();
+            let mut printer = WitPrinter::default();
+            printer.print(&resolve, main_id, &ids).unwrap();
+
+            insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit_print")}, {insta::assert_snapshot!(String::from(printer.output))});
+        } else {
+            insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit")}, {insta::assert_snapshot!(wit)});
+        }
     }
 }
