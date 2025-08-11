@@ -707,21 +707,14 @@ impl EventHistory {
                                             ))))),
                                         )))
                                     }
-                                    // Transform timeout to execution-error::execution-failed
-                                    Err(FinishedExecutionError::PermanentTimeout) => {
-                                        let execution_failed = execution_error(
-                                            ExecutionErrorVariant::ExecutionFailed,
-                                            child_execution_id,
-                                        );
-                                        Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                                            WastVal::Result(Err(Some(Box::new(execution_failed)))),
-                                        )))
-                                    }
-                                    // Transform activity trap to execution-error::execution-failed
-                                    Err(FinishedExecutionError::PermanentFailure {
-                                        kind: PermanentFailureKind::ActivityTrap,
-                                        ..
-                                    }) => {
+                                    // Transform timeout and activity trap to execution-error::execution-failed
+                                    Err(
+                                        FinishedExecutionError::PermanentTimeout
+                                        | FinishedExecutionError::PermanentFailure {
+                                            kind: PermanentFailureKind::ActivityTrap,
+                                            ..
+                                        },
+                                    ) => {
                                         let execution_failed = execution_error(
                                             ExecutionErrorVariant::ExecutionFailed,
                                             child_execution_id,
