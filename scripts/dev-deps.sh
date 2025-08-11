@@ -10,7 +10,7 @@ rm -f dev-deps.txt
 echo "cargo-binstall $(cargo-binstall -V)" >> dev-deps.txt
 cargo upgrade --version >> dev-deps.txt
 cargo-expand --version >> dev-deps.txt
-# cargo-insta --version >> dev-deps.txt  # Broken as of 1.39-unstable-2024-08-22
+cargo-insta --version >> dev-deps.txt
 cargo nextest --version | head -n 1 >> dev-deps.txt
 cargo semver-checks --version >> dev-deps.txt
 echo "litecli $(litecli --version)" >> dev-deps.txt
@@ -24,8 +24,10 @@ wasmtime --version >> dev-deps.txt
 cargo-zigbuild --version >> dev-deps.txt
 # web
 nix develop .#web --command wasm-opt --version >> dev-deps.txt # binaryen
+echo "trunk $(grep wasm_opt crates/webui/Trunk.toml)" >> dev-deps.txt
 nix develop .#web --command trunk --version >> dev-deps.txt
 nix develop .#web --command wasm-bindgen --version >> dev-deps.txt
+echo "trunk $(grep wasm_bindgen crates/webui/Trunk.toml)" >> dev-deps.txt
 
 # libc
 ldd --version | head -n 1 >> dev-deps.txt
