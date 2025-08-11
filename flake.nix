@@ -22,8 +22,8 @@
                 src = prev.fetchFromGitHub {
                   owner = "tomasol";
                   repo = "wasm-bindgen";
-                  rev = "cfe16b1cde5ca38f5c60ffa6ca6c26f66c5f87d7";
-                  sha256 = "sha256-hDJ4R4UK8W2UL4x6SKJieJCqmn21ebiK1aN1if9SPP8=";
+                  rev = "d501b68c5d459c41ba07d0b37bc1e84ae31cbfea";
+                  sha256 = "sha256-Ny0Q2ul3s2bpA3itgOP5QuGIVldromGlX+pm0VcqSHc=";
                 };
                 nativeBuildInputs = with prev; [
                   cargo
