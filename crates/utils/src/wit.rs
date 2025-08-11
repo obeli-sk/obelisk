@@ -461,23 +461,15 @@ fn generate_param_name(param_name: &str, params: &[(String, Type)]) -> String {
     let orig_param_names: hashbrown::HashSet<&str> =
         params.iter().map(|(name, _)| name.as_str()).collect();
     if orig_param_names.contains(param_name) {
-        let mut my_char = 'a';
-        loop {
+        for my_char in 'a'..'z' {
             let name = format!("{param_name}-{my_char}");
             if !orig_param_names.contains(name.as_str()) {
-                break name;
-            }
-            if my_char != 'z' {
-                my_char =
-                    std::char::from_u32(my_char as u32 + 1).expect("checked that my_char < 'z'");
-            } else {
-                warn!("Generated name `{name}` collides with other params {orig_param_names:?}");
-                break name;
+                return name;
             }
         }
-    } else {
-        param_name.to_string()
+        warn!("Parameter name `{param_name}` collides with other params {orig_param_names:?}");
     }
+    param_name.to_string()
 }
 
 fn copy_original_types(
