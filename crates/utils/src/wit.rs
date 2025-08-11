@@ -461,7 +461,7 @@ fn generate_param_name(param_name: &str, params: &[(String, Type)]) -> String {
     let orig_param_names: hashbrown::HashSet<&str> =
         params.iter().map(|(name, _)| name.as_str()).collect();
     if orig_param_names.contains(param_name) {
-        for my_char in 'a'..'z' {
+        for my_char in 'a'..='z' {
             let name = format!("{param_name}-{my_char}");
             if !orig_param_names.contains(name.as_str()) {
                 return name;
