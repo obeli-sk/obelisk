@@ -35,6 +35,7 @@ expression: exports
           },
           "err": {
             "variant": {
+              "all-processed": null,
               "execution-failed": {
                 "record": {
                   "execution-id": {
@@ -94,6 +95,7 @@ expression: exports
           },
           "err": {
             "variant": {
+              "all-processed": null,
               "execution-failed": {
                 "record": {
                   "execution-id": {
@@ -265,6 +267,7 @@ expression: exports
           },
           "err": {
             "variant": {
+              "all-processed": null,
               "execution-failed": {
                 "record": {
                   "execution-id": {
@@ -417,6 +420,7 @@ expression: exports
           },
           "err": {
             "variant": {
+              "all-processed": null,
               "execution-failed": {
                 "record": {
                   "execution-id": {
@@ -478,6 +482,7 @@ expression: exports
           },
           "err": {
             "variant": {
+              "all-processed": null,
               "execution-failed": {
                 "record": {
                   "execution-id": {
@@ -588,6 +593,7 @@ expression: exports
           },
           "err": {
             "variant": {
+              "all-processed": null,
               "execution-failed": {
                 "record": {
                   "execution-id": {

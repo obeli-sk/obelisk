@@ -60,11 +60,15 @@ package obelisk:types@2.0.0 {
       execution-id: execution-id,
     }
 
+    /// Error that is thrown by `-await-next` extension functions.
     variant execution-error {
+      /// Execution response was awaited and marked as processed, but it finished with an error.
       execution-failed(execution-failed),
-      /// Mismatch between extension function (-await-next, -get) and the actual execution result.
+      /// Execution response was awaited and marked as processed, but it belongs to a different function.
       /// This can happen when join set contains responses of multiple functions or delay requests.
       function-mismatch(function-mismatch),
+      /// All submitted requests and their responses were already processed.
+      all-processed,
     }
 
     /// Error that is thrown by `-get` extension functions.

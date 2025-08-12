@@ -395,6 +395,7 @@ impl ExIm {
             wit_type: StrVariant::Static("schedule-at"),
         };
 
+        // Define execution-error variants
         let execution_error_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("execution-failed") => Some(TypeWrapper::Record(indexmap! {
                 Box::from("execution-id") => execution_id_type_wrapper.clone()
@@ -402,6 +403,7 @@ impl ExIm {
             Box::from("function-mismatch") => Some(TypeWrapper::Record(indexmap! {
                 Box::from("execution-id") => execution_id_type_wrapper.clone()
             })),
+            Box::from("all-processed") => None,
         });
         let stub_error_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("conflict") => None,

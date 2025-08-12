@@ -77,6 +77,7 @@ expression: imports
           },
           "err": {
             "variant": {
+              "all-processed": null,
               "execution-failed": {
                 "record": {
                   "execution-id": {
