@@ -44,15 +44,6 @@ expression: exports
                     }
                   }
                 }
-              },
-              "function-mismatch": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
               }
             }
           }
@@ -97,15 +88,6 @@ expression: exports
             "variant": {
               "all-processed": null,
               "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
-              "function-mismatch": {
                 "record": {
                   "execution-id": {
                     "record": {
@@ -276,15 +258,6 @@ expression: exports
                     }
                   }
                 }
-              },
-              "function-mismatch": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
               }
             }
           }
@@ -429,15 +402,6 @@ expression: exports
                     }
                   }
                 }
-              },
-              "function-mismatch": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
               }
             }
           }
@@ -484,15 +448,6 @@ expression: exports
             "variant": {
               "all-processed": null,
               "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
-              "function-mismatch": {
                 "record": {
                   "execution-id": {
                     "record": {
@@ -595,15 +550,6 @@ expression: exports
             "variant": {
               "all-processed": null,
               "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
-              "function-mismatch": {
                 "record": {
                   "execution-id": {
                     "record": {

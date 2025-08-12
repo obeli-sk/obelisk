@@ -42,18 +42,19 @@ impl Guest for Component {
         // {
         //     AwaitNextResponse::Execution(found_id) => {
         //         assert_eq!(found_id.id, execution_id.id);
-        //         "TODO".to_string()
-        //         // match activity_ext::foo_get(&execution_id)
-        //         //     .expect("this execution response must have been processed")
-        //         // {
-        //         //     Ok(ok) => format!("execution won: {ok}"),
-        //         //     Err(GetResponseError::FunctionMismatch) => {
-        //         //         unreachable!("no other functions were submitted")
-        //         //     }
-        //         //     Err(GetResponseError::ExecutionError(_)) => {
-        //         //         format!("got execution error :(")
-        //         //     }
-        //         // }
+        //         match activity_ext::foo_get(&execution_id)
+        //         {
+        //             Ok(ok) => format!("execution won: {ok}"),
+        //             Err(GetExtensionError::FunctionMismatch) => {
+        //                 unreachable!("no other functions were submitted")
+        //             }
+        //             Err(GetExtensionError::ExecutionFailed(_)) => {
+        //                 format!("got execution error :(")
+        //             }
+        //             Err(GetExtensionError::NotFoundInProcessedResponses) => {
+        //                 unreachable!("got it from awaiting")
+        //             }
+        //         }
         //     }
         //     AwaitNextResponse::Delay(found_id) => {
         //         assert_eq!(found_id.id, delay_id.id);

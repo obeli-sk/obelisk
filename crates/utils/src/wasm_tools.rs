@@ -400,9 +400,6 @@ impl ExIm {
             Box::from("execution-failed") => Some(TypeWrapper::Record(indexmap! {
                 Box::from("execution-id") => execution_id_type_wrapper.clone()
             })),
-            Box::from("function-mismatch") => Some(TypeWrapper::Record(indexmap! {
-                Box::from("execution-id") => execution_id_type_wrapper.clone()
-            })),
             Box::from("all-processed") => None,
         });
         let stub_error_type_wrapper = TypeWrapper::Variant(indexmap! {

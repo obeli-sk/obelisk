@@ -1504,8 +1504,6 @@ impl EventHistory {
 enum ExecutionErrorVariant {
     #[display("execution-failed")]
     ExecutionFailed,
-    // #[display("function-mismatch")]
-    // FunctionMismatch,
 }
 
 fn execution_error(
