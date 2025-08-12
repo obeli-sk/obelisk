@@ -39,10 +39,15 @@ interface workflow-support {
         delay(delay-id),
     }
 
+    variant join-set-await-next-error {
+        /// All submitted requests and their responses were already processed.
+        all-processed,
+    }
     /// Block the workflow execution until next response associated with the join set arrives.
     /// The response is marked as processed.
     /// Child execution result can be obtained using `-get` extension function using the
     /// returned execution ID.
     /// Return `none` if the join set has all requests matched with responses.
-    await-next: func(join-set-id: borrow<join-set-id>) -> option<await-next-response>;
+    await-next: func(join-set-id: borrow<join-set-id>) ->
+        result<await-next-response, join-set-await-next-error>;
 }
