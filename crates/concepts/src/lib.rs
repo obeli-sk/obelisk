@@ -102,7 +102,7 @@ pub enum PermanentFailureKind {
     /// Applicable to Workflow
     WorkflowTrap,
     /// Applicable to Workflow
-    JoinSetNameConflict,
+    JoinSetNameError,
     /// Applicable to webhook endpoint
     WebhookEndpointError,
     /// Applicable to Stub Activity

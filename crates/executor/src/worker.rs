@@ -140,9 +140,9 @@ pub enum FatalError {
         trap_kind: TrapKind,
         detail: String,
     },
-    /// Workflow attempted to create a join set with the same name twice.
-    #[error("join set already exists with name `{name}`")]
-    JoinSetNameConflict { name: String },
+    /// Workflow attempted to create a join set with the same name twice, or with an invalid character.
+    #[error("{reason}")]
+    JoinSetNameError { reason: String },
 }
 
 impl From<FatalError> for FinishedExecutionError {
@@ -208,10 +208,10 @@ impl From<FatalError> for FinishedExecutionError {
                 kind: PermanentFailureKind::WorkflowTrap,
                 detail: Some(detail),
             },
-            FatalError::JoinSetNameConflict { name } => FinishedExecutionError::PermanentFailure {
-                reason_inner: name,
+            FatalError::JoinSetNameError { reason } => FinishedExecutionError::PermanentFailure {
+                reason_inner: reason,
                 reason_full,
-                kind: PermanentFailureKind::JoinSetNameConflict,
+                kind: PermanentFailureKind::JoinSetNameError,
                 detail: None,
             },
         }

@@ -16,7 +16,7 @@ use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
     ClosingStrategy, ComponentId, ExecutionId, FinishedExecutionError, FunctionRegistry,
-    IfcFqnName, StrVariant, SupportedFunctionReturnValue,
+    IfcFqnName, InvalidNameError, StrVariant, SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
@@ -48,8 +48,8 @@ pub(crate) enum WorkflowFunctionError {
         reason: StrVariant,
         detail: Option<String>,
     },
-    #[error("join set already exists with name `{0}`")]
-    JoinSetNameConflict(String),
+    #[error("{reason}")]
+    JoinSetNameError { reason: String },
     // retriable errors:
     #[error("interrupt requested")]
     InterruptRequested,
@@ -99,8 +99,8 @@ impl WorkflowFunctionError {
                 },
                 version,
             ),
-            WorkflowFunctionError::JoinSetNameConflict(name) => {
-                WorkerPartialResult::FatalError(FatalError::JoinSetNameConflict { name }, version)
+            WorkflowFunctionError::JoinSetNameError { reason } => {
+                WorkerPartialResult::FatalError(FatalError::JoinSetNameError { reason }, version)
             }
         }
     }
@@ -647,9 +647,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
         name: String,
         kind: JoinSetKind,
         closing_strategy: ClosingStrategy,
-    ) -> wasmtime::Result<Resource<JoinSetId>> {
+    ) -> Result<Resource<JoinSetId>, JoinSetCreateError> {
         if !self.event_history.join_set_name_exists(&name, kind) {
-            let join_set_id = JoinSetId::new(kind, StrVariant::from(name))?;
+            let join_set_id = JoinSetId::new(kind, StrVariant::from(name))
+                .map_err(JoinSetCreateError::InvalidNameError)?;
             let res = self
                 .event_history
                 .apply(
@@ -663,15 +664,16 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     self.clock_fn.now(),
                 )
                 .await
-                .map_err(WorkflowFunctionError::from)?;
+                .map_err(JoinSetCreateError::ApplyError)?;
             let join_set_id = assert_matches!(res,
                 ChildReturnValue::HostResource(HostResource::CreateJoinSetResp(join_set_id)) => join_set_id);
-            let join_set_id = self.resource_table.push(join_set_id)?;
+            let join_set_id = self
+                .resource_table
+                .push(join_set_id)
+                .map_err(JoinSetCreateError::ResourceTableError)?;
             Ok(join_set_id)
         } else {
-            Err(wasmtime::Error::new(
-                WorkflowFunctionError::JoinSetNameConflict(name),
-            ))
+            Err(JoinSetCreateError::NameConflict)
         }
     }
 
@@ -1018,11 +1020,24 @@ impl<C: ClockFn> WorkflowCtx<C> {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+enum JoinSetCreateError {
+    #[error(transparent)]
+    InvalidNameError(InvalidNameError<JoinSetId>),
+    #[error(transparent)]
+    ApplyError(ApplyError),
+    #[error(transparent)]
+    ResourceTableError(ResourceTableError),
+    #[error("join set name conflict")]
+    NameConflict,
+}
+
 mod workflow_support {
     use super::{ClockFn, EventCall, WorkflowCtx, WorkflowFunctionError, assert_matches};
     use crate::workflow::event_history::ChildReturnValue;
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::HostJoinSetId;
+    use crate::workflow::workflow_ctx::JoinSetCreateError;
     use concepts::FunctionFqn;
     use concepts::storage::HistoryEventScheduleAt;
     use concepts::{
@@ -1159,6 +1174,19 @@ mod workflow_support {
                 concepts::ClosingStrategy::Complete,
             )
             .await
+            .map_err(|err| match err {
+                JoinSetCreateError::InvalidNameError(_) | JoinSetCreateError::NameConflict => {
+                    wasmtime::Error::new(WorkflowFunctionError::JoinSetNameError {
+                        reason: err.to_string(),
+                    })
+                }
+                JoinSetCreateError::ApplyError(apply_err) => {
+                    wasmtime::Error::new(WorkflowFunctionError::from(apply_err))
+                }
+                JoinSetCreateError::ResourceTableError(resource_table_error) => {
+                    wasmtime::Error::new(resource_table_error)
+                }
+            })
         }
 
         pub(crate) async fn new_join_set_generated(
@@ -1172,6 +1200,17 @@ mod workflow_support {
                 concepts::ClosingStrategy::Complete,
             )
             .await
+            .map_err(|err| match err {
+                JoinSetCreateError::InvalidNameError(_) | JoinSetCreateError::NameConflict => {
+                    unreachable!("generated index has been incremented")
+                }
+                JoinSetCreateError::ApplyError(apply_err) => {
+                    wasmtime::Error::new(WorkflowFunctionError::from(apply_err))
+                }
+                JoinSetCreateError::ResourceTableError(resource_table_error) => {
+                    wasmtime::Error::new(resource_table_error)
+                }
+            })
         }
     }
 }

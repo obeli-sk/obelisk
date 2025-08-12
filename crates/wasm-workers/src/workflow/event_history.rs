@@ -80,17 +80,21 @@ enum ProcessingStatus {
     Processed,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub(crate) enum ApplyError {
     // fatal errors:
+    #[error("nondeterminism detected: `{0}`")]
     NondeterminismDetected(String),
     // Fatal unless when closing a join set
+    #[error("unhandled child execution error")]
     UnhandledChildExecutionError {
         child_execution_id: ExecutionIdDerived,
         root_cause_id: ExecutionIdDerived,
     },
     // retriable errors:
+    #[error("interrupt requested")]
     InterruptRequested,
+    #[error(transparent)]
     DbError(DbError),
 }
 
