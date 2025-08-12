@@ -8,7 +8,7 @@ jobs:
     name: Run benchmarks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: nixbuild/nix-quick-install-action@63ca48f939ee3b8d835f4126562537df0fee5b91
         with:
