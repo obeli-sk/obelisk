@@ -6,8 +6,7 @@ interface activity {
     foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
     foo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, string>, execution-error>;
 
-    // None if this execution is not marked as processed yet.
-    // foo-get: func(execution-id: execution-id) -> option<result<string, execution-error>>;
+    // foo-get: func(execution-id: execution-id) -> result<string, get-extension-error>;
 
     noret-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
     noret-await-next: func(join-set-id: borrow<join-set-id>) -> result<execution-id, execution-error>;
