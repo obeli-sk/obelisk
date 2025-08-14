@@ -62,15 +62,6 @@ expression: imports
                     }
                   }
                 }
-              },
-              "function-mismatch": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
               }
             }
           }
@@ -138,15 +129,6 @@ expression: imports
             "variant": {
               "all-processed": null,
               "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
-              "function-mismatch": {
                 "record": {
                   "execution-id": {
                     "record": {

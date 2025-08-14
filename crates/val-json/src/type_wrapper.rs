@@ -22,8 +22,8 @@ pub enum TypeWrapper {
     String,
     Own,
     Borrow,
-    Record(IndexMap<Box<str>, TypeWrapper>), // FIXME: indexmap
-    Variant(IndexMap<Box<str>, Option<TypeWrapper>>), // FIXME: indexmap
+    Record(IndexMap<Box<str>, TypeWrapper>), // FIXME: indexmap, ordering of keys matter!
+    Variant(IndexMap<Box<str>, Option<TypeWrapper>>), // FIXME: indexmap, ordering of keys matter!
     List(Box<TypeWrapper>),
     Tuple(Box<[TypeWrapper]>),
     Enum(IndexSet<Box<str>>),

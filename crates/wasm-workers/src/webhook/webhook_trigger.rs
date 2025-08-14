@@ -601,6 +601,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                         join_set_id: join_set_id_direct.clone(),
                         run_expires_at: created_at, // does not matter what the pending state is.
                         closing: false,
+                        requested_ffqn: Some(ffqn.clone()), // only needed for workflows but added for consistency.
                     },
                 },
             };

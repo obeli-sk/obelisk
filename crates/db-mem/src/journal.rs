@@ -194,6 +194,7 @@ impl ExecutionJournal {
                             join_set_id: expected_join_set_id,
                             run_expires_at: lock_expires_at,
                             closing,
+                            requested_ffqn: _,
                         },
                     ..
                 } => {

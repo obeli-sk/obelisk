@@ -1697,6 +1697,7 @@ impl<S: Sleep> SqlitePool<S> {
                         join_set_id,
                         run_expires_at,
                         closing,
+                        requested_ffqn: _,
                     },
             } => {
                 // Did the response arrive already?

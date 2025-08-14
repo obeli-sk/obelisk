@@ -947,7 +947,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from fn_registry exports must be found");
                 Ok(EventCall::StartAsync {
-                    ffqn: target_ffqn,
+                    target_ffqn,
                     fn_component_id,
                     fn_retry_config,
                     join_set_id,
@@ -957,13 +957,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 })
             }
             ImportedFnCall::AwaitNext {
-                target_ffqn: _, // Currently multiple functions are not supported in one join set.
+                target_ffqn,
                 join_set_id,
                 wasm_backtrace,
             } => Ok(EventCall::BlockingChildAwaitNext {
                 join_set_id,
-                closing: false,
                 wasm_backtrace,
+                requested_ffqn: target_ffqn,
             }),
             ImportedFnCall::Stub {
                 target_ffqn,

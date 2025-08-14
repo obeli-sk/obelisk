@@ -497,7 +497,7 @@ pub(crate) fn from_execution_event_to_grpc(
                                 }
                             },
                         }),
-                        HistoryEvent::JoinNext { join_set_id, run_expires_at, closing } => grpc_gen::execution_event::history_event::Event::JoinNext(grpc_gen::execution_event::history_event::JoinNext {
+                        HistoryEvent::JoinNext { join_set_id, run_expires_at, closing, requested_ffqn:_ } => grpc_gen::execution_event::history_event::Event::JoinNext(grpc_gen::execution_event::history_event::JoinNext {
                             join_set_id: Some(join_set_id.into()),
                             run_expires_at: Some(prost_wkt_types::Timestamp::from(run_expires_at)),
                             closing,

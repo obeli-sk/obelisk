@@ -1326,6 +1326,7 @@ mod tests {
                         join_set_id: join_set_id.clone(),
                         run_expires_at: sim_clock.now(),
                         closing: false,
+                        requested_ffqn: Some(FFQN_CHILD),
                     },
                 },
             };

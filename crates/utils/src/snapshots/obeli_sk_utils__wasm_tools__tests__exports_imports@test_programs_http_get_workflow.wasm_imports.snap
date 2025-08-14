@@ -86,15 +86,6 @@ expression: imports
                     }
                   }
                 }
-              },
-              "function-mismatch": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
               }
             }
           }

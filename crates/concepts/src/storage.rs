@@ -414,6 +414,9 @@ pub enum HistoryEvent {
         /// Set to a future time if the worker is keeping the execution invocation warm waiting for the result.
         /// The pending status will be kept in Locked state until `run_expires_at`.
         run_expires_at: DateTime<Utc>,
+        /// Set to a specific function when calling `-await-next` extension function, used for
+        /// determinism checks.
+        requested_ffqn: Option<FunctionFqn>,
         /// Is the joinset being closed?
         closing: bool,
     },
