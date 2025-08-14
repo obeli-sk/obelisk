@@ -86,6 +86,38 @@ expression: imports
                     }
                   }
                 }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
+                    }
+                  }
+                }
               }
             }
           }

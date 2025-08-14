@@ -5,6 +5,7 @@ use super::host_exports::execution_id_derived_into_wast_val;
 use super::host_exports::execution_id_into_wast_val;
 use super::host_exports::join_set_id_into_wast_val;
 use super::workflow_worker::JoinNextBlockingStrategy;
+use crate::workflow::host_exports::ffqn_into_wast_val;
 use chrono::{DateTime, Utc};
 use concepts::ClosingStrategy;
 use concepts::ComponentId;
@@ -33,6 +34,7 @@ use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use indexmap::indexmap;
+use itertools::Either;
 use std::fmt::Debug;
 use std::fmt::Display;
 use strum::IntoStaticStr;
@@ -497,10 +499,10 @@ impl EventHistory {
     }
 
     fn mark_next_unprocessed_response(
-        &mut self,
+        &'_ mut self,
         parent_event_idx: usize, // needs to be marked as Processed as well if found
         join_set_id: &JoinSetId,
-    ) -> Option<(&JoinSetResponse, Option<&FunctionFqn>)> {
+    ) -> Option<JoinSetResponseEnriched<'_>> {
         trace!(
             "mark_next_unprocessed_response responses: {:?}",
             self.responses
@@ -509,41 +511,47 @@ impl EventHistory {
             .responses
             .iter()
             .enumerate()
-            .filter_map(|(idx, (event, status))| {
+            .find_map(|(idx, (event, status))| {
                 if *status == Unprocessed
                     && let JoinSetResponseEvent {
-                        join_set_id: found,
-                        event,
+                        join_set_id: found_join_set_id,
+                        event: _,
                     } = event
-                    && found == join_set_id
+                    && found_join_set_id == join_set_id
                 {
-                    Some((idx, event))
+                    Some(idx)
                 } else {
                     None
                 }
-            })
-            .map(|(idx, join_set_response)| {
-                // Found an unprocessed response. Either return this index or fail on nondeterminism.
-                let child_ffqn_or_none_on_delay = match join_set_response {
-                    JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id, ..
-                    } => {
-                        // child_execution_id -> ffqn
-                        Some(
-                            self.index_child_exe_to_ffqn
-                                .get(child_execution_id)
-                                .expect("if finished the index must have it"),
-                        )
-                    }
-                    JoinSetResponse::DelayFinished { .. } => None,
-                };
-                (idx, child_ffqn_or_none_on_delay)
-            })
-            .next();
-        if let Some((idx, child_ffqn_or_none_on_delay)) = found_idx {
+            });
+        if let Some(idx) = found_idx {
             self.event_history[parent_event_idx].1 = Processed;
             self.responses[idx].1 = Processed;
-            Some((&self.responses[idx].0.event, child_ffqn_or_none_on_delay))
+            let enriched = {
+                match &self.responses[idx].0.event {
+                    JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id,
+                        finished_version: _,
+                        result,
+                    } => {
+                        // child_execution_id -> ffqn
+                        let response_ffqn = self
+                            .index_child_exe_to_ffqn
+                            .get(child_execution_id)
+                            .expect("if finished the index must have it");
+
+                        JoinSetResponseEnriched::ChildExecutionFinished {
+                            child_execution_id,
+                            result,
+                            response_ffqn,
+                        }
+                    }
+                    JoinSetResponse::DelayFinished { delay_id } => {
+                        JoinSetResponseEnriched::DelayFinished { delay_id }
+                    }
+                }
+            };
+            Some(enriched)
         } else {
             None
         }
@@ -681,14 +689,11 @@ impl EventHistory {
             {
                 trace!(%join_set_id, "Peeked at JoinNext - Child");
                 match self.mark_next_unprocessed_response(found_idx, join_set_id) {
-                    Some((
-                        JoinSetResponse::ChildExecutionFinished {
-                            child_execution_id,
-                            finished_version: _,
-                            result,
-                        },
-                        _,
-                    )) => {
+                    Some(JoinSetResponseEnriched::ChildExecutionFinished {
+                        child_execution_id,
+                        result,
+                        response_ffqn,
+                    }) if requested_ffqn == response_ffqn => {
                         trace!(%join_set_id, "Matched JoinNext & ChildExecutionFinished");
                         match kind {
                             JoinNextChildKind::DirectCall => match result {
@@ -756,10 +761,11 @@ impl EventHistory {
                                             ..
                                         },
                                     ) => {
-                                        let execution_failed = execution_error(
-                                            ExecutionErrorVariant::ExecutionFailed,
-                                            child_execution_id,
-                                        );
+                                        let execution_failed =
+                                            ExecutionErrorVariant::ExecutionFailed {
+                                                child_execution_id,
+                                            }
+                                            .as_wast_val();
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                                             WastVal::Result(Err(Some(Box::new(execution_failed)))),
                                         )))
@@ -790,10 +796,34 @@ impl EventHistory {
                             }
                         }
                     }
-                    None => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
-                    Some((JoinSetResponse::DelayFinished { .. }, _)) => {
-                        unreachable!("not implemented")
+                    Some(JoinSetResponseEnriched::ChildExecutionFinished {
+                        child_execution_id,
+                        result: _,
+                        response_ffqn,
+                    }) => {
+                        // mismatch between ffqns
+                        let function_mismatch = ExecutionErrorVariant::FunctionMismatch {
+                            specified_function: requested_ffqn,
+                            actual_function: Some(response_ffqn),
+                            actual_id: Either::Left(child_execution_id),
+                        }
+                        .as_wast_val();
+                        Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                            WastVal::Result(Err(Some(Box::new(function_mismatch)))),
+                        )))
                     }
+                    Some(JoinSetResponseEnriched::DelayFinished { delay_id }) => {
+                        let function_mismatch = ExecutionErrorVariant::FunctionMismatch {
+                            specified_function: requested_ffqn,
+                            actual_function: None,
+                            actual_id: Either::Right(delay_id),
+                        }
+                        .as_wast_val();
+                        Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                            WastVal::Result(Err(Some(Box::new(function_mismatch)))),
+                        )))
+                    }
+                    None => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
                 }
             }
 
@@ -808,17 +838,14 @@ impl EventHistory {
                 trace!(
                     %join_set_id, "Peeked at JoinNext - Delay");
                 match self.mark_next_unprocessed_response(found_idx, join_set_id) {
-                    Some((
-                        JoinSetResponse::DelayFinished {
-                            delay_id: _, // Currently only a single blocking delay is supported, no need to match the id
-                        },
-                        _,
-                    )) => {
+                    Some(JoinSetResponseEnriched::DelayFinished {
+                        delay_id: _, // Currently only a single blocking delay is supported, no need to match the id
+                    }) => {
                         trace!(%join_set_id, "Matched JoinNext & DelayFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::None))
                     }
                     None => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
-                    Some((JoinSetResponse::ChildExecutionFinished { .. }, _)) => unreachable!(
+                    Some(JoinSetResponseEnriched::ChildExecutionFinished { .. }) => unreachable!(
                         "EventHistoryKey::JoinNextDelay is emitted only on one-shot join sets"
                     ),
                 }
@@ -838,14 +865,11 @@ impl EventHistory {
             ) if *join_set_id == *found_join_set_id && closing == found_closing => {
                 trace!(%join_set_id, "EventHistoryKey::JoinNext: Peeked at JoinNext - Child");
                 match self.mark_next_unprocessed_response(found_idx, join_set_id) {
-                    Some((
-                        JoinSetResponse::ChildExecutionFinished {
-                            child_execution_id,
-                            finished_version: _,
-                            result,
-                        },
-                        _,
-                    )) => {
+                    Some(JoinSetResponseEnriched::ChildExecutionFinished {
+                        child_execution_id,
+                        result,
+                        response_ffqn: _,
+                    }) => {
                         trace!(%join_set_id, "EventHistoryKey::JoinNext: Matched JoinNext & ChildExecutionFinished");
 
                         match result {
@@ -877,10 +901,9 @@ impl EventHistory {
                                     ..
                                 },
                             ) => {
-                                let execution_failed = execution_error(
-                                    ExecutionErrorVariant::ExecutionFailed,
-                                    child_execution_id,
-                                );
+                                let execution_failed =
+                                    ExecutionErrorVariant::ExecutionFailed { child_execution_id }
+                                        .as_wast_val();
                                 Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                                     WastVal::Result(Err(Some(Box::new(execution_failed)))),
                                 )))
@@ -909,12 +932,9 @@ impl EventHistory {
                             }
                         }
                     }
-                    Some((
-                        JoinSetResponse::DelayFinished {
-                            delay_id: _, // Currently only a single blocking delay is supported, no need to match the id
-                        },
-                        _,
-                    )) => {
+                    Some(JoinSetResponseEnriched::DelayFinished {
+                        delay_id: _, // Currently only a single blocking delay is supported, no need to match the id
+                    }) => {
                         trace!(%join_set_id, "EventHistoryKey::JoinNext: Matched DelayFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::None))
                     }
@@ -1674,24 +1694,65 @@ impl EventHistory {
     }
 }
 
-#[derive(Copy, Clone, derive_more::Display)]
-enum ExecutionErrorVariant {
-    #[display("execution-failed")]
-    ExecutionFailed,
+#[derive(Clone)]
+enum ExecutionErrorVariant<'a> {
+    ExecutionFailed {
+        child_execution_id: &'a ExecutionIdDerived,
+    },
+    FunctionMismatch {
+        specified_function: &'a FunctionFqn,
+        actual_function: Option<&'a FunctionFqn>,
+        actual_id: Either<&'a ExecutionIdDerived, &'a DelayId>,
+    },
+}
+impl ExecutionErrorVariant<'_> {
+    fn as_wast_val(&self) -> WastVal {
+        match self {
+            ExecutionErrorVariant::ExecutionFailed { child_execution_id } => WastVal::Variant(
+                "execution-failed".to_string(),
+                Some(Box::new(WastVal::Record(indexmap! {
+                    "execution-id".to_string() => execution_id_derived_into_wast_val(
+                            child_execution_id,
+                        )
+                }))),
+            ),
+            ExecutionErrorVariant::FunctionMismatch {
+                specified_function: specified,
+                actual_function: actual,
+                actual_id,
+            } => WastVal::Variant(
+                "function-mismatch".to_string(),
+                Some(Box::new(WastVal::Record(indexmap! {
+                    "specified-function".to_string() => ffqn_into_wast_val(specified),
+                    "actual-function".to_string() =>  WastVal::Option(
+                        actual.map(|actual| Box::from(ffqn_into_wast_val(actual)))),
+                    "actual-id".to_string() =>
+                        WastVal::Variant(
+                            if matches!(actual_id, Either::Left(_)) {"execution-id"} else {"delay-id"}
+                            .to_string(),
+                        Some(Box::new(
+                        WastVal::Record(indexmap!{
+                            "id".to_string() => WastVal::String(match actual_id {
+                                Either::Left(id) => id.to_string(),
+                                Either::Right(id) => id.to_string()
+                            })
+                        }))
+                    ))
+                }))),
+            ),
+        }
+    }
 }
 
-fn execution_error(
-    variant: ExecutionErrorVariant,
-    child_execution_id: &ExecutionIdDerived,
-) -> WastVal {
-    WastVal::Variant(
-        variant.to_string(),
-        Some(Box::new(WastVal::Record(indexmap! {
-            "execution-id".to_string() => execution_id_derived_into_wast_val(
-                    child_execution_id,
-                )
-        }))),
-    )
+enum JoinSetResponseEnriched<'a> {
+    DelayFinished {
+        delay_id: &'a DelayId,
+    },
+    ChildExecutionFinished {
+        child_execution_id: &'a ExecutionIdDerived,
+        result: &'a FinishedExecutionResult,
+        response_ffqn: &'a FunctionFqn,
+    },
 }
 
 #[derive(Debug)]
@@ -2056,6 +2117,7 @@ mod tests {
     use super::super::host_exports::execution_id_into_wast_val;
     use super::super::workflow_worker::JoinNextBlockingStrategy;
     use crate::workflow::event_history::{ApplyError, ChildReturnValue};
+    use crate::workflow::host_exports::ffqn_into_wast_val;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::ExecutionIdDerived;
@@ -2068,6 +2130,7 @@ mod tests {
     };
     use concepts::{JoinSetId, StrVariant};
     use db_tests::Database;
+    use indexmap::indexmap;
     use rstest::rstest;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
@@ -2263,12 +2326,18 @@ mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[rstest]
     #[tokio::test]
-    async fn create_two_non_blocking_childs_then_two_join_nexts(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
-        second_run_strategy: JoinNextBlockingStrategy,
-        #[values([MOCK_FFQN, MOCK_FFQN], [MOCK_FFQN, MOCK_FFQN_2])] ffqns: [FunctionFqn; 2],
+    async fn create_two_non_blocking_childs_then_two_join_nexts_matching() {
+        create_two_non_blocking_childs_then_two_join_nexts_inner(false).await;
+    }
+
+    #[tokio::test]
+    async fn create_two_non_blocking_childs_then_two_join_nexts_mismatch() {
+        create_two_non_blocking_childs_then_two_join_nexts_inner(true).await;
+    }
+
+    async fn create_two_non_blocking_childs_then_two_join_nexts_inner(
+        submits_and_awaits_in_correct_order: bool,
     ) {
         const KID_A_RET: SupportedFunctionReturnValue =
             SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
@@ -2282,6 +2351,18 @@ mod tests {
             });
 
         test_utils::set_up();
+
+        let submit_ffqn_1 = if submits_and_awaits_in_correct_order {
+            MOCK_FFQN
+        } else {
+            MOCK_FFQN_2
+        };
+        let submit_ffqn_2 = if submits_and_awaits_in_correct_order {
+            MOCK_FFQN_2
+        } else {
+            MOCK_FFQN
+        };
+
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
@@ -2298,21 +2379,21 @@ mod tests {
         .await;
 
         let join_set_id =
-            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+            JoinSetId::new(concepts::JoinSetKind::Generated, StrVariant::empty()).unwrap();
 
         let child_execution_id_a = execution_id.next_level(&join_set_id);
         let child_execution_id_b = child_execution_id_a.get_incremented();
 
         // persist create_join_set, 2x start_async, 1x await_next
         assert_matches!(
-            apply_create_js_two_start_asyncs_await_next_a(
+            apply_create_join_set_two_start_asyncs_await_next_a(
                 db_connection.as_ref(),
                 &mut event_history,
                 &mut version,
                 join_set_id.clone(),
-                ffqns[0].clone(),
+                submit_ffqn_1.clone(),
                 child_execution_id_a.clone(),
-                ffqns[1].clone(),
+                submit_ffqn_2.clone(),
                 child_execution_id_b.clone(),
                 sim_clock.now()
             )
@@ -2328,9 +2409,13 @@ mod tests {
                 JoinSetResponseEvent {
                     join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id: child_execution_id_a.clone(),
+                        child_execution_id: if submits_and_awaits_in_correct_order {
+                            child_execution_id_a.clone()
+                        } else {
+                            child_execution_id_b.clone()
+                        },
                         finished_version: Version(0), // does not matter
-                        result: Ok(KID_A_RET),
+                        result: Ok(KID_A_RET),        // won't matter on mismatch
                     },
                 },
             )
@@ -2343,9 +2428,13 @@ mod tests {
                 JoinSetResponseEvent {
                     join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id: child_execution_id_b.clone(),
+                        child_execution_id: if submits_and_awaits_in_correct_order {
+                            child_execution_id_b.clone()
+                        } else {
+                            child_execution_id_a.clone()
+                        },
                         finished_version: Version(0), // does not matter
-                        result: Ok(KID_B_RET),
+                        result: Ok(KID_B_RET),        // won't matter on mismatch
                     },
                 },
             )
@@ -2358,49 +2447,63 @@ mod tests {
             db_connection.as_ref(),
             execution_id,
             sim_clock.now(), // execution_deadline
-            second_run_strategy,
+            JoinNextBlockingStrategy::Interrupt,
         )
         .await;
 
-        let res = apply_create_js_two_start_asyncs_await_next_a(
+        let res = apply_create_join_set_two_start_asyncs_await_next_a(
             db_connection.as_ref(),
             &mut event_history,
             &mut version,
             join_set_id.clone(),
-            ffqns[0].clone(),
+            submit_ffqn_1.clone(),
             child_execution_id_a.clone(),
-            ffqns[1].clone(),
+            submit_ffqn_2.clone(),
             child_execution_id_b.clone(),
             sim_clock.now(),
         )
         .await
         .unwrap();
-        let kid_a_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-            execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id_a)),
-            WastVal::U8(1),
-        ]))))));
-        assert_eq!(kid_a_wrapped, res);
-
-        // second child result should be found
-        let res = event_history
-            .apply(
-                EventCall::BlockingChildAwaitNext {
-                    join_set_id,
-                    wasm_backtrace: None,
-                    requested_ffqn: ffqns[1].clone(),
-                },
-                db_pool.connection().as_ref(),
-                &mut version,
-                sim_clock.now(),
-            )
-            .await
-            .unwrap();
-        let kid_b_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-            execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id_b)),
-            WastVal::U8(2),
-        ]))))));
-        assert_eq!(kid_b_wrapped, res.into_wast_val());
-
+        if !submits_and_awaits_in_correct_order {
+            // actually execution B was processed.
+            let mismatch = Some(WastVal::Result(Err(Some(Box::new(WastVal::Variant(
+                "function-mismatch".to_string(),
+                Some(Box::new(WastVal::Record(indexmap! {
+                    "specified-function".to_string() => ffqn_into_wast_val(&submit_ffqn_1),
+                    "actual-function".to_string() => WastVal::Option(Some(Box::new(
+                        ffqn_into_wast_val(&submit_ffqn_2)
+                    ))),
+                    "actual-id".to_string() => WastVal::Variant("execution-id".to_string(),
+                        Some(Box::from(execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id_b))))),
+                }))),
+            ))))));
+            assert_eq!(mismatch, res);
+        } else {
+            let kid_a = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
+                execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id_a)),
+                WastVal::U8(1),
+            ]))))));
+            assert_eq!(kid_a, res);
+            // second child result should be found
+            let res = event_history
+                .apply(
+                    EventCall::BlockingChildAwaitNext {
+                        join_set_id,
+                        wasm_backtrace: None,
+                        requested_ffqn: submit_ffqn_2.clone(),
+                    },
+                    db_pool.connection().as_ref(),
+                    &mut version,
+                    sim_clock.now(),
+                )
+                .await
+                .unwrap();
+            let kid_b = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
+                execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id_b)),
+                WastVal::U8(2),
+            ]))))));
+            assert_eq!(kid_b, res.into_wast_val());
+        }
         drop(db_connection);
         db_pool.close().await.unwrap();
     }
@@ -2740,7 +2843,7 @@ mod tests {
     }
 
     #[expect(clippy::too_many_arguments)]
-    async fn apply_create_js_two_start_asyncs_await_next_a(
+    async fn apply_create_join_set_two_start_asyncs_await_next_a(
         db_connection: &dyn DbConnection,
         event_history: &mut EventHistory,
         version: &mut Version,

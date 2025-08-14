@@ -54,8 +54,23 @@ package obelisk:types@2.0.0 {
       execution-id: execution-id,
     }
 
+    record function {
+      /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+      interface-name: string,
+      function-name: string,
+    }
+
+    variant response-id {
+      execution-id(execution-id),
+      delay-id(delay-id),
+    }
+
     record function-mismatch {
-      execution-id: execution-id,
+      /// Workflow requested function
+      specified-function: function,
+      /// What was found actually during execution. None if delay was found as next unprocessed response.
+      actual-function: option<function>,
+      actual-id: response-id,
     }
 
     /// Error that is thrown by `-await-next` extension functions.
@@ -64,6 +79,9 @@ package obelisk:types@2.0.0 {
       execution-failed(execution-failed),
       /// All submitted requests and their responses of specified function and join set were already processed.
       all-processed,
+      /// Execution response was awaited and marked as processed, but it belongs to a different function.
+      /// This can happen when join set contains responses of multiple functions or delay requests.
+      function-mismatch(function-mismatch),
     }
 
     /// Error that is thrown by `-get` extension functions.

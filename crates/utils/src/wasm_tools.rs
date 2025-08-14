@@ -359,6 +359,8 @@ impl ExIm {
         // initialize values for reuse
         let execution_id_type_wrapper =
             TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
+        let delay_id_type_wrapper =
+            TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
         let join_set_id_type_wrapper = TypeWrapper::Borrow;
 
         let return_type_execution_id = Some(ReturnType {
@@ -395,12 +397,27 @@ impl ExIm {
             wit_type: StrVariant::Static("schedule-at"),
         };
 
+        let function_type_wrapper = TypeWrapper::Record(indexmap! {
+            Box::from("interface-name") => TypeWrapper::String,
+            Box::from("function-name") => TypeWrapper::String,
+        });
+
+        let response_id = TypeWrapper::Variant(indexmap! {
+            Box::from("execution-id") => Some(execution_id_type_wrapper.clone()),
+            Box::from("delay-id") => Some(delay_id_type_wrapper.clone()),
+        });
+
         // Define execution-error variants
         let execution_error_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("execution-failed") => Some(TypeWrapper::Record(indexmap! {
                 Box::from("execution-id") => execution_id_type_wrapper.clone()
             })),
             Box::from("all-processed") => None,
+            Box::from("function-mismatch") => Some(TypeWrapper::Record(indexmap! {
+                Box::from("specified-function") => function_type_wrapper.clone(),
+                Box::from("actual-function") => TypeWrapper::Option(Box::from(function_type_wrapper)),
+                Box::from("actual-id") => response_id,
+            })),
         });
         let stub_error_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("conflict") => None,

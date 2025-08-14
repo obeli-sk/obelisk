@@ -7,7 +7,7 @@ export!(Component);
 
 impl Guest for Component {
     fn foo(_arg: String) -> String {
-        todo!()
+        unimplemented!("actual implementation is never used")
     }
 
     fn noret() {}

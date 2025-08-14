@@ -39,6 +39,38 @@ expression: exports
                     }
                   }
                 }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
+                    }
+                  }
+                }
               }
             }
           }
@@ -157,6 +189,38 @@ expression: exports
                   "execution-id": {
                     "record": {
                       "id": "string"
+                    }
+                  }
+                }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
                     }
                   }
                 }
@@ -301,6 +365,38 @@ expression: exports
                     }
                   }
                 }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
+                    }
+                  }
+                }
               }
             }
           }
@@ -344,6 +440,38 @@ expression: exports
                   "execution-id": {
                     "record": {
                       "id": "string"
+                    }
+                  }
+                }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
                     }
                   }
                 }
@@ -560,6 +688,38 @@ expression: exports
                   "execution-id": {
                     "record": {
                       "id": "string"
+                    }
+                  }
+                }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
                     }
                   }
                 }

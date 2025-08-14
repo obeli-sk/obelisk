@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use assert_matches::assert_matches;
 use chrono::DateTime;
-use concepts::JoinSetId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::HistoryEventScheduleAt;
 use concepts::{ExecutionId, prefixed_ulid::DelayId};
+use concepts::{FunctionFqn, JoinSetId};
 use indexmap::indexmap;
 use val_json::wast_val::WastVal;
 use wasmtime::component::Val;
@@ -155,4 +155,11 @@ pub(crate) fn join_set_id_into_wast_val(join_set_id: &JoinSetId) -> WastVal {
 
 pub(crate) fn delay_id_into_wast_val(delay_id: &DelayId) -> WastVal {
     WastVal::Record(indexmap! {"id".to_string() => WastVal::String(delay_id.to_string())})
+}
+
+pub(crate) fn ffqn_into_wast_val(ffqn: &FunctionFqn) -> WastVal {
+    WastVal::Record(indexmap! {
+        "interface-name".to_string() => WastVal::String(ffqn.ifc_fqn.to_string()),
+        "function-name".to_string() => WastVal::String(ffqn.function_name.to_string()),
+    })
 }
