@@ -4,7 +4,6 @@ use concepts::{
     ComponentType, FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB,
 };
 use const_format::formatcp;
-use hashbrown::HashMap;
 use id_arena::Arena;
 use indexmap::IndexMap;
 use semver::{BuildMetadata, Prerelease, Version};
@@ -555,9 +554,12 @@ fn get_or_create_package(
 
 fn get_exported_pkg_to_ifc_to_details_map_noext(
     exim: &ExIm,
-) -> HashMap<PkgFqn, HashMap<IfcFqnName, Vec<FnName>>> {
-    let mut exported_pkg_to_ifc_to_details_map: HashMap<PkgFqn, HashMap<IfcFqnName, Vec<FnName>>> =
-        HashMap::new();
+) -> IndexMap<PkgFqn, IndexMap<IfcFqnName, Vec<FnName>>> {
+    // Sorted so that the WIT output is deterministic.
+    let mut exported_pkg_to_ifc_to_details_map: IndexMap<
+        PkgFqn,
+        IndexMap<IfcFqnName, Vec<FnName>>,
+    > = IndexMap::new();
     for pkg_ifc_fns in exim.get_exports_hierarchy_noext() {
         let inner_map = exported_pkg_to_ifc_to_details_map
             .entry(pkg_ifc_fns.ifc_fqn.pkg_fqn_name())
@@ -723,7 +725,7 @@ mod tests {
             .collect::<Vec<_>>();
         let mut printer = WitPrinter::default();
         printer.print(&resolve, main_id, &ids).unwrap(); // verify it parses
-        // store original WIT string in snapshots as the printed one is nondeterministic.
+        // store original WIT string in snapshots, because that is the `wit()` output.
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit")}, {insta::assert_snapshot!(wit)});
     }
 }
