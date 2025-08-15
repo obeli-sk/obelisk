@@ -4,6 +4,6 @@ world any {
     export testing:sleep-workflow/workflow;
     import obelisk:workflow/workflow-support@2.0.0;
     import testing:sleep-obelisk-ext/sleep;
-    import testing:sleep-workflow-obelisk-ext/workflow;
+    import testing:sleep-workflow-obelisk-schedule/workflow;
     import testing:sleep/sleep;
 }

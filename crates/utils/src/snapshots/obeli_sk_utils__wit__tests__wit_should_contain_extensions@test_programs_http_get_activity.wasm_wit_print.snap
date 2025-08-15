@@ -453,32 +453,39 @@ package testing:http {
 
 package testing:http-obelisk-ext {
   interface http-get {
-    use obelisk:types/execution@2.0.0.{execution-id, join-set-id};
-    use obelisk:types/time@2.0.0.{schedule-at};
-    use obelisk:types/execution@2.0.0.{execution-error};
+    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, execution-error};
     use testing:http/http-get.{response, stargazers};
 
     get-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
     get-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, execution-error>;
 
-    get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
-
     get-resp-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
     get-resp-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<response, string>>, execution-error>;
-
-    get-resp-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
     get-stargazers-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
     get-stargazers-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<stargazers, string>>, execution-error>;
 
-    get-stargazers-schedule: func(schedule-at: schedule-at) -> execution-id;
-
     get-successful-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
     get-successful-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, execution-error>;
+  }
+}
+
+
+package testing:http-obelisk-schedule {
+  interface http-get {
+    use obelisk:types/execution@2.0.0.{execution-id};
+    use obelisk:types/time@2.0.0.{schedule-at};
+    use testing:http/http-get.{response, stargazers};
+
+    get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+
+    get-resp-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+
+    get-stargazers-schedule: func(schedule-at: schedule-at) -> execution-id;
 
     get-successful-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
   }

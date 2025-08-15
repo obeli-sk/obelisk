@@ -169,53 +169,6 @@ expression: exports
     "extension": "AwaitNext",
     "submittable": false
   },
-  "testing:http-workflow-obelisk-ext/workflow.get-resp-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-resp-schedule"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
-        "name": "scheduled-at",
-        "wit_type": "schedule-at"
-      },
-      {
-        "type_wrapper": "string",
-        "name": "url",
-        "wit_type": "string"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
-    },
-    "extension": "Schedule",
-    "submittable": true
-  },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-submit": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -243,53 +196,6 @@ expression: exports
     },
     "extension": "Submit",
     "submittable": false
-  },
-  "testing:http-workflow-obelisk-ext/workflow.get-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-schedule"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
-        "name": "scheduled-at",
-        "wit_type": "schedule-at"
-      },
-      {
-        "type_wrapper": "string",
-        "name": "url",
-        "wit_type": "string"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
-    },
-    "extension": "Schedule",
-    "submittable": true
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-await-next": {
     "ffqn": {
@@ -363,48 +269,6 @@ expression: exports
     },
     "extension": "AwaitNext",
     "submittable": false
-  },
-  "testing:http-workflow-obelisk-ext/workflow.get-stargazers-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-stargazers-schedule"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
-        "name": "scheduled-at",
-        "wit_type": "schedule-at"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
-    },
-    "extension": "Schedule",
-    "submittable": true
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-submit": {
     "ffqn": {
@@ -625,55 +489,6 @@ expression: exports
     "extension": "AwaitNext",
     "submittable": false
   },
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-concurrently-schedule"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
-        "name": "scheduled-at",
-        "wit_type": "schedule-at"
-      },
-      {
-        "type_wrapper": {
-          "list": "string"
-        },
-        "name": "urls",
-        "wit_type": "list<string>"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
-    },
-    "extension": "Schedule",
-    "submittable": true
-  },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -759,58 +574,6 @@ expression: exports
     "extension": "AwaitNext",
     "submittable": false
   },
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-concurrently-stress-schedule"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
-        "name": "scheduled-at",
-        "wit_type": "schedule-at"
-      },
-      {
-        "type_wrapper": "string",
-        "name": "url",
-        "wit_type": "string"
-      },
-      {
-        "type_wrapper": "u32",
-        "name": "concurrency",
-        "wit_type": "u32"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
-    },
-    "extension": "Schedule",
-    "submittable": true
-  },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -874,10 +637,38 @@ expression: exports
     "extension": "Submit",
     "submittable": false
   },
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-schedule": {
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-schedule"
+      "function_name": "get-successful-submit"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set-id",
+        "wit_type": "borrow<join-set-id>"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "record": {
+          "id": "string"
+        }
+      },
+      "wit_type": "execution-id"
+    },
+    "extension": "Submit",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-schedule/workflow.get-resp-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
+      "function_name": "get-resp-schedule"
     },
     "parameter_types": [
       {
@@ -921,16 +712,35 @@ expression: exports
     "extension": "Schedule",
     "submittable": true
   },
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": {
+  "testing:http-workflow-obelisk-schedule/workflow.get-schedule": {
     "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-submit"
+      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
+      "function_name": "get-schedule"
     },
     "parameter_types": [
       {
-        "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "type_wrapper": {
+          "variant": {
+            "at": {
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
+              }
+            },
+            "in": {
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
+              }
+            },
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
       },
       {
         "type_wrapper": "string",
@@ -946,8 +756,198 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
-    "submittable": false
+    "extension": "Schedule",
+    "submittable": true
+  },
+  "testing:http-workflow-obelisk-schedule/workflow.get-stargazers-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
+      "function_name": "get-stargazers-schedule"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "variant": {
+            "at": {
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
+              }
+            },
+            "in": {
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
+              }
+            },
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "record": {
+          "id": "string"
+        }
+      },
+      "wit_type": "execution-id"
+    },
+    "extension": "Schedule",
+    "submittable": true
+  },
+  "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
+      "function_name": "get-successful-concurrently-schedule"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "variant": {
+            "at": {
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
+              }
+            },
+            "in": {
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
+              }
+            },
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": {
+          "list": "string"
+        },
+        "name": "urls",
+        "wit_type": "list<string>"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "record": {
+          "id": "string"
+        }
+      },
+      "wit_type": "execution-id"
+    },
+    "extension": "Schedule",
+    "submittable": true
+  },
+  "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-stress-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
+      "function_name": "get-successful-concurrently-stress-schedule"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "variant": {
+            "at": {
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
+              }
+            },
+            "in": {
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
+              }
+            },
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "concurrency",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "record": {
+          "id": "string"
+        }
+      },
+      "wit_type": "execution-id"
+    },
+    "extension": "Schedule",
+    "submittable": true
+  },
+  "testing:http-workflow-obelisk-schedule/workflow.get-successful-schedule": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
+      "function_name": "get-successful-schedule"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "variant": {
+            "at": {
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
+              }
+            },
+            "in": {
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
+              }
+            },
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "record": {
+          "id": "string"
+        }
+      },
+      "wit_type": "execution-id"
+    },
+    "extension": "Schedule",
+    "submittable": true
   },
   "testing:http-workflow/workflow.get": {
     "ffqn": {

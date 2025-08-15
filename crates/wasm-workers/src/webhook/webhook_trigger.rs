@@ -3,8 +3,7 @@ use crate::component_logger::{ComponentLogger, log_activities};
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::workflow::host_exports::{
-    SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, execution_id_into_val,
-    history_event_schedule_at_from_wast_val,
+    SUFFIX_FN_SCHEDULE, execution_id_into_val, history_event_schedule_at_from_wast_val,
 };
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
@@ -15,7 +14,7 @@ use concepts::time::ClockFn;
 use concepts::{
     ClosingStrategy, ComponentId, ComponentType, ExecutionId, ExecutionMetadata,
     FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName,
-    JoinSetKind, Params, PermanentFailureKind, StrVariant,
+    JoinSetKind, Params, PermanentFailureKind, SUFFIX_PKG_SCHEDULE, StrVariant,
 };
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use http_body_util::combinators::BoxBody;
@@ -441,7 +440,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
         let (db_connection, version_min_including, version_max_excluding) = if let Some(
             package_name,
         ) =
-            ffqn.ifc_fqn.package_strip_obelisk_ext_suffix()
+            ffqn.ifc_fqn.package_strip_obelisk_schedule_suffix()
         {
             let ifc_fqn = IfcFqnName::from_parts(
                 ffqn.ifc_fqn.namespace(),
@@ -449,26 +448,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 ffqn.ifc_fqn.ifc_name(),
                 ffqn.ifc_fqn.version(),
             );
-            if ffqn.function_name.ends_with(SUFFIX_FN_SUBMIT) {
-                error!(%ffqn, "Webhooks do not support extension function {SUFFIX_FN_SUBMIT}");
-                return Err(WebhookEndpointFunctionError::UncategorizedError(
-                    const_format::formatcp!(
-                        "webhooks do not support extension function {}",
-                        SUFFIX_FN_SUBMIT
-                    ),
-                ));
-            } else if ffqn.function_name.ends_with(SUFFIX_FN_AWAIT_NEXT) {
-                error!(%ffqn,
-                    "Webhooks do not support extension function {SUFFIX_FN_AWAIT_NEXT}"
-                );
-                return Err(WebhookEndpointFunctionError::UncategorizedError(
-                    const_format::formatcp!(
-                        "webhooks do not support extension function {}",
-                        SUFFIX_FN_AWAIT_NEXT
-                    ),
-                ));
-            } else if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
-            {
+            if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE) {
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 debug!("Got `-schedule` extension for {ffqn}");
@@ -549,7 +529,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 results[0] = execution_id_into_val(&new_execution_id);
                 (db_connection, version_min_including, version.0)
             } else {
-                error!("unrecognized extension function {ffqn}");
+                error!("unrecognized `{SUFFIX_PKG_SCHEDULE}` extension function {ffqn}");
                 return Err(WebhookEndpointFunctionError::UncategorizedError(
                     "unrecognized extension function",
                 ));

@@ -7,7 +7,7 @@ use obelisk::workflow::workflow_support::ClosingStrategy;
 use obelisk::workflow::workflow_support::new_join_set_generated as new_join_set_generated1;
 use testing::sleep::sleep as sleep_activity;
 use testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
-use testing::sleep_workflow_obelisk_ext::workflow as workflow_ext;
+use testing::sleep_workflow_obelisk_schedule::workflow as workflow_schedule;
 use wit_bindgen::generate;
 
 generate!({ generate_all });
@@ -34,7 +34,11 @@ impl Guest for Component {
 
     fn reschedule(duration: DurationEnum, iterations: u8) {
         if iterations > 0 {
-            workflow_ext::reschedule_schedule(ScheduleAt::In(duration), duration, iterations - 1);
+            workflow_schedule::reschedule_schedule(
+                ScheduleAt::In(duration),
+                duration,
+                iterations - 1,
+            );
         }
     }
 

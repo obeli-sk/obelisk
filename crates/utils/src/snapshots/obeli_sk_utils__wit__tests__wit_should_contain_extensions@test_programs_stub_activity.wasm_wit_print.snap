@@ -266,9 +266,7 @@ package testing:stub-activity {
 
 package testing:stub-activity-obelisk-ext {
   interface activity {
-    use obelisk:types/execution@2.0.0.{execution-id, join-set-id};
-    use obelisk:types/time@2.0.0.{schedule-at};
-    use obelisk:types/execution@2.0.0.{execution-error};
+    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, execution-error};
 
     foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
 
@@ -277,6 +275,14 @@ package testing:stub-activity-obelisk-ext {
     noret-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
     noret-await-next: func(join-set-id: borrow<join-set-id>) -> result<execution-id, execution-error>;
+  }
+}
+
+
+package testing:stub-activity-obelisk-schedule {
+  interface activity {
+    use obelisk:types/execution@2.0.0.{execution-id};
+    use obelisk:types/time@2.0.0.{schedule-at};
   }
 }
 

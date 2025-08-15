@@ -1,4 +1,4 @@
-package testing:sleep-workflow-obelisk-ext;
+package testing:sleep-workflow-obelisk-schedule;
 
 interface workflow {
     use obelisk:types/execution@2.0.0.{execution-id};

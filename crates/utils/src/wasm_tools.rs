@@ -2,8 +2,8 @@ use crate::sha256sum::calculate_sha256_file;
 use anyhow::Context;
 use concepts::{
     ComponentType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
-    PackageIfcFns, ParameterType, ParameterTypes, ReturnType, SUFFIX_PKG_EXT, SUFFIX_PKG_STUB,
-    StrVariant,
+    PackageIfcFns, ParameterType, ParameterTypes, ReturnType, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE,
+    SUFFIX_PKG_STUB, StrVariant,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -424,6 +424,7 @@ impl ExIm {
         });
 
         let mut extensions = Vec::new();
+        let mut schedules = Vec::new();
         let mut stubs = Vec::new();
         for PackageIfcFns {
             ifc_fqn,
@@ -438,16 +439,28 @@ impl ExIm {
                 ifc_fqn.ifc_name(),
                 ifc_fqn.version(),
             );
-            let mut extension_fns = IndexMap::new();
-            let mut insert_ext = |fn_metadata: FunctionMetadata| {
-                extension_fns.insert(fn_metadata.ffqn.function_name.clone(), fn_metadata);
-            };
+            let obelisk_schedule_ifc = IfcFqnName::from_parts(
+                ifc_fqn.namespace(),
+                &format!("{}{SUFFIX_PKG_SCHEDULE}", ifc_fqn.package_name()),
+                ifc_fqn.ifc_name(),
+                ifc_fqn.version(),
+            );
             let obelisk_stub_ifc = IfcFqnName::from_parts(
                 ifc_fqn.namespace(),
                 &format!("{}{SUFFIX_PKG_STUB}", ifc_fqn.package_name()),
                 ifc_fqn.ifc_name(),
                 ifc_fqn.version(),
             );
+
+            let mut extension_fns = IndexMap::new();
+            let mut schedule_fns = IndexMap::new();
+            let mut insert_ext = |fn_metadata: FunctionMetadata| {
+                extension_fns.insert(fn_metadata.ffqn.function_name.clone(), fn_metadata);
+            };
+            let mut insert_schedule = |fn_metadata: FunctionMetadata| {
+                schedule_fns.insert(fn_metadata.ffqn.function_name.clone(), fn_metadata);
+            };
+
             let mut stub_fns = IndexMap::new();
             for (
                 fun,
@@ -550,7 +563,7 @@ impl ExIm {
                     // -schedule(schedule: schedule-at, original params) -> string (execution id)
                     let fn_schedule = FunctionMetadata {
                         ffqn: FunctionFqn {
-                            ifc_fqn: obelisk_ext_ifc.clone(),
+                            ifc_fqn: obelisk_schedule_ifc.clone(),
                             function_name: FnName::from(format!(
                                 "{}{EXTENSION_FN_SUFFIX_SCHEDULE}",
                                 exported_fn_metadata.ffqn.function_name
@@ -567,7 +580,7 @@ impl ExIm {
                         extension: Some(FunctionExtension::Schedule),
                         submittable: true,
                     };
-                    insert_ext(fn_schedule);
+                    insert_schedule(fn_schedule);
                 }
 
                 if component_type == ComponentType::ActivityStub {
@@ -617,19 +630,27 @@ impl ExIm {
                 }
             }
             extensions.push((obelisk_ext_ifc, extension_fns));
+            schedules.push((obelisk_schedule_ifc, schedule_fns));
             stubs.push((obelisk_stub_ifc, stub_fns));
         }
-        for (obelisk_ext_ifc, extension_fns) in extensions {
+        for (ifc_fqn, fns) in extensions {
             exports_hierarchy.push(PackageIfcFns {
-                ifc_fqn: obelisk_ext_ifc,
-                fns: extension_fns,
+                ifc_fqn,
+                fns,
                 extension: true,
             });
         }
-        for (obelisk_stub_ifc, stub_fns) in stubs {
+        for (ifc_fqn, fns) in schedules {
             exports_hierarchy.push(PackageIfcFns {
-                ifc_fqn: obelisk_stub_ifc,
-                fns: stub_fns,
+                ifc_fqn,
+                fns,
+                extension: true,
+            });
+        }
+        for (ifc_fqn, fns) in stubs {
+            exports_hierarchy.push(PackageIfcFns {
+                ifc_fqn,
+                fns,
                 extension: true,
             });
         }

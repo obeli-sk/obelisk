@@ -16,7 +16,8 @@ use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
     ClosingStrategy, ComponentId, ExecutionId, FinishedExecutionError, FunctionRegistry,
-    IfcFqnName, InvalidNameError, StrVariant, SupportedFunctionReturnValue,
+    IfcFqnName, InvalidNameError, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, StrVariant,
+    SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
@@ -285,8 +286,24 @@ impl<'a> ImportedFnCall<'a> {
                     join_set_id,
                     wasm_backtrace,
                 })
-            } else if let Some(function_name) =
-                called_ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
+            } else {
+                error!("Unrecognized `{SUFFIX_PKG_EXT}` interface function {called_ffqn}");
+                Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: StrVariant::Static("unrecognized `-obelisk-ext` interface function"),
+                    detail: None,
+                })
+            }
+        } else if let Some(target_package_name) =
+            called_ffqn.ifc_fqn.package_strip_obelisk_schedule_suffix()
+        {
+            let target_ifc_fqn = IfcFqnName::from_parts(
+                called_ffqn.ifc_fqn.namespace(),
+                target_package_name,
+                called_ffqn.ifc_fqn.ifc_name(),
+                called_ffqn.ifc_fqn.version(),
+            );
+            if let Some(function_name) = called_ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
             {
                 let target_ffqn = FunctionFqn::new_arc(
                     Arc::from(target_ifc_fqn.to_string()),
@@ -332,10 +349,12 @@ impl<'a> ImportedFnCall<'a> {
                     wasm_backtrace,
                 })
             } else {
-                error!("Unrecognized `-obelisk-ext` interface function {called_ffqn}");
+                error!("Unrecognized `{SUFFIX_PKG_SCHEDULE}` interface function {called_ffqn}");
                 Err(WorkflowFunctionError::ImportedFunctionCallError {
                     ffqn: called_ffqn,
-                    reason: StrVariant::Static("unrecognized `-obelisk-ext` interface function"),
+                    reason: StrVariant::Static(
+                        "unrecognized `-obelisk-schedule` interface function",
+                    ),
                     detail: None,
                 })
             }

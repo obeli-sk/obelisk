@@ -25,11 +25,11 @@ interface time {
 }
 
 interface execution {
+
     resource join-set-id {
         id: func() -> string;
-        // TODO: sleep-submit
-        // TODO: await-next
     }
+
     record execution-id {
         id: string,
     }

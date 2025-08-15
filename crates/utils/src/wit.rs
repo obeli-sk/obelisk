@@ -1,6 +1,8 @@
 use crate::wasm_tools::ExIm;
 use anyhow::Context;
-use concepts::{ComponentType, FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT, SUFFIX_PKG_STUB};
+use concepts::{
+    ComponentType, FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB,
+};
 use const_format::formatcp;
 use hashbrown::HashMap;
 use id_arena::Arena;
@@ -208,6 +210,8 @@ fn add_ext_exports(
     for (pkg_fqn, ifc_to_fns) in exported_pkg_to_ifc_to_details_map {
         // Get or create the -obelisk-ext variant of the exported package.
         let obelisk_ext_pkg_id = get_or_create_package(&pkg_fqn, SUFFIX_PKG_EXT, &mut resolve)?;
+        let obelisk_schedule_pkg_id =
+            get_or_create_package(&pkg_fqn, SUFFIX_PKG_SCHEDULE, &mut resolve)?;
         // Get or create the -obelisk-stub variant of the exported package.
         let obelisk_stub_pkg_id = if component_type == ComponentType::ActivityStub {
             Some(get_or_create_package(
@@ -228,8 +232,26 @@ fn add_ext_exports(
                 let mut types = IndexMap::new();
                 types.insert("execution-id".to_string(), type_id_execution_id);
                 types.insert("join-set-id".to_string(), type_id_join_set_id);
-                types.insert("schedule-at".to_string(), type_id_schedule_at);
                 types.insert("execution-error".to_string(), type_id_execution_error);
+                copy_original_types(
+                    original_ifc_id,
+                    original_ifc,
+                    &mut types,
+                    &mut resolve.types,
+                );
+                Interface {
+                    name: Some(ifc_fqn.ifc_name().to_string()),
+                    types,
+                    functions: IndexMap::default(),
+                    docs: wit_parser::Docs::default(),
+                    stability: wit_parser::Stability::default(),
+                    package: Some(obelisk_ext_pkg_id),
+                }
+            };
+            let mut schedule_ifc = {
+                let mut types = IndexMap::new();
+                types.insert("execution-id".to_string(), type_id_execution_id);
+                types.insert("schedule-at".to_string(), type_id_schedule_at);
                 copy_original_types(
                     original_ifc_id,
                     original_ifc,
@@ -364,7 +386,7 @@ fn add_ext_exports(
                         docs: wit_parser::Docs::default(),
                         stability: wit_parser::Stability::default(),
                     };
-                    ext_ifc.functions.insert(fn_name, fn_ext);
+                    schedule_ifc.functions.insert(fn_name, fn_ext);
                 }
                 // -stub: func(execution_id: execution-id, <retval>) -> result<_, stub-error>;
                 if let Some((_, stub_ifc)) = &mut stub_ifc {
@@ -430,6 +452,16 @@ fn add_ext_exports(
                     .expect("found or inserted already")
                     .interfaces
                     .insert(ifc_fqn.ifc_name().to_string(), ext_ifc_id);
+            }
+            {
+                // Add the `-obelisk-schedule` Interface to `resolve`.
+                let schedule_ifc_id = resolve.interfaces.alloc(schedule_ifc);
+                resolve
+                    .packages
+                    .get_mut(obelisk_schedule_pkg_id)
+                    .expect("found or inserted already")
+                    .interfaces
+                    .insert(ifc_fqn.ifc_name().to_string(), schedule_ifc_id);
             }
             if let Some((obelisk_stub_pkg_id, stub_ifc)) = stub_ifc {
                 // Add the `-obelisk-stub` Interface to `resolve`.

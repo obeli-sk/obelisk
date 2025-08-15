@@ -33,6 +33,7 @@ use wasmtime::component::{Type, Val};
 pub const NAMESPACE_OBELISK: &str = "obelisk";
 const NAMESPACE_WASI: &str = "wasi";
 pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
+pub const SUFFIX_PKG_SCHEDULE: &str = "-obelisk-schedule";
 pub const SUFFIX_PKG_STUB: &str = "-obelisk-stub";
 
 pub type FinishedExecutionResult = Result<SupportedFunctionReturnValue, FinishedExecutionError>;
@@ -404,6 +405,11 @@ impl IfcFqnName {
     #[must_use]
     pub fn package_strip_obelisk_ext_suffix(&self) -> Option<&str> {
         self.package_name().strip_suffix(SUFFIX_PKG_EXT)
+    }
+
+    #[must_use]
+    pub fn package_strip_obelisk_schedule_suffix(&self) -> Option<&str> {
+        self.package_name().strip_suffix(SUFFIX_PKG_SCHEDULE)
     }
 
     #[must_use]
@@ -1483,6 +1489,7 @@ pub struct JoinSetId {
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
 pub enum ClosingStrategy {
+    /// Wait for all child executions, do not wait if there are only delay requests remaining.
     #[default]
     Complete,
 }
