@@ -320,7 +320,7 @@ wit-component = "0.235.0"
 
 # testing components
 wasi = "0.14.2"
-wit-bindgen = "0.43.0"
+wit-bindgen = "0.44.0"
 
 # otlp
 opentelemetry = "0.30.0"
