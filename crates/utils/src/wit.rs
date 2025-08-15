@@ -702,7 +702,6 @@ mod tests {
     fn wit_should_contain_extensions(
         #[case] wasm_path: &'static str,
         #[case] component_type: ComponentType,
-        #[values(false, true)] print: bool,
     ) {
         test_utils::set_up();
 
@@ -711,24 +710,20 @@ mod tests {
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
         let wit = component.wit().unwrap();
-        if print {
-            // Verify that the generated WIT parses.
-            let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit).unwrap();
-            let mut resolve = Resolve::new();
-            let main_id = resolve.push_group(group).unwrap();
-            let ids = resolve
-                .packages
-                .iter()
-                .map(|(id, _)| id)
-                // The main package would show as a nested package as well
-                .filter(|id| *id != main_id)
-                .collect::<Vec<_>>();
-            let mut printer = WitPrinter::default();
-            printer.print(&resolve, main_id, &ids).unwrap();
-
-            insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit_print")}, {insta::assert_snapshot!(String::from(printer.output))});
-        } else {
-            insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit")}, {insta::assert_snapshot!(wit)});
-        }
+        // Verify that the generated WIT parses.
+        let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit).unwrap();
+        let mut resolve = Resolve::new();
+        let main_id = resolve.push_group(group).unwrap();
+        let ids = resolve
+            .packages
+            .iter()
+            .map(|(id, _)| id)
+            // The main package would show as a nested package as well
+            .filter(|id| *id != main_id)
+            .collect::<Vec<_>>();
+        let mut printer = WitPrinter::default();
+        printer.print(&resolve, main_id, &ids).unwrap(); // verify it parses
+        // store original WIT string in snapshots as the printed one is nondeterministic.
+        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit")}, {insta::assert_snapshot!(wit)});
     }
 }

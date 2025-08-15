@@ -902,43 +902,56 @@ pub(crate) mod tests {
         Arc::new(Engine::new(&wasmtime_config).unwrap())
     }
 
+    #[derive(Debug, Clone, Copy)]
+    enum ExIm {
+        Exports,
+        ExportsExtended,
+        Imports,
+    }
+
     #[rstest]
-    #[test]
     #[case(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)]
     #[case(test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW)]
-    fn exports_imports(#[case] wasm_path: &str) {
+    fn exports_imports(
+        #[case] wasm_path: &str,
+        #[values(ExIm::Exports, ExIm::ExportsExtended, ExIm::Imports)] exim: ExIm,
+    ) {
         test_utils::set_up();
 
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
         let engine = engine();
         let component = WasmComponent::new(&wasm_path, &engine, ComponentType::Workflow).unwrap();
-        let exports = component
-            .exported_functions(false)
-            .iter()
-            .map(|fn_metadata| (fn_metadata.ffqn.to_string(), fn_metadata))
-            .collect::<hashbrown::HashMap<_, _>>();
-
-        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports_noext")}, {insta::assert_json_snapshot!(exports)});
-
-        let exports = component
-            .exported_functions(true)
-            .iter()
-            .map(|fn_metadata| (fn_metadata.ffqn.to_string(), fn_metadata))
-            .collect::<hashbrown::HashMap<_, _>>();
-
-        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports_ext")}, {insta::assert_json_snapshot!(exports)});
-
-        let imports = component
-            .imported_functions()
-            .iter()
-            .map(|fn_metadata| (fn_metadata.ffqn.to_string(), fn_metadata))
-            .collect::<hashbrown::HashMap<_, _>>();
-        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
+        match exim {
+            ExIm::Exports => {
+                let exports = component
+                    .exported_functions(false)
+                    .iter()
+                    .map(|fn_metadata| (fn_metadata.ffqn.to_string(), fn_metadata))
+                    .collect::<hashbrown::HashMap<_, _>>();
+                insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports_noext")}, {insta::assert_json_snapshot!(exports)});
+            }
+            ExIm::ExportsExtended => {
+                let exports = component
+                    .exported_functions(true)
+                    .iter()
+                    .map(|fn_metadata| (fn_metadata.ffqn.to_string(), fn_metadata))
+                    .collect::<hashbrown::HashMap<_, _>>();
+                insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports_ext")}, {insta::assert_json_snapshot!(exports)});
+            }
+            ExIm::Imports => {
+                let imports = component
+                    .imported_functions()
+                    .iter()
+                    .map(|fn_metadata| (fn_metadata.ffqn.to_string(), fn_metadata))
+                    .collect::<hashbrown::HashMap<_, _>>();
+                insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
+            }
+        }
     }
 
-    #[test]
-    fn test_params() {
+    #[rstest]
+    fn test_params(#[values(true, false)] exports: bool) {
         let wasm_path =
             PathBuf::from(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
@@ -948,18 +961,20 @@ pub(crate) mod tests {
             panic!();
         };
         let world = resolve.worlds.get(world_id).expect("world must exist");
-        let exports = create_ffqn_to_metadata_map(&resolve, world.exports.iter())
-            .unwrap()
-            .into_iter()
-            .map(|(ffqn, val)| (ffqn.to_string(), val))
-            .collect::<hashbrown::HashMap<_, _>>();
-        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
-
-        let imports = create_ffqn_to_metadata_map(&resolve, world.imports.iter())
-            .unwrap()
-            .into_iter()
-            .map(|(ffqn, val)| (ffqn.to_string(), (val, ffqn.ifc_fqn, ffqn.function_name)))
-            .collect::<hashbrown::HashMap<_, _>>();
-        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
+        if exports {
+            let exports = create_ffqn_to_metadata_map(&resolve, world.exports.iter())
+                .unwrap()
+                .into_iter()
+                .map(|(ffqn, val)| (ffqn.to_string(), val))
+                .collect::<hashbrown::HashMap<_, _>>();
+            insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
+        } else {
+            let imports = create_ffqn_to_metadata_map(&resolve, world.imports.iter())
+                .unwrap()
+                .into_iter()
+                .map(|(ffqn, val)| (ffqn.to_string(), (val, ffqn.ifc_fqn, ffqn.function_name)))
+                .collect::<hashbrown::HashMap<_, _>>();
+            insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
+        }
     }
 }
