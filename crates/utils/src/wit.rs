@@ -555,7 +555,8 @@ fn get_or_create_package(
 fn get_exported_pkg_to_ifc_to_details_map_noext(
     exim: &ExIm,
 ) -> IndexMap<PkgFqn, IndexMap<IfcFqnName, Vec<FnName>>> {
-    // Sorted so that the WIT output is deterministic.
+    // Consistent iteration order so that the WIT output is deterministic.
+    // Interfaces are sorted already.
     let mut exported_pkg_to_ifc_to_details_map: IndexMap<
         PkgFqn,
         IndexMap<IfcFqnName, Vec<FnName>>,

@@ -675,7 +675,7 @@ fn merge_function_params_with_wasmtime(
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
     if exports {
         merge_function_params_with_wasmtime_internal(
-            component_type != ComponentType::ActivityStub,
+            component_type != ComponentType::ActivityStub, // stub executions must be created by workflows
             wasmtime_component_type.exports(engine),
             engine,
             ffqns_to_wit_parsed_meta,
@@ -690,6 +690,9 @@ fn merge_function_params_with_wasmtime(
     }
 }
 
+// Iterate over wasmtime's imports or exports, and add wasmtools' metadata:
+// Add param names and WIT types in string representation.
+// Add return types WIT types in string representation.
 fn merge_function_params_with_wasmtime_internal<'a>(
     submittable: bool,
     wasmtime_parsed_interfaces: impl ExactSizeIterator<Item = (&'a str /* ifc_fqn */, ComponentItem)>
