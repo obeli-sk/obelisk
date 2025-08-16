@@ -7,7 +7,7 @@ use super::host_exports::{
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
-use crate::workflow::host_exports::SUFFIX_FN_STUB;
+use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
@@ -178,6 +178,10 @@ pub(crate) enum ImportedFnCall<'a> {
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
+    Get {
+        target_ffqn: FunctionFqn,
+        child_execution_id: ExecutionIdDerived,
+    },
 }
 
 impl<'a> ImportedFnCall<'a> {
@@ -285,6 +289,50 @@ impl<'a> ImportedFnCall<'a> {
                     target_ffqn,
                     join_set_id,
                     wasm_backtrace,
+                })
+            } else if let Some(function_name) =
+                called_ffqn.function_name.strip_suffix(SUFFIX_FN_GET)
+            {
+                let target_ffqn = FunctionFqn::new_arc(
+                    Arc::from(target_ifc_fqn.to_string()),
+                    Arc::from(function_name),
+                );
+
+                let Some((child_execution_id, [])) = params.split_first() else {
+                    return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                        ffqn: called_ffqn,
+                        reason: StrVariant::Static("-get function exepcts one parameter"),
+                        detail: Some(format!(
+                            "wrong parameter length, expected single parameter of type `execution-id`, got {} parameters",
+                            params.len()
+                        )),
+                    });
+                };
+
+                let child_execution_id = match ExecutionId::try_from(child_execution_id) {
+                    Ok(ExecutionId::Derived(derived)) => derived,
+                    Ok(ExecutionId::TopLevel(_)) => {
+                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: called_ffqn,
+                            reason: "first parameter must not be a top-level `execution-id`".into(),
+                            detail: None,
+                        });
+                    }
+                    Err(err) => {
+                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: called_ffqn,
+                            reason: format!(
+                                "cannot parse first parameter as a derived `execution-id`: {err}"
+                            )
+                            .into(),
+                            detail: Some(format!("{err:?}")),
+                        });
+                    }
+                };
+
+                Ok(ImportedFnCall::Get {
+                    target_ffqn,
+                    child_execution_id,
                 })
             } else {
                 error!("Unrecognized `{SUFFIX_PKG_EXT}` interface function {called_ffqn}");
@@ -457,6 +505,9 @@ impl<'a> ImportedFnCall<'a> {
             }
             | Self::Stub {
                 target_ffqn: ffqn, ..
+            }
+            | Self::Get {
+                target_ffqn: ffqn, ..
             } => ffqn,
         }
     }
@@ -560,33 +611,14 @@ impl<C: ClockFn> WorkflowCtx<C> {
     ) -> Result<(), WorkflowFunctionError> {
         let called_at = self.clock_fn.now();
         trace!(?imported_fn_call, %called_at, "call_imported_fn start");
-        let event = match self.imported_fn_to_event_call(
-            imported_fn_call,
-            fn_registry,
-            called_at,
-            &called_ffqn,
-        ) {
-            Ok(ok) => ok,
-            Err(err) => {
-                error!(%called_ffqn, "{err:?}");
-                return Err(err);
-            }
-        };
-        let res = self
-            .event_history
-            .apply(
-                event,
-                self.db_pool.connection().as_ref(),
-                &mut self.version,
-                called_at,
-            )
-            .await?
-            .into_wast_val();
+        let val = self
+            .imported_fn_to_val(imported_fn_call, fn_registry, called_at, &called_ffqn)
+            .await?;
 
-        match (results.len(), res) {
+        match (results.len(), val) {
             (0, None) => {}
-            (1, Some(res)) => {
-                results[0] = res.as_val();
+            (1, Some(val)) => {
+                results[0] = val;
             }
             (expected, got) => {
                 error!(
@@ -892,13 +924,31 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .get_incremented_by(u64::try_from(count).unwrap())
     }
 
-    fn imported_fn_to_event_call(
+    async fn apply_event(
         &mut self,
-        imported_fn_call: ImportedFnCall,
+        event: EventCall,
+        called_at: DateTime<Utc>,
+    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+        Ok(self
+            .event_history
+            .apply(
+                event,
+                self.db_pool.connection().as_ref(),
+                &mut self.version,
+                called_at,
+            )
+            .await?
+            .into_wast_val()
+            .map(|wast_val| wast_val.as_val()))
+    }
+
+    async fn imported_fn_to_val(
+        &mut self,
+        imported_fn_call: ImportedFnCall<'_>,
         fn_registry: &dyn FunctionRegistry,
         called_at: DateTime<Utc>,
         called_ffqn: &FunctionFqn,
-    ) -> Result<EventCall, WorkflowFunctionError> {
+    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
         match imported_fn_call {
             ImportedFnCall::Direct {
                 ffqn,
@@ -911,15 +961,19 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     .get_by_exported_function(&ffqn)
                     .expect("function obtained from fn_registry exports must be found");
 
-                Ok(EventCall::BlockingChildDirectCall {
-                    ffqn,
-                    fn_component_id,
-                    fn_retry_config,
-                    join_set_id,
-                    params: Params::from_wasmtime(Arc::from(params)),
-                    child_execution_id,
-                    wasm_backtrace,
-                })
+                self.apply_event(
+                    EventCall::BlockingChildDirectCall {
+                        ffqn,
+                        fn_component_id,
+                        fn_retry_config,
+                        join_set_id,
+                        params: Params::from_wasmtime(Arc::from(params)),
+                        child_execution_id,
+                        wasm_backtrace,
+                    },
+                    called_at,
+                )
+                .await
             }
             ImportedFnCall::Schedule {
                 target_ffqn,
@@ -944,16 +998,20 @@ impl<C: ClockFn> WorkflowCtx<C> {
                         detail: Some(format!("{err:?}")),
                     }
                 })?;
-                Ok(EventCall::ScheduleRequest {
-                    schedule_at,
-                    scheduled_at_if_new,
-                    execution_id,
-                    ffqn: target_ffqn,
-                    fn_component_id,
-                    fn_retry_config,
-                    params: Params::from_wasmtime(Arc::from(target_params)),
-                    wasm_backtrace,
-                })
+                self.apply_event(
+                    EventCall::ScheduleRequest {
+                        schedule_at,
+                        scheduled_at_if_new,
+                        execution_id,
+                        ffqn: target_ffqn,
+                        fn_component_id,
+                        fn_retry_config,
+                        params: Params::from_wasmtime(Arc::from(target_params)),
+                        wasm_backtrace,
+                    },
+                    called_at,
+                )
+                .await
             }
             ImportedFnCall::Submit {
                 target_ffqn,
@@ -965,25 +1023,35 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from fn_registry exports must be found");
-                Ok(EventCall::StartAsync {
-                    target_ffqn,
-                    fn_component_id,
-                    fn_retry_config,
-                    join_set_id,
-                    params: Params::from_wasmtime(Arc::from(target_params)),
-                    child_execution_id,
-                    wasm_backtrace,
-                })
+                self.apply_event(
+                    EventCall::StartAsync {
+                        target_ffqn,
+                        fn_component_id,
+                        fn_retry_config,
+                        join_set_id,
+                        params: Params::from_wasmtime(Arc::from(target_params)),
+                        child_execution_id,
+                        wasm_backtrace,
+                    },
+                    called_at,
+                )
+                .await
             }
             ImportedFnCall::AwaitNext {
                 target_ffqn,
                 join_set_id,
                 wasm_backtrace,
-            } => Ok(EventCall::BlockingChildAwaitNext {
-                join_set_id,
-                wasm_backtrace,
-                requested_ffqn: target_ffqn,
-            }),
+            } => {
+                self.apply_event(
+                    EventCall::BlockingChildAwaitNext {
+                        join_set_id,
+                        wasm_backtrace,
+                        requested_ffqn: target_ffqn,
+                    },
+                    called_at,
+                )
+                .await
+            }
             ImportedFnCall::Stub {
                 target_ffqn,
                 target_execution_id,
@@ -1026,14 +1094,36 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     }
                 };
 
-                Ok(EventCall::Stub {
-                    target_ffqn: target_ffqn.clone(),
-                    target_execution_id: target_execution_id.clone(),
-                    parent_id,
-                    join_set_id,
-                    result,
-                    wasm_backtrace,
-                })
+                self.apply_event(
+                    EventCall::Stub {
+                        target_ffqn: target_ffqn.clone(),
+                        target_execution_id: target_execution_id.clone(),
+                        parent_id,
+                        join_set_id,
+                        result,
+                        wasm_backtrace,
+                    },
+                    called_at,
+                )
+                .await
+            }
+            ImportedFnCall::Get {
+                target_ffqn,
+                child_execution_id,
+            } => {
+                let val = match self
+                    .event_history
+                    .get_processed_response(&child_execution_id, &target_ffqn)
+                {
+                    Ok(option) => wasmtime::component::Val::Result(Ok(
+                        option.map(|wast_val| Box::new(wast_val.as_val()))
+                    )),
+                    Err(get_extension_err) => wasmtime::component::Val::Result(Err(Some(
+                        Box::new(wasmtime::component::Val::from(get_extension_err)),
+                    ))),
+                };
+
+                Ok(Some(val))
             }
         }
     }

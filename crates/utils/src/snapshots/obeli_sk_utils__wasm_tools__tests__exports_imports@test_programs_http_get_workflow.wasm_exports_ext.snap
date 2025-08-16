@@ -86,6 +86,84 @@ expression: exports
     "extension": "AwaitNext",
     "submittable": false
   },
+  "testing:http-workflow-obelisk-ext/workflow.get-get": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-get"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "result": {
+              "ok": "string",
+              "err": "string"
+            }
+          },
+          "err": {
+            "variant": {
+              "execution-failed": {
+                "record": {
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
+                }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
+                    }
+                  }
+                }
+              },
+              "not-found-in-processed-responses": null
+            }
+          }
+        }
+      },
+      "wit_type": "result<result<string, string>, get-extension-error>"
+    },
+    "extension": "Get",
+    "submittable": false
+  },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-await-next": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -167,6 +245,84 @@ expression: exports
       "wit_type": "result<tuple<execution-id, result<string, string>>, execution-error>"
     },
     "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-resp-get": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-resp-get"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "result": {
+              "ok": "string",
+              "err": "string"
+            }
+          },
+          "err": {
+            "variant": {
+              "execution-failed": {
+                "record": {
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
+                }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
+                    }
+                  }
+                }
+              },
+              "not-found-in-processed-responses": null
+            }
+          }
+        }
+      },
+      "wit_type": "result<result<string, string>, get-extension-error>"
+    },
+    "extension": "Get",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-submit": {
@@ -268,6 +424,79 @@ expression: exports
       "wit_type": "result<execution-id, execution-error>"
     },
     "extension": "AwaitNext",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-stargazers-get": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-stargazers-get"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": null,
+          "err": {
+            "variant": {
+              "execution-failed": {
+                "record": {
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
+                }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
+                    }
+                  }
+                }
+              },
+              "not-found-in-processed-responses": null
+            }
+          }
+        }
+      },
+      "wit_type": "result<_, get-extension-error>"
+    },
+    "extension": "Get",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-submit": {
@@ -489,6 +718,86 @@ expression: exports
     "extension": "AwaitNext",
     "submittable": false
   },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-get": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-concurrently-get"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "result": {
+              "ok": {
+                "list": "string"
+              },
+              "err": "string"
+            }
+          },
+          "err": {
+            "variant": {
+              "execution-failed": {
+                "record": {
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
+                }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
+                    }
+                  }
+                }
+              },
+              "not-found-in-processed-responses": null
+            }
+          }
+        }
+      },
+      "wit_type": "result<result<list<string>, string>, get-extension-error>"
+    },
+    "extension": "Get",
+    "submittable": false
+  },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -574,6 +883,86 @@ expression: exports
     "extension": "AwaitNext",
     "submittable": false
   },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-get": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-concurrently-stress-get"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "result": {
+              "ok": {
+                "list": "string"
+              },
+              "err": "string"
+            }
+          },
+          "err": {
+            "variant": {
+              "execution-failed": {
+                "record": {
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
+                }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
+                    }
+                  }
+                }
+              },
+              "not-found-in-processed-responses": null
+            }
+          }
+        }
+      },
+      "wit_type": "result<result<list<string>, string>, get-extension-error>"
+    },
+    "extension": "Get",
+    "submittable": false
+  },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -635,6 +1024,84 @@ expression: exports
       "wit_type": "execution-id"
     },
     "extension": "Submit",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-get": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-get"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "result": {
+              "ok": "string",
+              "err": "string"
+            }
+          },
+          "err": {
+            "variant": {
+              "execution-failed": {
+                "record": {
+                  "execution-id": {
+                    "record": {
+                      "id": "string"
+                    }
+                  }
+                }
+              },
+              "function-mismatch": {
+                "record": {
+                  "actual-function": {
+                    "option": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  },
+                  "actual-id": {
+                    "variant": {
+                      "delay-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      },
+                      "execution-id": {
+                        "record": {
+                          "id": "string"
+                        }
+                      }
+                    }
+                  },
+                  "specified-function": {
+                    "record": {
+                      "function-name": "string",
+                      "interface-name": "string"
+                    }
+                  }
+                }
+              },
+              "not-found-in-processed-responses": null
+            }
+          }
+        }
+      },
+      "wit_type": "result<result<string, string>, get-extension-error>"
+    },
+    "extension": "Get",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": {

@@ -133,30 +133,40 @@ package testing:fibo-obelisk-ext {
 
 package testing:fibo-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, execution-error};
+    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, execution-error, get-extension-error};
 
     fibow-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
 
     fibow-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, execution-error>;
 
+    fibow-get: func(execution-id: execution-id) -> result<u64, get-extension-error>;
+
     fiboa-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
 
     fiboa-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, execution-error>;
 
+    fiboa-get: func(execution-id: execution-id) -> result<u64, get-extension-error>;
+
     fiboa-concurrent-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
 
     fiboa-concurrent-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, execution-error>;
+
+    fiboa-concurrent-get: func(execution-id: execution-id) -> result<u64, get-extension-error>;
   }
   interface workflow-nesting {
-    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, execution-error};
+    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, execution-error, get-extension-error};
 
     fibo-nested-workflow-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
 
     fibo-nested-workflow-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, execution-error>;
 
+    fibo-nested-workflow-get: func(execution-id: execution-id) -> result<u64, get-extension-error>;
+
     fibo-start-fiboas-submit: func(join-set-id: borrow<join-set-id>, n: u8, fiboas: u32, iterations-per-fiboa: u32) -> execution-id;
 
     fibo-start-fiboas-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, execution-error>;
+
+    fibo-start-fiboas-get: func(execution-id: execution-id) -> result<u64, get-extension-error>;
   }
 }
 

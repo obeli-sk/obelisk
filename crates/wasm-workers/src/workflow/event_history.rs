@@ -4,8 +4,10 @@ use super::host_exports::delay_id_into_wast_val;
 use super::host_exports::execution_id_derived_into_wast_val;
 use super::host_exports::execution_id_into_wast_val;
 use super::host_exports::join_set_id_into_wast_val;
+use super::host_exports::v2_0_0::obelisk::types::execution::GetExtensionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::workflow::host_exports::ffqn_into_wast_val;
+use crate::workflow::host_exports::v2_0_0::obelisk::types::execution as types_execution;
 use chrono::{DateTime, Utc};
 use concepts::ClosingStrategy;
 use concepts::ComponentId;
@@ -108,7 +110,8 @@ pub(crate) struct EventHistory {
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     execution_deadline: DateTime<Utc>,
     event_history: Vec<(HistoryEvent, ProcessingStatus)>,
-    index_child_exe_to_ffqn: HashMap<ExecutionIdDerived, FunctionFqn>,
+    index_child_exe_to_processed_response_idx_and_ffqn:
+        HashMap<ExecutionIdDerived, (usize, FunctionFqn)>,
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
@@ -157,7 +160,7 @@ impl EventHistory {
         EventHistory {
             execution_id,
             component_id,
-            index_child_exe_to_ffqn: HashMap::default(),
+            index_child_exe_to_processed_response_idx_and_ffqn: HashMap::default(),
             event_history: event_history
                 .into_iter()
                 .map(|event| (event, Unprocessed))
@@ -252,7 +255,7 @@ impl EventHistory {
                 self.execution_deadline
             };
         let Some(poll_variant) = event_call.join_next_variant() else {
-            // Events that cannot block, e.g. creating new join sets.
+            // Events that cannot block, e.g. creating new join sets, persisting random value, getting processed responses.
             // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
             let cloned_non_blocking = event_call.clone();
             let history_events = self
@@ -534,17 +537,16 @@ impl EventHistory {
                         finished_version: _,
                         result,
                     } => {
-                        // child_execution_id -> ffqn
-                        let response_ffqn = self
-                            .index_child_exe_to_ffqn
+                        // Determine ffqn from child_execution_id
+                        let (_response_idx, response_ffqn) = self
+                            .index_child_exe_to_processed_response_idx_and_ffqn
                             .get(child_execution_id)
                             .expect("if finished the index must have it");
-
-                        JoinSetResponseEnriched::ChildExecutionFinished {
+                        JoinSetResponseEnriched::ChildExecutionFinished(ChildExecutionFinished {
                             child_execution_id,
                             result,
                             response_ffqn,
-                        }
+                        })
                     }
                     JoinSetResponse::DelayFinished { delay_id } => {
                         JoinSetResponseEnriched::DelayFinished { delay_id }
@@ -636,8 +638,8 @@ impl EventHistory {
             ) if *join_set_id == *found_join_set_id && *execution_id == *child_execution_id => {
                 // TODO: Check params to catch non-deterministic errors.
                 trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
-                self.index_child_exe_to_ffqn
-                    .insert(child_execution_id.clone(), target_ffqn.clone());
+                self.index_child_exe_to_processed_response_idx_and_ffqn
+                    .insert(child_execution_id.clone(), (found_idx, target_ffqn.clone()));
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::StartAsync`] , return execution id
                 Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
@@ -689,11 +691,13 @@ impl EventHistory {
             {
                 trace!(%join_set_id, "Peeked at JoinNext - Child");
                 match self.mark_next_unprocessed_response(found_idx, join_set_id) {
-                    Some(JoinSetResponseEnriched::ChildExecutionFinished {
-                        child_execution_id,
-                        result,
-                        response_ffqn,
-                    }) if requested_ffqn == response_ffqn => {
+                    Some(JoinSetResponseEnriched::ChildExecutionFinished(
+                        ChildExecutionFinished {
+                            child_execution_id,
+                            result,
+                            response_ffqn,
+                        },
+                    )) if requested_ffqn == response_ffqn => {
                         trace!(%join_set_id, "Matched JoinNext & ChildExecutionFinished");
                         match kind {
                             JoinNextChildKind::DirectCall => match result {
@@ -796,11 +800,13 @@ impl EventHistory {
                             }
                         }
                     }
-                    Some(JoinSetResponseEnriched::ChildExecutionFinished {
-                        child_execution_id,
-                        result: _,
-                        response_ffqn,
-                    }) => {
+                    Some(JoinSetResponseEnriched::ChildExecutionFinished(
+                        ChildExecutionFinished {
+                            child_execution_id,
+                            result: _,
+                            response_ffqn,
+                        },
+                    )) => {
                         // mismatch between ffqns
                         let function_mismatch = ExecutionErrorVariant::FunctionMismatch {
                             specified_function: requested_ffqn,
@@ -865,11 +871,13 @@ impl EventHistory {
             ) if *join_set_id == *found_join_set_id && closing == found_closing => {
                 trace!(%join_set_id, "EventHistoryKey::JoinNext: Peeked at JoinNext - Child");
                 match self.mark_next_unprocessed_response(found_idx, join_set_id) {
-                    Some(JoinSetResponseEnriched::ChildExecutionFinished {
-                        child_execution_id,
-                        result,
-                        response_ffqn: _,
-                    }) => {
+                    Some(JoinSetResponseEnriched::ChildExecutionFinished(
+                        ChildExecutionFinished {
+                            child_execution_id,
+                            result,
+                            response_ffqn: _,
+                        },
+                    )) => {
                         trace!(%join_set_id, "EventHistoryKey::JoinNext: Matched JoinNext & ChildExecutionFinished");
 
                         match result {
@@ -1692,6 +1700,37 @@ impl EventHistory {
             }
         }
     }
+
+    #[expect(clippy::result_large_err)]
+    pub(crate) fn get_processed_response(
+        &self,
+        child_execution_id: &ExecutionIdDerived,
+        specified_ffqn: &FunctionFqn,
+    ) -> Result<Option<WastVal>, GetExtensionError> {
+        let (response_idx, found_ffqn) = self
+            .index_child_exe_to_processed_response_idx_and_ffqn
+            .get(child_execution_id)
+            .ok_or(GetExtensionError::NotFoundInProcessedResponses)?;
+
+        if specified_ffqn != found_ffqn {
+            return Err(GetExtensionError::FunctionMismatch(
+                types_execution::FunctionMismatch {
+                    specified_function: types_execution::Function::from(specified_ffqn),
+                    actual_function: Some(types_execution::Function::from(found_ffqn)),
+                    actual_id: types_execution::ResponseId::ExecutionId(
+                        types_execution::ExecutionId::from(child_execution_id),
+                    ),
+                },
+            ));
+        }
+        match &self.responses.get(*response_idx).as_ref().expect(
+            "index_child_exe_to_processed_response_idx_and_ffqn must be consistent with responses",
+        ).0.event {
+            JoinSetResponse::ChildExecutionFinished { result: Ok(supported_retval), .. } => Ok(supported_retval.clone().into_value()),
+            JoinSetResponse::ChildExecutionFinished { result: Err(_err), ..}  => Err(GetExtensionError::ExecutionFailed(types_execution::ExecutionFailed::from(child_execution_id))),
+            JoinSetResponse::DelayFinished { .. } => unreachable!("`index_child_exe_to_processed_response_idx_and_ffqn` must point to a ChildExecutionFinished"),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1745,14 +1784,14 @@ impl ExecutionErrorVariant<'_> {
 }
 
 enum JoinSetResponseEnriched<'a> {
-    DelayFinished {
-        delay_id: &'a DelayId,
-    },
-    ChildExecutionFinished {
-        child_execution_id: &'a ExecutionIdDerived,
-        result: &'a FinishedExecutionResult,
-        response_ffqn: &'a FunctionFqn,
-    },
+    DelayFinished { delay_id: &'a DelayId },
+    ChildExecutionFinished(ChildExecutionFinished<'a>),
+}
+
+struct ChildExecutionFinished<'a> {
+    child_execution_id: &'a ExecutionIdDerived,
+    result: &'a FinishedExecutionResult,
+    response_ffqn: &'a FunctionFqn,
 }
 
 #[derive(Debug)]

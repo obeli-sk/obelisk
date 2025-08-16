@@ -680,6 +680,7 @@ pub enum FunctionExtension {
     AwaitNext,
     Schedule,
     Stub,
+    Get,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

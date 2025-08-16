@@ -112,6 +112,7 @@ enum FunctionExtension {
     AWAIT_NEXT = 1;
     SCHEDULE = 2;
     STUB = 3;
+    GET = 4;
 }
 
 message FunctionParameter {

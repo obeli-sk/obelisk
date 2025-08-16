@@ -174,6 +174,21 @@ fn add_ext_exports(
             stability: wit_parser::Stability::default(),
         })
     };
+    let type_id_get_extension_error = {
+        // obelisk:types/execution.{get-extension-error}
+        let actual_type_id = *execution_ifc
+            .types
+            .get("get-extension-error")
+            .expect("`get-extension-error` must exist");
+        // Create a reference to the type.
+        resolve.types.alloc(TypeDef {
+            name: None,
+            kind: TypeDefKind::Type(Type::Id(actual_type_id)),
+            owner: TypeOwner::Interface(execution_ifc_id),
+            docs: wit_parser::Docs::default(),
+            stability: wit_parser::Stability::default(),
+        })
+    };
     let type_id_stub_error = {
         // obelisk:types/execution.{stub-error}
         let actual_type_id = *execution_ifc
@@ -232,6 +247,10 @@ fn add_ext_exports(
                 types.insert("execution-id".to_string(), type_id_execution_id);
                 types.insert("join-set-id".to_string(), type_id_join_set_id);
                 types.insert("execution-error".to_string(), type_id_execution_error);
+                types.insert(
+                    "get-extension-error".to_string(),
+                    type_id_get_extension_error,
+                );
                 copy_original_types(
                     original_ifc_id,
                     original_ifc,
@@ -348,7 +367,7 @@ fn add_ext_exports(
                         let type_id_result = resolve.types.alloc(TypeDef {
                             name: None,
                             kind: TypeDefKind::Result(wit_parser::Result_ {
-                                ok: Some(Type::Id(type_id_execution_id)), // TODO add tuple?
+                                ok: Some(Type::Id(type_id_execution_id)),
                                 err: Some(Type::Id(type_id_await_next_err_part)),
                             }),
                             owner: TypeOwner::None,
@@ -357,6 +376,33 @@ fn add_ext_exports(
                         });
                         Some(Type::Id(type_id_result))
                     };
+                    let fn_ext = Function {
+                        name: fn_name.clone(),
+                        kind: FunctionKind::Freestanding,
+                        params,
+                        result,
+                        docs: wit_parser::Docs::default(),
+                        stability: wit_parser::Stability::default(),
+                    };
+                    ext_ifc.functions.insert(fn_name, fn_ext);
+                }
+
+                // -get(execution-id) -> result<original_return_type, get-extension-error>
+                // or
+                // -get(execution-id) -> result<_,  get-extension-error>
+                {
+                    let fn_name = format!("{fn_name}-get");
+                    let params = vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
+                    let result = Some(Type::Id(resolve.types.alloc(TypeDef {
+                        name: None,
+                        kind: TypeDefKind::Result(wit_parser::Result_ {
+                            ok: original_fn.result, // return type or None
+                            err: Some(Type::Id(type_id_get_extension_error)),
+                        }),
+                        owner: TypeOwner::None,
+                        docs: wit_parser::Docs::default(),
+                        stability: wit_parser::Stability::default(),
+                    })));
                     let fn_ext = Function {
                         name: fn_name.clone(),
                         kind: FunctionKind::Freestanding,

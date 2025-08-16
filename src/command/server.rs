@@ -1002,6 +1002,7 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
                     FunctionExtension::AwaitNext => grpc_gen::FunctionExtension::AwaitNext,
                     FunctionExtension::Schedule => grpc_gen::FunctionExtension::Schedule,
                     FunctionExtension::Stub => grpc_gen::FunctionExtension::Stub,
+                    FunctionExtension::Get => grpc_gen::FunctionExtension::Get,
                 }
                 .into()
             }),

@@ -2,9 +2,7 @@ use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
-use crate::workflow::host_exports::{
-    SUFFIX_FN_SCHEDULE, execution_id_into_val, history_event_schedule_at_from_wast_val,
-};
+use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, ClientError, CreateRequest, DbError, DbPool, ExecutionEventInner,
@@ -956,6 +954,13 @@ pub enum HandleRequestError {
     RouteNotFound,
     #[error("timeout")]
     Timeout,
+}
+
+fn execution_id_into_val(execution_id: &ExecutionId) -> Val {
+    Val::Record(vec![(
+        "id".to_string(),
+        Val::String(execution_id.to_string()),
+    )])
 }
 
 #[cfg(test)]

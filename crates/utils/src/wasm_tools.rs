@@ -407,18 +407,33 @@ impl ExIm {
             Box::from("delay-id") => Some(delay_id_type_wrapper.clone()),
         });
 
-        // Define execution-error variants
-        let execution_error_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("execution-failed") => Some(TypeWrapper::Record(indexmap! {
-                Box::from("execution-id") => execution_id_type_wrapper.clone()
-            })),
-            Box::from("all-processed") => None,
-            Box::from("function-mismatch") => Some(TypeWrapper::Record(indexmap! {
-                Box::from("specified-function") => function_type_wrapper.clone(),
-                Box::from("actual-function") => TypeWrapper::Option(Box::from(function_type_wrapper)),
-                Box::from("actual-id") => response_id,
-            })),
+        // record execution-failed
+        let execution_failed_type_wrapper = TypeWrapper::Record(indexmap! {
+            Box::from("execution-id") => execution_id_type_wrapper.clone()
         });
+
+        // record function-mismatch
+        let function_mismatch_type_wrapper = TypeWrapper::Record(indexmap! {
+            Box::from("specified-function") => function_type_wrapper.clone(),
+            Box::from("actual-function") => TypeWrapper::Option(Box::from(function_type_wrapper)),
+            Box::from("actual-id") => response_id,
+        });
+
+        // execution-error
+        let execution_error_type_wrapper = TypeWrapper::Variant(indexmap! {
+            Box::from("execution-failed") => Some(execution_failed_type_wrapper.clone()),
+            Box::from("all-processed") => None,
+            Box::from("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
+        });
+
+        // get-execution-error
+        let get_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
+            Box::from("execution-failed") => Some(execution_failed_type_wrapper.clone()),
+            Box::from("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
+            Box::from("not-found-in-processed-responses") => None,
+        });
+
+        // stub-error
         let stub_error_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("conflict") => None,
         });
@@ -554,6 +569,43 @@ impl ExIm {
                     submittable: false,
                 };
                 insert_ext(fn_await_next);
+
+                // -get(execution-id) -> result<original_return_type, get-extension-error>
+                // or
+                // -get(execution-id) -> result<_,  get-extension-error>
+                let fn_get = FunctionMetadata {
+                    ffqn: FunctionFqn {
+                        ifc_fqn: obelisk_ext_ifc.clone(),
+                        function_name: FnName::from(format!(
+                            "{}-get",
+                            exported_fn_metadata.ffqn.function_name
+                        )),
+                    },
+                    parameter_types: ParameterTypes(vec![param_type_execution_id.clone()]),
+                    return_type: {
+                        let (ok_wit, ok_type_wrapper) =
+                            if let Some(original_ret) = &exported_fn_metadata.return_type {
+                                (
+                                    &original_ret.wit_type,
+                                    Some(Box::new(original_ret.type_wrapper.clone())),
+                                )
+                            } else {
+                                (&StrVariant::Static("_"), None)
+                            };
+                        Some(ReturnType {
+                            type_wrapper: TypeWrapper::Result {
+                                ok: ok_type_wrapper,
+                                err: Some(Box::new(get_extension_error_type_wrapper.clone())),
+                            },
+                            wit_type: StrVariant::from(format!(
+                                "result<{ok_wit}, get-extension-error>"
+                            )),
+                        })
+                    },
+                    extension: Some(FunctionExtension::Get),
+                    submittable: false,
+                };
+                insert_ext(fn_get);
 
                 if component_type != ComponentType::ActivityStub {
                     assert!(
