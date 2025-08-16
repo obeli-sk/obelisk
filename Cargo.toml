@@ -176,15 +176,15 @@ webui-builder = { path = "crates/webui/builder" }
 anyhow = { version = "1.0", features = ["backtrace"] }
 axum = { version = "0.8.4", features = ["http2"] }
 directories = "6.0"
-arbitrary = { version = "1.4.1", features = ["derive"] }
+arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"
 bytes = "1.10"
 cargo_metadata = "0.21"
 cfg-if = "1.0.1"
 chrono = { version = "0.4.41", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.43", features = ["derive"] }
-config = { version = "0.15.13", default-features = false, features = [
+clap = { version = "4.5.45", features = ["derive"] }
+config = { version = "0.15.14", default-features = false, features = [
     "toml",
     "preserve_order",
     "async",
@@ -219,7 +219,7 @@ indexmap = { version = "2.10", features = ["serde"] }
 insta = { version = "1.43.1", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
-libc = "0.2.174"
+libc = "0.2.175"
 oci-client = { version = "0.15.0", default-features = false, features = [
     "rustls-tls",
 ] }
