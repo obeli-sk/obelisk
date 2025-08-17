@@ -536,30 +536,27 @@ impl ExIm {
                     },
                     parameter_types: ParameterTypes(vec![param_type_join_set.clone()]),
                     return_type: {
-                        let (ok_part, type_wrapper) =
+                        let (ok_part, ok_type_wrapper) =
                             if let Some(original_ret) = &exported_fn_metadata.return_type {
                                 (
-                                    // Use ReturnType::display to serialize wit_type or fallback
                                     Cow::Owned(format!("tuple<execution-id, {original_ret}>")),
-                                    TypeWrapper::Result {
-                                        ok: Some(Box::new(TypeWrapper::Tuple(Box::new([
-                                            execution_id_type_wrapper.clone(),
-                                            original_ret.type_wrapper.clone(),
-                                        ])))), // (execution-id, original_ret)
-                                        err: Some(Box::new(execution_error_type_wrapper.clone())),
-                                    },
+                                    // (execution-id, original_ret)
+                                    TypeWrapper::Tuple(Box::new([
+                                        execution_id_type_wrapper.clone(),
+                                        original_ret.type_wrapper.clone(),
+                                    ])),
                                 )
                             } else {
                                 (
                                     Cow::Borrowed("execution-id"),
-                                    TypeWrapper::Result {
-                                        ok: Some(Box::new(execution_id_type_wrapper.clone())),
-                                        err: Some(Box::new(execution_error_type_wrapper.clone())),
-                                    },
+                                    execution_id_type_wrapper.clone(),
                                 )
                             };
                         Some(ReturnType {
-                            type_wrapper,
+                            type_wrapper: TypeWrapper::Result {
+                                ok: Some(Box::new(ok_type_wrapper)),
+                                err: Some(Box::new(execution_error_type_wrapper.clone())),
+                            },
                             wit_type: StrVariant::from(format!(
                                 "result<{ok_part}, execution-error>"
                             )),
