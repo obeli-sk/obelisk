@@ -289,6 +289,10 @@ impl EventHistory {
             )
             .await
             .map_err(ApplyError::DbError)?;
+        assert!(
+            !history_events.is_empty(),
+            "each EventCall must produce at least one HistoryEvent"
+        );
         self.event_history
             .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
 
@@ -298,7 +302,14 @@ impl EventHistory {
             if idx == last_key_idx
                 && let FindMatchingResponse::Found(res) = res
             {
-                // Last key was replayed.
+                // Last key was marked as processed.
+                assert_eq!(
+                    Processed,
+                    self.event_history
+                        .last()
+                        .expect("checked that `history_events` is not empty")
+                        .1
+                );
                 return Ok(res);
             }
         }
@@ -414,9 +425,8 @@ impl EventHistory {
                 debug!("Adding BlockingChildAwaitNext to join set {join_set_id}");
                 match self
                     .apply(
-                        EventCall::BlockingJoinNext {
+                        EventCall::JoinNextClosing {
                             join_set_id: join_set_id.clone(),
-                            closing: true,
                             wasm_backtrace: None,
                         },
                         db_connection,
@@ -1322,9 +1332,8 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::BlockingJoinNext {
+            EventCall::JoinNextClosing {
                 join_set_id,
-                closing,
                 wasm_backtrace,
             } => {
                 // Non-cacheable event.
@@ -1335,7 +1344,7 @@ impl EventHistory {
                     join_set_id,
                     run_expires_at: lock_expires_at,
                     requested_ffqn: None,
-                    closing,
+                    closing: true,
                 };
                 let history_events = vec![event.clone()];
                 let join_next = AppendRequest {
@@ -1947,9 +1956,8 @@ pub(crate) enum EventCall {
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
-    BlockingJoinNext {
+    JoinNextClosing {
         join_set_id: JoinSetId,
-        closing: bool,
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
@@ -2029,13 +2037,12 @@ impl EventCall {
                 expires_at_if_new: _,
                 wasm_backtrace: _,
             }) => Some(JoinNextVariant::Delay(join_set_id.clone())),
-            EventCall::BlockingJoinNext {
+            EventCall::JoinNextClosing {
                 join_set_id,
-                closing,
                 wasm_backtrace: _,
             } => Some(JoinNextVariant::Opaque {
                 join_set_id: join_set_id.clone(),
-                closing: *closing,
+                closing: true,
             }),
 
             EventCall::CreateJoinSet { .. }
@@ -2180,13 +2187,12 @@ impl EventCall {
                     join_set_id: join_set_id.clone(),
                 },
             ],
-            EventCall::BlockingJoinNext {
+            EventCall::JoinNextClosing {
                 join_set_id,
-                closing,
                 wasm_backtrace: _,
             } => vec![EventHistoryKey::JoinNext {
                 join_set_id: join_set_id.clone(),
-                closing: *closing,
+                closing: true,
             }],
             EventCall::ScheduleRequest {
                 execution_id,
