@@ -10,7 +10,7 @@ use crate::component_logger::{ComponentLogger, log_activities};
 use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
+use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::{self, DbError, DbPool, HistoryEventScheduleAt, Version, WasmBacktrace};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
@@ -640,8 +640,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
         schedule_at: HistoryEventScheduleAt,
         sleep_ffqn: FunctionFqn,
     ) -> Result<(), WorkflowFunctionError> {
-        let join_set_id = self.next_join_set_one_off();
-        let delay_id = DelayId::new_oneoff(&self.execution_id, &join_set_id);
         let expires_at_if_new = schedule_at
             .as_date_time(self.clock_fn.now())
             .map_err(|err| WorkflowFunctionError::ImportedFunctionCallError {
@@ -651,13 +649,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
             })?;
         self.event_history
             .apply(
-                EventCall::BlockingDelayRequest {
-                    join_set_id,
-                    delay_id,
-                    expires_at_if_new,
+                EventCall::BlockingDelayRequest(self.event_history.next_delay(
                     schedule_at,
-                    wasm_backtrace: self.backtrace.take(),
-                },
+                    expires_at_if_new,
+                    self.backtrace.take(),
+                )),
                 self.db_pool.connection().as_ref(),
                 &mut self.version,
                 self.clock_fn.now(),
@@ -678,19 +674,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
         self.resource_table
             .get(resource)
             .inspect_err(|err| error!("Cannot get resource - {err:?}"))
-    }
-
-    fn next_join_set_name_index(&mut self, kind: JoinSetKind) -> String {
-        assert!(kind != JoinSetKind::Named);
-        (self.event_history.join_set_count(kind) + 1).to_string()
-    }
-
-    fn next_join_set_one_off(&mut self) -> JoinSetId {
-        JoinSetId::new(
-            JoinSetKind::OneOff,
-            StrVariant::from(self.next_join_set_name_index(JoinSetKind::OneOff)),
-        )
-        .expect("next_string_random returns valid join set name")
     }
 
     async fn persist_join_set_with_kind(
@@ -955,22 +938,20 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 params,
                 wasm_backtrace,
             } => {
-                let join_set_id = self.next_join_set_one_off();
-                let child_execution_id = self.execution_id.next_level(&join_set_id);
                 let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
                     .get_by_exported_function(&ffqn)
                     .expect("function obtained from fn_registry exports must be found");
 
                 self.apply_event(
-                    EventCall::BlockingChildDirectCall {
-                        ffqn,
-                        fn_component_id,
-                        fn_retry_config,
-                        join_set_id,
-                        params: Params::from_wasmtime(Arc::from(params)),
-                        child_execution_id,
-                        wasm_backtrace,
-                    },
+                    EventCall::BlockingChildDirectCall(
+                        self.event_history.next_blocking_child_direct_call(
+                            ffqn,
+                            fn_component_id,
+                            fn_retry_config,
+                            Params::from_wasmtime(Arc::from(params)),
+                            wasm_backtrace,
+                        ),
+                    ),
                     called_at,
                 )
                 .await
@@ -1301,7 +1282,7 @@ mod workflow_support {
         pub(crate) async fn new_join_set_generated(
             &mut self,
         ) -> wasmtime::Result<Resource<JoinSetId>> {
-            let name = self.next_join_set_name_index(JoinSetKind::Generated);
+            let name = self.event_history.next_join_set_name_generated();
             trace!("new_join_set_generated: {name}");
             self.persist_join_set_with_kind(
                 name,

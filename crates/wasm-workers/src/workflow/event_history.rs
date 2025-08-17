@@ -254,7 +254,7 @@ impl EventHistory {
             } else {
                 self.execution_deadline
             };
-        let Some(poll_variant) = event_call.join_next_variant() else {
+        let Some(join_next_variant) = event_call.join_next_variant() else {
             // Events that cannot block, e.g. creating new join sets, persisting random value, getting processed responses.
             // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
             let cloned_non_blocking = event_call.clone();
@@ -310,8 +310,8 @@ impl EventHistory {
             JoinNextBlockingStrategy::Await { .. }
         ) {
             // JoinNext was written, wait for next response.
-            debug!(join_set_id = %poll_variant.join_set_id(), "Waiting for {poll_variant:?}");
-            let key = poll_variant.as_key();
+            debug!(join_set_id = %join_next_variant.join_set_id(), "Waiting for {join_next_variant:?}");
+            let key = join_next_variant.as_key();
 
             // Subscribe to the next response.
             loop {
@@ -327,12 +327,12 @@ impl EventHistory {
                 );
                 trace!("All responses: {:?}", self.responses);
                 if let FindMatchingResponse::Found(accept_resp) = self.process_event_by_key(&key)? {
-                    debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
+                    debug!(join_set_id = %join_next_variant.join_set_id(), "Got result");
                     return Ok(accept_resp);
                 }
             }
         } else {
-            debug!(join_set_id = %poll_variant.join_set_id(),  "Interrupting on {poll_variant:?}");
+            debug!(join_set_id = %join_next_variant.join_set_id(),  "Interrupting on {join_next_variant:?}");
             Err(ApplyError::InterruptRequested)
         }
     }
@@ -1394,7 +1394,7 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::BlockingChildDirectCall {
+            EventCall::BlockingChildDirectCall(BlockingChildDirectCall {
                 ffqn,
                 fn_component_id,
                 fn_retry_config,
@@ -1402,7 +1402,7 @@ impl EventHistory {
                 child_execution_id,
                 params,
                 wasm_backtrace,
-            } => {
+            }) => {
                 // Non-cacheable event.
                 debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Flushing and appending JoinSet,ChildExecutionRequest,JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
@@ -1476,13 +1476,13 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::BlockingDelayRequest {
+            EventCall::BlockingDelayRequest(BlockingDelayRequest {
                 join_set_id,
                 delay_id,
                 schedule_at,
                 expires_at_if_new,
                 wasm_backtrace,
-            } => {
+            }) => {
                 // Non-cacheable event.
                 debug!(%delay_id, %join_set_id, "BlockingDelayRequest: Flushing and appending JoinSet,DelayRequest,JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
@@ -1731,8 +1731,64 @@ impl EventHistory {
             JoinSetResponse::DelayFinished { .. } => unreachable!("`index_child_exe_to_processed_response_idx_and_ffqn` must point to a ChildExecutionFinished"),
         }
     }
+
+    pub(crate) fn next_delay(
+        &self,
+        schedule_at: HistoryEventScheduleAt,
+        expires_at_if_new: DateTime<Utc>,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+    ) -> BlockingDelayRequest {
+        let join_set_id = self.next_join_set_one_off();
+        let delay_id = DelayId::new_oneoff(&self.execution_id, &join_set_id);
+        BlockingDelayRequest {
+            join_set_id,
+            delay_id,
+            schedule_at,
+            expires_at_if_new,
+            wasm_backtrace,
+        }
+    }
+
+    pub(crate) fn next_blocking_child_direct_call(
+        &self,
+        ffqn: FunctionFqn,
+        fn_component_id: ComponentId,
+        fn_retry_config: ComponentRetryConfig,
+        params: Params,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+    ) -> BlockingChildDirectCall {
+        let join_set_id = self.next_join_set_one_off();
+        let child_execution_id = self.execution_id.next_level(&join_set_id);
+        BlockingChildDirectCall {
+            ffqn,
+            fn_component_id,
+            fn_retry_config,
+            join_set_id,
+            child_execution_id,
+            params,
+            wasm_backtrace,
+        }
+    }
+
+    pub(crate) fn next_join_set_name_generated(&self) -> String {
+        self.next_join_set_name_index(JoinSetKind::Generated)
+    }
+
+    fn next_join_set_name_index(&self, kind: JoinSetKind) -> String {
+        assert!(kind != JoinSetKind::Named);
+        (self.join_set_count(kind) + 1).to_string()
+    }
+
+    fn next_join_set_one_off(&self) -> JoinSetId {
+        JoinSetId::new(
+            JoinSetKind::OneOff,
+            StrVariant::from(self.next_join_set_name_index(JoinSetKind::OneOff)),
+        )
+        .expect("next_join_set_name_index returns a number")
+    }
 }
 
+// TODO: Replace with generated ExecutionError, rename to AwaitNextExtensionError
 #[derive(Clone)]
 enum ExecutionErrorVariant<'a> {
     ExecutionFailed {
@@ -1899,25 +1955,8 @@ pub(crate) enum EventCall {
     },
     /// combines [`Self::CreateJoinSet`] [`Self::StartAsync`] [`Self::BlockingChildJoinNext`]
     /// Direct call
-    BlockingChildDirectCall {
-        ffqn: FunctionFqn,
-        fn_component_id: ComponentId,
-        fn_retry_config: ComponentRetryConfig,
-        join_set_id: JoinSetId, // should be created internally to make sure it is one off?
-        child_execution_id: ExecutionIdDerived,
-        #[debug(skip)]
-        params: Params,
-        #[debug(skip)]
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-    },
-    BlockingDelayRequest {
-        join_set_id: JoinSetId,
-        delay_id: DelayId,
-        schedule_at: HistoryEventScheduleAt, // Intention that must be compared when checking determinism
-        expires_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
-        #[debug(skip)]
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-    },
+    BlockingChildDirectCall(BlockingChildDirectCall),
+    BlockingDelayRequest(BlockingDelayRequest),
     Persist {
         #[debug(skip)]
         value: Vec<u8>,
@@ -1925,6 +1964,29 @@ pub(crate) enum EventCall {
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
+}
+
+#[derive(derive_more::Debug, Clone)]
+pub(crate) struct BlockingChildDirectCall {
+    ffqn: FunctionFqn,
+    fn_component_id: ComponentId,
+    fn_retry_config: ComponentRetryConfig,
+    join_set_id: JoinSetId, // should be created internally to make sure it is one off?
+    child_execution_id: ExecutionIdDerived,
+    #[debug(skip)]
+    params: Params,
+    #[debug(skip)]
+    wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+
+#[derive(derive_more::Debug, Clone)]
+pub(crate) struct BlockingDelayRequest {
+    join_set_id: JoinSetId,
+    delay_id: DelayId,
+    schedule_at: HistoryEventScheduleAt, // Intention that must be compared when checking determinism
+    expires_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
+    #[debug(skip)]
+    wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 
 impl Display for EventCall {
@@ -1938,7 +2000,7 @@ impl EventCall {
     fn join_next_variant(&self) -> Option<JoinNextVariant> {
         match &self {
             // Blocking calls can be polled for JoinSetResponse
-            EventCall::BlockingChildDirectCall {
+            EventCall::BlockingChildDirectCall(BlockingChildDirectCall {
                 join_set_id,
                 ffqn,
                 fn_component_id: _,
@@ -1946,7 +2008,7 @@ impl EventCall {
                 child_execution_id: _,
                 params: _,
                 wasm_backtrace: _,
-            } => Some(JoinNextVariant::Child {
+            }) => Some(JoinNextVariant::Child {
                 join_set_id: join_set_id.clone(),
                 kind: JoinNextChildKind::DirectCall,
                 requested_ffqn: ffqn.clone(),
@@ -1960,13 +2022,13 @@ impl EventCall {
                 kind: JoinNextChildKind::AwaitNext,
                 requested_ffqn: requested_ffqn.clone(),
             }),
-            EventCall::BlockingDelayRequest {
+            EventCall::BlockingDelayRequest(BlockingDelayRequest {
                 join_set_id,
                 delay_id: _,
                 schedule_at: _,
                 expires_at_if_new: _,
                 wasm_backtrace: _,
-            } => Some(JoinNextVariant::Delay(join_set_id.clone())),
+            }) => Some(JoinNextVariant::Delay(join_set_id.clone())),
             EventCall::BlockingJoinNext {
                 join_set_id,
                 closing,
@@ -2078,12 +2140,12 @@ impl EventCall {
                     requested_ffqn: requested_ffqn.clone(),
                 }]
             }
-            EventCall::BlockingChildDirectCall {
+            EventCall::BlockingChildDirectCall(BlockingChildDirectCall {
                 join_set_id,
                 child_execution_id,
                 ffqn,
                 ..
-            } => vec![
+            }) => vec![
                 EventHistoryKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::default(),
@@ -2099,12 +2161,12 @@ impl EventCall {
                     requested_ffqn: ffqn.clone(),
                 },
             ],
-            EventCall::BlockingDelayRequest {
+            EventCall::BlockingDelayRequest(BlockingDelayRequest {
                 join_set_id,
                 delay_id,
                 schedule_at,
                 ..
-            } => vec![
+            }) => vec![
                 EventHistoryKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::default(),
