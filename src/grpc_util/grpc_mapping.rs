@@ -1,5 +1,4 @@
-use super::grpc_gen::execution_event::history_event::Stub;
-use crate::grpc_util::grpc_gen;
+use crate::grpc_util::grpc_gen::{self, execution_event::history_event};
 use concepts::{
     ClosingStrategy, ComponentId, ComponentType, ExecutionId, FinishedExecutionError,
     FinishedExecutionResult, FunctionFqn, SupportedFunctionReturnValue,
@@ -456,67 +455,71 @@ pub(crate) fn from_execution_event_to_grpc(
                 }),
                 ExecutionEventInner::HistoryEvent { event } => grpc_gen::execution_event::Event::HistoryVariant(grpc_gen::execution_event::HistoryEvent {
                     event: Some(match event {
-                        HistoryEvent::Persist { value, kind } => grpc_gen::execution_event::history_event::Event::Persist(grpc_gen::execution_event::history_event::Persist {
+                        HistoryEvent::Persist { value, kind } => history_event::Event::Persist(history_event::Persist {
                             data: Some(prost_wkt_types::Any {
                                 type_url: "unknown".to_string(),
                                 value,
                             }),
-                            kind: Some(grpc_gen::execution_event::history_event::persist::PersistKind { variant: Some(match kind {
+                            kind: Some(history_event::persist::PersistKind { variant: Some(match kind {
                                 concepts::storage::PersistKind::RandomU64 { .. } =>
-                                grpc_gen::execution_event::history_event::persist::persist_kind::Variant::RandomU64(
-                                    grpc_gen::execution_event::history_event::persist::persist_kind::RandomU64 {  }),
+                                history_event::persist::persist_kind::Variant::RandomU64(
+                                    history_event::persist::persist_kind::RandomU64 {  }),
                                 concepts::storage::PersistKind::RandomString { .. } =>
-                                grpc_gen::execution_event::history_event::persist::persist_kind::Variant::RandomString(
-                                    grpc_gen::execution_event::history_event::persist::persist_kind::RandomString {  }),
+                                history_event::persist::persist_kind::Variant::RandomString(
+                                    history_event::persist::persist_kind::RandomString {  }),
                             }) })
                         }),
                         HistoryEvent::JoinSetCreate { join_set_id, closing_strategy } =>
-                            grpc_gen::execution_event::history_event::Event::JoinSetCreated(grpc_gen::execution_event::history_event::JoinSetCreated {
+                            history_event::Event::JoinSetCreated(history_event::JoinSetCreated {
                                 join_set_id: Some(join_set_id.into()),
                                 closing_strategy: match closing_strategy {
-                                    ClosingStrategy::Complete => grpc_gen::execution_event::history_event::join_set_created::ClosingStrategy::Complete.into()
+                                    ClosingStrategy::Complete => history_event::join_set_created::ClosingStrategy::Complete.into()
                                 }
                             }),
-                        HistoryEvent::JoinSetRequest { join_set_id, request } => grpc_gen::execution_event::history_event::Event::JoinSetRequest(grpc_gen::execution_event::history_event::JoinSetRequest {
+                        HistoryEvent::JoinSetRequest { join_set_id, request } => history_event::Event::JoinSetRequest(history_event::JoinSetRequest {
                             join_set_id: Some(join_set_id.into()),
                             join_set_request: match request {
                                 JoinSetRequest::DelayRequest { delay_id, expires_at, .. } => {
-                                    Some(grpc_gen::execution_event::history_event::join_set_request::JoinSetRequest::DelayRequest(
-                                        grpc_gen::execution_event::history_event::join_set_request::DelayRequest {
+                                    Some(history_event::join_set_request::JoinSetRequest::DelayRequest(
+                                        history_event::join_set_request::DelayRequest {
                                             delay_id: Some(delay_id.into()),
                                             expires_at: Some(prost_wkt_types::Timestamp::from(expires_at)),
                                         }
                                     ))
                                 }
                                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
-                                    Some(grpc_gen::execution_event::history_event::join_set_request::JoinSetRequest::ChildExecutionRequest(
-                                        grpc_gen::execution_event::history_event::join_set_request::ChildExecutionRequest {
+                                    Some(history_event::join_set_request::JoinSetRequest::ChildExecutionRequest(
+                                        history_event::join_set_request::ChildExecutionRequest {
                                             child_execution_id: Some(grpc_gen::ExecutionId { id: child_execution_id.to_string() }),
                                         }
                                     ))
                                 }
                             },
                         }),
-                        HistoryEvent::JoinNext { join_set_id, run_expires_at, closing, requested_ffqn:_ } => grpc_gen::execution_event::history_event::Event::JoinNext(grpc_gen::execution_event::history_event::JoinNext {
+                        HistoryEvent::JoinNext { join_set_id, run_expires_at, closing, requested_ffqn:_ } => history_event::Event::JoinNext(history_event::JoinNext {
                             join_set_id: Some(join_set_id.into()),
                             run_expires_at: Some(prost_wkt_types::Timestamp::from(run_expires_at)),
                             closing,
                         }),
-                        HistoryEvent::Schedule { execution_id, schedule_at: scheduled_at } => grpc_gen::execution_event::history_event::Event::Schedule(grpc_gen::execution_event::history_event::Schedule {
+                        HistoryEvent::JoinNextTooMany { join_set_id, requested_ffqn } => history_event::Event::JoinNextTooMany(history_event::JoinNextTooMany {
+                            join_set_id: Some(join_set_id.into()),
+                            function: requested_ffqn.map(Into::into)
+                        }),
+                        HistoryEvent::Schedule { execution_id, schedule_at: scheduled_at } => history_event::Event::Schedule(history_event::Schedule {
                             execution_id: Some(grpc_gen::ExecutionId { id: execution_id.to_string() }),
-                            scheduled_at: Some(grpc_gen::execution_event::history_event::schedule::ScheduledAt {
+                            scheduled_at: Some(history_event::schedule::ScheduledAt {
                                 variant: match scheduled_at {
-                                    HistoryEventScheduleAt::Now => Some(grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::Now(grpc_gen::execution_event::history_event::schedule::scheduled_at::Now {})),
-                                    HistoryEventScheduleAt::At( at) => Some(grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::At(grpc_gen::execution_event::history_event::schedule::scheduled_at::At {
+                                    HistoryEventScheduleAt::Now => Some(history_event::schedule::scheduled_at::Variant::Now(history_event::schedule::scheduled_at::Now {})),
+                                    HistoryEventScheduleAt::At( at) => Some(history_event::schedule::scheduled_at::Variant::At(history_event::schedule::scheduled_at::At {
                                         at: Some(prost_wkt_types::Timestamp::from(at)),
                                     })),
-                                    HistoryEventScheduleAt::In (r#in ) => Some(grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::In(grpc_gen::execution_event::history_event::schedule::scheduled_at::In {
+                                    HistoryEventScheduleAt::In (r#in ) => Some(history_event::schedule::scheduled_at::Variant::In(history_event::schedule::scheduled_at::In {
                                         r#in: prost_wkt_types::Duration::try_from(r#in).ok(),
                                     })),
                                 },
                             }),
                         }),
-                        HistoryEvent::Stub {  target_execution_id, persist_result: target_result, .. } => grpc_gen::execution_event::history_event::Event::Stub(Stub {
+                        HistoryEvent::Stub {  target_execution_id, persist_result: target_result, .. } => history_event::Event::Stub(history_event::Stub {
                             execution_id: Some(ExecutionId::Derived(target_execution_id).into()),
                             success: target_result.is_ok()
                         }),

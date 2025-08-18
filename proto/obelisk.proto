@@ -367,6 +367,11 @@ message ExecutionEvent {
             bool closing = 3;
         }
 
+        message JoinNextTooMany {
+            JoinSetId join_set_id = 1;
+            optional FunctionName function = 2;
+        }
+
         message Schedule {
             message ScheduledAt {
                 message Now {}
@@ -399,6 +404,7 @@ message ExecutionEvent {
             JoinSetCreated join_set_created = 2;
             JoinSetRequest join_set_request = 3;
             JoinNext join_next = 4;
+            JoinNextTooMany join_next_too_many = 7;
             Schedule schedule = 5;
             Stub stub = 6;
         }

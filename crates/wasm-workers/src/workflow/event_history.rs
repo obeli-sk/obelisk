@@ -278,7 +278,7 @@ impl EventHistory {
         };
 
         let keys = event_call.as_keys();
-        // Persist
+        // Create and append HistoryEvents.
         let history_events = self
             .append_to_db(
                 event_call,
@@ -293,6 +293,7 @@ impl EventHistory {
             !history_events.is_empty(),
             "each EventCall must produce at least one HistoryEvent"
         );
+        // Extend event history.
         self.event_history
             .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
 
@@ -363,11 +364,14 @@ impl EventHistory {
         // We want to end with the same actions when called again.
         // Count the iteractions not counting the delay requests and closing JoinNext-s.
         // Every counted JoinNext must have been awaited at this point.
-        let mut join_set_to_child_created_and_awaited = IndexMap::new(); // Must be deterministic.
+        let mut join_set_to_child_created_and_awaited: IndexMap<JoinSetId, (i32, i32)> =
+            IndexMap::new(); // Must be deterministic.
+
+        // FIXME: not working with heterogenous join sets.
         let delay_join_sets: hashbrown::HashSet<_> = self // Does not have to be deterministic.
             .event_history
             .iter()
-            .filter_map(|(event, _processing_sattus)| {
+            .filter_map(|(event, _processing_status)| {
                 if let HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::DelayRequest { .. },
@@ -379,48 +383,65 @@ impl EventHistory {
                 }
             })
             .collect();
-        for (event, _processing_sattus) in &self.event_history {
+
+        for (event, _processing_status) in &self.event_history {
             match event {
-                HistoryEvent::JoinSetCreate { join_set_id, .. }
-                    if !delay_join_sets.contains(join_set_id) =>
-                {
-                    let old =
-                        join_set_to_child_created_and_awaited.insert(join_set_id.clone(), (0, 0));
-                    assert!(old.is_none());
+                HistoryEvent::JoinSetCreate { join_set_id, .. } => {
+                    if !delay_join_sets.contains(join_set_id) {
+                        let old = join_set_to_child_created_and_awaited
+                            .insert(join_set_id.clone(), (0, 0));
+                        assert!(old.is_none());
+                    }
                 }
                 HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::ChildExecutionRequest { .. },
-                } if !delay_join_sets.contains(join_set_id) => {
-                    let (req_count, _) = join_set_to_child_created_and_awaited
-                        .get_mut(join_set_id)
-                        .expect("join set must have been created");
-                    *req_count += 1;
+                } => {
+                    if !delay_join_sets.contains(join_set_id) {
+                        let (req_count, _) = join_set_to_child_created_and_awaited
+                            .get_mut(join_set_id)
+                            .expect("join set must have been created");
+                        *req_count += 1;
+                    }
                 }
                 HistoryEvent::JoinNext {
                     join_set_id,
-                    closing: false,
+                    closing,
                     ..
-                } if !delay_join_sets.contains(join_set_id) => {
-                    let (_, await_count) = join_set_to_child_created_and_awaited
-                        .get_mut(join_set_id)
-                        .expect("join set must have been created");
-                    *await_count += 1;
+                } => {
+                    if !closing && !delay_join_sets.contains(join_set_id) {
+                        let (_, await_count) = join_set_to_child_created_and_awaited
+                            .get_mut(join_set_id)
+                            .expect("join set must have been created");
+                        *await_count += 1;
+                    }
                 }
-                _ => {}
+                // Delay requests are not awaited.
+                HistoryEvent::JoinSetRequest {
+                    request: JoinSetRequest::DelayRequest { .. },
+                    ..
+                }
+                // Other events are irrelevant.
+                | HistoryEvent::Persist { .. }
+                | HistoryEvent::JoinNextTooMany { .. }
+                | HistoryEvent::Schedule { .. }
+                | HistoryEvent::Stub { .. } => {}
             }
         }
         let mut first_unhandled_child_execution_error = None;
-        for (join_set_id, remaining) in join_set_to_child_created_and_awaited.iter().filter_map(
-            |(join_set, (created, awaited))| {
+
+        let join_sets_that_need_join_next = join_set_to_child_created_and_awaited
+            .iter()
+            .filter_map(|(join_set, (created, awaited))| {
                 let remaining = *created - *awaited;
                 if remaining > 0 {
                     Some((join_set, remaining))
                 } else {
                     None
                 }
-            },
-        ) {
+            });
+
+        for (join_set_id, remaining) in join_sets_that_need_join_next {
             for _ in 0..remaining {
                 debug!("Adding BlockingChildAwaitNext to join set {join_set_id}");
                 match self
@@ -681,6 +702,26 @@ impl EventHistory {
                 // return delay id
                 Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                     delay_id_into_wast_val(delay_id),
+                )))
+            }
+
+            (
+                EventHistoryKey::JoinNextChild {
+                    join_set_id,
+                    kind: JoinNextChildKind::AwaitNext,
+                    requested_ffqn,
+                },
+                HistoryEvent::JoinNextTooMany {
+                    join_set_id: found_join_set_id,
+                    requested_ffqn: found_requested_ffqn,
+                },
+            ) if *join_set_id == *found_join_set_id
+                && Some(requested_ffqn) == found_requested_ffqn.as_ref() =>
+            {
+                trace!(%join_set_id, "JoinNextTooMany -> all-processed");
+                let all_processed = ExecutionErrorVariant::AllProcessed.as_wast_val();
+                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                    WastVal::Result(Err(Some(Box::new(all_processed)))),
                 )))
             }
 
@@ -1337,7 +1378,7 @@ impl EventHistory {
                 wasm_backtrace,
             } => {
                 // Non-cacheable event.
-                debug!(%join_set_id, "BlockingChildJoinNext: Flushing and appending JoinNext");
+                debug!(%join_set_id, "JoinNextClosing: Flushing and appending JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let event = HistoryEvent::JoinNext {
@@ -1373,23 +1414,31 @@ impl EventHistory {
                 wasm_backtrace,
             } => {
                 // Non-cacheable event.
-                debug!(%join_set_id, "BlockingChildJoinNext: Flushing and appending JoinNext");
+                debug!(%join_set_id, "BlockingChildAwaitNext: Flushing and appending JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
-                let event = HistoryEvent::JoinNext {
-                    join_set_id,
-                    run_expires_at: lock_expires_at,
-                    requested_ffqn: Some(requested_ffqn),
-                    closing: false,
-                };
+                let event =
+                    if self.count_submissions(&join_set_id) > self.count_join_nexts(&join_set_id) {
+                        HistoryEvent::JoinNext {
+                            join_set_id,
+                            run_expires_at: lock_expires_at,
+                            requested_ffqn: Some(requested_ffqn),
+                            closing: false,
+                        }
+                    } else {
+                        HistoryEvent::JoinNextTooMany {
+                            join_set_id,
+                            requested_ffqn: Some(requested_ffqn),
+                        }
+                    };
                 let history_events = vec![event.clone()];
-                let join_next = AppendRequest {
+                let append_request = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
                 *version = {
                     let next_version = db_connection
-                        .append(self.execution_id.clone(), version.clone(), join_next)
+                        .append(self.execution_id.clone(), version.clone(), append_request)
                         .await?;
                     self.persist_backtrace_blocking(
                         db_connection,
@@ -1795,6 +1844,44 @@ impl EventHistory {
         )
         .expect("next_join_set_name_index returns a number")
     }
+
+    fn count_submissions(&self, join_set_id: &JoinSetId) -> usize {
+        // Processing status does not matter, count all requests.
+        self.event_history
+            .iter()
+            .filter(|(event, _processing_status)| match event {
+                HistoryEvent::JoinSetRequest {
+                    join_set_id: found_join_set_id,
+                    ..
+                } => found_join_set_id == join_set_id,
+                HistoryEvent::Persist { .. }
+                | HistoryEvent::JoinSetCreate { .. }
+                | HistoryEvent::JoinNext { .. }
+                | HistoryEvent::JoinNextTooMany { .. }
+                | HistoryEvent::Schedule { .. }
+                | HistoryEvent::Stub { .. } => false,
+            })
+            .count()
+    }
+
+    fn count_join_nexts(&self, join_set_id: &JoinSetId) -> usize {
+        // Processing status does not matter, count all requests.
+        self.event_history
+            .iter()
+            .filter(|(event, _processing_status)| match event {
+                HistoryEvent::JoinNext {
+                    join_set_id: found_join_set_id,
+                    ..
+                } => found_join_set_id == join_set_id,
+                HistoryEvent::Persist { .. }
+                | HistoryEvent::JoinSetCreate { .. }
+                | HistoryEvent::JoinSetRequest { .. }
+                | HistoryEvent::JoinNextTooMany { .. }
+                | HistoryEvent::Schedule { .. }
+                | HistoryEvent::Stub { .. } => false,
+            })
+            .count()
+    }
 }
 
 // TODO: Replace with generated ExecutionError, rename to AwaitNextExtensionError
@@ -1808,6 +1895,7 @@ enum ExecutionErrorVariant<'a> {
         actual_function: Option<&'a FunctionFqn>,
         actual_id: Either<&'a ExecutionIdDerived, &'a DelayId>,
     },
+    AllProcessed,
 }
 impl ExecutionErrorVariant<'_> {
     fn as_wast_val(&self) -> WastVal {
@@ -1844,6 +1932,9 @@ impl ExecutionErrorVariant<'_> {
                     ))
                 }))),
             ),
+            ExecutionErrorVariant::AllProcessed => {
+                WastVal::Variant("all-processed".to_string(), None)
+            }
         }
     }
 }
@@ -1949,6 +2040,7 @@ pub(crate) enum EventCall {
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
+    // TODO: Rename to JoinNextRequestingFfqn
     BlockingChildAwaitNext {
         // `ffqn-await-next`
         join_set_id: JoinSetId,
@@ -1962,8 +2054,9 @@ pub(crate) enum EventCall {
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     /// combines [`Self::CreateJoinSet`] [`Self::StartAsync`] [`Self::BlockingChildJoinNext`]
-    /// Direct call
+    // TODO: Rename BlockingChildDirectCall -> OneOffChildExecutionRequest
     BlockingChildDirectCall(BlockingChildDirectCall),
+    // TODO: Rename BlockingDelayRequest -> OneOffDelayRequest
     BlockingDelayRequest(BlockingDelayRequest),
     Persist {
         #[debug(skip)]

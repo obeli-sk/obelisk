@@ -420,6 +420,14 @@ pub enum HistoryEvent {
         /// Is the joinset being closed?
         closing: bool,
     },
+    /// Records the fact that a join set was awaited more times than its submission count.
+    #[display("JoinNextTooMany({join_set_id})")]
+    JoinNextTooMany {
+        join_set_id: JoinSetId,
+        /// Set to a specific function when calling `-await-next` extension function, used for
+        /// determinism checks.
+        requested_ffqn: Option<FunctionFqn>,
+    },
     #[display("Schedule({execution_id}, {schedule_at})")]
     Schedule {
         execution_id: ExecutionId,

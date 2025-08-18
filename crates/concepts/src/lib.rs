@@ -1490,7 +1490,8 @@ pub struct JoinSetId {
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
 pub enum ClosingStrategy {
-    /// Wait for all child executions, do not wait if there are only delay requests remaining.
+    /// All submitted child execution requests that were not awaited by the workflow are awaited during join set close.
+    /// Delay requests are not awaited.
     #[default]
     Complete,
 }

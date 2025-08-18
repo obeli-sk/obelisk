@@ -4,8 +4,6 @@
 
 ## feat: `execution-id.get()`, can be called multiple times
 
-## fix: Deadlock when calling `-await-next` while nothing is in queue
-
 ## feat: Add `obelisk generate`
 `obelisk generate config` blank(just webui),fibo, testing, stargazers
 `obelisk generate wit -c obelisk.toml --out-dir wit/deps/ my-activity`
