@@ -159,7 +159,7 @@ impl Debug for TypeWrapper {
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum TypeConversionError {
     #[error("unsupported type {0}")]
-    UnsupportedType(String),
+    UnsupportedType(&'static str),
 }
 
 #[cfg(feature = "wasmtime")]
@@ -225,6 +225,9 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
             Type::Borrow(_) => Ok(Self::Borrow),
             Type::Own(_) => Ok(Self::Own),
             Type::Flags(flags) => Ok(Self::Flags(flags.names().map(Box::from).collect())),
+            Type::Future(_) => Err(TypeConversionError::UnsupportedType("future")),
+            Type::Stream(_) => Err(TypeConversionError::UnsupportedType("stream")),
+            Type::ErrorContext => Err(TypeConversionError::UnsupportedType("error-context")),
         }
     }
 }

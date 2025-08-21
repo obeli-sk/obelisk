@@ -1,6 +1,3 @@
-use std::ops::Deref as _;
-use std::time::Duration;
-
 use assert_matches::assert_matches;
 use chrono::DateTime;
 use concepts::prefixed_ulid::ExecutionIdDerived;
@@ -8,6 +5,8 @@ use concepts::storage::HistoryEventScheduleAt;
 use concepts::{ExecutionId, prefixed_ulid::DelayId};
 use concepts::{FunctionFqn, JoinSetId};
 use indexmap::indexmap;
+use std::ops::Deref as _;
+use std::time::Duration;
 use val_json::wast_val::WastVal;
 
 pub(crate) const SUFFIX_FN_SUBMIT: &str = "-submit";
@@ -33,15 +32,16 @@ pub(crate) mod v2_0_0 {
 
     wasmtime::component::bindgen!({
         path: "host-wit-workflow/",
-        async: true,
         inline: "package any:any;
-                world bindings {
-                    import obelisk:workflow/workflow-support@2.0.0;
-                }",
+        world bindings {
+            import obelisk:workflow/workflow-support@2.0.0;
+            }",
         world: "any:any/bindings",
-        trappable_imports: true,
         with: {
             "obelisk:types/execution/join-set-id": concepts::JoinSetId,
+        },
+        imports: {
+            default: trappable
         }
     });
 

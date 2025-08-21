@@ -29,8 +29,10 @@ use std::sync::Arc;
 use tracing::{Span, error, instrument, trace};
 use val_json::wast_val::{WastVal, WastValWithType};
 use wasmtime::component::{Linker, Resource, Val};
-use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
-use wasmtime_wasi::{ResourceTable, ResourceTableError};
+use wasmtime_wasi::{
+    ResourceTable, ResourceTableError, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView,
+};
+use wasmtime_wasi_io::IoView;
 
 /// Result that is passed from guest to host as an error, must be downcast from anyhow.
 #[derive(thiserror::Error, Debug, Clone)]
@@ -516,15 +518,17 @@ impl<'a> ImportedFnCall<'a> {
 impl<C: ClockFn> wasmtime::component::HasData for WorkflowCtx<C> {
     type Data<'a> = &'a mut WorkflowCtx<C>;
 }
-
 impl<C: ClockFn> IoView for WorkflowCtx<C> {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.resource_table
     }
 }
 impl<C: ClockFn> WasiView for WorkflowCtx<C> {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi_ctx
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi_ctx,
+            table: &mut self.resource_table,
+        }
     }
 }
 
@@ -1139,14 +1143,14 @@ mod workflow_support {
     use wasmtime::component::Resource;
 
     impl<C: ClockFn> HostJoinSetId for WorkflowCtx<C> {
-        async fn id(
+        fn id(
             &mut self,
             resource: wasmtime::component::Resource<JoinSetId>,
         ) -> wasmtime::Result<String> {
             Ok(self.resource_to_join_set_id(&resource)?.to_string())
         }
 
-        async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
+        fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
             self.resource_table.delete(resource)?;
             Ok(())
         }

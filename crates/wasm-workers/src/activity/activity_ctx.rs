@@ -13,8 +13,8 @@ use tracing::{Instrument, Span, debug, info_span};
 use wasmtime::Engine;
 use wasmtime::component::Resource;
 use wasmtime::{Store, component::ResourceTable};
-use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi::{DirPerms, FilePerms};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::types::{
@@ -22,6 +22,7 @@ use wasmtime_wasi_http::types::{
     default_send_request_handler,
 };
 use wasmtime_wasi_http::{HttpResult, WasiHttpCtx, WasiHttpView};
+use wasmtime_wasi_io::IoView;
 
 pub type HttpClientTracesContainer =
     Arc<Mutex<Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>>>;
@@ -42,8 +43,11 @@ impl<C: ClockFn> wasmtime::component::HasData for ActivityCtx<C> {
 }
 
 impl<C: ClockFn> WasiView for ActivityCtx<C> {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi_ctx
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi_ctx,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -56,6 +60,10 @@ impl<C: ClockFn> IoView for ActivityCtx<C> {
 impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http_ctx
+    }
+
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
     }
 
     fn new_incoming_request<B>(

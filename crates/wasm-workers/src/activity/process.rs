@@ -3,7 +3,9 @@ use crate::activity::activity_ctx_process::process_support_outer::v1_0_0::obelis
 use std::path::{Path, PathBuf};
 use std::process::Stdio as StdProcessStdio;
 use tracing::{debug, error, info, trace, warn};
-use wasmtime_wasi::p2::{DynInputStream, DynOutputStream, StdinStream as _, StdoutStream as _};
+use wasmtime_wasi::cli::StdinStream;
+use wasmtime_wasi::cli::{AsyncStdinStream, AsyncStdoutStream, StdoutStream};
+use wasmtime_wasi::p2::{DynInputStream, DynOutputStream};
 
 #[derive(derive_more::Debug)]
 pub struct HostChildProcess {
@@ -167,29 +169,24 @@ impl HostChildProcess {
 
     pub(crate) fn take_stdin(&mut self) -> Option<DynOutputStream> {
         self.stdin.take().map(|stream| {
-            wasmtime_wasi::p2::AsyncStdoutStream::new(
-                wasmtime_wasi::p2::pipe::AsyncWriteStream::new(1024, stream),
+            AsyncStdoutStream::new(
+                32, // Write budget
+                stream,
             )
-            .stream()
+            .p2_stream()
         })
     }
 
     pub(crate) fn take_stdout(&mut self) -> Option<DynInputStream> {
-        self.stdout.take().map(|stream| {
-            wasmtime_wasi::p2::AsyncStdinStream::new(wasmtime_wasi::p2::pipe::AsyncReadStream::new(
-                stream,
-            ))
-            .stream()
-        })
+        self.stdout
+            .take()
+            .map(|stream| AsyncStdinStream::new(stream).p2_stream())
     }
 
     pub(crate) fn take_stderr(&mut self) -> Option<DynInputStream> {
-        self.stderr.take().map(|stream| {
-            wasmtime_wasi::p2::AsyncStdinStream::new(wasmtime_wasi::p2::pipe::AsyncReadStream::new(
-                stream,
-            ))
-            .stream()
-        })
+        self.stderr
+            .take()
+            .map(|stream| AsyncStdinStream::new(stream).p2_stream())
     }
 
     pub(crate) fn try_wait(&mut self) -> Result<Option<i32>, process_support::WaitError> {

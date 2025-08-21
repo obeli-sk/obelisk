@@ -72,8 +72,8 @@ pub enum WastValWithTypeConversionError {
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
-#[error("conversion of the resource type is not supported")]
-pub struct WastValConversionError;
+#[error("conversion of the type {0} is not supported")]
+pub struct WastValConversionError(&'static str);
 
 #[cfg(feature = "wasmtime")]
 impl TryFrom<wasmtime::component::Val> for WastVal {
@@ -82,50 +82,53 @@ impl TryFrom<wasmtime::component::Val> for WastVal {
     fn try_from(value: wasmtime::component::Val) -> Result<Self, Self::Error> {
         use wasmtime::component::Val;
 
-        Ok(match value {
-            Val::Bool(v) => Self::Bool(v),
-            Val::S8(v) => Self::S8(v),
-            Val::U8(v) => Self::U8(v),
-            Val::S16(v) => Self::S16(v),
-            Val::U16(v) => Self::U16(v),
-            Val::S32(v) => Self::S32(v),
-            Val::U32(v) => Self::U32(v),
-            Val::S64(v) => Self::S64(v),
-            Val::U64(v) => Self::U64(v),
-            Val::Float32(v) => Self::F32(v),
-            Val::Float64(v) => Self::F64(v),
-            Val::Char(v) => Self::Char(v),
-            Val::String(v) => Self::String(v),
-            Val::List(v) => Self::List(
+        match value {
+            Val::Bool(v) => Ok(Self::Bool(v)),
+            Val::S8(v) => Ok(Self::S8(v)),
+            Val::U8(v) => Ok(Self::U8(v)),
+            Val::S16(v) => Ok(Self::S16(v)),
+            Val::U16(v) => Ok(Self::U16(v)),
+            Val::S32(v) => Ok(Self::S32(v)),
+            Val::U32(v) => Ok(Self::U32(v)),
+            Val::S64(v) => Ok(Self::S64(v)),
+            Val::U64(v) => Ok(Self::U64(v)),
+            Val::Float32(v) => Ok(Self::F32(v)),
+            Val::Float64(v) => Ok(Self::F64(v)),
+            Val::Char(v) => Ok(Self::Char(v)),
+            Val::String(v) => Ok(Self::String(v)),
+            Val::List(v) => Ok(Self::List(
                 v.into_iter()
                     .map(WastVal::try_from)
                     .collect::<Result<_, _>>()?,
-            ),
-            Val::Record(v) => Self::Record(
+            )),
+            Val::Record(v) => Ok(Self::Record(
                 v.into_iter()
                     .map(|(name, v)| WastVal::try_from(v).map(|v| (name, v)))
                     .collect::<Result<_, _>>()?,
-            ),
-            Val::Tuple(v) => Self::Tuple(
+            )),
+            Val::Tuple(v) => Ok(Self::Tuple(
                 v.into_iter()
                     .map(WastVal::try_from)
                     .collect::<Result<_, _>>()?,
-            ),
-            Val::Variant(str, v) => Self::Variant(
+            )),
+            Val::Variant(str, v) => Ok(Self::Variant(
                 str,
                 v.map(|v| WastVal::try_from(*v)).transpose()?.map(Box::new),
-            ),
-            Val::Enum(v) => Self::Enum(v),
-            Val::Option(v) => {
-                Self::Option(v.map(|v| WastVal::try_from(*v)).transpose()?.map(Box::new))
-            }
-            Val::Result(v) => Self::Result(match v {
+            )),
+            Val::Enum(v) => Ok(Self::Enum(v)),
+            Val::Option(v) => Ok(Self::Option(
+                v.map(|v| WastVal::try_from(*v)).transpose()?.map(Box::new),
+            )),
+            Val::Result(v) => Ok(Self::Result(match v {
                 Ok(v) => Ok(v.map(|v| WastVal::try_from(*v)).transpose()?.map(Box::new)),
                 Err(v) => Err(v.map(|v| WastVal::try_from(*v)).transpose()?.map(Box::new)),
-            }),
-            Val::Flags(v) => Self::Flags(v),
-            Val::Resource(_) => return Err(WastValConversionError),
-        })
+            })),
+            Val::Flags(v) => Ok(Self::Flags(v)),
+            Val::Resource(_) => Err(WastValConversionError("resource")),
+            Val::Future(_) => Err(WastValConversionError("future")),
+            Val::Stream(_) => Err(WastValConversionError("stream")),
+            Val::ErrorContext(_) => Err(WastValConversionError("error-context")),
+        }
     }
 }
 

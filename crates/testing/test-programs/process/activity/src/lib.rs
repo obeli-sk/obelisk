@@ -62,6 +62,7 @@ fn ls() -> Vec<String> {
 }
 
 async fn stdio() -> Result<(), anyhow::Error> {
+    println!("Spawning bash");
     let proc = process_support::spawn(
         "bash",
         &process_support::SpawnOptions {
@@ -76,6 +77,7 @@ async fn stdio() -> Result<(), anyhow::Error> {
             stderr: process_support::Stdio::Pipe,
         },
     )?;
+    println!("Taking std streams");
     let stdin = proc.take_stdin().expect("first `take_stdin` must succeed");
     let stdout = proc
         .take_stdout()

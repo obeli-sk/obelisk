@@ -38,7 +38,5 @@ pub(crate) mod log_activities {
                         import obelisk:log/log@1.0.0;
                     }",
         world: "any:any/bindings",
-        async: false,
-        trappable_imports: false,
     });
 }

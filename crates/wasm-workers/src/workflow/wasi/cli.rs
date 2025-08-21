@@ -3,7 +3,7 @@ use crate::workflow::workflow_ctx::WorkflowCtx;
 use concepts::time::ClockFn;
 use wasmtime::Result;
 use wasmtime::component::Resource;
-use wasmtime_wasi::p2::{StdinStream as _, pipe};
+use wasmtime_wasi::{cli::StdinStream, p2::pipe};
 use wasmtime_wasi_io::streams::{DynInputStream, DynOutputStream};
 
 impl<C: ClockFn> environment::Host for WorkflowCtx<C> {
@@ -30,7 +30,7 @@ impl<C: ClockFn> exit::Host for WorkflowCtx<C> {
 impl<C: ClockFn> stdin::Host for WorkflowCtx<C> {
     fn get_stdin(&mut self) -> Result<Resource<DynInputStream>> {
         let stdin = pipe::ClosedInputStream;
-        let stream = stdin.stream();
+        let stream = stdin.p2_stream();
         Ok(self.resource_table.push(stream)?)
     }
 }

@@ -10,24 +10,26 @@ pub(crate) mod process_support_outer {
     pub(crate) mod v1_0_0 {
         wasmtime::component::bindgen!({
             path: "host-wit-activity/",
-            async: true,
             inline: "package any:any;
                 world bindings {
                     import obelisk:activity/process@1.0.0;
                 }",
             world: "any:any/bindings",
-            trappable_imports: true,
             with: {
                 "obelisk:activity/process/child-process": crate::activity::process::HostChildProcess,
                 "wasi:io": wasmtime_wasi_io::bindings::wasi::io,
-            }
+            },
+            imports: {
+                "obelisk:activity/process/[method]child-process.kill": async | trappable,
+                default: trappable,
+            },
         });
     }
 }
 
 // NB: Only use `?` for translating `ResourceTableError` into anyhow!
 impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
-    async fn spawn(
+    fn spawn(
         &mut self,
         command: String,
         options: process_support::SpawnOptions,
@@ -51,12 +53,12 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
 
 // Implement methods for the `child-process` resource
 impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
-    async fn id(&mut self, self_handle: Resource<HostChildProcess>) -> wasmtime::Result<u32> {
+    fn id(&mut self, self_handle: Resource<HostChildProcess>) -> wasmtime::Result<u32> {
         let child_process = self.table().get(&self_handle)?;
         Ok(child_process.id())
     }
 
-    async fn take_stdin(
+    fn take_stdin(
         &mut self,
         self_handle: Resource<HostChildProcess>,
     ) -> wasmtime::Result<Option<Resource<DynOutputStream>>> {
@@ -69,7 +71,7 @@ impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
         }
     }
 
-    async fn take_stdout(
+    fn take_stdout(
         &mut self,
         self_handle: Resource<HostChildProcess>,
     ) -> wasmtime::Result<Option<Resource<DynInputStream>>> {
@@ -82,7 +84,7 @@ impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
         }
     }
 
-    async fn take_stderr(
+    fn take_stderr(
         &mut self,
         self_handle: Resource<HostChildProcess>,
     ) -> wasmtime::Result<Option<Resource<DynInputStream>>> {
@@ -95,7 +97,7 @@ impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
         }
     }
 
-    async fn subscribe_wait(
+    fn subscribe_wait(
         &mut self,
         self_handle: Resource<process_support::ChildProcess>,
     ) -> wasmtime::Result<wasmtime::component::Resource<wasmtime_wasi::p2::DynPollable>> {
@@ -103,7 +105,7 @@ impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
         wasmtime_wasi::p2::subscribe(self.table(), self_handle)
     }
 
-    async fn wait(
+    fn wait(
         &mut self,
         self_handle: Resource<process_support::ChildProcess>,
     ) -> wasmtime::Result<Result<Option<i32>, process_support::WaitError>> {
@@ -119,7 +121,7 @@ impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
         Ok(child_process.kill().await)
     }
 
-    async fn drop(
+    fn drop(
         &mut self,
         self_handle: Resource<process_support::ChildProcess>,
     ) -> wasmtime::Result<()> {

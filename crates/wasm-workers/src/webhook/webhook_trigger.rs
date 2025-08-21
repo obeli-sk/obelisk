@@ -31,26 +31,28 @@ use types_v2_0_0::obelisk::types::execution::Host as ExecutionHost;
 use types_v2_0_0::obelisk::types::execution::HostJoinSetId;
 use utils::wasm_tools::{ExIm, HTTP_HANDLER_FFQN, WasmComponent};
 use val_json::wast_val::WastVal;
+use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
-use wasmtime::component::{Resource, ResourceTable};
 use wasmtime::{Engine, Store, UpdateDeadline};
-use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::bindings::ProxyPre;
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+use wasmtime_wasi_io::IoView;
 
 pub(crate) mod types_v2_0_0 {
     wasmtime::component::bindgen!({
         path: "host-wit-webhook/",
-        async: true,
         inline: "package any:any;
                 world bindings {
                     import obelisk:types/time@2.0.0;
                     import obelisk:types/execution@2.0.0;
                 }",
         world: "any:any/bindings",
-        trappable_imports: true,
+        exports: {
+            default: trappable | async,
+        },
         with: {
             "obelisk:types/execution/join-set-id": concepts::JoinSetId,
         }
@@ -369,14 +371,17 @@ struct WebhookEndpointCtx<C: ClockFn> {
 }
 
 impl<C: ClockFn> HostJoinSetId for WebhookEndpointCtx<C> {
-    async fn id(
+    fn id(
         &mut self,
         _resource: wasmtime::component::Resource<JoinSetId>,
-    ) -> wasmtime::Result<String> {
+    ) -> wasmtime::component::__internal::String {
         unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }
 
-    async fn drop(&mut self, _resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
+    fn drop(
+        &mut self,
+        _resource: wasmtime::component::Resource<JoinSetId>,
+    ) -> wasmtime::Result<()> {
         unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }
 }
@@ -777,8 +782,11 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WebhookEndpointCtx<
 }
 
 impl<C: ClockFn> WasiView for WebhookEndpointCtx<C> {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi_ctx
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi_ctx,
+            table: &mut self.table,
+        }
     }
 }
 impl<C: ClockFn> IoView for WebhookEndpointCtx<C> {
@@ -786,10 +794,13 @@ impl<C: ClockFn> IoView for WebhookEndpointCtx<C> {
         &mut self.table
     }
 }
-
 impl<C: ClockFn> WasiHttpView for WebhookEndpointCtx<C> {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http_ctx
+    }
+
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
     }
 }
 
