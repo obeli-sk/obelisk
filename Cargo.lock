@@ -2577,15 +2577,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "implicit-clone"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88e4c5423e5b38b6f175b42561a08f6ddbc8ed3a3275f48eb350ba2dfe9a6b60"
-dependencies = [
- "implicit-clone-derive",
-]
-
-[[package]]
 name = "implicit-clone-derive"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6571,7 +6562,6 @@ dependencies = [
  "futures",
  "gloo 0.11.0",
  "hashbrown 0.15.5",
- "implicit-clone 0.5.1",
  "indexmap 2.10.0",
  "log",
  "obeli-sk-val-json",
@@ -7380,7 +7370,7 @@ dependencies = [
  "console_error_panic_hook",
  "futures",
  "gloo 0.10.0",
- "implicit-clone 0.4.9",
+ "implicit-clone",
  "indexmap 2.10.0",
  "js-sys",
  "prokio",
@@ -7471,7 +7461,7 @@ checksum = "2313241cc1ae2da556dcdb990c4a53b3de57a70fbc2ca12816ad9f2184c58ea2"
 dependencies = [
  "gloo 0.10.0",
  "id_tree",
- "implicit-clone 0.4.9",
+ "implicit-clone",
  "wasm-bindgen",
  "web-sys",
  "yew",

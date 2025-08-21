@@ -20,7 +20,6 @@ derive_more.workspace = true
 futures.workspace = true
 gloo.workspace = true
 hashbrown.workspace = true
-implicit-clone.workspace = true
 indexmap.workspace = true
 log.workspace = true
 prost-wkt-types.workspace = true

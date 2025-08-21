@@ -1,10 +1,6 @@
 use std::{fmt::Display, hash::Hash, str::FromStr};
 
-use implicit_clone::ImplicitClone;
-
 tonic::include_proto!("obelisk");
-
-impl ImplicitClone for FunctionDetail {}
 
 impl Display for ComponentId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -18,8 +14,6 @@ impl Hash for ComponentId {
         self.id.hash(state);
     }
 }
-
-impl ImplicitClone for ComponentId {}
 
 impl FromStr for ComponentId {
     type Err = ();

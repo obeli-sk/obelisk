@@ -288,7 +288,6 @@ wiremock = "0.6"
 # webui
 gloo = "0.11.0"
 id-arena = "2.2.1"
-implicit-clone = "0.5.1"
 log = "0.4.27"
 semver = "1.0.26"
 tonic-web-wasm-client = "0.7.1"
