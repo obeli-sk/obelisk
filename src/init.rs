@@ -1,3 +1,5 @@
+use std::io::IsTerminal as _;
+
 use crate::config::toml::{ConfigToml, log::LoggingStyle};
 use tracing::warn;
 use tracing_subscriber::Layer;
@@ -90,12 +92,14 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
                 LoggingStyle::Plain => tracing_subscriber::fmt::layer()
                     .with_target(stdout.common.target)
                     .with_span_events(stdout.common.span.into())
+                    .with_ansi(std::io::stdout().is_terminal())
                     .with_filter(env_filter)
                     .boxed(),
                 LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
                     .compact()
                     .with_target(stdout.common.target)
                     .with_span_events(stdout.common.span.into())
+                    .with_ansi(std::io::stdout().is_terminal())
                     .with_filter(env_filter)
                     .boxed(),
                 LoggingStyle::Json => tracing_subscriber::fmt::layer()

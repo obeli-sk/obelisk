@@ -18,8 +18,6 @@ use grpc_util::{grpc_gen, injector::TracingInjector, to_channel};
 use std::path::PathBuf;
 use tonic::{codec::CompressionEncoding, transport::Channel};
 
-pub type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
-
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     match Args::parse().command {
