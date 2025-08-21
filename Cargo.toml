@@ -180,7 +180,7 @@ arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"
 bytes = "1.10"
-cargo_metadata = "0.21"
+cargo_metadata = "0.22"
 cfg-if = "1.0.3"
 chrono = { version = "0.4.41", features = ["arbitrary", "serde"] }
 clap = { version = "4.5.45", features = ["derive"] }
@@ -192,7 +192,7 @@ config = { version = "0.15.14", default-features = false, features = [
 ] }
 console-subscriber = "0.4.1"
 const_format = "0.2.34"
-criterion = "0.6"
+criterion = "0.7"
 crossterm = "0.29.0"
 derive_more = { version = "2.0.1", features = [
     "debug",
@@ -236,7 +236,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 route-recognizer = "0.3.1"
-rstest = "0.25"
+rstest = "0.26"
 rusqlite = { version = "0.37.0", features = [
     "bundled",
     "chrono",
