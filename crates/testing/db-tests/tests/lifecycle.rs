@@ -1138,7 +1138,25 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
         .await
         .unwrap();
 
+    // Create joinset
     let join_set_id = JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+    let version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetCreate {
+                        join_set_id: join_set_id.clone(),
+                        closing_strategy: ClosingStrategy::Complete,
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
     let delay_id = DelayId::new_oneoff(&execution_id, &join_set_id);
     db_connection
         .append(

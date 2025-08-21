@@ -2,8 +2,9 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::JoinSetId;
 use concepts::storage::{
-    CreateRequest, ExecutionEvent, ExecutionEventInner, HistoryEvent, JoinSetResponseEvent,
-    JoinSetResponseEventOuter, PendingStateFinished, PendingStateFinishedResultKind, VersionType,
+    CreateRequest, ExecutionEvent, ExecutionEventInner, HistoryEvent, JoinSetRequest,
+    JoinSetResponseEvent, JoinSetResponseEventOuter, PendingStateFinished,
+    PendingStateFinishedResultKind, VersionType,
 };
 use concepts::storage::{ExecutionLog, PendingState, SpecificError, Version};
 use concepts::{ExecutionId, ExecutionMetadata};
@@ -236,7 +237,22 @@ impl ExecutionJournal {
                         })
                     }
                 }
-                ExecutionEventInner::HistoryEvent { .. } => None, // previous event
+                // No pending state change for following events:
+                ExecutionEventInner::HistoryEvent {
+                    event:
+                        HistoryEvent::JoinSetCreate { .. }
+                        | HistoryEvent::JoinSetRequest {
+                            // Adding a request does not change pending state.
+                            request:
+                                JoinSetRequest::DelayRequest { .. }
+                                | JoinSetRequest::ChildExecutionRequest { .. },
+                            ..
+                        }
+                        | HistoryEvent::Persist { .. }
+                        | HistoryEvent::Schedule { .. }
+                        | HistoryEvent::Stub { .. }
+                        | HistoryEvent::JoinNextTooMany { .. },
+                } => None,
             })
             .expect("journal must begin with Created event")
     }
