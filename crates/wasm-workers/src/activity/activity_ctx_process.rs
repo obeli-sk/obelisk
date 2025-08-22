@@ -1,7 +1,9 @@
 use super::activity_ctx::ActivityCtx;
 use crate::activity::process::HostChildProcess;
 use concepts::time::ClockFn;
-use process_support_outer::v1_0_0::obelisk::activity::process as process_support;
+use process_support_outer::v1_0_0::{
+    SpawnErrorTrappable, obelisk::activity::process as process_support,
+};
 use wasmtime::component::Resource;
 use wasmtime_wasi::p2::{DynInputStream, DynOutputStream};
 use wasmtime_wasi_io::IoView as _;
@@ -23,19 +25,26 @@ pub(crate) mod process_support_outer {
                 "obelisk:activity/process/[method]child-process.kill": async | trappable,
                 default: trappable,
             },
+            trappable_error_type: { "obelisk:activity/process/spawn-error" => SpawnErrorTrappable },
+
         });
+
+        #[derive(Debug, thiserror::Error)]
+        pub(crate) enum SpawnErrorTrappable {
+            #[error(transparent)]
+            Normal(#[from] obelisk::activity::process::SpawnError),
+            #[error(transparent)]
+            Trap(#[from] wasmtime::Error),
+        }
     }
 }
 
-// NB: Only use `?` for translating `ResourceTableError` into anyhow!
 impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
     fn spawn(
         &mut self,
         command: String,
         options: process_support::SpawnOptions,
-    ) -> wasmtime::Result<
-        Result<Resource<process_support::ChildProcess>, process_support::SpawnError>,
-    > {
+    ) -> Result<Resource<process_support::ChildProcess>, SpawnErrorTrappable> {
         let preopened_dir = self
             .preopened_dir
             .clone()
@@ -44,9 +53,20 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
             .process_provider
             .expect("process api can only be linked if it is enabled");
 
-        match HostChildProcess::spawn(provider, command, &options, &preopened_dir) {
-            Ok(child_process) => Ok(Ok(self.table().push(child_process)?)),
-            Err(err) => Ok(Err(err)), // Forward the spawn-error
+        let child_process = HostChildProcess::spawn(provider, command, &options, &preopened_dir)?;
+        Ok(self
+            .table()
+            .push(child_process)
+            .map_err(|res_err| wasmtime::Error::new(res_err))?)
+    }
+
+    fn convert_spawn_error(
+        &mut self,
+        err: SpawnErrorTrappable,
+    ) -> wasmtime::Result<process_support::SpawnError> {
+        match err {
+            SpawnErrorTrappable::Normal(err) => Ok(err),
+            SpawnErrorTrappable::Trap(err) => Err(err),
         }
     }
 }
