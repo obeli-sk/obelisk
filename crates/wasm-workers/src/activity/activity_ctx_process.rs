@@ -57,7 +57,7 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
         Ok(self
             .table()
             .push(child_process)
-            .map_err(|res_err| wasmtime::Error::new(res_err))?)
+            .map_err(wasmtime::Error::new)?)
     }
 
     fn convert_spawn_error(
