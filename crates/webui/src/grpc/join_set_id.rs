@@ -1,17 +1,8 @@
-use std::{fmt::Display, hash::Hash};
+use std::fmt::Display;
 
 use super::grpc_client;
 
 const JOIN_SET_ID_INFIX: char = ':';
-
-impl Hash for grpc_client::JoinSetId {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.kind.hash(state);
-        self.name.hash(state);
-    }
-}
-
-impl Eq for grpc_client::JoinSetId {}
 
 impl Display for grpc_client::JoinSetId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

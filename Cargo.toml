@@ -52,6 +52,7 @@ tonic = { workspace = true, default-features = true, features = [
     "gzip",
     "tls-native-roots",
 ] }
+tonic-prost.workspace = true
 tonic-web.workspace = true
 tower-http.workspace = true
 tower.workspace = true
@@ -93,7 +94,7 @@ default = ["otlp"]
 workspace = true
 
 [build-dependencies]
-tonic-build = { workspace = true, default-features = true }
+tonic-prost-build.workspace = true
 
 [workspace]
 resolver = "2"
@@ -228,8 +229,8 @@ oci-wasm = { version = "0.3.0", default-features = false, features = [ # Depende
 ] }
 parameterized = "2.0.0"
 parameterized-macro = "2.0.0"
-prost = "0.13.5"
-prost-wkt-types = "0.6"
+prost = "0.14.1"
+prost-wkt-types = "0.7"
 rand = "0.8" # yew 0.21 needs getrandom 0.2
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
@@ -270,9 +271,10 @@ tokio = { version = "1", features = [
 ] }
 tokio-stream = "0.1.17"
 toml = { version = "0.9.5", features = ["preserve_order"] }
-tonic = { version = "0.13.1", default-features = false }
-tonic-build = { version = "0.13.1", default-features = false }
-tonic-web = "0.13.1"
+tonic = { version = "0.14.1", default-features = false }
+tonic-prost = "0.14.1"
+tonic-prost-build = "0.14.1"
+tonic-web = "0.14.1"
 tower = "0.5.2"
 tower-http = { version = "0.6.6", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
@@ -373,3 +375,6 @@ strip = "debuginfo"
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/obelisk-{ target }.tar.gz"
 pkg-fmt = "tgz"
+
+[patch.crates-io]
+tonic-web-wasm-client = {git="https://github.com/devashishdxt/tonic-web-wasm-client", rev="dfa85d06f182d72ebf1af680ac4ae191607b8982"}

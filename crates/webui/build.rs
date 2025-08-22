@@ -5,15 +5,16 @@ use syntect::{highlighting::ThemeSet, html::ClassStyle};
 fn main() {
     let workspace_dir = get_workspace_dir();
     let proto_path = workspace_dir.join("proto");
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .protoc_arg("--experimental_allow_proto3_optional") // not needed anymore with protoc  25.3
         .compile_well_known_types(true)
         .extern_path(".google.protobuf.Timestamp", "::prost_wkt_types::Timestamp")
         .extern_path(".google.protobuf.Duration", "::prost_wkt_types::Duration")
         .extern_path(".google.protobuf.Any", "::prost_wkt_types::Any")
         .build_server(false)
+        .build_transport(false)
         .build_client(true)
-        .compile_protos(&["obelisk.proto"], &[proto_path])
+        .compile_protos(&[PathBuf::from("obelisk.proto")], &[proto_path])
         .unwrap();
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     generate_blueprint_css(&pkg_name);

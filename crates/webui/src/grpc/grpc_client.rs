@@ -8,13 +8,6 @@ impl Display for ComponentId {
     }
 }
 
-impl Eq for ComponentId {}
-impl Hash for ComponentId {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
 impl FromStr for ComponentId {
     type Err = ();
 
