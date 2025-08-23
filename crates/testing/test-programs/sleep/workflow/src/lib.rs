@@ -53,10 +53,10 @@ impl Guest for Component {
         let join_set_id = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
         let _long =
             workflow_support::submit_delay(&join_set_id, ScheduleAt::In(DurationEnum::Seconds(10)));
-        // let _short = workflow_support::submit_delay(
-        //     &join_set_id,
-        //     ScheduleAt::In(DurationEnum::Milliseconds(10)),
-        // );
+        let _short = workflow_support::submit_delay(
+            &join_set_id,
+            ScheduleAt::In(DurationEnum::Milliseconds(10)),
+        );
         // let obelisk::types::execution::ResponseId::DelayId(first) =
         //     workflow_support::join_next(&join_set_id).unwrap()
         // else {

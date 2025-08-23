@@ -1931,8 +1931,23 @@ impl EventHistory {
     }
 
     pub(crate) fn next_delay_id(&self, join_set_id: &JoinSetId) -> DelayId {
-        // FIXME: Count already created delays for this join set
-        DelayId::new(&self.execution_id, join_set_id)
+        // TODO: Optimize
+        let idx = self
+            .event_history
+            .iter()
+            .filter(|(event, _processing_status)| {
+                matches!(
+                    event,
+                    HistoryEvent::JoinSetRequest {join_set_id:found_join_set_id, request:JoinSetRequest::DelayRequest { .. } }
+                    if join_set_id == found_join_set_id
+                )
+            })
+            .count();
+        DelayId::new_with_index(
+            &self.execution_id,
+            join_set_id,
+            u64::try_from(idx).expect("too many delays in a join set"),
+        )
     }
 }
 

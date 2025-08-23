@@ -1394,7 +1394,9 @@ pub(crate) mod tests {
     };
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
     use concepts::time::{ClockFn, Now};
-    use concepts::{ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, SUFFIX_PKG_EXT};
+    use concepts::{
+        ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, JoinSetId, SUFFIX_PKG_EXT,
+    };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
@@ -1438,11 +1440,15 @@ pub(crate) mod tests {
         Call {
             ffqn: FunctionFqn,
         },
+        JoinSetCreate {
+            name: String,
+        },
         SubmitExecution {
             target_ffqn: FunctionFqn,
         },
         SubmitDelay {
             millis: u32, // Avoid ScheduleAtConversionError::OutOfRangeError
+            join_set_id: Option<JoinSetId>,
         },
         RandomU64 {
             min: u64,
@@ -1551,6 +1557,12 @@ pub(crate) mod tests {
                             )
                             .await
                     }
+
+                    WorkflowStep::JoinSetCreate { name } => {
+                        workflow_ctx.new_join_set_named(name.clone()).await.unwrap();
+                        Ok(())
+                    }
+
                     WorkflowStep::SubmitExecution { target_ffqn } => {
                         // Create new join set
                         let join_set_resource =
@@ -1588,15 +1600,22 @@ pub(crate) mod tests {
                             )
                             .await
                     }
-                    WorkflowStep::SubmitDelay { millis } => {
+                    WorkflowStep::SubmitDelay {
+                        millis,
+                        join_set_id,
+                    } => {
                         // Create new join set
-                        let join_set_resource =
-                            workflow_ctx.new_join_set_generated().await.unwrap();
-                        let join_set_id = workflow_ctx
-                            .resource_table
-                            .get(&join_set_resource)
-                            .unwrap()
-                            .clone();
+                        let join_set_id = if let Some(join_set_id) = join_set_id {
+                            join_set_id.clone()
+                        } else {
+                            let join_set_resource =
+                                workflow_ctx.new_join_set_generated().await.unwrap();
+                            workflow_ctx
+                                .resource_table
+                                .get(&join_set_resource)
+                                .unwrap()
+                                .clone()
+                        };
                         workflow_ctx
                             .submit_delay(
                                 join_set_id,
@@ -1855,10 +1874,24 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn submit_delay_should_work() {
+    async fn submitting_two_delays_should_work() {
         test_utils::set_up();
         let (_guard, db_pool) = Database::Memory.set_up().await;
-        let steps = vec![WorkflowStep::SubmitDelay { millis: 1 }];
+        let join_set = JoinSetId::new(concepts::JoinSetKind::Named, "".into()).unwrap();
+
+        let steps = vec![
+            WorkflowStep::JoinSetCreate {
+                name: join_set.name.to_string(),
+            },
+            WorkflowStep::SubmitDelay {
+                millis: 1,
+                join_set_id: Some(join_set.clone()),
+            },
+            WorkflowStep::SubmitDelay {
+                millis: 10,
+                join_set_id: Some(join_set),
+            },
+        ];
         execute_steps(steps, db_pool.clone(), &mut SimClock::epoch(), || 0).await;
         db_pool.close().await.unwrap();
     }
