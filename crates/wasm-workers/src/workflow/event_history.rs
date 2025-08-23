@@ -913,71 +913,14 @@ impl EventHistory {
                     Some(JoinSetResponseEnriched::ChildExecutionFinished(
                         ChildExecutionFinished {
                             child_execution_id,
-                            result,
+                            result: _,
                             response_ffqn: _,
                         },
                     )) => {
-                        trace!(%join_set_id, "EventHistoryKey::JoinNext: Matched JoinNext & ChildExecutionFinished");
-
-                        match result {
-                            Ok(SupportedFunctionReturnValue::None) => {
-                                // result<execution-id, execution-error>
-                                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                                    WastVal::Result(Ok(Some(Box::new(
-                                        execution_id_derived_into_wast_val(child_execution_id),
-                                    )))),
-                                )))
-                            }
-                            Ok(
-                                SupportedFunctionReturnValue::InfallibleOrResultOk(v)
-                                | SupportedFunctionReturnValue::FallibleResultErr(v),
-                            ) => {
-                                // result<(execution-id, inner>, execution-error>
-                                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                                    WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-                                        execution_id_derived_into_wast_val(child_execution_id),
-                                        v.value.clone(),
-                                    ]))))),
-                                )))
-                            }
-                            // Transform timeout and activity trap to execution-error::execution-failed
-                            Err(
-                                FinishedExecutionError::PermanentTimeout
-                                | FinishedExecutionError::PermanentFailure {
-                                    kind: PermanentFailureKind::ActivityTrap,
-                                    ..
-                                },
-                            ) => {
-                                let execution_failed =
-                                    ExecutionErrorVariant::ExecutionFailed { child_execution_id }
-                                        .as_wast_val();
-                                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                                    WastVal::Result(Err(Some(Box::new(execution_failed)))),
-                                )))
-                            }
-                            // Copy root cause of UnhandledChildExecutionError
-                            Err(FinishedExecutionError::UnhandledChildExecutionError {
-                                child_execution_id: _,
-                                root_cause_id,
-                            }) => {
-                                error!(%child_execution_id,
-                                                "Child execution finished with an execution error");
-                                Err(ApplyError::UnhandledChildExecutionError {
-                                    child_execution_id: child_execution_id.clone(),
-                                    root_cause_id: root_cause_id.clone(), // Copy the original root cause
-                                })
-                            }
-                            // All other FinishedExecutionErrors are unhandled with current child being the root cause
-                            Err(_) => {
-                                error!(%child_execution_id,
-                                                "Child execution finished with an execution error");
-                                Err(ApplyError::UnhandledChildExecutionError {
-                                    child_execution_id: child_execution_id.clone(),
-                                    // The child is the root cause
-                                    root_cause_id: child_execution_id.clone(),
-                                })
-                            }
-                        }
+                        trace!(%join_set_id, %child_execution_id, "EventHistoryKey::JoinNext: Matched ChildExecutionFinished");
+                        Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(Ok(
+                            types_execution::ResponseId::ExecutionId(child_execution_id.into()),
+                        ))))
                     }
                     Some(JoinSetResponseEnriched::DelayFinished {
                         delay_id, // Currently only a single blocking delay is supported, no need to match the id
