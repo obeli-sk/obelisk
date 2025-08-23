@@ -9,6 +9,7 @@ pub struct SimClock {
 }
 
 impl Default for SimClock {
+    // TODO: Rename to system_time
     fn default() -> Self {
         Self::new(Now.now())
     }

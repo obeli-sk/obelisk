@@ -1882,7 +1882,7 @@ pub(crate) mod tests {
             test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::TWO_DELAYS_IN_SAME_JOIN_SET
         );
         test_utils::set_up();
-        let sim_clock = SimClock::default();
+        let sim_clock = SimClock::epoch();
         let (_guard, db_pool) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY), // only to satisfy imports
@@ -1946,37 +1946,35 @@ pub(crate) mod tests {
             .get_pending_state(&execution_id)
             .await
             .unwrap();
-        assert_matches!(
-            pending_state,
-            PendingState::Finished {
-                finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind(Ok(())),
-                    ..
-                }
-            }
+
+        assert_matches!(pending_state, PendingState::BlockedByJoinSet { .. });
+
+        // See WASM impl in `two_delays_in_same_join_set()`
+        sim_clock.move_time_forward(Duration::from_millis(10));
+        {
+            let timer = expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
+                .await
+                .unwrap();
+            assert_eq!(1, timer.expired_async_timers);
+        }
+
+        // another exec tick + await should mark the execution finished.
+        assert_eq!(
+            1,
+            exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap()
         );
 
-        // let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
-
-        // sim_clock.move_time_to(scheduled_at);
-
-        // // another tick + await should mark the execution finished.
-        // assert_eq!(
-        //     1,
-        //     exec_task
-        //         .tick_test(sim_clock.now(), RunId::generate())
-        //         .await
-        //         .unwrap()
-        //         .wait_for_tasks()
-        //         .await
-        //         .unwrap()
-        // );
-
-        // let res = db_connection.get(&execution_id).await.unwrap();
-        // assert_matches!(
-        //     res.into_finished_result().unwrap().unwrap(),
-        //     SupportedFunctionReturnValue::None
-        // );
+        let res = db_connection.get(&execution_id).await.unwrap();
+        assert_matches!(
+            res.into_finished_result().unwrap().unwrap(),
+            SupportedFunctionReturnValue::None
+        );
 
         drop(exec_task);
         db_pool.close().await.unwrap();

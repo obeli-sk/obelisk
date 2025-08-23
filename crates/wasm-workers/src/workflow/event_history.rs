@@ -3,8 +3,8 @@ use super::event_history::ProcessingStatus::Unprocessed;
 use super::host_exports::delay_id_into_wast_val;
 use super::host_exports::execution_id_derived_into_wast_val;
 use super::host_exports::execution_id_into_wast_val;
-use super::host_exports::join_set_id_into_wast_val;
 use super::host_exports::v2_0_0::obelisk::types::execution::GetExtensionError;
+use super::host_exports::v2_0_0::obelisk::workflow::workflow_support;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::v2_0_0::obelisk::types::execution as types_execution;
@@ -51,12 +51,8 @@ use val_json::wast_val::WastVal;
 pub(crate) enum ChildReturnValue {
     None,
     WastVal(WastVal),
-    HostResource(HostResource),
-}
-
-#[derive(Debug)]
-pub(crate) enum HostResource {
-    CreateJoinSetResp(JoinSetId), // response to `CreateJoinSet`
+    JoinSetCreate(JoinSetId),
+    JoinNext(Result<types_execution::ResponseId, workflow_support::JoinNextError>),
 }
 
 impl ChildReturnValue {
@@ -65,16 +61,6 @@ impl ChildReturnValue {
             Self::WastVal(result)
         } else {
             Self::None
-        }
-    }
-
-    pub(crate) fn into_wast_val(self) -> Option<WastVal> {
-        match self {
-            Self::None => None,
-            Self::WastVal(wast_val) => Some(wast_val),
-            Self::HostResource(HostResource::CreateJoinSetResp(join_set_id)) => {
-                Some(join_set_id_into_wast_val(&join_set_id))
-            }
         }
     }
 }
@@ -446,8 +432,9 @@ impl EventHistory {
                 debug!("Adding BlockingChildAwaitNext to join set {join_set_id}");
                 match self
                     .apply(
-                        EventCall::JoinNextClosing {
+                        EventCall::JoinNext {
                             join_set_id: join_set_id.clone(),
+                            closing: true,
                             wasm_backtrace: None,
                         },
                         db_connection,
@@ -614,9 +601,9 @@ impl EventHistory {
                 trace!(%join_set_id, "Matched JoinSet");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
-                Ok(FindMatchingResponse::Found(ChildReturnValue::HostResource(
-                    HostResource::CreateJoinSetResp(join_set_id.clone()),
-                )))
+                Ok(FindMatchingResponse::Found(
+                    ChildReturnValue::JoinSetCreate(join_set_id.clone()),
+                ))
             }
 
             (
@@ -735,7 +722,7 @@ impl EventHistory {
                     join_set_id: found_join_set_id,
                     requested_ffqn: found_requested_ffqn,
                     run_expires_at: _,
-                    closing: false,
+                    closing: false, // JoinNextChild originates from user's code
                 },
             ) if *join_set_id == *found_join_set_id
                 && Some(requested_ffqn) == found_requested_ffqn.as_ref() =>
@@ -889,7 +876,8 @@ impl EventHistory {
                 HistoryEvent::JoinNext {
                     join_set_id: found_join_set_id,
                     requested_ffqn: None,
-                    ..
+                    closing: false, // JoinNextDelay originates from user's code
+                    run_expires_at: _,
                 },
             ) if *join_set_id == *found_join_set_id => {
                 trace!(
@@ -915,12 +903,12 @@ impl EventHistory {
                 },
                 HistoryEvent::JoinNext {
                     join_set_id: found_join_set_id,
-                    requested_ffqn: None, // closing and joinset.await next do not collect it.
+                    requested_ffqn: None, // closing and `join-next` are agnostic of ffqn.
                     run_expires_at: _,
                     closing: found_closing,
                 },
             ) if *join_set_id == *found_join_set_id && closing == found_closing => {
-                trace!(%join_set_id, "EventHistoryKey::JoinNext: Peeked at JoinNext - Child");
+                trace!(%join_set_id, "EventHistoryKey::JoinNext(closing:{closing}): Peeked at JoinNext");
                 match self.mark_next_unprocessed_response(found_idx, join_set_id) {
                     Some(JoinSetResponseEnriched::ChildExecutionFinished(
                         ChildExecutionFinished {
@@ -992,10 +980,13 @@ impl EventHistory {
                         }
                     }
                     Some(JoinSetResponseEnriched::DelayFinished {
-                        delay_id: _, // Currently only a single blocking delay is supported, no need to match the id
+                        delay_id, // Currently only a single blocking delay is supported, no need to match the id
                     }) => {
-                        trace!(%join_set_id, "EventHistoryKey::JoinNext: Matched DelayFinished");
-                        Ok(FindMatchingResponse::Found(ChildReturnValue::None))
+                        trace!(%join_set_id, %delay_id, "EventHistoryKey::JoinNext: Matched DelayFinished");
+
+                        Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(Ok(
+                            types_execution::ResponseId::DelayId(delay_id.into()),
+                        ))))
                     }
                     None => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
                 }
@@ -1420,19 +1411,20 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::JoinNextClosing {
+            EventCall::JoinNext {
                 join_set_id,
+                closing,
                 wasm_backtrace,
             } => {
                 // Non-cacheable event.
-                debug!(%join_set_id, "JoinNextClosing: Flushing and appending JoinNext");
+                debug!(%join_set_id, "JoinNext(closing:{closing}): Flushing and appending JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
                     run_expires_at: lock_expires_at,
                     requested_ffqn: None,
-                    closing: true,
+                    closing,
                 };
                 let history_events = vec![event.clone()];
                 let join_next = AppendRequest {
@@ -1935,7 +1927,10 @@ impl EventHistory {
         let idx = self
             .event_history
             .iter()
-            .filter(|(event, _processing_status)| {
+            .filter(|(event, processing_status)| {
+                // Ignore unprocessed events, which happens only on replay where we need to produce "old" ids.
+                // Applying the `EventCall::SubmitDelay` will immediately mark this as processed.
+                *processing_status == Processed &&
                 matches!(
                     event,
                     HistoryEvent::JoinSetRequest {join_set_id:found_join_set_id, request:JoinSetRequest::DelayRequest { .. } }
@@ -2125,8 +2120,10 @@ pub(crate) enum EventCall {
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
-    JoinNextClosing {
+    // join-next: func(join-set-id: borrow<join-set-id>) -> result<response-id, join-next-error>
+    JoinNext {
         join_set_id: JoinSetId,
+        closing: bool,
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
@@ -2207,12 +2204,13 @@ impl EventCall {
                 expires_at_if_new: _,
                 wasm_backtrace: _,
             }) => Some(JoinNextVariant::Delay(join_set_id.clone())),
-            EventCall::JoinNextClosing {
+            EventCall::JoinNext {
                 join_set_id,
+                closing,
                 wasm_backtrace: _,
             } => Some(JoinNextVariant::Opaque {
                 join_set_id: join_set_id.clone(),
-                closing: true,
+                closing: *closing,
             }),
 
             EventCall::CreateJoinSet { .. }
@@ -2229,6 +2227,7 @@ impl EventCall {
 /// Those properties are checked for equality with `HistoryEvent` before it is marked as `Processed`.
 /// One `EventCall` can be represented as multiple `EventHistoryKey`-s.
 /// One `EventHistoryKey` corresponds to one `HistoryEvent`.
+// TODO: Rename to DeterministicKey
 #[derive(derive_more::Debug, Clone)]
 enum EventHistoryKey {
     Persist {
@@ -2368,12 +2367,13 @@ impl EventCall {
                     join_set_id: join_set_id.clone(),
                 },
             ],
-            EventCall::JoinNextClosing {
+            EventCall::JoinNext {
                 join_set_id,
+                closing,
                 wasm_backtrace: _,
             } => vec![EventHistoryKey::JoinNext {
                 join_set_id: join_set_id.clone(),
-                closing: true,
+                closing: *closing,
             }],
             EventCall::ScheduleRequest {
                 execution_id,
@@ -2603,12 +2603,12 @@ mod tests {
             .await
             .unwrap();
 
-        let child_resp_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
+        let child_resp_wrapped = WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
             execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id)),
             WastVal::U8(1),
-        ]))))));
-
-        assert_eq!(child_resp_wrapped, res.into_wast_val());
+        ])))));
+        let res = assert_matches!(res, ChildReturnValue::WastVal(res) => res);
+        assert_eq!(child_resp_wrapped, res);
 
         drop(db_connection);
         db_pool.close().await.unwrap();
@@ -2778,11 +2778,12 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            let kid_b = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
+            let kid_b = WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
                 execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id_b)),
                 WastVal::U8(2),
-            ]))))));
-            assert_eq!(kid_b, res.into_wast_val());
+            ])))));
+            let res = assert_matches!(res, ChildReturnValue::WastVal(res) => res);
+            assert_eq!(kid_b, res);
         }
         drop(db_connection);
         db_pool.close().await.unwrap();
@@ -3173,6 +3174,12 @@ mod tests {
                 called_at,
             )
             .await
-            .map(super::ChildReturnValue::into_wast_val)
+            .map(|res| match res {
+                ChildReturnValue::None => None,
+                ChildReturnValue::WastVal(res) => Some(res),
+                other => {
+                    unreachable!("BlockingChildAwaitNext returns WastVal or None, got {other:?}")
+                }
+            })
     }
 }

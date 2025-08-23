@@ -1,9 +1,9 @@
 use assert_matches::assert_matches;
 use chrono::DateTime;
+use concepts::FunctionFqn;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::HistoryEventScheduleAt;
 use concepts::{ExecutionId, prefixed_ulid::DelayId};
-use concepts::{FunctionFqn, JoinSetId};
 use indexmap::indexmap;
 use std::ops::Deref as _;
 use std::time::Duration;
@@ -272,10 +272,6 @@ pub(crate) fn execution_id_into_wast_val(execution_id: &ExecutionId) -> WastVal 
 
 pub(crate) fn execution_id_derived_into_wast_val(execution_id: &ExecutionIdDerived) -> WastVal {
     WastVal::Record(indexmap! {"id".to_string() => WastVal::String(execution_id.to_string())})
-}
-
-pub(crate) fn join_set_id_into_wast_val(join_set_id: &JoinSetId) -> WastVal {
-    WastVal::Record(indexmap! {"id".to_string() => WastVal::String(join_set_id.to_string())})
 }
 
 pub(crate) fn delay_id_into_wast_val(delay_id: &DelayId) -> WastVal {

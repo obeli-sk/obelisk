@@ -1,4 +1,4 @@
-use super::event_history::{ApplyError, ChildReturnValue, EventCall, EventHistory, HostResource};
+use super::event_history::{ApplyError, ChildReturnValue, EventCall, EventHistory};
 use super::host_exports::v2_0_0::obelisk::types::execution as types_execution;
 use super::host_exports::v2_0_0::{ClosingStrategy_2_0_0, ScheduleAt_2_0_0};
 use super::host_exports::{
@@ -533,18 +533,6 @@ impl<C: ClockFn> WasiView for WorkflowCtx<C> {
     }
 }
 
-#[derive(Copy, Clone)]
-enum WorkflowSupportVersion {
-    Version2,
-}
-impl WorkflowSupportVersion {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Version2 => IFC_FQN_WORKFLOW_SUPPORT_2,
-        }
-    }
-}
-
 const IFC_FQN_WORKFLOW_SUPPORT_2: &str = "obelisk:workflow/workflow-support@2.0.0";
 
 impl<C: ClockFn> WorkflowCtx<C> {
@@ -701,7 +689,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 .await
                 .map_err(JoinSetCreateError::ApplyError)?;
             let join_set_id = assert_matches!(res,
-                ChildReturnValue::HostResource(HostResource::CreateJoinSetResp(join_set_id)) => join_set_id);
+                ChildReturnValue::JoinSetCreate(join_set_id) => join_set_id);
             let join_set_id = self
                 .resource_table
                 .push(join_set_id)
@@ -748,22 +736,20 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .map_err(linking_err)?;
 
         // link workflow-support 2.0.0
-        Self::add_to_linker_workflow_support(linker, WorkflowSupportVersion::Version2)?;
+        Self::add_to_linker_workflow_support(linker)?;
         if stub_wasi {
             super::wasi::add_to_linker_async(linker)?;
         }
         Ok(())
     }
 
-    fn add_to_linker_workflow_support(
-        linker: &mut Linker<Self>,
-        workflow_support_version: WorkflowSupportVersion,
-    ) -> Result<(), WasmFileError> {
-        let mut inst_workflow_support = linker
-            .instance(workflow_support_version.as_str())
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static(workflow_support_version.as_str()),
-                err: err.into(),
+    fn add_to_linker_workflow_support(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
+        let mut inst_workflow_support =
+            linker.instance(IFC_FQN_WORKFLOW_SUPPORT_2).map_err(|err| {
+                WasmFileError::LinkingError {
+                    context: StrVariant::Static(IFC_FQN_WORKFLOW_SUPPORT_2),
+                    err: err.into(),
+                }
             })?;
         inst_workflow_support
             .func_wrap_async(
@@ -894,6 +880,25 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 err: err.into(),
             })?;
 
+        inst_workflow_support
+            .func_wrap_async(
+                "join-next",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                      (join_set_id,): (Resource<JoinSetId>,)| {
+                    wasmtime::component::__internal::Box::new(async move {
+                        let host = Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_id)?.clone();
+                        let result = host.join_next(join_set_id).await;
+                        host.backtrace = None;
+                        Ok((result?,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking function new-join-set-generated"),
+                err: err.into(),
+            })?;
+
         Ok(())
     }
 
@@ -919,7 +924,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         event: EventCall,
         called_at: DateTime<Utc>,
     ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
-        Ok(self
+        let resp = self
             .event_history
             .apply(
                 event,
@@ -927,9 +932,14 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 &mut self.version,
                 called_at,
             )
-            .await?
-            .into_wast_val()
-            .map(|wast_val| wast_val.as_val()))
+            .await?;
+        match resp {
+            ChildReturnValue::None => Ok(None),
+            ChildReturnValue::WastVal(wast_val) => Ok(Some(wast_val.as_val())),
+            ChildReturnValue::JoinSetCreate(_) | ChildReturnValue::JoinNext(_) => {
+                unreachable!("specific responses handled in their respective functions")
+            }
+        }
     }
 
     async fn imported_fn_to_val(
@@ -1135,6 +1145,7 @@ mod workflow_support {
     use crate::workflow::event_history::ChildReturnValue;
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::HostJoinSetId;
+    use crate::workflow::host_exports::v2_0_0::obelisk::workflow::workflow_support;
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_2, JoinSetCreateError};
     use concepts::FunctionFqn;
     use concepts::storage::HistoryEventScheduleAt;
@@ -1322,6 +1333,7 @@ mod workflow_support {
                     wasmtime::Error::new(WorkflowFunctionError::from(apply_err))
                 }
                 JoinSetCreateError::ResourceTableError(resource_table_error) => {
+                    // trap
                     wasmtime::Error::new(resource_table_error)
                 }
             })
@@ -1349,6 +1361,31 @@ mod workflow_support {
                     wasmtime::Error::new(resource_table_error)
                 }
             })
+        }
+
+        pub(crate) async fn join_next(
+            &mut self,
+            join_set_id: JoinSetId,
+        ) -> Result<
+            Result<types_execution::ResponseId, workflow_support::JoinNextError>,
+            WorkflowFunctionError,
+        > {
+            let value = self
+                .event_history
+                .apply(
+                    EventCall::JoinNext {
+                        join_set_id,
+                        closing: false,
+                        wasm_backtrace: self.backtrace.take(),
+                    },
+                    self.db_pool.connection().as_ref(),
+                    &mut self.version,
+                    self.clock_fn.now(),
+                )
+                .await
+                .map_err(WorkflowFunctionError::from)?;
+            let value = assert_matches!(value,ChildReturnValue::JoinNext(value) => value);
+            Ok(value)
         }
     }
 }
