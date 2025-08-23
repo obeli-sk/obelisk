@@ -1885,39 +1885,45 @@ impl EventHistory {
     }
 
     fn count_submissions(&self, join_set_id: &JoinSetId) -> usize {
-        // Processing status does not matter, count all requests.
+        // Processing status does matter in order to make replays make the same decisions.
         self.event_history
             .iter()
-            .filter(|(event, _processing_status)| match event {
-                HistoryEvent::JoinSetRequest {
-                    join_set_id: found_join_set_id,
-                    ..
-                } => found_join_set_id == join_set_id,
-                HistoryEvent::Persist { .. }
-                | HistoryEvent::JoinSetCreate { .. }
-                | HistoryEvent::JoinNext { .. }
-                | HistoryEvent::JoinNextTooMany { .. }
-                | HistoryEvent::Schedule { .. }
-                | HistoryEvent::Stub { .. } => false,
+            .filter(|(event, processing_status)| {
+                *processing_status == Processed
+                    && match event {
+                        HistoryEvent::JoinSetRequest {
+                            join_set_id: found_join_set_id,
+                            ..
+                        } => found_join_set_id == join_set_id,
+                        HistoryEvent::Persist { .. }
+                        | HistoryEvent::JoinSetCreate { .. }
+                        | HistoryEvent::JoinNext { .. }
+                        | HistoryEvent::JoinNextTooMany { .. }
+                        | HistoryEvent::Schedule { .. }
+                        | HistoryEvent::Stub { .. } => false,
+                    }
             })
             .count()
     }
 
     fn count_join_nexts(&self, join_set_id: &JoinSetId) -> usize {
-        // Processing status does not matter, count all requests.
+        // Processing status does matter in order to make replays make the same decisions.
         self.event_history
             .iter()
-            .filter(|(event, _processing_status)| match event {
-                HistoryEvent::JoinNext {
-                    join_set_id: found_join_set_id,
-                    ..
-                } => found_join_set_id == join_set_id,
-                HistoryEvent::Persist { .. }
-                | HistoryEvent::JoinSetCreate { .. }
-                | HistoryEvent::JoinSetRequest { .. }
-                | HistoryEvent::JoinNextTooMany { .. }
-                | HistoryEvent::Schedule { .. }
-                | HistoryEvent::Stub { .. } => false,
+            .filter(|(event, processing_status)| {
+                *processing_status == Processed
+                    && match event {
+                        HistoryEvent::JoinNext {
+                            join_set_id: found_join_set_id,
+                            ..
+                        } => found_join_set_id == join_set_id,
+                        HistoryEvent::Persist { .. }
+                        | HistoryEvent::JoinSetCreate { .. }
+                        | HistoryEvent::JoinSetRequest { .. }
+                        | HistoryEvent::JoinNextTooMany { .. }
+                        | HistoryEvent::Schedule { .. }
+                        | HistoryEvent::Stub { .. } => false,
+                    }
             })
             .count()
     }
