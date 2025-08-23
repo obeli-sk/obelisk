@@ -705,7 +705,7 @@ impl EventHistory {
             ) if *join_set_id == *found_join_set_id
                 && Some(requested_ffqn) == found_requested_ffqn.as_ref() =>
             {
-                trace!(%join_set_id, "JoinNextTooMany -> all-processed");
+                trace!(%join_set_id, "matched JoinNextChild with JoinNextTooMany");
                 let all_processed = ExecutionErrorVariant::AllProcessed.as_wast_val();
                 Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                     WastVal::Result(Err(Some(Box::new(all_processed)))),
@@ -990,6 +990,22 @@ impl EventHistory {
                     }
                     None => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
                 }
+            }
+
+            (
+                EventHistoryKey::JoinNext {
+                    join_set_id,
+                    closing: false, // Runtime should never issue a bogus `JoinNext`.
+                },
+                HistoryEvent::JoinNextTooMany {
+                    join_set_id: found_join_set_id,
+                    requested_ffqn: None, // `join-next` is agnostic of ffqn.
+                },
+            ) if *join_set_id == *found_join_set_id => {
+                trace!(%join_set_id, "matched JoinNext with JoinNextTooMany");
+                Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(
+                    Err(workflow_support::JoinNextError::AllProcessed),
+                )))
             }
 
             (
@@ -1420,12 +1436,20 @@ impl EventHistory {
                 debug!(%join_set_id, "JoinNext(closing:{closing}): Flushing and appending JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
-                let event = HistoryEvent::JoinNext {
-                    join_set_id,
-                    run_expires_at: lock_expires_at,
-                    requested_ffqn: None,
-                    closing,
-                };
+                let event =
+                    if self.count_submissions(&join_set_id) > self.count_join_nexts(&join_set_id) {
+                        HistoryEvent::JoinNext {
+                            join_set_id,
+                            run_expires_at: lock_expires_at,
+                            requested_ffqn: None,
+                            closing,
+                        }
+                    } else {
+                        HistoryEvent::JoinNextTooMany {
+                            join_set_id,
+                            requested_ffqn: None,
+                        }
+                    };
                 let history_events = vec![event.clone()];
                 let join_next = AppendRequest {
                     created_at: called_at,
