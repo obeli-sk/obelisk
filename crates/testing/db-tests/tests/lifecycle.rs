@@ -1015,7 +1015,7 @@ pub async fn lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
                     event: ExecutionEventInner::HistoryEvent {
                         event: HistoryEvent::JoinSetRequest {
                             request: JoinSetRequest::DelayRequest {
-                                delay_id: DelayId::new_oneoff(&execution_id, &join_set_id),
+                                delay_id: DelayId::new(&execution_id, &join_set_id),
                                 expires_at: sim_clock.now(),
                                 schedule_at: HistoryEventScheduleAt::Now,
                             },
@@ -1157,7 +1157,7 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
         .await
         .unwrap();
 
-    let delay_id = DelayId::new_oneoff(&execution_id, &join_set_id);
+    let delay_id = DelayId::new(&execution_id, &join_set_id);
     db_connection
         .append(
             execution_id.clone(),

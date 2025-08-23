@@ -1,7 +1,8 @@
 use super::event_history::{ApplyError, ChildReturnValue, EventCall, EventHistory, HostResource};
+use super::host_exports::v2_0_0::obelisk::types::execution as types_execution;
 use super::host_exports::v2_0_0::{ClosingStrategy_2_0_0, ScheduleAt_2_0_0};
 use super::host_exports::{
-    self, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
+    SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
     history_event_schedule_at_from_wast_val,
 };
 use super::workflow_worker::JoinNextBlockingStrategy;
@@ -156,7 +157,7 @@ pub(crate) enum ImportedFnCall<'a> {
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
-    Submit {
+    SubmitExecution {
         target_ffqn: FunctionFqn,
         join_set_id: JoinSetId,
         #[debug(skip)]
@@ -253,7 +254,7 @@ impl<'a> ImportedFnCall<'a> {
                             detail: Some(detail),
                         },
                     )?;
-                Ok(ImportedFnCall::Submit {
+                Ok(ImportedFnCall::SubmitExecution {
                     target_ffqn,
                     join_set_id,
                     target_params: params,
@@ -499,7 +500,7 @@ impl<'a> ImportedFnCall<'a> {
             | Self::Schedule {
                 target_ffqn: ffqn, ..
             }
-            | Self::Submit {
+            | Self::SubmitExecution {
                 target_ffqn: ffqn, ..
             }
             | Self::AwaitNext {
@@ -540,13 +541,6 @@ impl WorkflowSupportVersion {
     fn as_str(&self) -> &'static str {
         match self {
             Self::Version2 => IFC_FQN_WORKFLOW_SUPPORT_2,
-        }
-    }
-    const SLEEP_FFQN_2: FunctionFqn = FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_2, "sleep");
-
-    fn sleep_ffqn(&self) -> FunctionFqn {
-        match self {
-            Self::Version2 => Self::SLEEP_FFQN_2,
         }
     }
 }
@@ -642,18 +636,21 @@ impl<C: ClockFn> WorkflowCtx<C> {
     async fn persist_sleep(
         &mut self,
         schedule_at: HistoryEventScheduleAt,
-        sleep_ffqn: FunctionFqn,
     ) -> Result<(), WorkflowFunctionError> {
         let expires_at_if_new = schedule_at
             .as_date_time(self.clock_fn.now())
-            .map_err(|err| WorkflowFunctionError::ImportedFunctionCallError {
-                ffqn: sleep_ffqn,
-                reason: "schedule-at conversion error".into(),
-                detail: Some(format!("{err:?}")),
+            .map_err(|err| {
+                const FFQN: FunctionFqn =
+                    FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_2, "sleep");
+                WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: FFQN,
+                    reason: "schedule-at conversion error".into(),
+                    detail: Some(format!("{err:?}")),
+                }
             })?;
         self.event_history
             .apply(
-                EventCall::BlockingDelayRequest(self.event_history.next_delay(
+                EventCall::BlockingDelayRequest(self.event_history.next_blocking_delay_request(
                     schedule_at,
                     expires_at_if_new,
                     self.backtrace.take(),
@@ -716,6 +713,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
     }
 
     // NB: Caller must not forget to clear `host.backtrace` afterwards.
+    // TODO: Either add RAII-style guard or return a tuple.
     fn get_host_maybe_capture_backtrace<'a>(
         caller: &'a mut wasmtime::StoreContextMut<'_, Self>,
     ) -> &'a mut WorkflowCtx<C> {
@@ -746,33 +744,21 @@ impl<C: ClockFn> WorkflowCtx<C> {
         )
         .map_err(linking_err)?;
         // link obelisk:types@2.0.0
-        host_exports::v2_0_0::obelisk::types::execution::add_to_linker::<_, WorkflowCtx<C>>(
-            linker,
-            |state: &mut Self| state,
-        )
-        .map_err(linking_err)?;
+        types_execution::add_to_linker::<_, WorkflowCtx<C>>(linker, |state: &mut Self| state)
+            .map_err(linking_err)?;
 
         // link workflow-support 2.0.0
-        Self::add_to_linker_workflow_support::<ClosingStrategy_2_0_0, ScheduleAt_2_0_0>(
-            linker,
-            WorkflowSupportVersion::Version2,
-        )?;
+        Self::add_to_linker_workflow_support(linker, WorkflowSupportVersion::Version2)?;
         if stub_wasi {
             super::wasi::add_to_linker_async(linker)?;
         }
         Ok(())
     }
 
-    fn add_to_linker_workflow_support<
-        ClosingStrategyType: wasmtime::component::Lift + 'static,
-        SleepParamType: wasmtime::component::Lift + 'static,
-    >(
+    fn add_to_linker_workflow_support(
         linker: &mut Linker<Self>,
         workflow_support_version: WorkflowSupportVersion,
-    ) -> Result<(), WasmFileError>
-    where
-        ScheduleAt_2_0_0: From<SleepParamType>,
-    {
+    ) -> Result<(), WasmFileError> {
         let mut inst_workflow_support = linker
             .instance(workflow_support_version.as_str())
             .map_err(|err| WasmFileError::LinkingError {
@@ -835,16 +821,33 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
         inst_workflow_support
             .func_wrap_async(
-                "sleep",
+                "submit-delay",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (schedule_at,): (SleepParamType,)| {
-                    let schedule_at = ScheduleAt_2_0_0::from(schedule_at);
+                      (join_set_id, schedule_at): (Resource<JoinSetId>, ScheduleAt_2_0_0)| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host
-                            .sleep(schedule_at, workflow_support_version.sleep_ffqn())
-                            .await;
+                        let join_set_id = host.resource_to_join_set_id(&join_set_id)?.clone();
+                        let result = host.submit_delay(join_set_id, schedule_at).await;
+                        host.backtrace = None;
+                        Ok((result?,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking function submit-delay"),
+                err: err.into(),
+            })?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "sleep",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                      (schedule_at,): (ScheduleAt_2_0_0,)| {
+                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
+                    wasmtime::component::__internal::Box::new(async move {
+                        let host = Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let result = host.sleep(schedule_at).await;
                         host.backtrace = None;
                         result
                     })
@@ -859,7 +862,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .func_wrap_async(
                 "new-join-set-named",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (name, _closing_strategy): (String, ClosingStrategyType)| {
+                      (name, _closing_strategy): (String, ClosingStrategy_2_0_0)| {
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host.new_join_set_named(name).await;
@@ -877,7 +880,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .func_wrap_async(
                 "new-join-set-generated",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (_closing_strategy,): (ClosingStrategyType,)| {
+                      (_closing_strategy,): (ClosingStrategy_2_0_0,)| {
                     wasmtime::component::__internal::Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host.new_join_set_generated().await;
@@ -998,7 +1001,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 )
                 .await
             }
-            ImportedFnCall::Submit {
+            ImportedFnCall::SubmitExecution {
                 target_ffqn,
                 join_set_id,
                 target_params,
@@ -1127,11 +1130,12 @@ enum JoinSetCreateError {
 }
 
 mod workflow_support {
+    use super::types_execution;
     use super::{ClockFn, EventCall, WorkflowCtx, WorkflowFunctionError, assert_matches};
     use crate::workflow::event_history::ChildReturnValue;
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::HostJoinSetId;
-    use crate::workflow::workflow_ctx::JoinSetCreateError;
+    use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_2, JoinSetCreateError};
     use concepts::FunctionFqn;
     use concepts::storage::HistoryEventScheduleAt;
     use concepts::{
@@ -1250,12 +1254,52 @@ mod workflow_support {
             Ok(value)
         }
 
+        pub(crate) async fn submit_delay(
+            &mut self,
+            join_set_id: JoinSetId,
+            schedule_at: HistoryEventScheduleAt,
+        ) -> Result<types_execution::DelayId, WorkflowFunctionError> {
+            let delay_id = self.event_history.next_delay_id(&join_set_id);
+            let expires_at_if_new =
+                schedule_at
+                    .as_date_time(self.clock_fn.now())
+                    .map_err(|err| {
+                        const FFQN: FunctionFqn =
+                            FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_2, "submit-delay");
+
+                        WorkflowFunctionError::ImportedFunctionCallError {
+                            ffqn: FFQN,
+                            reason: "schedule-at conversion error".into(),
+                            detail: Some(format!("{err:?}")),
+                        }
+                    })?;
+            let value = self
+                .event_history
+                .apply(
+                    EventCall::SubmitDelay {
+                        delay_id,
+                        join_set_id,
+                        schedule_at,
+                        expires_at_if_new,
+                        wasm_backtrace: self.backtrace.take(),
+                    },
+                    self.db_pool.connection().as_ref(),
+                    &mut self.version,
+                    self.clock_fn.now(),
+                )
+                .await
+                .map_err(WorkflowFunctionError::from)?;
+            let id = assert_matches!(value, ChildReturnValue::WastVal(WastVal::Record(mut map)) => map.shift_remove("id").expect(
+                "DelayId must be serialized as WastVal::Record"));
+            let id = assert_matches!(id, WastVal::String(id) => id, "DelayId record must have `id` serialized as WastVal::String");
+            Ok(types_execution::DelayId { id })
+        }
+
         pub(crate) async fn sleep(
             &mut self,
             schedule_at: HistoryEventScheduleAt,
-            sleep_ffqn: FunctionFqn,
         ) -> wasmtime::Result<()> {
-            Ok(self.persist_sleep(schedule_at, sleep_ffqn).await?)
+            Ok(self.persist_sleep(schedule_at).await?)
         }
 
         pub(crate) async fn new_join_set_named(
@@ -1334,7 +1378,7 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
-    use crate::workflow::workflow_ctx::{ApplyError, WorkflowSupportVersion};
+    use crate::workflow::workflow_ctx::ApplyError;
     use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
     use crate::{
         workflow::workflow_ctx::WorkflowCtx, workflow::workflow_worker::JoinNextBlockingStrategy,
@@ -1394,8 +1438,11 @@ pub(crate) mod tests {
         Call {
             ffqn: FunctionFqn,
         },
-        SubmitWithoutAwait {
+        SubmitExecution {
             target_ffqn: FunctionFqn,
+        },
+        SubmitDelay {
+            millis: u32, // Avoid ScheduleAtConversionError::OutOfRangeError
         },
         RandomU64 {
             min: u64,
@@ -1485,12 +1532,9 @@ pub(crate) mod tests {
                 let res = match step {
                     WorkflowStep::Sleep { millis } => {
                         workflow_ctx
-                            .persist_sleep(
-                                HistoryEventScheduleAt::In(Duration::from_millis(u64::from(
-                                    *millis,
-                                ))),
-                                WorkflowSupportVersion::SLEEP_FFQN_2,
-                            )
+                            .persist_sleep(HistoryEventScheduleAt::In(Duration::from_millis(
+                                u64::from(*millis),
+                            )))
                             .await
                     }
                     WorkflowStep::Call { ffqn } => {
@@ -1507,7 +1551,7 @@ pub(crate) mod tests {
                             )
                             .await
                     }
-                    WorkflowStep::SubmitWithoutAwait { target_ffqn } => {
+                    WorkflowStep::SubmitExecution { target_ffqn } => {
                         // Create new join set
                         let join_set_resource =
                             workflow_ctx.new_join_set_generated().await.unwrap();
@@ -1532,7 +1576,7 @@ pub(crate) mod tests {
                         };
                         workflow_ctx
                             .call_imported_fn(
-                                ImportedFnCall::Submit {
+                                ImportedFnCall::SubmitExecution {
                                     target_ffqn: target_ffqn.clone(),
                                     join_set_id,
                                     target_params: &[],
@@ -1543,6 +1587,25 @@ pub(crate) mod tests {
                                 self.fn_registry.as_ref(),
                             )
                             .await
+                    }
+                    WorkflowStep::SubmitDelay { millis } => {
+                        // Create new join set
+                        let join_set_resource =
+                            workflow_ctx.new_join_set_generated().await.unwrap();
+                        let join_set_id = workflow_ctx
+                            .resource_table
+                            .get(&join_set_resource)
+                            .unwrap()
+                            .clone();
+                        workflow_ctx
+                            .submit_delay(
+                                join_set_id,
+                                HistoryEventScheduleAt::In(Duration::from_millis(u64::from(
+                                    *millis,
+                                ))),
+                            )
+                            .await
+                            .map(|_| ())
                     }
                     WorkflowStep::RandomU64 { min, max_inclusive } => {
                         let value = workflow_ctx
@@ -1613,7 +1676,9 @@ pub(crate) mod tests {
             let steps = generate_steps(seed);
             let closure = |steps, mut sim_clock, seed| async move {
                 let (_guard, db_pool) = Database::Memory.set_up().await;
-                let res = execute_steps(steps, db_pool.clone(), &mut sim_clock, seed).await;
+                let mut seedable_rng = StdRng::seed_from_u64(seed);
+                let next_u128 = || rand::Rng::r#gen(&mut seedable_rng);
+                let res = execute_steps(steps, db_pool.clone(), &mut sim_clock, next_u128).await;
                 db_pool.close().await.unwrap();
                 res
             };
@@ -1634,9 +1699,15 @@ pub(crate) mod tests {
             println!("Run 1");
             let (execution_id, execution_log) = {
                 let (_guard, db_pool) = Database::Memory.set_up().await;
-                let (execution_id, execution_log) =
-                    execute_steps(steps.clone(), db_pool.clone(), &mut SimClock::epoch(), seed)
-                        .await;
+                let mut seedable_rng = StdRng::seed_from_u64(seed);
+                let next_u128 = || rand::Rng::r#gen(&mut seedable_rng);
+                let (execution_id, execution_log) = execute_steps(
+                    steps.clone(),
+                    db_pool.clone(),
+                    &mut SimClock::epoch(),
+                    next_u128,
+                )
+                .await;
                 println!("{execution_log:?}");
                 (execution_id, execution_log)
             };
@@ -1775,14 +1846,21 @@ pub(crate) mod tests {
             WorkflowStep::Call {
                 ffqn: FFQN_CHILD_MOCK,
             },
-            WorkflowStep::SubmitWithoutAwait {
+            WorkflowStep::SubmitExecution {
                 target_ffqn: FFQN_CHILD_MOCK,
             },
         ];
-        for seed in get_seed() {
-            execute_steps(steps.clone(), db_pool.clone(), &mut SimClock::epoch(), seed).await;
-            db_pool.close().await.unwrap();
-        }
+        execute_steps(steps, db_pool.clone(), &mut SimClock::epoch(), || 0).await;
+        db_pool.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn submit_delay_should_work() {
+        test_utils::set_up();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let steps = vec![WorkflowStep::SubmitDelay { millis: 1 }];
+        execute_steps(steps, db_pool.clone(), &mut SimClock::epoch(), || 0).await;
+        db_pool.close().await.unwrap();
     }
 
     const FFQN_CHILD_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn-child");
@@ -1816,7 +1894,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let steps: Vec<_> = std::iter::repeat_n(
-            WorkflowStep::SubmitWithoutAwait {
+            WorkflowStep::SubmitExecution {
                 target_ffqn: FFQN_CHILD_MOCK,
             },
             SUBMITS,
@@ -2015,8 +2093,7 @@ pub(crate) mod tests {
         // FIXME: the test harness supports a single child/delay request per join set
         let mut join_sets = hashbrown::HashSet::new();
         steps.retain(|step| match step {
-            WorkflowStep::Call { ffqn }
-            | WorkflowStep::SubmitWithoutAwait { target_ffqn: ffqn } => {
+            WorkflowStep::Call { ffqn } | WorkflowStep::SubmitExecution { target_ffqn: ffqn } => {
                 join_sets.insert(ffqn.clone()) // Retain only the first step for a given ffqn
             }
             _ => true,
@@ -2030,7 +2107,7 @@ pub(crate) mod tests {
             .iter()
             .filter_map(|step| match step {
                 WorkflowStep::Call { ffqn }
-                | WorkflowStep::SubmitWithoutAwait { target_ffqn: ffqn } => Some(ffqn.clone()),
+                | WorkflowStep::SubmitExecution { target_ffqn: ffqn } => Some(ffqn.clone()),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -2041,10 +2118,8 @@ pub(crate) mod tests {
         steps: Vec<WorkflowStep>,
         db_pool: Arc<dyn DbPool>,
         sim_clock: &mut SimClock,
-        seed: u64,
+        mut next_u128: impl FnMut() -> u128,
     ) -> (ExecutionId, ExecutionLog) {
-        let mut seedable_rng = StdRng::seed_from_u64(seed);
-        let mut next_u128 = || rand::Rng::r#gen(&mut seedable_rng);
         let created_at = sim_clock.now();
         info!(now = %created_at, "Steps: {steps:?}");
         let execution_id = ExecutionId::from_parts(
@@ -2057,7 +2132,7 @@ pub(crate) mod tests {
             .filter(|step| {
                 matches!(
                     step,
-                    WorkflowStep::Call { .. } | WorkflowStep::SubmitWithoutAwait { .. }
+                    WorkflowStep::Call { .. } | WorkflowStep::SubmitExecution { .. }
                 )
             })
             .count();

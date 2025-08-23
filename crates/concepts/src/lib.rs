@@ -901,7 +901,7 @@ impl Params {
 }
 
 pub mod prefixed_ulid {
-    use crate::{JoinSetId, JoinSetIdParseError, JoinSetKind};
+    use crate::{JoinSetId, JoinSetIdParseError};
     use serde_with::{DeserializeFromStr, SerializeDisplay};
     use std::{
         fmt::{Debug, Display},
@@ -1288,6 +1288,7 @@ pub mod prefixed_ulid {
     const EXECUTION_ID_JOIN_SET_INFIX: char = '_';
     const EXECUTION_ID_START_IDX: u64 = 1;
     pub const JOIN_SET_START_IDX: u64 = 1;
+    const DELAY_ID_START_IDX: u64 = 1;
 
     #[derive(Debug, thiserror::Error)]
     pub enum ExecutionIdParseError {
@@ -1385,14 +1386,22 @@ pub mod prefixed_ulid {
     }
     impl DelayId {
         #[must_use]
-        pub fn new_oneoff(execution_id: &ExecutionId, join_set_id: &JoinSetId) -> DelayId {
-            assert_eq!(join_set_id.kind, JoinSetKind::OneOff);
+        pub fn new(execution_id: &ExecutionId, join_set_id: &JoinSetId) -> DelayId {
+            Self::new_with_index(execution_id, join_set_id, DELAY_ID_START_IDX)
+        }
+
+        #[must_use]
+        pub fn new_with_index(
+            execution_id: &ExecutionId,
+            join_set_id: &JoinSetId,
+            idx: u64,
+        ) -> DelayId {
             let ExecutionIdDerived {
-                top_level,
+                top_level: PrefixedUlid { ulid, .. },
                 infix,
-                idx,
+                idx: _,
             } = execution_id.next_level(join_set_id);
-            let top_level = DelayIdTopLevel::new(top_level.ulid);
+            let top_level = DelayIdTopLevel::new(ulid);
             DelayId {
                 top_level,
                 infix,
@@ -1461,7 +1470,7 @@ pub mod prefixed_ulid {
                 let execution_id = ExecutionId::arbitrary(u)?;
                 let mut join_set_id = JoinSetId::arbitrary(u)?;
                 join_set_id.kind = crate::JoinSetKind::OneOff;
-                Ok(DelayId::new_oneoff(&execution_id, &join_set_id))
+                Ok(DelayId::new(&execution_id, &join_set_id))
             }
         }
     }

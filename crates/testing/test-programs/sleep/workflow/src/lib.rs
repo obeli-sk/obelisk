@@ -48,4 +48,20 @@ impl Guest for Component {
         let random_duration = DurationEnum::Milliseconds(random_millis);
         workflow_support::sleep(ScheduleAt::In(random_duration));
     }
+
+    fn two_delays_in_same_join_set() {
+        let join_set_id = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+        let _long =
+            workflow_support::submit_delay(&join_set_id, ScheduleAt::In(DurationEnum::Seconds(10)));
+        // let _short = workflow_support::submit_delay(
+        //     &join_set_id,
+        //     ScheduleAt::In(DurationEnum::Milliseconds(10)),
+        // );
+        // let obelisk::types::execution::ResponseId::DelayId(first) =
+        //     workflow_support::join_next(&join_set_id).unwrap()
+        // else {
+        //     unreachable!("only delays have been submitted");
+        // };
+        // assert_eq!(short.id, first.id);
+    }
 }

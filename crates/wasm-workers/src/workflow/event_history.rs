@@ -1288,6 +1288,53 @@ impl EventHistory {
                 Ok(history_events)
             }
 
+            EventCall::SubmitDelay {
+                join_set_id,
+                delay_id,
+                schedule_at,
+                expires_at_if_new,
+                wasm_backtrace,
+            } => {
+                // Non-cacheable event.
+                debug!(%delay_id, %join_set_id, "SubmitDelay");
+                self.flush_non_blocking_event_cache(db_connection, called_at)
+                    .await?;
+
+                let event = HistoryEvent::JoinSetRequest {
+                    join_set_id: join_set_id.clone(),
+                    request: JoinSetRequest::DelayRequest {
+                        delay_id,
+                        expires_at: expires_at_if_new,
+                        schedule_at,
+                    },
+                };
+                let delay_req = AppendRequest {
+                    created_at: called_at,
+                    event: ExecutionEventInner::HistoryEvent {
+                        event: event.clone(),
+                    },
+                };
+                *version = {
+                    let next_version = db_connection
+                        .append_batch(
+                            called_at,
+                            vec![delay_req],
+                            self.execution_id.clone(),
+                            version.clone(),
+                        )
+                        .await?;
+                    self.persist_backtrace_blocking(
+                        db_connection,
+                        version,
+                        &next_version,
+                        wasm_backtrace,
+                    )
+                    .await;
+                    next_version
+                };
+                Ok(vec![event])
+            }
+
             EventCall::ScheduleRequest {
                 schedule_at,
                 scheduled_at_if_new,
@@ -1790,14 +1837,14 @@ impl EventHistory {
         }
     }
 
-    pub(crate) fn next_delay(
+    pub(crate) fn next_blocking_delay_request(
         &self,
         schedule_at: HistoryEventScheduleAt,
         expires_at_if_new: DateTime<Utc>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> BlockingDelayRequest {
         let join_set_id = self.next_join_set_one_off();
-        let delay_id = DelayId::new_oneoff(&self.execution_id, &join_set_id);
+        let delay_id = DelayId::new(&self.execution_id, &join_set_id);
         BlockingDelayRequest {
             join_set_id,
             delay_id,
@@ -1881,6 +1928,11 @@ impl EventHistory {
                 | HistoryEvent::Stub { .. } => false,
             })
             .count()
+    }
+
+    pub(crate) fn next_delay_id(&self, join_set_id: &JoinSetId) -> DelayId {
+        // FIXME: Count already created delays for this join set
+        DelayId::new(&self.execution_id, join_set_id)
     }
 }
 
@@ -2007,6 +2059,7 @@ pub(crate) enum EventCall {
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
+    // TODO: Rename to `SubmitChildExecution`
     StartAsync {
         target_ffqn: FunctionFqn,
         fn_component_id: ComponentId,
@@ -2018,6 +2071,15 @@ pub(crate) enum EventCall {
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
+    SubmitDelay {
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
+        schedule_at: HistoryEventScheduleAt, // Intention that must be compared when checking determinism
+        expires_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
+        #[debug(skip)]
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+    },
+    // TODO: Rename to `Schedule`
     ScheduleRequest {
         schedule_at: HistoryEventScheduleAt, // Intention that must be compared when checking determinism
         scheduled_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
@@ -2140,9 +2202,10 @@ impl EventCall {
 
             EventCall::CreateJoinSet { .. }
             | EventCall::StartAsync { .. }
+            | EventCall::SubmitDelay { .. }
             | EventCall::ScheduleRequest { .. }
             | EventCall::Persist { .. }
-            | EventCall::Stub { .. } => None, // continue the execution event if Interrupt strategy is set
+            | EventCall::Stub { .. } => None, // No response polling is needed.
         }
     }
 }
@@ -2228,6 +2291,16 @@ impl EventCall {
                 join_set_id: join_set_id.clone(),
                 child_execution_id: child_execution_id.clone(),
                 target_ffqn: target_ffqn.clone(),
+            }],
+            EventCall::SubmitDelay {
+                delay_id,
+                join_set_id,
+                schedule_at: timeout,
+                ..
+            } => vec![EventHistoryKey::DelayRequest {
+                join_set_id: join_set_id.clone(),
+                delay_id: delay_id.clone(),
+                schedule_at: *timeout,
             }],
             EventCall::BlockingChildAwaitNext {
                 join_set_id,
@@ -2526,18 +2599,10 @@ mod tests {
         db_pool.close().await.unwrap();
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn create_two_non_blocking_childs_then_two_join_nexts_matching() {
-        create_two_non_blocking_childs_then_two_join_nexts_inner(false).await;
-    }
-
-    #[tokio::test]
-    async fn create_two_non_blocking_childs_then_two_join_nexts_mismatch() {
-        create_two_non_blocking_childs_then_two_join_nexts_inner(true).await;
-    }
-
-    async fn create_two_non_blocking_childs_then_two_join_nexts_inner(
-        submits_and_awaits_in_correct_order: bool,
+    async fn create_two_non_blocking_childs_then_two_join_nexts(
+        #[values(true, false)] submits_and_awaits_in_correct_order: bool,
     ) {
         const KID_A_RET: SupportedFunctionReturnValue =
             SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {

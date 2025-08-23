@@ -26,8 +26,8 @@ interface workflow-support {
     /// Block execution for given time.
     sleep: func(schedule-at: schedule-at);
 
-    /// Add a delay request to the join set. The delay can be later polled using `await-next`.
-    request-delay: func(join-set-id: borrow<join-set-id>, timeout: schedule-at) -> delay-id;
+    /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
+    submit-delay: func(join-set-id: borrow<join-set-id>, timeout: schedule-at) -> delay-id;
 
     /// Create a new completing join set.
     new-join-set-named: func(name: string, closing-strategy: closing-strategy) -> join-set-id;

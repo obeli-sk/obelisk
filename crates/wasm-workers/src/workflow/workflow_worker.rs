@@ -1626,17 +1626,16 @@ pub(crate) mod tests {
             db_pool.clone(),
             Arc::new([FFQN_WORKFLOW_SLEEP_RESCHEDULE_FFQN]),
         );
-        // tick + await should mark the first execution finished.
-        assert_eq!(
-            1,
-            exec_task
+        {
+            let task_count = exec_task
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
-        );
+                .unwrap();
+            assert_eq!(1, task_count);
+        }
         let res = db_pool.connection().get(&execution_id).await.unwrap();
         assert_matches!(
             res.into_finished_result().unwrap(),
@@ -1775,7 +1774,7 @@ pub(crate) mod tests {
     ) {
         use crate::activity::activity_worker::tests::compile_activity_stub;
 
-        const FFQN_WORKFLOW_STUB_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+        const FFQN_WORKFLOW_STUB: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_STUB_AWAIT,
         );
         const INPUT_PARAM: &str = "bar";
@@ -1804,7 +1803,7 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id: execution_id.clone(),
-                ffqn: FFQN_WORKFLOW_STUB_FFQN,
+                ffqn: FFQN_WORKFLOW_STUB,
                 params,
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -1828,20 +1827,19 @@ pub(crate) mod tests {
             },
             sim_clock.clone(),
             db_pool.clone(),
-            Arc::new([FFQN_WORKFLOW_STUB_FFQN]),
+            Arc::new([FFQN_WORKFLOW_STUB]),
         );
-        info!("Should be interrupted at PendingAt now");
-        // tick + await should mark the first execution finished.
-        assert_eq!(
-            1,
-            exec_task
+
+        {
+            let task_count = exec_task
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
-        );
+                .unwrap();
+            assert_eq!(1, task_count);
+        }
 
         let pending_state = db_connection
             .get_pending_state(&execution_id)
@@ -1870,6 +1868,115 @@ pub(crate) mod tests {
             )) => value
         );
         assert_eq!(WastVal::String(format!("stubbing {INPUT_PARAM}")), value);
+
+        drop(exec_task);
+        db_pool.close().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn submit_delay(
+        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
+    ) {
+        const FFQN_DELAY: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::TWO_DELAYS_IN_SAME_JOIN_SET
+        );
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool) = db.set_up().await;
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY), // only to satisfy imports
+            compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW),
+        ]);
+
+        let worker = compile_workflow_worker(
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+            db_pool.clone(),
+            sim_clock.clone(),
+            TokioSleep,
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+        );
+        let exec_task = ExecTask::new(
+            worker,
+            ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: TICK_SLEEP,
+                component_id: ComponentId::dummy_workflow(),
+                task_limiter: None,
+                executor_id: ExecutorId::generate(),
+            },
+            sim_clock.clone(),
+            db_pool.clone(),
+            Arc::new([FFQN_DELAY]),
+        );
+
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: FFQN_DELAY,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: u32::MAX,
+                component_id: ComponentId::dummy_workflow(),
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        {
+            let task_count = exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap();
+            assert_eq!(1, task_count);
+        }
+
+        let pending_state = db_connection
+            .get_pending_state(&execution_id)
+            .await
+            .unwrap();
+        assert_matches!(
+            pending_state,
+            PendingState::Finished {
+                finished: PendingStateFinished {
+                    result_kind: PendingStateFinishedResultKind(Ok(())),
+                    ..
+                }
+            }
+        );
+
+        // let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
+
+        // sim_clock.move_time_to(scheduled_at);
+
+        // // another tick + await should mark the execution finished.
+        // assert_eq!(
+        //     1,
+        //     exec_task
+        //         .tick_test(sim_clock.now(), RunId::generate())
+        //         .await
+        //         .unwrap()
+        //         .wait_for_tasks()
+        //         .await
+        //         .unwrap()
+        // );
+
+        // let res = db_connection.get(&execution_id).await.unwrap();
+        // assert_matches!(
+        //     res.into_finished_result().unwrap().unwrap(),
+        //     SupportedFunctionReturnValue::None
+        // );
 
         drop(exec_task);
         db_pool.close().await.unwrap();

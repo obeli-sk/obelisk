@@ -20,6 +20,7 @@ pub(crate) mod v2_0_0 {
     use chrono::DateTime;
     use chrono::Utc;
     use concepts::FunctionFqn;
+    use concepts::prefixed_ulid::DelayId;
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::HistoryEventScheduleAt;
     use obelisk::types::execution as types_execution;
@@ -103,6 +104,14 @@ pub(crate) mod v2_0_0 {
         fn from(value: &ExecutionIdDerived) -> Self {
             Self {
                 execution_id: types_execution::ExecutionId::from(value),
+            }
+        }
+    }
+
+    impl From<&DelayId> for types_execution::DelayId {
+        fn from(value: &DelayId) -> Self {
+            Self {
+                id: value.to_string(),
             }
         }
     }
