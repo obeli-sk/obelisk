@@ -1603,7 +1603,7 @@ impl<'a> arbitrary::Arbitrary<'a> for JoinSetId {
                 .collect()
         };
 
-        Ok(JoinSetId::new(JoinSetKind::Generated, StrVariant::from(name)).unwrap())
+        Ok(JoinSetId::new(JoinSetKind::Named, StrVariant::from(name)).unwrap())
     }
 }
 

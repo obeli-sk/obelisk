@@ -1395,7 +1395,8 @@ pub(crate) mod tests {
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
     use concepts::time::{ClockFn, Now};
     use concepts::{
-        ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, JoinSetId, SUFFIX_PKG_EXT,
+        ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, JoinSetId, JoinSetKind,
+        SUFFIX_PKG_EXT,
     };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
@@ -1440,8 +1441,8 @@ pub(crate) mod tests {
         Call {
             ffqn: FunctionFqn,
         },
-        JoinSetCreate {
-            name: String,
+        JoinSetCreateNamed {
+            join_set_id: JoinSetId,
         },
         SubmitExecution {
             target_ffqn: FunctionFqn,
@@ -1558,8 +1559,12 @@ pub(crate) mod tests {
                             .await
                     }
 
-                    WorkflowStep::JoinSetCreate { name } => {
-                        workflow_ctx.new_join_set_named(name.clone()).await.unwrap();
+                    WorkflowStep::JoinSetCreateNamed { join_set_id } => {
+                        assert_eq!(JoinSetKind::Named, join_set_id.kind);
+                        workflow_ctx
+                            .new_join_set_named(join_set_id.name.to_string())
+                            .await
+                            .unwrap();
                         Ok(())
                     }
 
@@ -1877,19 +1882,19 @@ pub(crate) mod tests {
     async fn submitting_two_delays_should_work() {
         test_utils::set_up();
         let (_guard, db_pool) = Database::Memory.set_up().await;
-        let join_set = JoinSetId::new(concepts::JoinSetKind::Named, "".into()).unwrap();
+        let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "".into()).unwrap();
 
         let steps = vec![
-            WorkflowStep::JoinSetCreate {
-                name: join_set.name.to_string(),
+            WorkflowStep::JoinSetCreateNamed {
+                join_set_id: join_set_id.clone(),
             },
             WorkflowStep::SubmitDelay {
                 millis: 1,
-                join_set_id: Some(join_set.clone()),
+                join_set_id: Some(join_set_id.clone()),
             },
             WorkflowStep::SubmitDelay {
                 millis: 10,
-                join_set_id: Some(join_set),
+                join_set_id: Some(join_set_id),
             },
         ];
         execute_steps(steps, db_pool.clone(), &mut SimClock::epoch(), || 0).await;
