@@ -945,6 +945,7 @@ impl EventHistory {
                 },
             ) if *join_set_id == *found_join_set_id => {
                 trace!(%join_set_id, "matched JoinNext with JoinNextTooMany");
+                self.event_history[found_idx].1 = Processed;
                 Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(
                     Err(workflow_support::JoinNextError::AllProcessed),
                 )))

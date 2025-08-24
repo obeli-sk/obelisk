@@ -1875,12 +1875,31 @@ pub(crate) mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
-    async fn submit_delay(
+    async fn two_delays_in_same_join_set(
         #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
     ) {
-        const FFQN_DELAY: FunctionFqn = FunctionFqn::new_static_tuple(
+        const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::TWO_DELAYS_IN_SAME_JOIN_SET
         );
+        execute_sleep_fn_with_single_delay(FFQN, Duration::from_millis(10), db).await;
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn join_next_produces_all_processed_error(
+        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
+    ) {
+        const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::JOIN_NEXT_PRODUCES_ALL_PROCESSED_ERROR
+        );
+        execute_sleep_fn_with_single_delay(FFQN, Duration::from_millis(10), db).await;
+    }
+
+    async fn execute_sleep_fn_with_single_delay(
+        ffqn: FunctionFqn,
+        delay: Duration,
+        db: db_tests::Database,
+    ) {
         test_utils::set_up();
         let sim_clock = SimClock::epoch();
         let (_guard, db_pool) = db.set_up().await;
@@ -1909,7 +1928,7 @@ pub(crate) mod tests {
             },
             sim_clock.clone(),
             db_pool.clone(),
-            Arc::new([FFQN_DELAY]),
+            Arc::new([ffqn.clone()]),
         );
 
         let execution_id = ExecutionId::generate();
@@ -1918,7 +1937,7 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id: execution_id.clone(),
-                ffqn: FFQN_DELAY,
+                ffqn,
                 params: Params::empty(),
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -1949,8 +1968,7 @@ pub(crate) mod tests {
 
         assert_matches!(pending_state, PendingState::BlockedByJoinSet { .. });
 
-        // See WASM impl in `two_delays_in_same_join_set()`
-        sim_clock.move_time_forward(Duration::from_millis(10));
+        sim_clock.move_time_forward(delay);
         {
             let timer = expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
                 .await

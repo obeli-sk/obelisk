@@ -4,6 +4,7 @@ use obelisk::types::time::Duration as DurationEnum;
 use obelisk::types::time::ScheduleAt;
 use obelisk::workflow::workflow_support;
 use obelisk::workflow::workflow_support::ClosingStrategy;
+use obelisk::workflow::workflow_support::JoinNextError;
 use obelisk::workflow::workflow_support::new_join_set_generated as new_join_set_generated1;
 use testing::sleep::sleep as sleep_activity;
 use testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
@@ -63,5 +64,15 @@ impl Guest for Component {
             unreachable!("only delays have been submitted");
         };
         assert_eq!(short.id, first.id);
+    }
+
+    fn join_next_produces_all_processed_error() {
+        let join_set_id = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+        workflow_support::submit_delay(
+            &join_set_id,
+            ScheduleAt::In(DurationEnum::Milliseconds(10)),
+        );
+        workflow_support::join_next(&join_set_id).unwrap();
+        let JoinNextError::AllProcessed = workflow_support::join_next(&join_set_id).unwrap_err();
     }
 }

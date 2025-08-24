@@ -12,5 +12,6 @@ interface workflow {
     sleep-random: func(min-millis: u64, max-millis-inclusive: u64);
 
     two-delays-in-same-join-set: func();
+    join-next-produces-all-processed-error: func();
 
 }
