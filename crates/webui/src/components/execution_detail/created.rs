@@ -187,7 +187,7 @@ impl ProcessedProps {
                     icon: Icon::Time,
                     label: html! { <>
                         {"Scheduled by "}
-                        { self.link.link(scheduled_by.clone(), "Scheduled by") }
+                        { self.link.link(scheduled_by.clone(), &scheduled_by.to_string()) }
                     </>},
                     has_caret: false,
                     ..Default::default()
