@@ -689,6 +689,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for WorkflowWorker<C, S> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::activity::activity_worker::tests::compile_activity_stub;
     use crate::{
         activity::activity_worker::tests::{
             FIBO_10_INPUT, FIBO_10_OUTPUT, compile_activity, spawn_activity_fibo, wasm_file_name,
@@ -1772,8 +1773,6 @@ pub(crate) mod tests {
     async fn stub(
         #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
     ) {
-        use crate::activity::activity_worker::tests::compile_activity_stub;
-
         const FFQN_WORKFLOW_STUB: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_STUB_AWAIT,
         );
@@ -1987,6 +1986,85 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
         );
+
+        let res = db_connection.get(&execution_id).await.unwrap();
+        assert_matches!(
+            res.into_finished_result().unwrap().unwrap(),
+            SupportedFunctionReturnValue::None
+        );
+
+        drop(exec_task);
+        db_pool.close().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn await_next_produces_all_processed_error(
+        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
+    ) {
+        const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::AWAIT_NEXT_PRODUCES_ALL_PROCESSED_ERROR
+        );
+        test_utils::set_up();
+        let sim_clock = SimClock::epoch();
+        let (_guard, db_pool) = db.set_up().await;
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
+            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW),
+        ]);
+
+        let worker = compile_workflow_worker(
+            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+            db_pool.clone(),
+            sim_clock.clone(),
+            TokioSleep,
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+        );
+        let exec_task = ExecTask::new(
+            worker,
+            ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: TICK_SLEEP,
+                component_id: ComponentId::dummy_workflow(),
+                task_limiter: None,
+                executor_id: ExecutorId::generate(),
+            },
+            sim_clock.clone(),
+            db_pool.clone(),
+            Arc::new([FFQN]),
+        );
+
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: FFQN,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: u32::MAX,
+                component_id: ComponentId::dummy_workflow(),
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        {
+            let task_count = exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap();
+            assert_eq!(1, task_count);
+        }
 
         let res = db_connection.get(&execution_id).await.unwrap();
         assert_matches!(

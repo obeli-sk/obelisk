@@ -3,7 +3,7 @@ use crate::obelisk::workflow::workflow_support::{self, ClosingStrategy};
 use crate::testing::stub_activity::activity;
 use crate::testing::stub_activity_obelisk_ext::activity as activity_ext;
 use crate::testing::stub_activity_obelisk_stub::activity as activity_stub;
-use obelisk::types::execution::{ExecutionId, StubError};
+use obelisk::types::execution::{ExecutionError, ExecutionId, StubError};
 use wit_bindgen::generate;
 
 generate!({ generate_all });
@@ -17,7 +17,7 @@ impl Guest for Component {
         activity_stub::foo_stub(&execution_id, Ok(&format!("stubbing {arg}")))
             .expect("stubbed activity must accept returned value once");
         let (actual_execution_id, ret_val) =
-            activity_ext::foo_await_next(&join_set).expect("stubbed activity must resolve");
+            activity_ext::foo_await_next(&join_set).expect("stubbed execution result above");
         assert_eq!(execution_id.id, actual_execution_id.id);
         ret_val
     }
@@ -66,5 +66,13 @@ impl Guest for Component {
 
     fn stub_subworkflow(execution_id: ExecutionId, retval: String) -> Result<(), StubError> {
         activity_stub::foo_stub(&execution_id, Ok(&format!("stubbing {retval}")))
+    }
+
+    fn await_next_produces_all_processed_error() {
+        let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+        let ExecutionError::AllProcessed = activity_ext::foo_await_next(&join_set).unwrap_err()
+        else {
+            unreachable!()
+        };
     }
 }

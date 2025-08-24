@@ -706,6 +706,7 @@ impl EventHistory {
                 && Some(requested_ffqn) == found_requested_ffqn.as_ref() =>
             {
                 trace!(%join_set_id, "matched JoinNextChild with JoinNextTooMany");
+                self.event_history[found_idx].1 = Processed;
                 let all_processed = ExecutionErrorVariant::AllProcessed.as_wast_val();
                 Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                     WastVal::Result(Err(Some(Box::new(all_processed)))),
