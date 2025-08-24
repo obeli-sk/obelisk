@@ -926,7 +926,6 @@ impl EventHistory {
                         delay_id, // Currently only a single blocking delay is supported, no need to match the id
                     }) => {
                         trace!(%join_set_id, %delay_id, "EventHistoryKey::JoinNext: Matched DelayFinished");
-
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(Ok(
                             types_execution::ResponseId::DelayId(delay_id.into()),
                         ))))
@@ -984,19 +983,17 @@ impl EventHistory {
                 },
             ) if target_execution_id == found_execution_id && return_value == found_result => {
                 trace!(%target_execution_id, "Matched Stub");
-                let ret = match target_result {
-                    Ok(()) => Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                        WastVal::Result(Ok(None)),
-                    ))),
-                    Err(()) => Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                        WastVal::Result(Err(Some(Box::new(WastVal::Variant(
-                            "conflict".to_string(),
-                            None,
-                        ))))),
-                    ))),
+                let wat_val = match target_result {
+                    Ok(()) => WastVal::Result(Ok(None)),
+                    Err(()) => WastVal::Result(Err(Some(Box::new(WastVal::Variant(
+                        "conflict".to_string(), // TODO: return generated StubError::Conflict
+                        None,
+                    ))))),
                 };
                 self.event_history[found_idx].1 = Processed;
-                ret
+                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                    wat_val,
+                )))
             }
 
             (key, found) => Err(ApplyError::NondeterminismDetected(format!(
