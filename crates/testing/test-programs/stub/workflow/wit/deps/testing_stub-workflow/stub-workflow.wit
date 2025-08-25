@@ -8,7 +8,10 @@ interface workflow {
 
     noret-submit-await: func();
 
-    submit-race: func() -> string;
+    submit-race-join-next-stub: func();
+    submit-race-join-next-stub-error: func();
+    submit-race-join-next-delay: func();
+
     stub-subworkflow: func(execution-id: execution-id, retval: string) -> result<_, stub-error>;
 
     await-next-produces-all-processed-error: func();

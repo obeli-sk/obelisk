@@ -96,8 +96,9 @@ pub(crate) struct EventHistory {
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     execution_deadline: DateTime<Utc>,
     event_history: Vec<(HistoryEvent, ProcessingStatus)>,
-    index_child_exe_to_processed_response_idx_and_ffqn:
-        HashMap<ExecutionIdDerived, (usize, FunctionFqn)>,
+    // Used for `-get`ting the processed response by Execution Id.
+    index_child_exe_to_processed_response_idx: HashMap<ExecutionIdDerived, usize>,
+    index_child_exe_to_ffqn: HashMap<ExecutionIdDerived, FunctionFqn>,
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
@@ -146,7 +147,8 @@ impl EventHistory {
         EventHistory {
             execution_id,
             component_id,
-            index_child_exe_to_processed_response_idx_and_ffqn: HashMap::default(),
+            index_child_exe_to_processed_response_idx: HashMap::default(),
+            index_child_exe_to_ffqn: HashMap::default(),
             event_history: event_history
                 .into_iter()
                 .map(|event| (event, Unprocessed))
@@ -228,7 +230,7 @@ impl EventHistory {
         version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, ApplyError> {
-        trace!("apply({event_call:?})");
+        debug!("applying {event_call:?}");
         if let Some(resp) = self.find_matching_atomic(&event_call)? {
             trace!("found_atomic: {resp:?}");
             return Ok(resp);
@@ -528,36 +530,38 @@ impl EventHistory {
             "mark_next_unprocessed_response responses: {:?}",
             self.responses
         );
-        let found_idx = self
-            .responses
-            .iter()
-            .enumerate()
-            .find_map(|(idx, (event, status))| {
-                if *status == Unprocessed
-                    && let JoinSetResponseEvent {
-                        join_set_id: found_join_set_id,
-                        event: _,
-                    } = event
-                    && found_join_set_id == join_set_id
-                {
-                    Some(idx)
-                } else {
-                    None
-                }
-            });
-        if let Some(idx) = found_idx {
+        let found_resp_idx =
+            self.responses
+                .iter()
+                .enumerate()
+                .find_map(|(idx, (event, status))| {
+                    if *status == Unprocessed
+                        && let JoinSetResponseEvent {
+                            join_set_id: found_join_set_id,
+                            event: _,
+                        } = event
+                        && found_join_set_id == join_set_id
+                    {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                });
+        if let Some(found_resp_idx) = found_resp_idx {
             self.event_history[parent_event_idx].1 = Processed;
-            self.responses[idx].1 = Processed;
+            self.responses[found_resp_idx].1 = Processed;
             let enriched = {
-                match &self.responses[idx].0.event {
+                match &self.responses[found_resp_idx].0.event {
                     JoinSetResponse::ChildExecutionFinished {
                         child_execution_id,
                         finished_version: _,
                         result,
                     } => {
-                        // Determine ffqn from child_execution_id
-                        let (_response_idx, response_ffqn) = self
-                            .index_child_exe_to_processed_response_idx_and_ffqn
+                        self.index_child_exe_to_processed_response_idx
+                            .insert(child_execution_id.clone(), found_resp_idx);
+
+                        let response_ffqn = self
+                            .index_child_exe_to_ffqn
                             .get(child_execution_id)
                             .expect("if finished the index must have it");
                         JoinSetResponseEnriched::ChildExecutionFinished(ChildExecutionFinished {
@@ -656,8 +660,8 @@ impl EventHistory {
             ) if *join_set_id == *found_join_set_id && *execution_id == *child_execution_id => {
                 // TODO: Check params to catch non-deterministic errors.
                 trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
-                self.index_child_exe_to_processed_response_idx_and_ffqn
-                    .insert(child_execution_id.clone(), (found_idx, target_ffqn.clone()));
+                self.index_child_exe_to_ffqn
+                    .insert(child_execution_id.clone(), target_ffqn.clone());
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::StartAsync`] , return execution id
                 Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
@@ -1770,8 +1774,12 @@ impl EventHistory {
         child_execution_id: &ExecutionIdDerived,
         specified_ffqn: &FunctionFqn,
     ) -> Result<Option<WastVal>, GetExtensionError> {
-        let (response_idx, found_ffqn) = self
-            .index_child_exe_to_processed_response_idx_and_ffqn
+        let found_ffqn = self
+            .index_child_exe_to_ffqn
+            .get(child_execution_id)
+            .ok_or(GetExtensionError::NotFoundInProcessedResponses)?; // Not even found in unprocessed requests.
+        let response_idx = self
+            .index_child_exe_to_processed_response_idx
             .get(child_execution_id)
             .ok_or(GetExtensionError::NotFoundInProcessedResponses)?;
 
@@ -1786,12 +1794,26 @@ impl EventHistory {
                 },
             ));
         }
-        match &self.responses.get(*response_idx).as_ref().expect(
-            "index_child_exe_to_processed_response_idx_and_ffqn must be consistent with responses",
-        ).0.event {
-            JoinSetResponse::ChildExecutionFinished { result: Ok(supported_retval), .. } => Ok(supported_retval.clone().into_value()),
-            JoinSetResponse::ChildExecutionFinished { result: Err(_err), ..}  => Err(GetExtensionError::ExecutionFailed(types_execution::ExecutionFailed::from(child_execution_id))),
-            JoinSetResponse::DelayFinished { .. } => unreachable!("`index_child_exe_to_processed_response_idx_and_ffqn` must point to a ChildExecutionFinished"),
+        match &self
+            .responses
+            .get(*response_idx)
+            .as_ref()
+            .expect("`index_child_exe_to_processed_response_idx` must point to a response")
+            .0
+            .event
+        {
+            JoinSetResponse::ChildExecutionFinished {
+                result: Ok(supported_retval),
+                ..
+            } => Ok(supported_retval.clone().into_value()),
+            JoinSetResponse::ChildExecutionFinished {
+                result: Err(_err), ..
+            } => Err(GetExtensionError::ExecutionFailed(
+                types_execution::ExecutionFailed::from(child_execution_id),
+            )),
+            JoinSetResponse::DelayFinished { .. } => unreachable!(
+                "`index_child_exe_to_processed_response_idx` must point to a ChildExecutionFinished"
+            ),
         }
     }
 

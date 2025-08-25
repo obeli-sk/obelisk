@@ -3,7 +3,9 @@ use crate::obelisk::workflow::workflow_support::{self, ClosingStrategy};
 use crate::testing::stub_activity::activity;
 use crate::testing::stub_activity_obelisk_ext::activity as activity_ext;
 use crate::testing::stub_activity_obelisk_stub::activity as activity_stub;
-use obelisk::types::execution::{ExecutionError, ExecutionId, StubError};
+use obelisk::types::execution::{
+    ExecutionError, ExecutionFailed, ExecutionId, GetExtensionError, ResponseId, StubError,
+};
 use wit_bindgen::generate;
 
 generate!({ generate_all });
@@ -30,38 +32,14 @@ impl Guest for Component {
         activity::noret();
     }
 
-    fn submit_race() -> String {
-        // let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
-        // let execution_id = activity_ext::foo_submit(&join_set, "some param");
-        // let delay_id = workflow_support::request_delay(
-        //     &join_set,
-        //     obelisk::types::time::ScheduleAt::In(obelisk::types::time::Duration::Seconds(1)),
-        // );
-        // match workflow_support::await_next(&join_set)
-        //     .expect("two submissions and no response was processed yet")
-        // {
-        //     AwaitNextResponse::Execution(found_id) => {
-        //         assert_eq!(found_id.id, execution_id.id);
-        //         match activity_ext::foo_get(&execution_id)
-        //         {
-        //             Ok(ok) => format!("execution won: {ok}"),
-        //             Err(GetExtensionError::FunctionMismatch) => {
-        //                 unreachable!("no other functions were submitted")
-        //             }
-        //             Err(GetExtensionError::ExecutionFailed(_)) => {
-        //                 format!("got execution error :(")
-        //             }
-        //             Err(GetExtensionError::NotFoundInProcessedResponses) => {
-        //                 unreachable!("got it from awaiting")
-        //             }
-        //         }
-        //     }
-        //     AwaitNextResponse::Delay(found_id) => {
-        //         assert_eq!(found_id.id, delay_id.id);
-        //         "delay won".to_string()
-        //     }
-        // }
-        todo!()
+    fn submit_race_join_next_stub() {
+        submit_race_join_next(RaceConfig::Stub);
+    }
+    fn submit_race_join_next_stub_error() {
+        submit_race_join_next(RaceConfig::StubError);
+    }
+    fn submit_race_join_next_delay() {
+        submit_race_join_next(RaceConfig::Delay);
     }
 
     fn stub_subworkflow(execution_id: ExecutionId, retval: String) -> Result<(), StubError> {
@@ -74,5 +52,64 @@ impl Guest for Component {
         else {
             unreachable!()
         };
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RaceConfig {
+    Delay,
+    Stub,
+    StubError,
+}
+
+fn submit_race_join_next(config: RaceConfig) {
+    const OK_STUB_RESP: &str = "ok";
+    let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+    let execution_id = activity_ext::foo_submit(&join_set, "some param");
+    let delay_id = workflow_support::submit_delay(
+        &join_set,
+        obelisk::types::time::ScheduleAt::In(obelisk::types::time::Duration::Milliseconds(10)),
+    );
+    match config {
+        RaceConfig::Stub => {
+            activity_stub::foo_stub(&execution_id, Ok(OK_STUB_RESP))
+                .expect("stubbed activity must accept returned value once");
+        }
+        RaceConfig::StubError => {
+            activity_stub::foo_stub(&execution_id, Err(()))
+                .expect("stubbed activity must accept returned value once");
+        }
+        RaceConfig::Delay => {
+            // wait for timeout
+        }
+    }
+    match workflow_support::join_next(&join_set)
+        .expect("two submissions and no response was processed yet")
+    {
+        ResponseId::ExecutionId(reported_id) => {
+            assert_eq!(reported_id.id, execution_id.id);
+            match activity_ext::foo_get(&execution_id) {
+                Ok(ok) => {
+                    assert_eq!(RaceConfig::Stub, config);
+                    assert_eq!(OK_STUB_RESP, ok);
+                }
+                Err(GetExtensionError::ExecutionFailed(ExecutionFailed {
+                    execution_id: err_id,
+                })) => {
+                    assert_eq!(RaceConfig::StubError, config);
+                    assert_eq!(execution_id.id, err_id.id);
+                }
+                Err(GetExtensionError::FunctionMismatch(_)) => {
+                    unreachable!("no other functions were submitted")
+                }
+                Err(GetExtensionError::NotFoundInProcessedResponses) => {
+                    unreachable!("got it from join_next")
+                }
+            }
+        }
+        ResponseId::DelayId(reported_id) => {
+            assert_eq!(RaceConfig::Delay, config);
+            assert_eq!(delay_id.id, reported_id.id);
+        }
     }
 }
