@@ -419,14 +419,14 @@ impl ExIm {
             Box::from("actual-id") => response_id,
         });
 
-        // execution-error
-        let execution_error_type_wrapper = TypeWrapper::Variant(indexmap! {
+        // await-next-extension-error
+        let await_next_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("execution-failed") => Some(execution_failed_type_wrapper.clone()),
             Box::from("all-processed") => None,
             Box::from("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
         });
 
-        // get-execution-error
+        // get-extension-error
         let get_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("execution-failed") => Some(execution_failed_type_wrapper.clone()),
             Box::from("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
@@ -525,7 +525,7 @@ impl ExIm {
                 };
                 insert_ext(fn_submit);
 
-                // -await-next(join-set-id: join-set-id) ->  result<(execution_id, original_return_type), execution-error>
+                // -await-next(join-set-id: join-set-id) ->  result<(execution_id, original_return_type), await-next-extension-error>
                 let fn_await_next = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),
@@ -555,10 +555,12 @@ impl ExIm {
                         Some(ReturnType {
                             type_wrapper: TypeWrapper::Result {
                                 ok: Some(Box::new(ok_type_wrapper)),
-                                err: Some(Box::new(execution_error_type_wrapper.clone())),
+                                err: Some(Box::new(
+                                    await_next_extension_error_type_wrapper.clone(),
+                                )),
                             },
                             wit_type: StrVariant::from(format!(
-                                "result<{ok_part}, execution-error>"
+                                "result<{ok_part}, await-next-extension-error>"
                             )),
                         })
                     },

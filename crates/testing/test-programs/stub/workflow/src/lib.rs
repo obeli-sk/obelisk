@@ -4,7 +4,7 @@ use crate::testing::stub_activity::activity;
 use crate::testing::stub_activity_obelisk_ext::activity as activity_ext;
 use crate::testing::stub_activity_obelisk_stub::activity as activity_stub;
 use obelisk::types::execution::{
-    ExecutionError, ExecutionFailed, ExecutionId, GetExtensionError, ResponseId, StubError,
+    AwaitNextExtensionError, ExecutionFailed, ExecutionId, GetExtensionError, ResponseId, StubError,
 };
 use wit_bindgen::generate;
 
@@ -48,7 +48,8 @@ impl Guest for Component {
 
     fn await_next_produces_all_processed_error() {
         let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
-        let ExecutionError::AllProcessed = activity_ext::foo_await_next(&join_set).unwrap_err()
+        let AwaitNextExtensionError::AllProcessed =
+            activity_ext::foo_await_next(&join_set).unwrap_err()
         else {
             unreachable!()
         };

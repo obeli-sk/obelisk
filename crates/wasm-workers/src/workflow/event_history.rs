@@ -755,16 +755,16 @@ impl EventHistory {
                                     root_cause_id,
                                 }) => {
                                     error!(%child_execution_id,
-                                            "Child execution finished with an execution error");
+                                            "Child execution finished with UnhandledChildExecutionError");
                                     Err(ApplyError::UnhandledChildExecutionError {
                                         child_execution_id: child_execution_id.clone(),
                                         root_cause_id: root_cause_id.clone(), // Copy the original root cause
                                     })
                                 }
                                 // All other FinishedExecutionErrors are unhandled with current child being the root cause
-                                Err(_) => {
+                                Err(other) => {
                                     error!(%child_execution_id,
-                                            "Child execution finished with an execution error");
+                                            "Child execution finished with {other:?}");
                                     Err(ApplyError::UnhandledChildExecutionError {
                                         child_execution_id: child_execution_id.clone(),
                                         // The child is the root cause
@@ -775,7 +775,7 @@ impl EventHistory {
                             JoinNextChildKind::AwaitNext => {
                                 match result {
                                     Ok(SupportedFunctionReturnValue::None) => {
-                                        // result<execution-id, execution-error>
+                                        // result<execution-id, await-next-extension-error>
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                                             WastVal::Result(Ok(Some(Box::new(
                                                 execution_id_derived_into_wast_val(
@@ -788,7 +788,7 @@ impl EventHistory {
                                         SupportedFunctionReturnValue::InfallibleOrResultOk(v)
                                         | SupportedFunctionReturnValue::FallibleResultErr(v),
                                     ) => {
-                                        // result<(execution-id, inner>, execution-error>
+                                        // result<(execution-id, inner>, await-next-extension-error>
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
                                             WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(
                                                 vec![
@@ -800,7 +800,7 @@ impl EventHistory {
                                             ))))),
                                         )))
                                     }
-                                    // Transform timeout and activity trap to execution-error::execution-failed
+                                    // Transform timeout and activity trap to await-next-extension-error::execution-failed
                                     Err(
                                         FinishedExecutionError::PermanentTimeout
                                         | FinishedExecutionError::PermanentFailure {
@@ -823,16 +823,16 @@ impl EventHistory {
                                         root_cause_id,
                                     }) => {
                                         error!(%child_execution_id,
-                                                "Child execution finished with an execution error");
+                                                "Child execution finished with PermanentTimeout");
                                         Err(ApplyError::UnhandledChildExecutionError {
                                             child_execution_id: child_execution_id.clone(),
                                             root_cause_id: root_cause_id.clone(), // Copy the original root cause
                                         })
                                     }
                                     // All other FinishedExecutionErrors are unhandled with current child being the root cause
-                                    Err(_) => {
+                                    Err(other) => {
                                         error!(%child_execution_id,
-                                                "Child execution finished with an execution error");
+                                                "Child execution finished with {other:?}");
                                         Err(ApplyError::UnhandledChildExecutionError {
                                             child_execution_id: child_execution_id.clone(),
                                             // The child is the root cause
@@ -1940,7 +1940,7 @@ impl EventHistory {
     }
 }
 
-// TODO: Replace with generated ExecutionError, rename to AwaitNextExtensionError
+// TODO: Replace with generated AwaitNextExtensionError
 #[derive(Clone)]
 enum ExecutionErrorVariant<'a> {
     ExecutionFailed {
@@ -2990,7 +2990,7 @@ mod tests {
     }
 
     // TODO: Check -await-next for fn without return type
-    // TODO: Check execution errors translating to execution-error
+    // TODO: Check execution errors translating to await-next-extension-error
 
     // utils
 

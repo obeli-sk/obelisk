@@ -159,12 +159,12 @@ fn add_ext_exports(
         });
         (type_id_join_set_id, type_id_join_set_id_borrow_handle)
     };
-    let type_id_execution_error = {
-        // obelisk:types/execution.{execution-error}
+    let type_id_await_next_extension_error = {
+        // obelisk:types/execution.{await-next-extension-error}
         let actual_type_id = *execution_ifc
             .types
-            .get("execution-error")
-            .expect("`execution-error` must exist");
+            .get("await-next-extension-error")
+            .expect("`await-next-extension-error` must exist");
         // Create a reference to the type.
         resolve.types.alloc(TypeDef {
             name: None,
@@ -204,7 +204,7 @@ fn add_ext_exports(
             stability: wit_parser::Stability::default(),
         })
     };
-    let type_id_await_next_err_part = type_id_execution_error;
+    let type_id_await_next_err_part = type_id_await_next_extension_error;
     let type_id_schedule_at = {
         // obelisk:types/time.{schedule-at}
         let actual_type_id = *time_ifc
@@ -246,7 +246,10 @@ fn add_ext_exports(
                 let mut types = IndexMap::new();
                 types.insert("execution-id".to_string(), type_id_execution_id);
                 types.insert("join-set-id".to_string(), type_id_join_set_id);
-                types.insert("execution-error".to_string(), type_id_execution_error);
+                types.insert(
+                    "await-next-extension-error".to_string(),
+                    type_id_await_next_extension_error,
+                );
                 types.insert(
                     "get-extension-error".to_string(),
                     type_id_get_extension_error,
@@ -333,9 +336,9 @@ fn add_ext_exports(
                     ext_ifc.functions.insert(fn_name, fn_ext);
                 }
                 // -await-next: func(join-set-id: borrow<join-set-id>) ->
-                //  result<tuple<execution-id, return-type>, execution-error>;
+                //  result<tuple<execution-id, return-type>, await-next-extension-error>;
                 // or if the function does not return anything:
-                //  result<execution-id, execution-error>;
+                //  result<execution-id, await-next-extension-error>;
                 {
                     let fn_name = format!("{fn_name}-await-next");
                     let params = vec![(

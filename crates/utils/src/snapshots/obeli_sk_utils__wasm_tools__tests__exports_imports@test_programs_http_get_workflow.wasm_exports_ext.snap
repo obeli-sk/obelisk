@@ -81,7 +81,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, result<string, string>>, execution-error>"
+      "wit_type": "result<tuple<execution-id, result<string, string>>, await-next-extension-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -242,7 +242,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, result<string, string>>, execution-error>"
+      "wit_type": "result<tuple<execution-id, result<string, string>>, await-next-extension-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -421,7 +421,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<execution-id, execution-error>"
+      "wit_type": "result<execution-id, await-next-extension-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -628,7 +628,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, result<string, string>>, execution-error>"
+      "wit_type": "result<tuple<execution-id, result<string, string>>, await-next-extension-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -713,7 +713,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, result<list<string>, string>>, execution-error>"
+      "wit_type": "result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -878,7 +878,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, result<list<string>, string>>, execution-error>"
+      "wit_type": "result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>"
     },
     "extension": "AwaitNext",
     "submittable": false

@@ -76,7 +76,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
+      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -255,7 +255,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
+      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -444,7 +444,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
+      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -522,7 +522,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
+      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
     "extension": "AwaitNext",
     "submittable": false
@@ -812,7 +812,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
+      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
     "extension": "AwaitNext",
     "submittable": false

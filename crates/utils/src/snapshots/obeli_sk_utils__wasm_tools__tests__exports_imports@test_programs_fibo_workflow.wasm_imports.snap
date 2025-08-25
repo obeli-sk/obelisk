@@ -99,7 +99,7 @@ expression: imports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
+      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
     "extension": null,
     "submittable": false
@@ -205,7 +205,7 @@ expression: imports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, execution-error>"
+      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
     "extension": null,
     "submittable": false

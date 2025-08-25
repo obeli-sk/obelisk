@@ -1,13 +1,13 @@
 package testing:stub-activity-obelisk-ext;
 
 interface activity {
-    use obelisk:types/execution@2.0.0.{join-set-id, execution-error, execution-id, get-extension-error};
+    use obelisk:types/execution@2.0.0.{join-set-id, await-next-extension-error, execution-id, get-extension-error};
 
     foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
-    foo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, string>, execution-error>;
+    foo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, string>, await-next-extension-error>;
     foo-get: func(execution-id: execution-id) -> result<string, get-extension-error>;
 
     noret-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
-    noret-await-next: func(join-set-id: borrow<join-set-id>) -> result<execution-id, execution-error>;
+    noret-await-next: func(join-set-id: borrow<join-set-id>) -> result<execution-id, await-next-extension-error>;
     noret-get: func(execution-id: execution-id) -> result<_, get-extension-error>;
 }
