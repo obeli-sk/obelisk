@@ -676,7 +676,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 .map_err(JoinSetCreateError::InvalidNameError)?;
             let res = self
                 .event_history
-                .apply(
+                .apply_inner(
                     EventCall::CreateJoinSet {
                         join_set_id,
                         closing_strategy,
@@ -1153,20 +1153,29 @@ mod workflow_support {
         CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind,
         storage::{self, PersistKind},
     };
-    use tracing::trace;
+    use tracing::{info, trace};
     use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
 
     impl<C: ClockFn> HostJoinSetId for WorkflowCtx<C> {
-        fn id(
+        async fn id(
             &mut self,
             resource: wasmtime::component::Resource<JoinSetId>,
         ) -> wasmtime::Result<String> {
             Ok(self.resource_to_join_set_id(&resource)?.to_string())
         }
 
-        fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
-            self.resource_table.delete(resource)?;
+        async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
+            let join_set_id = self.resource_table.delete(resource)?;
+            info!("Closing {join_set_id}");
+            self.event_history
+                .close_opened_join_set(
+                    join_set_id,
+                    self.db_pool.connection().as_ref(),
+                    &mut self.version,
+                    self.clock_fn.now(),
+                )
+                .await?;
             Ok(())
         }
     }
@@ -1211,8 +1220,7 @@ mod workflow_support {
                     &mut self.version,
                     self.clock_fn.now(),
                 )
-                .await
-                .map_err(WorkflowFunctionError::from)?;
+                .await?;
             let value =
                 assert_matches!(value, ChildReturnValue::WastVal(WastVal::U64(value)) => value);
             Ok(value)
@@ -1258,8 +1266,7 @@ mod workflow_support {
                     &mut self.version,
                     self.clock_fn.now(),
                 )
-                .await
-                .map_err(WorkflowFunctionError::from)?;
+                .await?;
             let value =
                 assert_matches!(value, ChildReturnValue::WastVal(WastVal::String(value)) => value);
             Ok(value)
@@ -1298,8 +1305,7 @@ mod workflow_support {
                     &mut self.version,
                     self.clock_fn.now(),
                 )
-                .await
-                .map_err(WorkflowFunctionError::from)?;
+                .await?;
             let id = assert_matches!(value, ChildReturnValue::WastVal(WastVal::Record(mut map)) => map.shift_remove("id").expect(
                 "DelayId must be serialized as WastVal::Record"));
             let id = assert_matches!(id, WastVal::String(id) => id, "DelayId record must have `id` serialized as WastVal::String");
@@ -1382,8 +1388,7 @@ mod workflow_support {
                     &mut self.version,
                     self.clock_fn.now(),
                 )
-                .await
-                .map_err(WorkflowFunctionError::from)?;
+                .await?;
             let value = assert_matches!(value,ChildReturnValue::JoinNext(value) => value);
             Ok(value)
         }

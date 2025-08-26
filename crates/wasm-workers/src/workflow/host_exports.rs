@@ -42,7 +42,7 @@ pub(crate) mod v2_0_0 {
             "obelisk:types/execution/join-set-id": concepts::JoinSetId,
         },
         imports: {
-            default: trappable
+            default: trappable | async
         }
     });
 

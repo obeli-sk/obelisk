@@ -5,6 +5,7 @@ use super::host_exports::execution_id_derived_into_wast_val;
 use super::host_exports::execution_id_into_wast_val;
 use super::host_exports::v2_0_0::obelisk::types::execution::GetExtensionError;
 use super::host_exports::v2_0_0::obelisk::workflow::workflow_support;
+use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::v2_0_0::obelisk::types::execution as types_execution;
@@ -220,10 +221,22 @@ impl EventHistory {
             .count()
     }
 
+    pub(crate) async fn apply(
+        &mut self,
+        event_call: EventCall,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<ChildReturnValue, WorkflowFunctionError> {
+        Ok(self
+            .apply_inner(event_call, db_connection, version, called_at)
+            .await?)
+    }
+
     /// Apply the event and wait if new, replay if already in the event history, or
     /// apply with an interrupt.
     #[instrument(skip_all, fields(otel.name = format!("apply {event_call}"), ?event_call))]
-    pub(crate) async fn apply(
+    pub(crate) async fn apply_inner(
         &mut self,
         event_call: EventCall,
         db_connection: &dyn DbConnection,
@@ -337,6 +350,21 @@ impl EventHistory {
         }
     }
 
+    pub(crate) async fn close_opened_join_set(
+        &mut self,
+        _join_set_id: JoinSetId,
+        _db_connection: &dyn DbConnection,
+        _version: &mut Version,
+        _called_at: DateTime<Utc>,
+    ) -> Result<(), WorkflowFunctionError> {
+        // TODO: as events arrive, maintain a list of join sets that need closing:
+        // Used for closing join sets.
+        // index_join_set_to_open_child_requests: IndexMap<JoinSetId, usize>,
+        // Used for closing join sets.
+        // index_join_set_to_strategy: HashMap<JoinSetId, ClosingStrategy>,
+        Ok(())
+    }
+
     /// Scan the execution log for join sets containing more `[JoinSetRequest::ChildExecutionRequest]`-s
     /// than corresponding awaits.
     /// For each open join set deterministically emit `EventCall::BlockingJoinNext` and wait for the response.
@@ -433,7 +461,7 @@ impl EventHistory {
             for _ in 0..remaining {
                 debug!("Adding BlockingChildAwaitNext to join set {join_set_id}");
                 match self
-                    .apply(
+                    .apply_inner(
                         EventCall::JoinNext {
                             join_set_id: join_set_id.clone(),
                             closing: true,
@@ -3063,7 +3091,7 @@ mod tests {
         )
         .await;
         event_history
-            .apply(
+            .apply_inner(
                 EventCall::BlockingChildAwaitNext {
                     join_set_id,
                     wasm_backtrace: None,
@@ -3157,7 +3185,7 @@ mod tests {
             .await
             .unwrap();
         event_history
-            .apply(
+            .apply_inner(
                 EventCall::BlockingChildAwaitNext {
                     join_set_id,
                     wasm_backtrace: None,
