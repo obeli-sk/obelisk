@@ -1120,7 +1120,7 @@ impl EventHistory {
         // NB: Flush the cache before writing to the DB.
         trace!(%version, "append_to_db");
         match event_call {
-            EventCall::CreateJoinSet(CreateJoinSet {
+            EventCall::JoinSetCreate(JoinSetCreate {
                 join_set_id,
                 closing_strategy,
                 wasm_backtrace,
@@ -2086,7 +2086,7 @@ impl JoinNextVariant {
 
 #[derive(derive_more::Debug, Clone, IntoStaticStr)]
 pub(crate) enum EventCall {
-    CreateJoinSet(CreateJoinSet),
+    JoinSetCreate(JoinSetCreate),
     SubmitChildExecution(SubmitChildExecution),
     SubmitDelay(SubmitDelay),
     Schedule(Schedule),
@@ -2101,11 +2101,32 @@ pub(crate) enum EventCall {
 }
 
 #[derive(derive_more::Debug, Clone)]
-pub(crate) struct CreateJoinSet {
+pub(crate) struct JoinSetCreate {
     pub(crate) join_set_id: JoinSetId,
     pub(crate) closing_strategy: ClosingStrategy,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+impl JoinSetCreate {
+    pub(crate) async fn apply(
+        self,
+        event_history: &mut EventHistory,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<JoinSetId, ApplyError> {
+        let value = event_history
+            .apply_inner(
+                EventCall::JoinSetCreate(self),
+                db_connection,
+                version,
+                called_at,
+            )
+            .await?;
+        let value = assert_matches!(value,
+            ChildReturnValue::JoinSetCreate(join_set_id) => join_set_id);
+        Ok(value)
+    }
 }
 
 #[derive(derive_more::Debug, Clone)]
@@ -2356,7 +2377,7 @@ impl EventCall {
                 closing: *closing,
             }),
 
-            EventCall::CreateJoinSet { .. }
+            EventCall::JoinSetCreate { .. }
             | EventCall::SubmitChildExecution { .. }
             | EventCall::SubmitDelay { .. }
             | EventCall::Schedule { .. }
@@ -2422,7 +2443,7 @@ enum JoinNextChildKind {
 impl EventCall {
     fn as_keys(&self) -> Vec<DeterministicKey> {
         match self {
-            EventCall::CreateJoinSet(CreateJoinSet {
+            EventCall::JoinSetCreate(JoinSetCreate {
                 join_set_id,
                 closing_strategy,
                 ..
@@ -2548,7 +2569,7 @@ mod tests {
     use super::super::workflow_worker::JoinNextBlockingStrategy;
     use super::SubmitChildExecution;
     use crate::workflow::event_history::{
-        ApplyError, ChildReturnValue, CreateJoinSet, JoinNextRequestingFfqn, Schedule, Stub,
+        ApplyError, ChildReturnValue, JoinNextRequestingFfqn, JoinSetCreate, Schedule, Stub,
     };
     use crate::workflow::host_exports::ffqn_into_wast_val;
     use assert_matches::assert_matches;
@@ -2976,7 +2997,7 @@ mod tests {
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         event_history
             .apply(
-                EventCall::CreateJoinSet(CreateJoinSet {
+                EventCall::JoinSetCreate(JoinSetCreate {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::Complete,
                     wasm_backtrace: None,
@@ -3238,7 +3259,7 @@ mod tests {
     ) {
         event_history
             .apply(
-                EventCall::CreateJoinSet(CreateJoinSet {
+                EventCall::JoinSetCreate(JoinSetCreate {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::Complete,
                     wasm_backtrace: None,

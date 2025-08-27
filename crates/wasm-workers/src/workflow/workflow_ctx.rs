@@ -11,9 +11,8 @@ use super::host_exports::{
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
-use crate::workflow::event_history::CreateJoinSet;
+use crate::workflow::event_history::JoinSetCreate;
 use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB};
-use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::{self, DbError, DbPool, HistoryEventScheduleAt, Version, WasmBacktrace};
@@ -678,22 +677,20 @@ impl<C: ClockFn> WorkflowCtx<C> {
         if !self.event_history.join_set_name_exists(&name, kind) {
             let join_set_id = JoinSetId::new(kind, StrVariant::from(name))
                 .map_err(JoinSetCreateError::InvalidNameError)?;
-            let res = self
-                .event_history
-                .apply_inner(
-                    EventCall::CreateJoinSet(CreateJoinSet {
-                        join_set_id,
-                        closing_strategy,
-                        wasm_backtrace: self.backtrace.take(),
-                    }),
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                    self.clock_fn.now(),
-                )
-                .await
-                .map_err(JoinSetCreateError::ApplyError)?;
-            let join_set_id = assert_matches!(res,
-                ChildReturnValue::JoinSetCreate(join_set_id) => join_set_id);
+            let join_set_id = JoinSetCreate {
+                join_set_id,
+                closing_strategy,
+                wasm_backtrace: self.backtrace.take(),
+            }
+            .apply(
+                &mut self.event_history,
+                self.db_pool.connection().as_ref(),
+                &mut self.version,
+                self.clock_fn.now(),
+            )
+            .await
+            .map_err(JoinSetCreateError::ApplyError)?;
+
             let join_set_id = self
                 .resource_table
                 .push(join_set_id)
