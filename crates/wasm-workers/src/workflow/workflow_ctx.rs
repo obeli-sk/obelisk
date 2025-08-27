@@ -1168,14 +1168,12 @@ mod workflow_support {
         async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
             let join_set_id = self.resource_table.delete(resource)?;
             info!("Closing {join_set_id}");
-            self.event_history
-                .close_opened_join_set(
-                    join_set_id,
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                    self.clock_fn.now(),
-                )
-                .await?;
+            self.event_history.close_opened_join_set(
+                join_set_id,
+                self.db_pool.connection().as_ref(),
+                &mut self.version,
+                self.clock_fn.now(),
+            )?;
             Ok(())
         }
     }

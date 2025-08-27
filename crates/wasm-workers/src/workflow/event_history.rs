@@ -351,7 +351,7 @@ impl EventHistory {
         }
     }
 
-    pub(crate) async fn close_opened_join_set(
+    pub(crate) fn close_opened_join_set(
         &mut self,
         _join_set_id: JoinSetId,
         _db_connection: &dyn DbConnection,
