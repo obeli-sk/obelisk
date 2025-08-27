@@ -167,7 +167,6 @@ mod bench {
                     component_id: component_id.clone(),
                     join_next_blocking_strategy,
                     retry_on_trap: false,
-                    forward_unhandled_child_errors_in_join_set_close: false,
                     backtrace_persist: false,
                     stub_wasi: false,
                 },

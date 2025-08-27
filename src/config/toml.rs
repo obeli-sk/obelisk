@@ -526,8 +526,6 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) retry_on_trap: bool,
     #[serde(default = "default_convert_core_module")]
     pub(crate) convert_core_module: bool,
-    #[serde(default = "default_forward_unhandled_child_errors_in_completing_join_set_close")]
-    pub(crate) forward_unhandled_child_errors_in_completing_join_set_close: bool,
     #[serde(default)]
     pub(crate) backtrace: WorkflowComponentBacktraceConfig,
     #[serde(default)]
@@ -676,8 +674,6 @@ impl WorkflowComponentConfigToml {
             component_id: component_id.clone(),
             join_next_blocking_strategy: self.blocking_strategy.into(),
             retry_on_trap: self.retry_on_trap,
-            forward_unhandled_child_errors_in_join_set_close: self
-                .forward_unhandled_child_errors_in_completing_join_set_close,
             backtrace_persist: global_backtrace_persist,
             stub_wasi: self.stub_wasi,
         };
@@ -1222,10 +1218,6 @@ const fn default_retry_on_trap() -> bool {
 }
 
 const fn default_convert_core_module() -> bool {
-    true
-}
-
-const fn default_forward_unhandled_child_errors_in_completing_join_set_close() -> bool {
     true
 }
 

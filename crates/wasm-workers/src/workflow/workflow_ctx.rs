@@ -552,7 +552,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
         version: Version,
         execution_deadline: DateTime<Utc>,
         worker_span: Span,
-        forward_unhandled_child_errors_in_join_set_close: bool,
         backtrace_persist: bool,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
@@ -570,7 +569,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 join_next_blocking_strategy,
                 execution_deadline,
                 worker_span.clone(),
-                forward_unhandled_child_errors_in_join_set_close,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -1537,7 +1535,6 @@ pub(crate) mod tests {
                 ctx.version,
                 ctx.execution_deadline,
                 tracing::info_span!("workflow-test"),
-                false,
                 false,
             );
             for step in &self.steps {

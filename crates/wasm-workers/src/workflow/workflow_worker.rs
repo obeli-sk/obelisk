@@ -47,7 +47,6 @@ pub struct WorkflowConfig {
     pub component_id: ComponentId,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub retry_on_trap: bool,
-    pub forward_unhandled_child_errors_in_join_set_close: bool,
     pub backtrace_persist: bool,
     pub stub_wasi: bool,
 }
@@ -349,7 +348,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
             ctx.version,
             ctx.execution_deadline,
             ctx.worker_span,
-            self.config.forward_unhandled_child_errors_in_join_set_close,
             self.config.backtrace_persist,
         );
 
@@ -780,7 +778,6 @@ pub(crate) mod tests {
                     component_id: component_id.clone(),
                     join_next_blocking_strategy,
                     retry_on_trap: false,
-                    forward_unhandled_child_errors_in_join_set_close: false,
                     backtrace_persist: false,
                     stub_wasi: false,
                 },
@@ -959,7 +956,6 @@ pub(crate) mod tests {
                     component_id: ComponentId::dummy_workflow(),
                     join_next_blocking_strategy,
                     retry_on_trap: false,
-                    forward_unhandled_child_errors_in_join_set_close: false,
                     backtrace_persist: false,
                     stub_wasi: false,
                 },

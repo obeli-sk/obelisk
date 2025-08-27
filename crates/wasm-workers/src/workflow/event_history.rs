@@ -105,7 +105,6 @@ pub(crate) struct EventHistory {
     non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     worker_span: Span,
-    forward_unhandled_child_errors_in_join_set_close: bool,
     // TODO: optimize using start_from_idx: usize,
 }
 
@@ -138,7 +137,6 @@ impl EventHistory {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         execution_deadline: DateTime<Utc>,
         worker_span: Span,
-        forward_unhandled_child_errors_in_join_set_close: bool,
     ) -> Self {
         let non_blocking_event_batch_size = match join_next_blocking_strategy {
             JoinNextBlockingStrategy::Await {
@@ -168,7 +166,6 @@ impl EventHistory {
                 Some(Vec::with_capacity(non_blocking_event_batch_size))
             },
             worker_span,
-            forward_unhandled_child_errors_in_join_set_close,
         }
     }
 
@@ -494,17 +491,7 @@ impl EventHistory {
                 }
             }
         }
-        match first_unhandled_child_execution_error {
-            Some((child_execution_id, root_cause_id))
-                if self.forward_unhandled_child_errors_in_join_set_close =>
-            {
-                Err(ApplyError::UnhandledChildExecutionError {
-                    child_execution_id,
-                    root_cause_id,
-                })
-            }
-            _ => Ok(()),
-        }
+        Ok(())
     }
 
     // Return ChildReturnValue if response is found
@@ -3341,7 +3328,6 @@ mod tests {
             join_next_blocking_strategy,
             execution_deadline,
             info_span!("worker-test"),
-            false,
         );
         (event_history, exec_log.next_version)
     }
