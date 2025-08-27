@@ -1153,12 +1153,8 @@ mod workflow_support {
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_2, JoinSetCreateError};
     use concepts::FunctionFqn;
     use concepts::storage::HistoryEventScheduleAt;
-    use concepts::{
-        CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind,
-        storage::{self, PersistKind},
-    };
+    use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind};
     use tracing::{info, trace};
-    use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
 
     impl<C: ClockFn> HostJoinSetId for WorkflowCtx<C> {
@@ -1211,22 +1207,19 @@ mod workflow_support {
                 return Err(wasmtime::Error::msg("range must not be empty"));
             }
             let value = rand::Rng::gen_range(&mut self.rng, range);
-            let value = Vec::from(storage::from_u64_to_bytes(value));
-            let value = self
-                .event_history
-                .apply(
-                    EventCall::Persist(Persist {
-                        value,
-                        kind: PersistKind::RandomU64 { min, max_inclusive },
-                        wasm_backtrace: self.backtrace.take(),
-                    }),
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                    self.clock_fn.now(),
-                )
-                .await?;
-            let value =
-                assert_matches!(value, ChildReturnValue::WastVal(WastVal::U64(value)) => value);
+
+            let value = Persist::apply_u64(
+                value,
+                min,
+                max_inclusive,
+                self.backtrace.take(),
+                &mut self.event_history,
+                self.db_pool.connection().as_ref(),
+                &mut self.version,
+                self.clock_fn.now(),
+            )
+            .await?;
+
             Ok(value)
         }
 
@@ -1254,25 +1247,17 @@ mod workflow_support {
                     .collect()
             };
             // Persist
-            let value = Vec::from_iter(value.bytes());
-            let value = self
-                .event_history
-                .apply(
-                    EventCall::Persist(Persist {
-                        value,
-                        kind: PersistKind::RandomString {
-                            min_length: u64::from(min_length),
-                            max_length_exclusive: u64::from(max_length_exclusive),
-                        },
-                        wasm_backtrace: self.backtrace.take(),
-                    }),
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                    self.clock_fn.now(),
-                )
-                .await?;
-            let value =
-                assert_matches!(value, ChildReturnValue::WastVal(WastVal::String(value)) => value);
+            let value = Persist::apply_string(
+                value,
+                u64::from(min_length),
+                u64::from(max_length_exclusive),
+                self.backtrace.take(),
+                &mut self.event_history,
+                self.db_pool.connection().as_ref(),
+                &mut self.version,
+                self.clock_fn.now(),
+            )
+            .await?;
             Ok(value)
         }
 
@@ -1295,25 +1280,20 @@ mod workflow_support {
                             detail: Some(format!("{err:?}")),
                         }
                     })?;
-            let value = self
-                .event_history
-                .apply(
-                    EventCall::SubmitDelay(SubmitDelay {
-                        delay_id,
-                        join_set_id,
-                        schedule_at,
-                        expires_at_if_new,
-                        wasm_backtrace: self.backtrace.take(),
-                    }),
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                    self.clock_fn.now(),
-                )
-                .await?;
-            let id = assert_matches!(value, ChildReturnValue::WastVal(WastVal::Record(mut map)) => map.shift_remove("id").expect(
-                "DelayId must be serialized as WastVal::Record"));
-            let id = assert_matches!(id, WastVal::String(id) => id, "DelayId record must have `id` serialized as WastVal::String");
-            Ok(types_execution::DelayId { id })
+            SubmitDelay {
+                delay_id,
+                join_set_id,
+                schedule_at,
+                expires_at_if_new,
+                wasm_backtrace: self.backtrace.take(),
+            }
+            .apply(
+                &mut self.event_history,
+                self.db_pool.connection().as_ref(),
+                &mut self.version,
+                self.clock_fn.now(),
+            )
+            .await
         }
 
         pub(crate) async fn sleep(

@@ -9,6 +9,7 @@ use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::v2_0_0::obelisk::types::execution as types_execution;
+use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::ClosingStrategy;
 use concepts::ComponentId;
@@ -2129,7 +2130,28 @@ pub(crate) struct SubmitDelay {
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
-
+impl SubmitDelay {
+    pub(crate) async fn apply(
+        self,
+        event_history: &mut EventHistory,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<types_execution::DelayId, WorkflowFunctionError> {
+        let value = event_history
+            .apply(
+                EventCall::SubmitDelay(self),
+                db_connection,
+                version,
+                called_at,
+            )
+            .await?;
+        let id = assert_matches!(value, ChildReturnValue::WastVal(WastVal::Record(mut map)) => map.shift_remove("id").expect(
+            "DelayId must be serialized as WastVal::Record"));
+        let id = assert_matches!(id, WastVal::String(id) => id, "DelayId record must have `id` serialized as WastVal::String");
+        Ok(types_execution::DelayId { id })
+    }
+}
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct Schedule {
     #[expect(clippy::struct_field_names)]
@@ -2204,6 +2226,67 @@ pub(crate) struct Persist {
     pub(crate) kind: PersistKind,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+impl Persist {
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) async fn apply_string(
+        value: String,
+        min_length: u64,
+        max_length_exclusive: u64,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        event_history: &mut EventHistory,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<String, WorkflowFunctionError> {
+        let value = Vec::from_iter(value.bytes());
+        let value = event_history
+            .apply(
+                EventCall::Persist(Persist {
+                    value,
+                    kind: PersistKind::RandomString {
+                        min_length,
+                        max_length_exclusive,
+                    },
+                    wasm_backtrace,
+                }),
+                db_connection,
+                version,
+                called_at,
+            )
+            .await?;
+        let value =
+            assert_matches!(value, ChildReturnValue::WastVal(WastVal::String(value)) => value);
+        Ok(value)
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) async fn apply_u64(
+        value: u64,
+        min: u64,
+        max_inclusive: u64,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        event_history: &mut EventHistory,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<u64, WorkflowFunctionError> {
+        let value = Vec::from(storage::from_u64_to_bytes(value));
+        let value = event_history
+            .apply(
+                EventCall::Persist(Persist {
+                    value,
+                    kind: PersistKind::RandomU64 { min, max_inclusive },
+                    wasm_backtrace,
+                }),
+                db_connection,
+                version,
+                called_at,
+            )
+            .await?;
+        let value = assert_matches!(value, ChildReturnValue::WastVal(WastVal::U64(value)) => value);
+        Ok(value)
+    }
 }
 
 impl Display for EventCall {
