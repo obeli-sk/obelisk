@@ -512,7 +512,6 @@ impl ActivityComponentConfigToml {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[expect(clippy::struct_excessive_bools)]
 pub(crate) struct WorkflowComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,

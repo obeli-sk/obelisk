@@ -149,7 +149,6 @@ enum FindMatchingResponse {
 }
 
 impl EventHistory {
-    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
         component_id: ComponentId,
@@ -427,7 +426,7 @@ impl EventHistory {
         let close_count = self
             .close_requests
             .get(join_set_id)
-            .cloned()
+            .copied()
             .unwrap_or_default();
         debug!(%join_set_id, created_child_request_count, processed_child_response_count,  close_count, "join_set_close");
         if created_child_request_count > processed_child_response_count + close_count {
@@ -472,14 +471,13 @@ impl EventHistory {
         self.index_join_set_to_created_child_requests
             .iter()
             .rev()
-            .filter_map(|(js, remaining)| {
+            .find_map(|(js, remaining)| {
                 if *remaining > 0 {
                     Some(js.clone())
                 } else {
                     None
                 }
             })
-            .next()
     }
 
     #[instrument(skip_all)]

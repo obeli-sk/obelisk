@@ -42,7 +42,6 @@ impl Default for JoinNextBlockingStrategy {
 }
 
 #[derive(Clone, Debug)]
-#[expect(clippy::struct_excessive_bools)]
 pub struct WorkflowConfig {
     pub component_id: ComponentId,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
