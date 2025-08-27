@@ -137,6 +137,9 @@ fn submit_race_join_next(config: RaceConfig) {
         ResponseId::DelayId(reported_id) => {
             assert_eq!(RaceConfig::Delay, config);
             assert_eq!(delay_id.id, reported_id.id);
+            // Cannot cancel waiting for the execution when closing join set, just mock it:
+            activity_stub::foo_stub(&execution_id, Ok(OK_STUB_RESP))
+                .expect("stubbed activity must accept returned value once");
         }
     }
 }

@@ -417,7 +417,7 @@ pub enum HistoryEvent {
         /// Set to a specific function when calling `-await-next` extension function, used for
         /// determinism checks.
         requested_ffqn: Option<FunctionFqn>,
-        /// Is the joinset being closed?
+        /// Closing request must never set `requested_ffqn` and is ignored by determinism checks.
         closing: bool,
     },
     /// Records the fact that a join set was awaited more times than its submission count.

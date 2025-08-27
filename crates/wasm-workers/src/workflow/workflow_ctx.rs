@@ -1,6 +1,6 @@
 use super::event_history::{
-    ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
-    OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
+    ApplyError, EventHistory, JoinNextRequestingFfqn, JoinSetCloseError,
+    OneOffChildExecutionRequest, OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
 };
 use super::host_exports::v2_0_0::obelisk::types::execution as types_execution;
 use super::host_exports::v2_0_0::{ClosingStrategy_2_0_0, ScheduleAt_2_0_0};
@@ -898,9 +898,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
         Ok(())
     }
 
-    pub(crate) async fn close_opened_join_sets(&mut self) -> Result<(), ApplyError> {
+    pub(crate) async fn close_forgotten_join_sets(&mut self) -> Result<(), JoinSetCloseError> {
         self.event_history
-            .close_opened_join_sets(
+            .close_forgotten_join_sets(
                 self.db_pool.connection().as_ref(),
                 &mut self.version,
                 self.clock_fn.now(),
@@ -1020,20 +1020,19 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 target_ffqn,
                 join_set_id,
                 wasm_backtrace,
-            } => {
-                JoinNextRequestingFfqn {
-                    join_set_id,
-                    wasm_backtrace,
-                    requested_ffqn: target_ffqn,
-                }
-                .apply(
-                    &mut self.event_history,
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                    called_at,
-                )
-                .await
+            } => JoinNextRequestingFfqn {
+                join_set_id,
+                wasm_backtrace,
+                requested_ffqn: target_ffqn,
             }
+            .apply(
+                &mut self.event_history,
+                self.db_pool.connection().as_ref(),
+                &mut self.version,
+                called_at,
+            )
+            .await
+            .map(Some),
             ImportedFnCall::Stub {
                 target_ffqn,
                 target_execution_id,
@@ -1137,7 +1136,7 @@ mod workflow_support {
     use concepts::FunctionFqn;
     use concepts::storage::HistoryEventScheduleAt;
     use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind};
-    use tracing::{info, trace};
+    use tracing::trace;
     use wasmtime::component::Resource;
 
     impl<C: ClockFn> HostJoinSetId for WorkflowCtx<C> {
@@ -1150,13 +1149,14 @@ mod workflow_support {
 
         async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
             let join_set_id = self.resource_table.delete(resource)?;
-            info!("Closing {join_set_id}");
-            self.event_history.close_opened_join_set(
-                join_set_id,
-                self.db_pool.connection().as_ref(),
-                &mut self.version,
-                self.clock_fn.now(),
-            )?;
+            self.event_history
+                .join_set_close(
+                    &join_set_id,
+                    self.db_pool.connection().as_ref(),
+                    &mut self.version,
+                    self.clock_fn.now(),
+                )
+                .await?;
             Ok(())
         }
     }
@@ -1353,6 +1353,7 @@ mod workflow_support {
                 self.clock_fn.now(),
             )
             .await
+            .map_err(WorkflowFunctionError::from)
         }
     }
 }
@@ -1381,8 +1382,8 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::workflow::event_history::JoinSetCloseError;
     use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
-    use crate::workflow::workflow_ctx::ApplyError;
     use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
     use crate::{
         workflow::workflow_ctx::WorkflowCtx, workflow::workflow_worker::JoinNextBlockingStrategy,
@@ -1662,7 +1663,7 @@ pub(crate) mod tests {
                 }
             }
             info!("Closing opened join sets");
-            let res = match workflow_ctx.close_opened_join_sets().await {
+            let res = match workflow_ctx.close_forgotten_join_sets().await {
                 Ok(()) => {
                     info!("Finishing");
                     WorkerResult::Ok(
@@ -1671,7 +1672,7 @@ pub(crate) mod tests {
                         None,
                     )
                 }
-                Err(ApplyError::InterruptRequested) => {
+                Err(JoinSetCloseError::InterruptRequested) => {
                     info!("Interrupting");
                     return WorkerResult::DbUpdatedByWorkerOrWatcher;
                 }

@@ -1,4 +1,4 @@
-use super::event_history::ApplyError;
+use super::event_history::JoinSetCloseError;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::WasmFileError;
 use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
@@ -634,28 +634,13 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
 
     async fn close_join_sets(workflow_ctx: &mut WorkflowCtx<C>) -> Result<(), WorkerResult> {
         workflow_ctx
-            .close_opened_join_sets()
+            .close_forgotten_join_sets()
             .await
             .map_err(|err| match err {
-                ApplyError::NondeterminismDetected(detail) => {
-                    WorkerResult::Err(WorkerError::FatalError(
-                        FatalError::NondeterminismDetected { detail },
-                        workflow_ctx.version.clone(),
-                    ))
+                JoinSetCloseError::InterruptRequested => WorkerResult::DbUpdatedByWorkerOrWatcher,
+                JoinSetCloseError::DbError(db_error) => {
+                    WorkerResult::Err(WorkerError::DbError(db_error))
                 }
-                ApplyError::InterruptRequested => WorkerResult::DbUpdatedByWorkerOrWatcher,
-                ApplyError::DbError(db_error) => WorkerResult::Err(WorkerError::DbError(db_error)),
-                // Can only happen when forwarding unhandled child errors in join set close.
-                ApplyError::UnhandledChildExecutionError {
-                    child_execution_id,
-                    root_cause_id,
-                } => WorkerResult::Err(WorkerError::FatalError(
-                    FatalError::UnhandledChildExecutionError {
-                        child_execution_id,
-                        root_cause_id,
-                    },
-                    workflow_ctx.version.clone(),
-                )),
             })
     }
 }

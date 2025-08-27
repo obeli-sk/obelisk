@@ -122,6 +122,56 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00.010Z",
       "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "Stub",
+            "target_execution_id": "E_00000000000000000000000000.g:1_1",
+            "result": {
+              "Ok": {
+                "InfallibleOrResultOk": {
+                  "type": "string",
+                  "value": "ok"
+                }
+              }
+            },
+            "persist_result": {
+              "Ok": null
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinNext",
+            "join_set_id": "g:1",
+            "run_expires_at": "1970-01-01T00:00:00.010Z",
+            "requested_ffqn": null,
+            "closing": true
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
+        "Locked": {
+          "component_id": "workflow:",
+          "executor_id": "Exr_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000003",
+          "lock_expires_at": "1970-01-01T00:00:01.010Z"
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
         "Finished": {
           "result": {
             "Ok": "None"
@@ -142,13 +192,32 @@ expression: execution_log
           "delay_id": "Delay_00000000000000000000000000.g:1_0"
         }
       }
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
+        "join_set_id": "g:1",
+        "event": {
+          "type": "ChildExecutionFinished",
+          "child_execution_id": "E_00000000000000000000000000.g:1_1",
+          "finished_version": 1,
+          "result": {
+            "Ok": {
+              "InfallibleOrResultOk": {
+                "type": "string",
+                "value": "ok"
+              }
+            }
+          }
+        }
+      }
     }
   ],
-  "next_version": 7,
+  "next_version": 10,
   "pending_state": {
     "type": "Finished",
     "finished": {
-      "version": 7,
+      "version": 10,
       "finished_at": "1970-01-01T00:00:00.010Z",
       "result_kind": "ok"
     }

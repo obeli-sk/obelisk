@@ -39,6 +39,7 @@ use hashbrown::HashMap;
 use indexmap::IndexMap;
 use indexmap::indexmap;
 use itertools::Either;
+use itertools::Itertools;
 use std::fmt::Debug;
 use std::fmt::Display;
 use strum::IntoStaticStr;
@@ -91,6 +92,23 @@ pub(crate) enum ApplyError {
     DbError(DbError),
 }
 
+#[derive(Debug, Clone, thiserror::Error)]
+pub(crate) enum JoinSetCloseError {
+    #[error("interrupt requested")]
+    InterruptRequested,
+    #[error(transparent)]
+    DbError(DbError),
+}
+
+impl From<JoinSetCloseError> for ApplyError {
+    fn from(value: JoinSetCloseError) -> Self {
+        match value {
+            JoinSetCloseError::DbError(db_error) => Self::DbError(db_error),
+            JoinSetCloseError::InterruptRequested => Self::InterruptRequested,
+        }
+    }
+}
+
 #[expect(clippy::struct_field_names)]
 pub(crate) struct EventHistory {
     execution_id: ExecutionId,
@@ -101,11 +119,14 @@ pub(crate) struct EventHistory {
     // Used for `-get`ting the processed response by Execution Id.
     index_child_exe_to_processed_response_idx: HashMap<ExecutionIdDerived, usize>,
     index_child_exe_to_ffqn: HashMap<ExecutionIdDerived, FunctionFqn>,
+    // Used for closing join sets in reverse order. One-off join sets are ignored.
+    index_join_set_to_created_child_requests: IndexMap<JoinSetId, usize>,
+    // Used for closing join sets.
+    close_requests: std::collections::HashMap<JoinSetId, usize>,
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     worker_span: Span,
-    // TODO: optimize using start_from_idx: usize,
 }
 
 #[expect(clippy::large_enum_variant)]
@@ -144,15 +165,38 @@ impl EventHistory {
             } => non_blocking_event_batching as usize,
             JoinNextBlockingStrategy::Interrupt => 0,
         };
+        let close_requests = event_history
+            .iter()
+            .filter_map(|event| {
+                if let HistoryEvent::JoinNext {
+                    closing: true,
+                    join_set_id,
+                    ..
+                } = event
+                {
+                    Some(join_set_id.clone())
+                } else {
+                    None
+                }
+            })
+            .counts();
         EventHistory {
             execution_id,
             component_id,
             index_child_exe_to_processed_response_idx: HashMap::default(),
             index_child_exe_to_ffqn: HashMap::default(),
+            index_join_set_to_created_child_requests: IndexMap::default(),
             event_history: event_history
                 .into_iter()
-                .map(|event| (event, Unprocessed))
+                .filter_map(|event| {
+                    if matches!(event, HistoryEvent::JoinNext { closing: true, .. }) {
+                        None // Ignore closing requests. Join sets must be closed even after nondeterminism is detected.
+                    } else {
+                        Some((event, Unprocessed))
+                    }
+                })
                 .collect(),
+            close_requests,
             responses: responses
                 .into_iter()
                 .map(|event| (event, Unprocessed))
@@ -348,148 +392,108 @@ impl EventHistory {
         }
     }
 
-    pub(crate) fn close_opened_join_set(
+    pub(crate) async fn join_set_close(
         &mut self,
-        _join_set_id: JoinSetId,
-        _db_connection: &dyn DbConnection,
-        _version: &mut Version,
-        _called_at: DateTime<Utc>,
-    ) -> Result<(), WorkflowFunctionError> {
-        // TODO: as events arrive, maintain a list of join sets that need closing:
-        // Used for closing join sets.
-        // index_join_set_to_open_child_requests: IndexMap<JoinSetId, usize>,
-        // Used for closing join sets.
-        // index_join_set_to_strategy: HashMap<JoinSetId, ClosingStrategy>,
-        Ok(())
-    }
-
-    /// Scan the execution log for join sets containing more `[JoinSetRequest::ChildExecutionRequest]`-s
-    /// than corresponding awaits.
-    /// For each open join set deterministically emit `EventCall::BlockingJoinNext` and wait for the response.
-    /// MUST NOT add items to `NonBlockingCache`, as only `EventCall::BlockingJoinNext` and their
-    /// processed responses are appended.
-    #[instrument(skip_all)]
-    pub(crate) async fn close_opened_join_sets(
-        &mut self,
+        join_set_id: &JoinSetId,
         db_connection: &dyn DbConnection,
         version: &mut Version,
         called_at: DateTime<Utc>,
-    ) -> Result<(), ApplyError> {
-        // We want to end with the same actions when called again.
-        // Count the iteractions not counting the delay requests and closing JoinNext-s.
-        // Every counted JoinNext must have been awaited at this point.
-        let mut join_set_to_child_created_and_awaited: IndexMap<JoinSetId, (i32, i32)> =
-            IndexMap::new(); // Must be deterministic.
+    ) -> Result<(), WorkflowFunctionError> {
+        self.join_set_close_inner(join_set_id, db_connection, version, called_at)
+            .await
+            .map_err(ApplyError::from)
+            .map_err(WorkflowFunctionError::from)
+    }
 
-        // FIXME: not working with heterogenous join sets.
-        let delay_join_sets: hashbrown::HashSet<_> = self // Does not have to be deterministic.
-            .event_history
+    /// For each open join set deterministically emit `JoinNext` and wait for the response.
+    async fn join_set_close_inner(
+        &mut self,
+        join_set_id: &JoinSetId,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<(), JoinSetCloseError> {
+        // Keep submitting JoinNext-s until the created child requests == processed(paired) join nexts + closing join nexts.
+        // After closing a join set, it must not be possible for code to add more join nexts.
+
+        let created_child_request_count = *self
+            .index_join_set_to_created_child_requests
+            .get(join_set_id)
+            .expect("must have been created in JoinSetCreate");
+
+        // TODO: optimize search for child execution responses.
+        let processed_child_response_count = self.responses.iter().filter(|(event, status)| *status == Processed &&
+            matches!(event, JoinSetResponseEvent { join_set_id:found, event: JoinSetResponse::ChildExecutionFinished { .. } } if join_set_id == found)).count();
+        let close_count = self
+            .close_requests
+            .get(join_set_id)
+            .cloned()
+            .unwrap_or_default();
+        debug!(%join_set_id, created_child_request_count, processed_child_response_count,  close_count, "join_set_close");
+        if created_child_request_count > processed_child_response_count + close_count {
+            debug!(%join_set_id, created_child_request_count, processed_child_response_count, "Flusing and adding JoinNext");
+
+            self.flush_non_blocking_event_cache(db_connection, called_at)
+                .await
+                .map_err(JoinSetCloseError::DbError)?;
+            // Changing version here but currently Interrupt strategy is only one implemented.
+            *version = db_connection
+                .append(
+                    self.execution_id.clone(),
+                    version.clone(),
+                    AppendRequest {
+                        created_at: called_at,
+                        event: ExecutionEventInner::HistoryEvent {
+                            event: HistoryEvent::JoinNext {
+                                join_set_id: join_set_id.clone(),
+                                run_expires_at: called_at, // TODO: Implement the Await strategy.
+                                requested_ffqn: None,
+                                closing: true,
+                            },
+                        },
+                    },
+                )
+                .await
+                .map_err(JoinSetCloseError::DbError)?;
+
+            Err(JoinSetCloseError::InterruptRequested) // TODO: Implement the Await strategy.
+        } else {
+            // Clean up for `close_forgotten_join_sets`
+            *self
+                .index_join_set_to_created_child_requests
+                .get_mut(join_set_id)
+                .expect("must have been created in JoinSetCreate") = 0;
+
+            Ok(())
+        }
+    }
+
+    fn last_join_set(&self) -> Option<JoinSetId> {
+        self.index_join_set_to_created_child_requests
             .iter()
-            .filter_map(|(event, _processing_status)| {
-                if let HistoryEvent::JoinSetRequest {
-                    join_set_id,
-                    request: JoinSetRequest::DelayRequest { .. },
-                } = event
-                {
-                    Some(join_set_id.clone())
+            .rev()
+            .filter_map(|(js, remaining)| {
+                if *remaining > 0 {
+                    Some(js.clone())
                 } else {
                     None
                 }
             })
-            .collect();
+            .next()
+    }
 
-        for (event, _processing_status) in &self.event_history {
-            match event {
-                HistoryEvent::JoinSetCreate { join_set_id, .. } => {
-                    if !delay_join_sets.contains(join_set_id) {
-                        let old = join_set_to_child_created_and_awaited
-                            .insert(join_set_id.clone(), (0, 0));
-                        assert!(old.is_none());
-                    }
-                }
-                HistoryEvent::JoinSetRequest {
-                    join_set_id,
-                    request: JoinSetRequest::ChildExecutionRequest { .. },
-                } => {
-                    if !delay_join_sets.contains(join_set_id) {
-                        let (req_count, _) = join_set_to_child_created_and_awaited
-                            .get_mut(join_set_id)
-                            .expect("join set must have been created");
-                        *req_count += 1;
-                    }
-                }
-                HistoryEvent::JoinNext {
-                    join_set_id,
-                    closing,
-                    ..
-                } => {
-                    if !closing && !delay_join_sets.contains(join_set_id) {
-                        let (_, await_count) = join_set_to_child_created_and_awaited
-                            .get_mut(join_set_id)
-                            .expect("join set must have been created");
-                        *await_count += 1;
-                    }
-                }
-                // Delay requests are not awaited.
-                HistoryEvent::JoinSetRequest {
-                    request: JoinSetRequest::DelayRequest { .. },
-                    ..
-                }
-                // Other events are irrelevant.
-                | HistoryEvent::Persist { .. }
-                | HistoryEvent::JoinNextTooMany { .. }
-                | HistoryEvent::Schedule { .. }
-                | HistoryEvent::Stub { .. } => {}
-            }
-        }
-        let mut first_unhandled_child_execution_error = None;
-
-        let join_sets_that_need_join_next = join_set_to_child_created_and_awaited
-            .iter()
-            .filter_map(|(join_set, (created, awaited))| {
-                let remaining = *created - *awaited;
-                if remaining > 0 {
-                    Some((join_set, remaining))
-                } else {
-                    None
-                }
-            });
-
-        for (join_set_id, remaining) in join_sets_that_need_join_next {
-            for _ in 0..remaining {
-                debug!("Adding BlockingChildAwaitNext to join set {join_set_id}");
-                match self
-                    .apply_inner(
-                        EventCall::JoinNext(JoinNext {
-                            join_set_id: join_set_id.clone(),
-                            closing: true,
-                            wasm_backtrace: None,
-                        }),
-                        db_connection,
-                        version,
-                        called_at,
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        // continue
-                    }
-                    Err(ApplyError::UnhandledChildExecutionError {
-                        child_execution_id,
-                        root_cause_id,
-                    }) => {
-                        if first_unhandled_child_execution_error.is_none() {
-                            first_unhandled_child_execution_error =
-                                Some((child_execution_id, root_cause_id));
-                        }
-                    }
-                    Err(
-                        apply_err @ (ApplyError::NondeterminismDetected(_)
-                        | ApplyError::DbError(_)
-                        | ApplyError::InterruptRequested),
-                    ) => return Err(apply_err),
-                }
-            }
+    #[instrument(skip_all)]
+    pub(crate) async fn close_forgotten_join_sets(
+        &mut self,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<(), JoinSetCloseError> {
+        debug!("close_forgotten_join_sets");
+        while let Some(join_set_id) = self.last_join_set() {
+            self.join_set_close_inner(&join_set_id, db_connection, version, called_at)
+                .await?;
+            // No action was needed, continue with next join set.
         }
         Ok(())
     }
@@ -2064,6 +2068,8 @@ impl JoinSetCreate {
         version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<JoinSetId, ApplyError> {
+        assert!(self.join_set_id.kind != JoinSetKind::OneOff);
+        let join_set_id = self.join_set_id.clone();
         let value = event_history
             .apply_inner(
                 EventCall::JoinSetCreate(self),
@@ -2074,6 +2080,11 @@ impl JoinSetCreate {
             .await?;
         let value = assert_matches!(value,
             ChildReturnValue::JoinSetCreate(join_set_id) => join_set_id);
+        assert_eq!(join_set_id, value);
+        let prev_val = event_history
+            .index_join_set_to_created_child_requests
+            .insert(join_set_id, 0);
+        assert!(prev_val.is_none());
         Ok(value)
     }
 }
@@ -2098,6 +2109,8 @@ impl SubmitChildExecution {
         version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val /* ExecutionId */, WorkflowFunctionError> {
+        assert!(self.join_set_id.kind != JoinSetKind::OneOff);
+        let join_set_id = self.join_set_id.clone();
         let value = event_history
             .apply(
                 EventCall::SubmitChildExecution(self),
@@ -2107,14 +2120,23 @@ impl SubmitChildExecution {
             )
             .await?;
         // TODO: Must be an ExecutionId
-        match value {
+        let value = match value {
             ChildReturnValue::WastVal(wast_val) => Ok(wast_val.as_val()),
             ChildReturnValue::None
             | ChildReturnValue::JoinSetCreate(_)
             | ChildReturnValue::JoinNext(_) => {
                 unreachable!("must be an ExecutionId")
             }
+        };
+        {
+            // Increment `index_join_set_to_created_child_requests` counter
+            let counter = event_history
+                .index_join_set_to_created_child_requests
+                .get_mut(&join_set_id)
+                .expect("must have been created in JoinSetCreate");
+            *counter += 1;
         }
+        value
     }
 }
 
@@ -2236,7 +2258,11 @@ impl JoinNextRequestingFfqn {
         db_connection: &dyn DbConnection,
         version: &mut Version,
         called_at: DateTime<Utc>,
-    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+    ) -> Result<
+        wasmtime::component::Val, /* result<?, await-next-extension-error> */
+        WorkflowFunctionError,
+    > {
+        assert!(self.join_set_id.kind != JoinSetKind::OneOff);
         let value = event_history
             .apply(
                 EventCall::JoinNextRequestingFfqn(self),
@@ -2246,14 +2272,15 @@ impl JoinNextRequestingFfqn {
             )
             .await?;
 
-        match value {
-            ChildReturnValue::None => Ok(None),
-            ChildReturnValue::WastVal(wast_val) => Ok(Some(wast_val.as_val())),
-
-            ChildReturnValue::JoinSetCreate(_) | ChildReturnValue::JoinNext(_) => {
-                unreachable!("must be WastVal or None")
+        let value = match value {
+            ChildReturnValue::WastVal(wast_val) => wast_val,
+            ChildReturnValue::None
+            | ChildReturnValue::JoinSetCreate(_)
+            | ChildReturnValue::JoinNext(_) => {
+                unreachable!("must be WastVal containing result<?, await-next-extension-error>")
             }
-        }
+        };
+        Ok(value.as_val())
     }
 }
 
@@ -2271,12 +2298,10 @@ impl JoinNext {
         db_connection: &dyn DbConnection,
         version: &mut Version,
         called_at: DateTime<Utc>,
-    ) -> Result<
-        Result<types_execution::ResponseId, workflow_support::JoinNextError>,
-        WorkflowFunctionError,
-    > {
+    ) -> Result<Result<types_execution::ResponseId, workflow_support::JoinNextError>, ApplyError>
+    {
         let value = event_history
-            .apply(EventCall::JoinNext(self), db_connection, version, called_at)
+            .apply_inner(EventCall::JoinNext(self), db_connection, version, called_at)
             .await?;
         let value = assert_matches!(value,ChildReturnValue::JoinNext(value) => value);
         Ok(value)
@@ -2327,7 +2352,7 @@ impl OneOffChildExecutionRequest {
             ChildReturnValue::None => Ok(None),
             ChildReturnValue::WastVal(wast_val) => Ok(Some(wast_val.as_val())),
             ChildReturnValue::JoinSetCreate(_) | ChildReturnValue::JoinNext(_) => {
-                unreachable!("specific responses handled in their respective functions")
+                unreachable!("must return WastVal or None")
             }
         }
     }
