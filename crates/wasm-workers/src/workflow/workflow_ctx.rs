@@ -993,20 +993,25 @@ impl<C: ClockFn> WorkflowCtx<C> {
                         detail: Some(format!("{err:?}")),
                     }
                 })?;
-                self.apply_event(
-                    EventCall::Schedule(Schedule {
-                        schedule_at,
-                        scheduled_at_if_new,
-                        execution_id,
-                        ffqn: target_ffqn,
-                        fn_component_id,
-                        fn_retry_config,
-                        params: Params::from_wasmtime(Arc::from(target_params)),
-                        wasm_backtrace,
-                    }),
+
+                Schedule {
+                    schedule_at,
+                    scheduled_at_if_new,
+                    execution_id,
+                    ffqn: target_ffqn,
+                    fn_component_id,
+                    fn_retry_config,
+                    params: Params::from_wasmtime(Arc::from(target_params)),
+                    wasm_backtrace,
+                }
+                .apply(
+                    &mut self.event_history,
+                    self.db_pool.connection().as_ref(),
+                    &mut self.version,
                     called_at,
                 )
                 .await
+                .map(Some)
             }
             ImportedFnCall::SubmitExecution {
                 target_ffqn,

@@ -2135,6 +2135,7 @@ impl SubmitDelay {
         Ok(types_execution::DelayId { id })
     }
 }
+
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct Schedule {
     #[expect(clippy::struct_field_names)]
@@ -2148,6 +2149,28 @@ pub(crate) struct Schedule {
     pub(crate) params: Params,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+impl Schedule {
+    pub(crate) async fn apply(
+        self,
+        event_history: &mut EventHistory,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
+        let value = event_history
+            .apply(EventCall::Schedule(self), db_connection, version, called_at)
+            .await?;
+        // TODO: Must be an ExecutionId
+        match value {
+            ChildReturnValue::WastVal(wast_val) => Ok(wast_val.as_val()),
+            ChildReturnValue::None
+            | ChildReturnValue::JoinSetCreate(_)
+            | ChildReturnValue::JoinNext(_) => {
+                unreachable!("specific responses handled in their respective functions")
+            }
+        }
+    }
 }
 
 #[derive(derive_more::Debug, Clone)]
