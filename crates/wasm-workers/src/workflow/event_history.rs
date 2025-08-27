@@ -1846,23 +1846,6 @@ impl EventHistory {
         }
     }
 
-    pub(crate) fn next_blocking_delay_request(
-        &self,
-        schedule_at: HistoryEventScheduleAt,
-        expires_at_if_new: DateTime<Utc>,
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-    ) -> OneOffDelayRequest {
-        let join_set_id = self.next_join_set_one_off();
-        let delay_id = DelayId::new(&self.execution_id, &join_set_id);
-        OneOffDelayRequest {
-            join_set_id,
-            delay_id,
-            schedule_at,
-            expires_at_if_new,
-            wasm_backtrace,
-        }
-    }
-
     pub(crate) fn next_blocking_child_direct_call(
         &self,
         ffqn: FunctionFqn,
@@ -2256,6 +2239,39 @@ pub(crate) struct OneOffDelayRequest {
     expires_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
     #[debug(skip)]
     wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+impl OneOffDelayRequest {
+    pub(crate) async fn apply(
+        schedule_at: HistoryEventScheduleAt,
+        expires_at_if_new: DateTime<Utc>,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        event_history: &mut EventHistory,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<(), WorkflowFunctionError> {
+        let join_set_id = event_history.next_join_set_one_off();
+        let delay_id = DelayId::new(&event_history.execution_id, &join_set_id);
+
+        let ChildReturnValue::None = event_history
+            .apply(
+                EventCall::OneOffDelayRequest(OneOffDelayRequest {
+                    join_set_id,
+                    delay_id,
+                    schedule_at,
+                    expires_at_if_new,
+                    wasm_backtrace,
+                }),
+                db_connection,
+                version,
+                called_at,
+            )
+            .await?
+        else {
+            unreachable!()
+        };
+        Ok(())
+    }
 }
 
 #[derive(derive_more::Debug, Clone)]

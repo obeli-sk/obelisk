@@ -1,6 +1,6 @@
 use super::event_history::{
-    ApplyError, ChildReturnValue, EventCall, EventHistory, JoinNextRequestingFfqn, Schedule, Stub,
-    SubmitChildExecution,
+    ApplyError, ChildReturnValue, EventCall, EventHistory, JoinNextRequestingFfqn,
+    OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
 };
 use super::host_exports::v2_0_0::obelisk::types::execution as types_execution;
 use super::host_exports::v2_0_0::{ClosingStrategy_2_0_0, ScheduleAt_2_0_0};
@@ -639,19 +639,16 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     detail: Some(format!("{err:?}")),
                 }
             })?;
-        self.event_history
-            .apply(
-                EventCall::OneOffDelayRequest(self.event_history.next_blocking_delay_request(
-                    schedule_at,
-                    expires_at_if_new,
-                    self.backtrace.take(),
-                )),
-                self.db_pool.connection().as_ref(),
-                &mut self.version,
-                self.clock_fn.now(),
-            )
-            .await?;
-        Ok(())
+        OneOffDelayRequest::apply(
+            schedule_at,
+            expires_at_if_new,
+            self.backtrace.take(),
+            &mut self.event_history,
+            self.db_pool.connection().as_ref(),
+            &mut self.version,
+            self.clock_fn.now(),
+        )
+        .await
     }
 
     // Must be persisted by the caller.
