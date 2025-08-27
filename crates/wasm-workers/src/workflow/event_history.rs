@@ -2309,6 +2309,7 @@ pub(crate) struct OneOffChildExecutionRequest {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl OneOffChildExecutionRequest {
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn apply(
         ffqn: FunctionFqn,
         fn_component_id: ComponentId,

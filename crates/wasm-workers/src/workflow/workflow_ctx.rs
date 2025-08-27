@@ -1,6 +1,6 @@
 use super::event_history::{
-    ApplyError, ChildReturnValue, EventCall, EventHistory, JoinNextRequestingFfqn,
-    OneOffChildExecutionRequest, OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
+    ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
+    OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
 };
 use super::host_exports::v2_0_0::obelisk::types::execution as types_execution;
 use super::host_exports::v2_0_0::{ClosingStrategy_2_0_0, ScheduleAt_2_0_0};
