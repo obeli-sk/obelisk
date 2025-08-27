@@ -2220,6 +2220,33 @@ pub(crate) struct JoinNextRequestingFfqn {
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
+impl JoinNextRequestingFfqn {
+    pub(crate) async fn apply(
+        self,
+        event_history: &mut EventHistory,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+        let value = event_history
+            .apply(
+                EventCall::JoinNextRequestingFfqn(self),
+                db_connection,
+                version,
+                called_at,
+            )
+            .await?;
+
+        match value {
+            ChildReturnValue::None => Ok(None),
+            ChildReturnValue::WastVal(wast_val) => Ok(Some(wast_val.as_val())),
+
+            ChildReturnValue::JoinSetCreate(_) | ChildReturnValue::JoinNext(_) => {
+                unreachable!("must be an ExecutionId")
+            }
+        }
+    }
+}
 
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct JoinNext {

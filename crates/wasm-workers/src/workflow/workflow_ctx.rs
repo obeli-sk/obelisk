@@ -1046,12 +1046,15 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 join_set_id,
                 wasm_backtrace,
             } => {
-                self.apply_event(
-                    EventCall::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
-                        join_set_id,
-                        wasm_backtrace,
-                        requested_ffqn: target_ffqn,
-                    }),
+                JoinNextRequestingFfqn {
+                    join_set_id,
+                    wasm_backtrace,
+                    requested_ffqn: target_ffqn,
+                }
+                .apply(
+                    &mut self.event_history,
+                    self.db_pool.connection().as_ref(),
+                    &mut self.version,
                     called_at,
                 )
                 .await
