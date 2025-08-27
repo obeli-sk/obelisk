@@ -1,4 +1,7 @@
-use super::event_history::{ApplyError, ChildReturnValue, EventCall, EventHistory};
+use super::event_history::{
+    ApplyError, ChildReturnValue, EventCall, EventHistory, JoinNextRequestingFfqn, Schedule, Stub,
+    SubmitChildExecution,
+};
 use super::host_exports::v2_0_0::obelisk::types::execution as types_execution;
 use super::host_exports::v2_0_0::{ClosingStrategy_2_0_0, ScheduleAt_2_0_0};
 use super::host_exports::{
@@ -8,6 +11,7 @@ use super::host_exports::{
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
+use crate::workflow::event_history::CreateJoinSet;
 use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
@@ -638,7 +642,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             })?;
         self.event_history
             .apply(
-                EventCall::BlockingDelayRequest(self.event_history.next_blocking_delay_request(
+                EventCall::OneOffDelayRequest(self.event_history.next_blocking_delay_request(
                     schedule_at,
                     expires_at_if_new,
                     self.backtrace.take(),
@@ -677,11 +681,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
             let res = self
                 .event_history
                 .apply_inner(
-                    EventCall::CreateJoinSet {
+                    EventCall::CreateJoinSet(CreateJoinSet {
                         join_set_id,
                         closing_strategy,
                         wasm_backtrace: self.backtrace.take(),
-                    },
+                    }),
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
                     self.clock_fn.now(),
@@ -960,7 +964,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     .expect("function obtained from fn_registry exports must be found");
 
                 self.apply_event(
-                    EventCall::BlockingChildDirectCall(
+                    EventCall::OneOffChildExecutionRequest(
                         self.event_history.next_blocking_child_direct_call(
                             ffqn,
                             fn_component_id,
@@ -997,7 +1001,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     }
                 })?;
                 self.apply_event(
-                    EventCall::ScheduleRequest {
+                    EventCall::Schedule(Schedule {
                         schedule_at,
                         scheduled_at_if_new,
                         execution_id,
@@ -1006,7 +1010,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                         fn_retry_config,
                         params: Params::from_wasmtime(Arc::from(target_params)),
                         wasm_backtrace,
-                    },
+                    }),
                     called_at,
                 )
                 .await
@@ -1022,7 +1026,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from fn_registry exports must be found");
                 self.apply_event(
-                    EventCall::StartAsync {
+                    EventCall::SubmitChildExecution(SubmitChildExecution {
                         target_ffqn,
                         fn_component_id,
                         fn_retry_config,
@@ -1030,7 +1034,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                         params: Params::from_wasmtime(Arc::from(target_params)),
                         child_execution_id,
                         wasm_backtrace,
-                    },
+                    }),
                     called_at,
                 )
                 .await
@@ -1041,11 +1045,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 wasm_backtrace,
             } => {
                 self.apply_event(
-                    EventCall::BlockingChildAwaitNext {
+                    EventCall::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
                         join_set_id,
                         wasm_backtrace,
                         requested_ffqn: target_ffqn,
-                    },
+                    }),
                     called_at,
                 )
                 .await
@@ -1093,14 +1097,14 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 };
 
                 self.apply_event(
-                    EventCall::Stub {
+                    EventCall::Stub(Stub {
                         target_ffqn: target_ffqn.clone(),
                         target_execution_id: target_execution_id.clone(),
                         parent_id,
                         join_set_id,
                         result,
                         wasm_backtrace,
-                    },
+                    }),
                     called_at,
                 )
                 .await
@@ -1142,7 +1146,7 @@ enum JoinSetCreateError {
 mod workflow_support {
     use super::types_execution;
     use super::{ClockFn, EventCall, WorkflowCtx, WorkflowFunctionError, assert_matches};
-    use crate::workflow::event_history::ChildReturnValue;
+    use crate::workflow::event_history::{ChildReturnValue, JoinNext, Persist, SubmitDelay};
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::HostJoinSetId;
     use crate::workflow::host_exports::v2_0_0::obelisk::workflow::workflow_support;
@@ -1211,11 +1215,11 @@ mod workflow_support {
             let value = self
                 .event_history
                 .apply(
-                    EventCall::Persist {
+                    EventCall::Persist(Persist {
                         value,
                         kind: PersistKind::RandomU64 { min, max_inclusive },
                         wasm_backtrace: self.backtrace.take(),
-                    },
+                    }),
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
                     self.clock_fn.now(),
@@ -1254,14 +1258,14 @@ mod workflow_support {
             let value = self
                 .event_history
                 .apply(
-                    EventCall::Persist {
+                    EventCall::Persist(Persist {
                         value,
                         kind: PersistKind::RandomString {
                             min_length: u64::from(min_length),
                             max_length_exclusive: u64::from(max_length_exclusive),
                         },
                         wasm_backtrace: self.backtrace.take(),
-                    },
+                    }),
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
                     self.clock_fn.now(),
@@ -1294,13 +1298,13 @@ mod workflow_support {
             let value = self
                 .event_history
                 .apply(
-                    EventCall::SubmitDelay {
+                    EventCall::SubmitDelay(SubmitDelay {
                         delay_id,
                         join_set_id,
                         schedule_at,
                         expires_at_if_new,
                         wasm_backtrace: self.backtrace.take(),
-                    },
+                    }),
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
                     self.clock_fn.now(),
@@ -1379,11 +1383,11 @@ mod workflow_support {
             let value = self
                 .event_history
                 .apply(
-                    EventCall::JoinNext {
+                    EventCall::JoinNext(JoinNext {
                         join_set_id,
                         closing: false,
                         wasm_backtrace: self.backtrace.take(),
-                    },
+                    }),
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
                     self.clock_fn.now(),
