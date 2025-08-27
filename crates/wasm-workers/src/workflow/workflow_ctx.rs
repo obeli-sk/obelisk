@@ -1,6 +1,6 @@
 use super::event_history::{
     ApplyError, ChildReturnValue, EventCall, EventHistory, JoinNextRequestingFfqn,
-    OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
+    OneOffChildExecutionRequest, OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
 };
 use super::host_exports::v2_0_0::obelisk::types::execution as types_execution;
 use super::host_exports::v2_0_0::{ClosingStrategy_2_0_0, ScheduleAt_2_0_0};
@@ -957,16 +957,15 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     .get_by_exported_function(&ffqn)
                     .expect("function obtained from fn_registry exports must be found");
 
-                self.apply_event(
-                    EventCall::OneOffChildExecutionRequest(
-                        self.event_history.next_blocking_child_direct_call(
-                            ffqn,
-                            fn_component_id,
-                            fn_retry_config,
-                            Params::from_wasmtime(Arc::from(params)),
-                            wasm_backtrace,
-                        ),
-                    ),
+                OneOffChildExecutionRequest::apply(
+                    ffqn,
+                    fn_component_id,
+                    fn_retry_config,
+                    Params::from_wasmtime(Arc::from(params)),
+                    wasm_backtrace,
+                    &mut self.event_history,
+                    self.db_pool.connection().as_ref(),
+                    &mut self.version,
                     called_at,
                 )
                 .await

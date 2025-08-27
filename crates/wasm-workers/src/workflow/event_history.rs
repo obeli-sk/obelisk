@@ -1846,27 +1846,6 @@ impl EventHistory {
         }
     }
 
-    pub(crate) fn next_blocking_child_direct_call(
-        &self,
-        ffqn: FunctionFqn,
-        fn_component_id: ComponentId,
-        fn_retry_config: ComponentRetryConfig,
-        params: Params,
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-    ) -> OneOffChildExecutionRequest {
-        let join_set_id = self.next_join_set_one_off();
-        let child_execution_id = self.execution_id.next_level(&join_set_id);
-        OneOffChildExecutionRequest {
-            ffqn,
-            fn_component_id,
-            fn_retry_config,
-            join_set_id,
-            child_execution_id,
-            params,
-            wasm_backtrace,
-        }
-    }
-
     pub(crate) fn next_join_set_name_generated(&self) -> String {
         self.next_join_set_name_index(JoinSetKind::Generated)
     }
@@ -2229,6 +2208,42 @@ pub(crate) struct OneOffChildExecutionRequest {
     params: Params,
     #[debug(skip)]
     wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+impl OneOffChildExecutionRequest {
+    pub(crate) async fn apply(
+        ffqn: FunctionFqn,
+        fn_component_id: ComponentId,
+        fn_retry_config: ComponentRetryConfig,
+        params: Params,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        event_history: &mut EventHistory,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+        let join_set_id = event_history.next_join_set_one_off();
+        let child_execution_id = event_history.execution_id.next_level(&join_set_id);
+        let event = EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
+            ffqn,
+            fn_component_id,
+            fn_retry_config,
+            join_set_id,
+            child_execution_id,
+            params,
+            wasm_backtrace,
+        });
+
+        let value = event_history
+            .apply(event, db_connection, version, called_at)
+            .await?;
+        match value {
+            ChildReturnValue::None => Ok(None),
+            ChildReturnValue::WastVal(wast_val) => Ok(Some(wast_val.as_val())),
+            ChildReturnValue::JoinSetCreate(_) | ChildReturnValue::JoinNext(_) => {
+                unreachable!("specific responses handled in their respective functions")
+            }
+        }
+    }
 }
 
 #[derive(derive_more::Debug, Clone)]
