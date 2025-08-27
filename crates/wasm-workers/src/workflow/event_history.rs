@@ -2195,6 +2195,24 @@ pub(crate) struct JoinNext {
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
+impl JoinNext {
+    pub(crate) async fn apply(
+        self,
+        event_history: &mut EventHistory,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<
+        Result<types_execution::ResponseId, workflow_support::JoinNextError>,
+        WorkflowFunctionError,
+    > {
+        let value = event_history
+            .apply(EventCall::JoinNext(self), db_connection, version, called_at)
+            .await?;
+        let value = assert_matches!(value,ChildReturnValue::JoinNext(value) => value);
+        Ok(value)
+    }
+}
 
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct OneOffChildExecutionRequest {

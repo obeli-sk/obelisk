@@ -1145,8 +1145,8 @@ enum JoinSetCreateError {
 
 mod workflow_support {
     use super::types_execution;
-    use super::{ClockFn, EventCall, WorkflowCtx, WorkflowFunctionError, assert_matches};
-    use crate::workflow::event_history::{ChildReturnValue, JoinNext, Persist, SubmitDelay};
+    use super::{ClockFn, WorkflowCtx, WorkflowFunctionError};
+    use crate::workflow::event_history::{JoinNext, Persist, SubmitDelay};
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::HostJoinSetId;
     use crate::workflow::host_exports::v2_0_0::obelisk::workflow::workflow_support;
@@ -1358,21 +1358,18 @@ mod workflow_support {
             Result<types_execution::ResponseId, workflow_support::JoinNextError>,
             WorkflowFunctionError,
         > {
-            let value = self
-                .event_history
-                .apply(
-                    EventCall::JoinNext(JoinNext {
-                        join_set_id,
-                        closing: false,
-                        wasm_backtrace: self.backtrace.take(),
-                    }),
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                    self.clock_fn.now(),
-                )
-                .await?;
-            let value = assert_matches!(value,ChildReturnValue::JoinNext(value) => value);
-            Ok(value)
+            JoinNext {
+                join_set_id,
+                closing: false,
+                wasm_backtrace: self.backtrace.take(),
+            }
+            .apply(
+                &mut self.event_history,
+                self.db_pool.connection().as_ref(),
+                &mut self.version,
+                self.clock_fn.now(),
+            )
+            .await
         }
     }
 }
