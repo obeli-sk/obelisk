@@ -611,7 +611,7 @@ impl EventHistory {
 
     fn process_event_by_key(
         &mut self,
-        key: &EventHistoryKey,
+        key: &DeterministicKey,
     ) -> Result<FindMatchingResponse, ApplyError> {
         let Some((found_idx, found_request_event)) = self.first_unprocessed_request() else {
             return Ok(FindMatchingResponse::NotFound);
@@ -619,7 +619,7 @@ impl EventHistory {
         trace!("Finding match for {key:?}, [{found_idx}] {found_request_event:?}");
         match (key, found_request_event) {
             (
-                EventHistoryKey::CreateJoinSet {
+                DeterministicKey::CreateJoinSet {
                     join_set_id,
                     closing_strategy,
                 },
@@ -639,7 +639,7 @@ impl EventHistory {
             }
 
             (
-                EventHistoryKey::Persist { value, kind },
+                DeterministicKey::Persist { value, kind },
                 HistoryEvent::Persist {
                     value: found_value,
                     kind: found_kind,
@@ -676,7 +676,7 @@ impl EventHistory {
             }
 
             (
-                EventHistoryKey::ChildExecutionRequest {
+                DeterministicKey::ChildExecutionRequest {
                     join_set_id,
                     child_execution_id: execution_id,
                     target_ffqn,
@@ -698,7 +698,7 @@ impl EventHistory {
             }
 
             (
-                EventHistoryKey::DelayRequest {
+                DeterministicKey::DelayRequest {
                     join_set_id,
                     delay_id,
                     schedule_at,
@@ -725,7 +725,7 @@ impl EventHistory {
             }
 
             (
-                EventHistoryKey::JoinNextChild {
+                DeterministicKey::JoinNextChild {
                     join_set_id,
                     kind: JoinNextChildKind::AwaitNext,
                     requested_ffqn,
@@ -746,7 +746,7 @@ impl EventHistory {
             }
 
             (
-                EventHistoryKey::JoinNextChild {
+                DeterministicKey::JoinNextChild {
                     join_set_id,
                     kind,
                     requested_ffqn,
@@ -905,7 +905,7 @@ impl EventHistory {
             }
 
             (
-                EventHistoryKey::JoinNextDelay { join_set_id },
+                DeterministicKey::JoinNextDelay { join_set_id },
                 HistoryEvent::JoinNext {
                     join_set_id: found_join_set_id,
                     requested_ffqn: None,
@@ -930,7 +930,7 @@ impl EventHistory {
             }
 
             (
-                EventHistoryKey::JoinNext {
+                DeterministicKey::JoinNext {
                     join_set_id,
                     closing,
                 },
@@ -968,7 +968,7 @@ impl EventHistory {
             }
 
             (
-                EventHistoryKey::JoinNext {
+                DeterministicKey::JoinNext {
                     join_set_id,
                     closing: false, // Runtime should never issue a bogus `JoinNext`.
                 },
@@ -985,7 +985,7 @@ impl EventHistory {
             }
 
             (
-                EventHistoryKey::Schedule {
+                DeterministicKey::Schedule {
                     target_execution_id,
                     schedule_at,
                 },
@@ -1006,7 +1006,7 @@ impl EventHistory {
             }
 
             (
-                EventHistoryKey::Stub {
+                DeterministicKey::Stub {
                     target_execution_id,
                     return_value,
                 },
@@ -2058,24 +2058,24 @@ impl JoinNextVariant {
             } => join_set_id,
         }
     }
-    fn as_key(&self) -> EventHistoryKey {
+    fn as_key(&self) -> DeterministicKey {
         match self {
             JoinNextVariant::Child {
                 join_set_id,
                 kind,
                 requested_ffqn,
-            } => EventHistoryKey::JoinNextChild {
+            } => DeterministicKey::JoinNextChild {
                 join_set_id: join_set_id.clone(),
                 kind: *kind,
                 requested_ffqn: requested_ffqn.clone(),
             },
-            JoinNextVariant::Delay(join_set_id) => EventHistoryKey::JoinNextDelay {
+            JoinNextVariant::Delay(join_set_id) => DeterministicKey::JoinNextDelay {
                 join_set_id: join_set_id.clone(),
             },
             JoinNextVariant::Opaque {
                 join_set_id,
                 closing,
-            } => EventHistoryKey::JoinNext {
+            } => DeterministicKey::JoinNext {
                 join_set_id: join_set_id.clone(),
                 closing: *closing,
             },
@@ -2269,9 +2269,8 @@ impl EventCall {
 /// Those properties are checked for equality with `HistoryEvent` before it is marked as `Processed`.
 /// One `EventCall` can be represented as multiple `EventHistoryKey`-s.
 /// One `EventHistoryKey` corresponds to one `HistoryEvent`.
-// TODO: Rename to DeterministicKey
 #[derive(derive_more::Debug, Clone)]
-enum EventHistoryKey {
+enum DeterministicKey {
     Persist {
         #[debug(skip)]
         value: Vec<u8>,
@@ -2320,20 +2319,20 @@ enum JoinNextChildKind {
 }
 
 impl EventCall {
-    fn as_keys(&self) -> Vec<EventHistoryKey> {
+    fn as_keys(&self) -> Vec<DeterministicKey> {
         match self {
             EventCall::CreateJoinSet(CreateJoinSet {
                 join_set_id,
                 closing_strategy,
                 ..
             }) => {
-                vec![EventHistoryKey::CreateJoinSet {
+                vec![DeterministicKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: *closing_strategy,
                 }]
             }
             EventCall::Persist(Persist { value, kind, .. }) => {
-                vec![EventHistoryKey::Persist {
+                vec![DeterministicKey::Persist {
                     value: value.clone(),
                     kind: *kind,
                 }]
@@ -2343,7 +2342,7 @@ impl EventCall {
                 child_execution_id,
                 target_ffqn,
                 ..
-            }) => vec![EventHistoryKey::ChildExecutionRequest {
+            }) => vec![DeterministicKey::ChildExecutionRequest {
                 join_set_id: join_set_id.clone(),
                 child_execution_id: child_execution_id.clone(),
                 target_ffqn: target_ffqn.clone(),
@@ -2353,7 +2352,7 @@ impl EventCall {
                 join_set_id,
                 schedule_at: timeout,
                 ..
-            }) => vec![EventHistoryKey::DelayRequest {
+            }) => vec![DeterministicKey::DelayRequest {
                 join_set_id: join_set_id.clone(),
                 delay_id: delay_id.clone(),
                 schedule_at: *timeout,
@@ -2363,7 +2362,7 @@ impl EventCall {
                 requested_ffqn,
                 ..
             }) => {
-                vec![EventHistoryKey::JoinNextChild {
+                vec![DeterministicKey::JoinNextChild {
                     join_set_id: join_set_id.clone(),
                     kind: JoinNextChildKind::AwaitNext,
                     requested_ffqn: requested_ffqn.clone(),
@@ -2375,16 +2374,16 @@ impl EventCall {
                 ffqn,
                 ..
             }) => vec![
-                EventHistoryKey::CreateJoinSet {
+                DeterministicKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::default(),
                 },
-                EventHistoryKey::ChildExecutionRequest {
+                DeterministicKey::ChildExecutionRequest {
                     join_set_id: join_set_id.clone(),
                     child_execution_id: child_execution_id.clone(),
                     target_ffqn: ffqn.clone(),
                 },
-                EventHistoryKey::JoinNextChild {
+                DeterministicKey::JoinNextChild {
                     join_set_id: join_set_id.clone(),
                     kind: JoinNextChildKind::DirectCall,
                     requested_ffqn: ffqn.clone(),
@@ -2396,16 +2395,16 @@ impl EventCall {
                 schedule_at,
                 ..
             }) => vec![
-                EventHistoryKey::CreateJoinSet {
+                DeterministicKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::default(),
                 },
-                EventHistoryKey::DelayRequest {
+                DeterministicKey::DelayRequest {
                     join_set_id: join_set_id.clone(),
                     delay_id: delay_id.clone(),
                     schedule_at: *schedule_at,
                 },
-                EventHistoryKey::JoinNextDelay {
+                DeterministicKey::JoinNextDelay {
                     join_set_id: join_set_id.clone(),
                 },
             ],
@@ -2413,7 +2412,7 @@ impl EventCall {
                 join_set_id,
                 closing,
                 wasm_backtrace: _,
-            }) => vec![EventHistoryKey::JoinNext {
+            }) => vec![DeterministicKey::JoinNext {
                 join_set_id: join_set_id.clone(),
                 closing: *closing,
             }],
@@ -2422,7 +2421,7 @@ impl EventCall {
                 schedule_at,
                 ..
             }) => {
-                vec![EventHistoryKey::Schedule {
+                vec![DeterministicKey::Schedule {
                     target_execution_id: execution_id.clone(),
                     schedule_at: *schedule_at,
                 }]
@@ -2432,7 +2431,7 @@ impl EventCall {
                 result: return_value,
                 ..
             }) => {
-                vec![EventHistoryKey::Stub {
+                vec![DeterministicKey::Stub {
                     target_execution_id: target_execution_id.clone(),
                     return_value: return_value.clone(),
                 }]
