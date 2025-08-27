@@ -49,6 +49,7 @@ db-mem.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
 db-tests.workspace = true
 executor = { workspace = true, features = ["test"] }
+insta.workspace = true
 serde_json.workspace = true
 test-programs-dir-activity-builder.workspace = true
 test-programs-fibo-activity-builder.workspace = true

@@ -3174,6 +3174,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "indexmap 2.11.0",
+ "insta",
  "itertools",
  "libc",
  "obeli-sk-concepts",

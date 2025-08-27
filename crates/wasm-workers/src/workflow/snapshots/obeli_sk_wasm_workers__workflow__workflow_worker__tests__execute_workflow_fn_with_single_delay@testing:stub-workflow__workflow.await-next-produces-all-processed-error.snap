@@ -1,0 +1,95 @@
+---
+source: crates/wasm-workers/src/workflow/workflow_worker.rs
+expression: execution_log
+---
+{
+  "execution_id": "E_00000000000000000000000000",
+  "events": [
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "Created": {
+          "ffqn": {
+            "ifc_fqn": "testing:stub-workflow/workflow",
+            "function_name": "await-next-produces-all-processed-error"
+          },
+          "params": [],
+          "parent": null,
+          "scheduled_at": "1970-01-01T00:00:00Z",
+          "retry_exp_backoff": {
+            "secs": 0,
+            "nanos": 0
+          },
+          "max_retries": 4294967295,
+          "component_id": "workflow:",
+          "metadata": null,
+          "scheduled_by": null
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "Locked": {
+          "component_id": "workflow:",
+          "executor_id": "Exr_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000001",
+          "lock_expires_at": "1970-01-01T00:00:01Z"
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetCreate",
+            "join_set_id": "g:1",
+            "closing_strategy": "complete"
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinNextTooMany",
+            "join_set_id": "g:1",
+            "requested_ffqn": {
+              "ifc_fqn": "testing:stub-activity/activity",
+              "function_name": "foo"
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "Finished": {
+          "result": {
+            "Ok": "None"
+          },
+          "http_client_traces": null
+        }
+      },
+      "backtrace_id": null
+    }
+  ],
+  "responses": [],
+  "next_version": 4,
+  "pending_state": {
+    "type": "Finished",
+    "finished": {
+      "version": 4,
+      "finished_at": "1970-01-01T00:00:00Z",
+      "result_kind": "ok"
+    }
+  }
+}

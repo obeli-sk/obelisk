@@ -1940,20 +1940,20 @@ pub(crate) mod tests {
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
-                executor_id: ExecutorId::generate(),
+                executor_id: ExecutorId::from_parts(0, 0),
             },
             sim_clock.clone(),
             db_pool.clone(),
             Arc::new([ffqn.clone()]),
         );
 
-        let execution_id = ExecutionId::generate();
+        let execution_id = ExecutionId::from_parts(0, 0);
         let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id: execution_id.clone(),
-                ffqn,
+                ffqn: ffqn.clone(),
                 params: Params::empty(),
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -1966,9 +1966,16 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
+        let mut run_id = {
+            let mut id = 0;
+            move || {
+                id += 1;
+                RunId::from_parts(0, id)
+            }
+        };
         {
             let task_count = exec_task
-                .tick_test(sim_clock.now(), RunId::generate())
+                .tick_test(sim_clock.now(), run_id())
                 .await
                 .unwrap()
                 .wait_for_tasks()
@@ -1997,7 +2004,7 @@ pub(crate) mod tests {
             assert_eq!(
                 1,
                 exec_task
-                    .tick_test(sim_clock.now(), RunId::generate())
+                    .tick_test(sim_clock.now(), run_id())
                     .await
                     .unwrap()
                     .wait_for_tasks()
@@ -2010,7 +2017,7 @@ pub(crate) mod tests {
             assert_eq!(
                 1,
                 exec_task
-                    .tick_test(sim_clock.now(), RunId::generate())
+                    .tick_test(sim_clock.now(), run_id())
                     .await
                     .unwrap()
                     .wait_for_tasks()
@@ -2032,10 +2039,10 @@ pub(crate) mod tests {
                 }
             }
         );
-
-        let res = db_connection.get(&execution_id).await.unwrap();
+        let execution_log = db_connection.get(&execution_id).await.unwrap();
+        insta::with_settings!({snapshot_suffix => format!("{ffqn}")}, {insta::assert_json_snapshot!(execution_log)});
         assert_matches!(
-            res.into_finished_result(),
+            execution_log.into_finished_result(),
             Some(Ok(SupportedFunctionReturnValue::None))
         );
 
