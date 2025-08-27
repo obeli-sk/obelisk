@@ -1,0 +1,715 @@
+---
+source: crates/wasm-workers/src/workflow/workflow_worker.rs
+expression: execution_log
+---
+{
+  "execution_id": "E_00000000000000000000000000",
+  "events": [
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "Created": {
+          "ffqn": {
+            "ifc_fqn": "testing:stub-workflow/workflow",
+            "function_name": "join-next-in-scope"
+          },
+          "params": [],
+          "parent": null,
+          "scheduled_at": "1970-01-01T00:00:00Z",
+          "retry_exp_backoff": {
+            "secs": 0,
+            "nanos": 0
+          },
+          "max_retries": 4294967295,
+          "component_id": "workflow:",
+          "metadata": null,
+          "scheduled_by": null
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "Locked": {
+          "component_id": "workflow:",
+          "executor_id": "Exr_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000001",
+          "lock_expires_at": "1970-01-01T00:00:01Z"
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetCreate",
+            "join_set_id": "n:a",
+            "closing_strategy": "complete"
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetRequest",
+            "join_set_id": "n:a",
+            "request": {
+              "type": "ChildExecutionRequest",
+              "child_execution_id": "E_00000000000000000000000000.n:a_1"
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "Stub",
+            "target_execution_id": "E_00000000000000000000000000.n:a_1",
+            "result": {
+              "Ok": {
+                "InfallibleOrResultOk": {
+                  "type": "string",
+                  "value": "a"
+                }
+              }
+            },
+            "persist_result": {
+              "Ok": null
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetRequest",
+            "join_set_id": "n:a",
+            "request": {
+              "type": "ChildExecutionRequest",
+              "child_execution_id": "E_00000000000000000000000000.n:a_2"
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "Stub",
+            "target_execution_id": "E_00000000000000000000000000.n:a_2",
+            "result": {
+              "Ok": {
+                "InfallibleOrResultOk": {
+                  "type": "string",
+                  "value": "aa"
+                }
+              }
+            },
+            "persist_result": {
+              "Ok": null
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetCreate",
+            "join_set_id": "n:b",
+            "closing_strategy": "complete"
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetRequest",
+            "join_set_id": "n:b",
+            "request": {
+              "type": "ChildExecutionRequest",
+              "child_execution_id": "E_00000000000000000000000000.n:b_1"
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "Stub",
+            "target_execution_id": "E_00000000000000000000000000.n:b_1",
+            "result": {
+              "Ok": {
+                "InfallibleOrResultOk": {
+                  "type": "string",
+                  "value": "b"
+                }
+              }
+            },
+            "persist_result": {
+              "Ok": null
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetRequest",
+            "join_set_id": "n:b",
+            "request": {
+              "type": "ChildExecutionRequest",
+              "child_execution_id": "E_00000000000000000000000000.n:b_2"
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "Stub",
+            "target_execution_id": "E_00000000000000000000000000.n:b_2",
+            "result": {
+              "Ok": {
+                "InfallibleOrResultOk": {
+                  "type": "string",
+                  "value": "bb"
+                }
+              }
+            },
+            "persist_result": {
+              "Ok": null
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetCreate",
+            "join_set_id": "n:f",
+            "closing_strategy": "complete"
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetRequest",
+            "join_set_id": "n:f",
+            "request": {
+              "type": "ChildExecutionRequest",
+              "child_execution_id": "E_00000000000000000000000000.n:f_1"
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "Stub",
+            "target_execution_id": "E_00000000000000000000000000.n:f_1",
+            "result": {
+              "Ok": {
+                "InfallibleOrResultOk": {
+                  "type": "string",
+                  "value": "f"
+                }
+              }
+            },
+            "persist_result": {
+              "Ok": null
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetRequest",
+            "join_set_id": "n:f",
+            "request": {
+              "type": "ChildExecutionRequest",
+              "child_execution_id": "E_00000000000000000000000000.n:f_2"
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "Stub",
+            "target_execution_id": "E_00000000000000000000000000.n:f_2",
+            "result": {
+              "Ok": {
+                "InfallibleOrResultOk": {
+                  "type": "string",
+                  "value": "ff"
+                }
+              }
+            },
+            "persist_result": {
+              "Ok": null
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetCreate",
+            "join_set_id": "n:c",
+            "closing_strategy": "complete"
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetRequest",
+            "join_set_id": "n:c",
+            "request": {
+              "type": "ChildExecutionRequest",
+              "child_execution_id": "E_00000000000000000000000000.n:c_1"
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "Stub",
+            "target_execution_id": "E_00000000000000000000000000.n:c_1",
+            "result": {
+              "Ok": {
+                "InfallibleOrResultOk": {
+                  "type": "string",
+                  "value": "c"
+                }
+              }
+            },
+            "persist_result": {
+              "Ok": null
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinSetRequest",
+            "join_set_id": "n:c",
+            "request": {
+              "type": "ChildExecutionRequest",
+              "child_execution_id": "E_00000000000000000000000000.n:c_2"
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "Stub",
+            "target_execution_id": "E_00000000000000000000000000.n:c_2",
+            "result": {
+              "Ok": {
+                "InfallibleOrResultOk": {
+                  "type": "string",
+                  "value": "cc"
+                }
+              }
+            },
+            "persist_result": {
+              "Ok": null
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinNext",
+            "join_set_id": "n:a",
+            "run_expires_at": "1970-01-01T00:00:00Z",
+            "requested_ffqn": null,
+            "closing": true
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "Locked": {
+          "component_id": "workflow:",
+          "executor_id": "Exr_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000002",
+          "lock_expires_at": "1970-01-01T00:00:01Z"
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinNext",
+            "join_set_id": "n:a",
+            "run_expires_at": "1970-01-01T00:00:00Z",
+            "requested_ffqn": null,
+            "closing": true
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinNext",
+            "join_set_id": "n:b",
+            "run_expires_at": "1970-01-01T00:00:00Z",
+            "requested_ffqn": null,
+            "closing": true
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinNext",
+            "join_set_id": "n:b",
+            "run_expires_at": "1970-01-01T00:00:00Z",
+            "requested_ffqn": null,
+            "closing": true
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinNext",
+            "join_set_id": "n:f",
+            "run_expires_at": "1970-01-01T00:00:00Z",
+            "requested_ffqn": null,
+            "closing": true
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinNext",
+            "join_set_id": "n:f",
+            "run_expires_at": "1970-01-01T00:00:00Z",
+            "requested_ffqn": null,
+            "closing": true
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinNext",
+            "join_set_id": "n:c",
+            "run_expires_at": "1970-01-01T00:00:00Z",
+            "requested_ffqn": null,
+            "closing": true
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinNext",
+            "join_set_id": "n:c",
+            "run_expires_at": "1970-01-01T00:00:00Z",
+            "requested_ffqn": null,
+            "closing": true
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "Finished": {
+          "result": {
+            "Ok": "None"
+          },
+          "http_client_traces": null
+        }
+      },
+      "backtrace_id": null
+    }
+  ],
+  "responses": [
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "join_set_id": "n:a",
+        "event": {
+          "type": "ChildExecutionFinished",
+          "child_execution_id": "E_00000000000000000000000000.n:a_1",
+          "finished_version": 1,
+          "result": {
+            "Ok": {
+              "InfallibleOrResultOk": {
+                "type": "string",
+                "value": "a"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "join_set_id": "n:a",
+        "event": {
+          "type": "ChildExecutionFinished",
+          "child_execution_id": "E_00000000000000000000000000.n:a_2",
+          "finished_version": 1,
+          "result": {
+            "Ok": {
+              "InfallibleOrResultOk": {
+                "type": "string",
+                "value": "aa"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "join_set_id": "n:b",
+        "event": {
+          "type": "ChildExecutionFinished",
+          "child_execution_id": "E_00000000000000000000000000.n:b_1",
+          "finished_version": 1,
+          "result": {
+            "Ok": {
+              "InfallibleOrResultOk": {
+                "type": "string",
+                "value": "b"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "join_set_id": "n:b",
+        "event": {
+          "type": "ChildExecutionFinished",
+          "child_execution_id": "E_00000000000000000000000000.n:b_2",
+          "finished_version": 1,
+          "result": {
+            "Ok": {
+              "InfallibleOrResultOk": {
+                "type": "string",
+                "value": "bb"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "join_set_id": "n:f",
+        "event": {
+          "type": "ChildExecutionFinished",
+          "child_execution_id": "E_00000000000000000000000000.n:f_1",
+          "finished_version": 1,
+          "result": {
+            "Ok": {
+              "InfallibleOrResultOk": {
+                "type": "string",
+                "value": "f"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "join_set_id": "n:f",
+        "event": {
+          "type": "ChildExecutionFinished",
+          "child_execution_id": "E_00000000000000000000000000.n:f_2",
+          "finished_version": 1,
+          "result": {
+            "Ok": {
+              "InfallibleOrResultOk": {
+                "type": "string",
+                "value": "ff"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "join_set_id": "n:c",
+        "event": {
+          "type": "ChildExecutionFinished",
+          "child_execution_id": "E_00000000000000000000000000.n:c_1",
+          "finished_version": 1,
+          "result": {
+            "Ok": {
+              "InfallibleOrResultOk": {
+                "type": "string",
+                "value": "c"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "join_set_id": "n:c",
+        "event": {
+          "type": "ChildExecutionFinished",
+          "child_execution_id": "E_00000000000000000000000000.n:c_2",
+          "finished_version": 1,
+          "result": {
+            "Ok": {
+              "InfallibleOrResultOk": {
+                "type": "string",
+                "value": "cc"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "next_version": 31,
+  "pending_state": {
+    "type": "Finished",
+    "finished": {
+      "version": 31,
+      "finished_at": "1970-01-01T00:00:00Z",
+      "result_kind": "ok"
+    }
+  }
+}

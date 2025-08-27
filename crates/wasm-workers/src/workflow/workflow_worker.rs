@@ -1884,7 +1884,6 @@ pub(crate) mod tests {
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             FFQN,
             Some(Duration::from_millis(10)),
-            false,
             db,
         )
         .await;
@@ -1902,7 +1901,6 @@ pub(crate) mod tests {
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             FFQN,
             Some(Duration::from_millis(10)),
-            false,
             db,
         )
         .await;
@@ -1912,9 +1910,10 @@ pub(crate) mod tests {
         workflow_wasm_path: &'static str,
         ffqn: FunctionFqn,
         delay: Option<Duration>,
-        needs_extra_tick: bool,
         db: db_tests::Database,
     ) {
+        const MAX_RUNS: u128 = 100;
+
         test_utils::set_up();
         let sim_clock = SimClock::epoch();
         let (_guard, db_pool) = db.set_up().await;
@@ -1974,6 +1973,7 @@ pub(crate) mod tests {
             }
         };
         {
+            // First exec tick must run.
             let task_count = exec_task
                 .tick_test(sim_clock.now(), run_id())
                 .await
@@ -2000,30 +2000,23 @@ pub(crate) mod tests {
                         .unwrap();
                 assert_eq!(1, timer.expired_async_timers);
             }
-
-            assert_eq!(
-                1,
-                exec_task
-                    .tick_test(sim_clock.now(), run_id())
-                    .await
-                    .unwrap()
-                    .wait_for_tasks()
-                    .await
-                    .unwrap()
-            );
         }
 
-        if needs_extra_tick {
-            assert_eq!(
-                1,
-                exec_task
-                    .tick_test(sim_clock.now(), run_id())
-                    .await
-                    .unwrap()
-                    .wait_for_tasks()
-                    .await
-                    .unwrap()
-            );
+        // Keep running exec ticks.
+        loop {
+            let run = run_id();
+            assert!(run.random_part() < MAX_RUNS);
+            let executed = exec_task
+                .tick_test(sim_clock.now(), run)
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap();
+            if executed == 0 {
+                break;
+            }
+            assert_eq!(1, executed);
         }
 
         let pending_state = db_connection
@@ -2061,7 +2054,6 @@ pub(crate) mod tests {
                 test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::AWAIT_NEXT_PRODUCES_ALL_PROCESSED_ERROR
             ),
             None,
-            false,
             db,
         )
         .await;
@@ -2079,7 +2071,6 @@ pub(crate) mod tests {
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             FunctionFqn::new_static_tuple(ffqn_tuple),
             None,
-            true,
             db,
         )
         .await;
@@ -2094,7 +2085,20 @@ pub(crate) mod tests {
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_RACE_JOIN_NEXT_DELAY),
             Some(Duration::from_millis(10)),
-            false,
+            db,
+        )
+        .await;
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn stub_join_next_in_scope(
+        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
+    ) {
+        execute_workflow_fn_with_single_delay(
+            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+            FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::JOIN_NEXT_IN_SCOPE),
+            None,
             db,
         )
         .await;

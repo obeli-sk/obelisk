@@ -15,4 +15,6 @@ interface workflow {
     stub-subworkflow: func(execution-id: execution-id, retval: string) -> result<_, stub-error>;
 
     await-next-produces-all-processed-error: func();
+
+    join-next-in-scope: func();
 }
