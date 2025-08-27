@@ -878,10 +878,6 @@
         "exec": {
           "$ref": "#/$defs/ExecConfigToml"
         },
-        "forward_unhandled_child_errors_in_completing_join_set_close": {
-          "type": "boolean",
-          "default": true
-        },
         "location": {
           "$ref": "#/$defs/ComponentLocation"
         },
