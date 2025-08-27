@@ -1023,19 +1023,23 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from fn_registry exports must be found");
-                self.apply_event(
-                    EventCall::SubmitChildExecution(SubmitChildExecution {
-                        target_ffqn,
-                        fn_component_id,
-                        fn_retry_config,
-                        join_set_id,
-                        params: Params::from_wasmtime(Arc::from(target_params)),
-                        child_execution_id,
-                        wasm_backtrace,
-                    }),
+                SubmitChildExecution {
+                    target_ffqn,
+                    fn_component_id,
+                    fn_retry_config,
+                    join_set_id,
+                    params: Params::from_wasmtime(Arc::from(target_params)),
+                    child_execution_id,
+                    wasm_backtrace,
+                }
+                .apply(
+                    &mut self.event_history,
+                    self.db_pool.connection().as_ref(),
+                    &mut self.version,
                     called_at,
                 )
                 .await
+                .map(Some)
             }
             ImportedFnCall::AwaitNext {
                 target_ffqn,
