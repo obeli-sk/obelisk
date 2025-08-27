@@ -917,29 +917,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .get_incremented_by(u64::try_from(count).unwrap())
     }
 
-    async fn apply_event(
-        &mut self,
-        event: EventCall,
-        called_at: DateTime<Utc>,
-    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
-        let resp = self
-            .event_history
-            .apply(
-                event,
-                self.db_pool.connection().as_ref(),
-                &mut self.version,
-                called_at,
-            )
-            .await?;
-        match resp {
-            ChildReturnValue::None => Ok(None),
-            ChildReturnValue::WastVal(wast_val) => Ok(Some(wast_val.as_val())),
-            ChildReturnValue::JoinSetCreate(_) | ChildReturnValue::JoinNext(_) => {
-                unreachable!("specific responses handled in their respective functions")
-            }
-        }
-    }
-
     async fn imported_fn_to_val(
         &mut self,
         imported_fn_call: ImportedFnCall<'_>,
@@ -1078,7 +1055,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                         detail: Some(format!("{err:?}")),
                     }
                 })?;
-
+                // Add TypeWrapper
                 let result = match (return_value_or_err, fn_meta.return_type) {
                     (WastVal::Result(Err(None)), _) => {
                         Err(FinishedExecutionError::new_stubbed_error())
@@ -1101,15 +1078,18 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     }
                 };
 
-                self.apply_event(
-                    EventCall::Stub(Stub {
-                        target_ffqn: target_ffqn.clone(),
-                        target_execution_id: target_execution_id.clone(),
-                        parent_id,
-                        join_set_id,
-                        result,
-                        wasm_backtrace,
-                    }),
+                Stub {
+                    target_ffqn: target_ffqn.clone(),
+                    target_execution_id: target_execution_id.clone(),
+                    parent_id,
+                    join_set_id,
+                    result,
+                    wasm_backtrace,
+                }
+                .apply(
+                    &mut self.event_history,
+                    self.db_pool.connection().as_ref(),
+                    &mut self.version,
                     called_at,
                 )
                 .await

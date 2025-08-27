@@ -222,7 +222,7 @@ impl EventHistory {
             .count()
     }
 
-    pub(crate) async fn apply(
+    async fn apply(
         &mut self,
         event_call: EventCall,
         db_connection: &dyn DbConnection,
@@ -237,7 +237,7 @@ impl EventHistory {
     /// Apply the event and wait if new, replay if already in the event history, or
     /// apply with an interrupt.
     #[instrument(skip_all, fields(otel.name = format!("apply {event_call}"), ?event_call))]
-    pub(crate) async fn apply_inner(
+    async fn apply_inner(
         &mut self,
         event_call: EventCall,
         db_connection: &dyn DbConnection,
@@ -2211,6 +2211,28 @@ pub(crate) struct Stub {
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
+impl Stub {
+    pub(crate) async fn apply(
+        self,
+        event_history: &mut EventHistory,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+        let value = event_history
+            .apply(EventCall::Stub(self), db_connection, version, called_at)
+            .await?;
+
+        match value {
+            ChildReturnValue::None => Ok(None),
+            ChildReturnValue::WastVal(wast_val) => Ok(Some(wast_val.as_val())),
+
+            ChildReturnValue::JoinSetCreate(_) | ChildReturnValue::JoinNext(_) => {
+                unreachable!("must be WastVal or None")
+            }
+        }
+    }
+}
 
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct JoinNextRequestingFfqn {
@@ -2242,7 +2264,7 @@ impl JoinNextRequestingFfqn {
             ChildReturnValue::WastVal(wast_val) => Ok(Some(wast_val.as_val())),
 
             ChildReturnValue::JoinSetCreate(_) | ChildReturnValue::JoinNext(_) => {
-                unreachable!("must be an ExecutionId")
+                unreachable!("must be WastVal or None")
             }
         }
     }
