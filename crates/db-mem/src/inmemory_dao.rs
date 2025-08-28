@@ -14,13 +14,14 @@ use concepts::storage::{
     ClientError, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
     ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
     JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
-    ResponseWithCursor, SpecificError, Version, VersionType,
+    ResponseWithCursor, SpecificError, SubscribeError, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
 use std::collections::BTreeMap;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -187,19 +188,26 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         execution_id: &ExecutionId,
         start_idx: usize,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
+        interrupt_after: Pin<Box<dyn Future<Output = ()> + Send>>,
+    ) -> Result<Vec<JoinSetResponseEventOuter>, SubscribeError> {
         let either = self
             .0
             .lock()
             .await
-            .subscribe_to_next_responses(execution_id, start_idx)?;
+            .subscribe_to_next_responses(execution_id, start_idx)
+            .map_err(SubscribeError::DbError)?;
         // unlock
         match either {
             Either::Left(resp) => Ok(resp),
-            Either::Right(receiver) => receiver
-                .await
-                .map(|it| vec![it])
-                .map_err(|_| DbError::Connection(DbConnectionError::RecvError)),
+            Either::Right(receiver) => {
+                tokio::select! {
+                    res = receiver => res
+                    .map(|it| vec![it])
+                    .map_err(|_| SubscribeError::DbError(DbError::Connection(DbConnectionError::RecvError))),
+
+                    _ = interrupt_after => Err(SubscribeError::Interrupted),
+                }
+            }
         }
     }
 

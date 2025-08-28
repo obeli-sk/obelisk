@@ -1954,7 +1954,6 @@ fn prespawn_workflow(
         workflow.workflow_config,
         engine,
         Now,
-        TokioSleep,
     )?;
     Ok(WorkerCompiled::new_workflow(
         worker,
@@ -1966,7 +1965,7 @@ fn prespawn_workflow(
 }
 
 struct WorkerCompiled {
-    worker: Either<Arc<dyn Worker>, WorkflowWorkerCompiled<Now, TokioSleep>>,
+    worker: Either<Arc<dyn Worker>, WorkflowWorkerCompiled<Now>>,
     exec_config: ExecConfig,
 }
 
@@ -1999,7 +1998,7 @@ impl WorkerCompiled {
     }
 
     fn new_workflow(
-        worker: WorkflowWorkerCompiled<Now, TokioSleep>,
+        worker: WorkflowWorkerCompiled<Now>,
         content_digest: ContentDigest,
         exec_config: ExecConfig,
         retry_config: ComponentRetryConfig,
@@ -2040,7 +2039,7 @@ impl WorkerCompiled {
 }
 
 struct WorkerLinked {
-    worker: Either<Arc<dyn Worker>, WorkflowWorkerLinked<Now, TokioSleep>>,
+    worker: Either<Arc<dyn Worker>, WorkflowWorkerLinked<Now>>,
     exec_config: ExecConfig,
 }
 impl WorkerLinked {

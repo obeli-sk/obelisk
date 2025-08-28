@@ -172,7 +172,6 @@ mod bench {
                 },
                 workflow_engine,
                 clock_fn.clone(),
-                TokioSleep,
             )
             .unwrap()
             .link(fn_registry)

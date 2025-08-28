@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::{self, DbError, DbPool, HistoryEventScheduleAt, Version, WasmBacktrace};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
-use concepts::time::ClockFn;
+use concepts::time::{ClockFn, SleepFactory};
 use concepts::{
     ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FinishedExecutionError,
     FunctionRegistry, IfcFqnName, InvalidNameError, ReturnType, SUFFIX_PKG_EXT,
@@ -56,8 +56,8 @@ pub(crate) enum WorkflowFunctionError {
         detail: Option<String>,
     },
     // retriable errors:
-    #[error("interrupt requested")]
-    InterruptRequested,
+    #[error("interrupt, db updated")]
+    InterruptDbUpdated,
     #[error(transparent)]
     DbError(DbError),
 }
@@ -66,14 +66,14 @@ pub(crate) enum WorkflowFunctionError {
 pub(crate) enum WorkerPartialResult {
     FatalError(FatalError, Version),
     // retriable:
-    InterruptRequested,
+    InterruptDbUpdated,
     DbError(DbError),
 }
 
 impl WorkflowFunctionError {
     pub(crate) fn into_worker_partial_result(self, version: Version) -> WorkerPartialResult {
         match self {
-            WorkflowFunctionError::InterruptRequested => WorkerPartialResult::InterruptRequested,
+            WorkflowFunctionError::InterruptDbUpdated => WorkerPartialResult::InterruptDbUpdated,
             WorkflowFunctionError::DbError(db_error) => WorkerPartialResult::DbError(db_error),
             // fatal errors:
             WorkflowFunctionError::NondeterminismDetected(detail) => {
@@ -119,7 +119,7 @@ impl From<ApplyError> for WorkflowFunctionError {
                 child_execution_id,
                 root_cause_id,
             },
-            ApplyError::InterruptRequested => Self::InterruptRequested,
+            ApplyError::InterruptDbUpdated => Self::InterruptDbUpdated,
             ApplyError::DbError(db_error) => Self::DbError(db_error),
         }
     }
@@ -880,6 +880,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         execution_deadline: DateTime<Utc>,
         worker_span: Span,
         backtrace_persist: bool,
+        sleep_factory: SleepFactory,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -896,6 +897,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 join_next_blocking_strategy,
                 execution_deadline,
                 worker_span.clone(),
+                sleep_factory,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -1542,7 +1544,7 @@ pub(crate) mod tests {
         PendingStateFinished, PendingStateFinishedResultKind,
     };
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
-    use concepts::time::{ClockFn, Now};
+    use concepts::time::{ClockFn, Now, SleepFactory};
     use concepts::{
         ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, JoinSetId, JoinSetKind,
         SUFFIX_PKG_EXT,
@@ -1573,7 +1575,7 @@ pub(crate) mod tests {
                 WorkerPartialResult::FatalError(err, version) => {
                     WorkerResult::Err(executor::worker::WorkerError::FatalError(err, version))
                 }
-                WorkerPartialResult::InterruptRequested => WorkerResult::DbUpdatedByWorkerOrWatcher,
+                WorkerPartialResult::InterruptDbUpdated => WorkerResult::DbUpdatedByWorkerOrWatcher,
                 WorkerPartialResult::DbError(db_err) => {
                     WorkerResult::Err(executor::worker::WorkerError::DbError(db_err))
                 }
@@ -1667,6 +1669,11 @@ pub(crate) mod tests {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             info!("Starting");
             let seed = ctx.execution_id.random_seed();
+            let sleep_factory = SleepFactory::new(
+                (ctx.execution_deadline - self.clock_fn.now())
+                    .to_std()
+                    .unwrap(),
+            );
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id.clone(),
                 ComponentId::dummy_activity(),
@@ -1680,6 +1687,7 @@ pub(crate) mod tests {
                 ctx.execution_deadline,
                 tracing::info_span!("workflow-test"),
                 false,
+                sleep_factory,
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");
@@ -1832,7 +1840,7 @@ pub(crate) mod tests {
                         None,
                     )
                 }
-                Err(JoinSetCloseError::InterruptRequested) => {
+                Err(JoinSetCloseError::InterruptDbUpdated) => {
                     info!("Interrupting");
                     return WorkerResult::DbUpdatedByWorkerOrWatcher;
                 }

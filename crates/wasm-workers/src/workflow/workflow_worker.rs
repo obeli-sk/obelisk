@@ -5,7 +5,7 @@ use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::storage::DbPool;
-use concepts::time::{ClockFn, Sleep, now_tokio_instant};
+use concepts::time::{ClockFn, SleepFactory, now_tokio_instant};
 use concepts::{
     ComponentId, FunctionFqn, FunctionMetadata, PackageIfcFns, ResultParsingError, StrVariant,
     TrapKind,
@@ -50,11 +50,10 @@ pub struct WorkflowConfig {
     pub stub_wasi: bool,
 }
 
-pub struct WorkflowWorkerCompiled<C: ClockFn, S: Sleep> {
+pub struct WorkflowWorkerCompiled<C: ClockFn> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
     clock_fn: C,
-    sleep: S,
     wasmtime_component: wasmtime::component::Component,
     exported_functions_ext: Vec<FunctionMetadata>,
     exports_hierarchy_ext: Vec<PackageIfcFns>,
@@ -63,31 +62,29 @@ pub struct WorkflowWorkerCompiled<C: ClockFn, S: Sleep> {
     imported_functions: Vec<FunctionMetadata>,
 }
 
-pub struct WorkflowWorkerLinked<C: ClockFn, S: Sleep> {
+pub struct WorkflowWorkerLinked<C: ClockFn> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
     clock_fn: C,
-    sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     instance_pre: InstancePre<WorkflowCtx<C>>,
     exported_functions_noext: Vec<FunctionMetadata>,
 }
 
 #[derive(Clone)]
-pub struct WorkflowWorker<C: ClockFn, S: Sleep> {
+pub struct WorkflowWorker<C: ClockFn> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
     exported_functions_noext: Vec<FunctionMetadata>,
     db_pool: Arc<dyn DbPool>,
     clock_fn: C,
-    sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     instance_pre: InstancePre<WorkflowCtx<C>>,
 }
 
 const WASI_NAMESPACE: &str = "wasi";
 
-impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
+impl<C: ClockFn> WorkflowWorkerCompiled<C> {
     // If `config.stub_wasi` is set, this function must remove WASI exports and imports.
     #[tracing::instrument(skip_all, fields(%config.component_id))]
     pub fn new_with_config(
@@ -95,7 +92,6 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
         config: WorkflowConfig,
         engine: Arc<Engine>,
         clock_fn: C,
-        sleep: S,
     ) -> Result<Self, DecodeError> {
         let exported_functions_ext = wasm_component
             .exim
@@ -169,7 +165,6 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
             config,
             engine,
             clock_fn,
-            sleep,
             wasmtime_component: wasm_component.wasmtime_component,
             exported_functions_ext,
             exports_hierarchy_ext,
@@ -183,7 +178,7 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
     pub fn link(
         self,
         fn_registry: &Arc<dyn FunctionRegistry>,
-    ) -> Result<WorkflowWorkerLinked<C, S>, WasmFileError> {
+    ) -> Result<WorkflowWorkerLinked<C>, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
 
         // Link obelisk:workflow-support and obelisk:log
@@ -288,7 +283,6 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
             config: self.config,
             engine: self.engine,
             clock_fn: self.clock_fn,
-            sleep: self.sleep,
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             instance_pre,
             exported_functions_noext: self.exported_functions_noext,
@@ -308,14 +302,13 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
     }
 }
 
-impl<C: ClockFn, S: Sleep> WorkflowWorkerLinked<C, S> {
-    pub fn into_worker(self, db_pool: Arc<dyn DbPool>) -> WorkflowWorker<C, S> {
+impl<C: ClockFn> WorkflowWorkerLinked<C> {
+    pub fn into_worker(self, db_pool: Arc<dyn DbPool>) -> WorkflowWorker<C> {
         WorkflowWorker {
             config: self.config,
             engine: self.engine,
             db_pool,
             clock_fn: self.clock_fn,
-            sleep: self.sleep,
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             instance_pre: self.instance_pre,
             exported_functions_noext: self.exported_functions_noext,
@@ -344,11 +337,24 @@ enum WorkerResultRefactored<C: ClockFn> {
 
 type CallFuncResult<C> = Result<(SupportedFunctionReturnValue, WorkflowCtx<C>), RunError<C>>;
 
-impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
+enum PrepareFuncErr {
+    WorkerError(WorkerError),
+    DbUpdatedByWorkerOrWatcher,
+}
+
+impl<C: ClockFn + 'static> WorkflowWorker<C> {
     async fn prepare_func(
         &self,
         ctx: WorkerContext,
-    ) -> Result<(Store<WorkflowCtx<C>>, wasmtime::component::Func, Arc<[Val]>), WorkerError> {
+    ) -> Result<(Store<WorkflowCtx<C>>, wasmtime::component::Func, Arc<[Val]>), PrepareFuncErr>
+    {
+        let started_at = self.clock_fn.now();
+        let Ok(deadline_duration) = (ctx.execution_deadline - started_at).to_std() else {
+            ctx.worker_span.in_scope(||
+                info!(execution_deadline = %ctx.execution_deadline, %started_at, "Timed out - started_at later than execution_deadline")
+            );
+            return Err(PrepareFuncErr::DbUpdatedByWorkerOrWatcher);
+        };
         let version_at_start = ctx.version.clone();
         let seed = ctx.execution_id.random_seed();
         let workflow_ctx = WorkflowCtx::new(
@@ -364,6 +370,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
             ctx.execution_deadline,
             ctx.worker_span,
             self.config.backtrace_persist,
+            SleepFactory::new(deadline_duration),
         );
 
         let mut store = Store::new(&self.engine, workflow_ctx);
@@ -382,15 +389,18 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
                 let reason = err.to_string();
                 let version = store.into_data().version;
                 if reason.starts_with("maximum concurrent") {
-                    return Err(WorkerError::LimitReached { reason, version });
+                    return Err(PrepareFuncErr::WorkerError(WorkerError::LimitReached {
+                        reason,
+                        version,
+                    }));
                 }
-                return Err(WorkerError::FatalError(
+                return Err(PrepareFuncErr::WorkerError(WorkerError::FatalError(
                     FatalError::CannotInstantiate {
                         reason: format!("{err}"),
                         detail: format!("{err:?}"),
                     },
                     version,
-                ));
+                )));
             }
         };
 
@@ -407,10 +417,10 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
         let params = match ctx.params.as_vals(func.params(&store)) {
             Ok(params) => params,
             Err(err) => {
-                return Err(WorkerError::FatalError(
+                return Err(PrepareFuncErr::WorkerError(WorkerError::FatalError(
                     FatalError::ParamsParsingError(err),
                     version_at_start,
-                ));
+                )));
             }
         };
         Ok((store, func, params))
@@ -470,59 +480,22 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
         }
     }
 
-    async fn race_func_with_timeout(
-        &self,
-        store: Store<WorkflowCtx<C>>,
-        func: wasmtime::component::Func,
-        params: Arc<[Val]>,
-        worker_span: Span,
-        execution_deadline: DateTime<Utc>,
-    ) -> WorkerResult {
-        let started_at = self.clock_fn.now();
-        let Ok(deadline_duration) = (execution_deadline - started_at).to_std() else {
-            worker_span.in_scope(||
-                info!(%execution_deadline, %started_at, "Timed out - started_at later than execution_deadline")
-            );
-            return WorkerResult::DbUpdatedByWorkerOrWatcher;
-        };
-        let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
-        tokio::select! { // future's liveness: Dropping the loser immediately.
-            res = Self::race_func_internal(store, func, params, &worker_span, stopwatch, deadline_duration, execution_deadline, self.config.retry_on_trap) => {
-                res
-            },
-            () = self.sleep.sleep(deadline_duration) => {
-                // Not flushing the workflow_ctx as it would introduce locking.
-                // Not closing the join sets, workflow MUST be retried.
-                worker_span.in_scope(||
-                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %self.clock_fn.now(), "Timed out")
-                );
-
-                WorkerResult::DbUpdatedByWorkerOrWatcher
-            }
-        }
-    }
-
     #[expect(clippy::too_many_arguments)]
-    async fn race_func_internal(
+    async fn call_func_convert_result(
         store: Store<WorkflowCtx<C>>,
         func: wasmtime::component::Func,
         params: Arc<[Val]>,
         worker_span: &Span,
-        stopwatch: tokio::time::Instant,
-        deadline_duration: Duration,
         execution_deadline: DateTime<Utc>,
         retry_on_trap: bool,
     ) -> WorkerResult {
+        // call_func
+        let elapsed = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         let res = Self::call_func(store, func, params).await;
-        let worker_result_refactored = Self::convert_result(
-            res,
-            worker_span,
-            stopwatch,
-            deadline_duration,
-            execution_deadline,
-            retry_on_trap,
-        )
-        .await;
+        let elapsed = elapsed.elapsed();
+        let worker_result_refactored =
+            Self::convert_result(res, worker_span, elapsed, execution_deadline, retry_on_trap)
+                .await;
         match worker_result_refactored {
             WorkerResultRefactored::Ok(res, mut workflow_ctx) => {
                 match Self::close_join_sets(&mut workflow_ctx).await {
@@ -546,19 +519,17 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
         }
     }
 
+    #[instrument(skip_all, fields(res, worker_span))]
     async fn convert_result(
         res: CallFuncResult<C>,
         worker_span: &Span,
-        stopwatch: tokio::time::Instant,
-        deadline_duration: Duration,
-        execution_deadline: DateTime<Utc>,
+        #[expect(unused_variables)] elapsed: Duration,
+        #[expect(unused_variables)] execution_deadline: DateTime<Utc>,
         retry_on_trap: bool,
     ) -> WorkerResultRefactored<C> {
         match res {
             Ok((supported_result, mut workflow_ctx)) => {
-                worker_span.in_scope(||
-                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished")
-                );
+                worker_span.in_scope(|| info!("Finished"));
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(|| error!("Database error: {db_err}"));
                     return WorkerResultRefactored::Retriable(WorkerResult::Err(
@@ -583,9 +554,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
                 }
                 let version = workflow_ctx.version;
                 let err = if retry_on_trap {
-                    worker_span.in_scope(||
-                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as an temporary error")
-                    );
+                    worker_span.in_scope(|| info!("Trap handled as an temporary error"));
                     WorkerError::TemporaryWorkflowTrap {
                         reason,
                         kind,
@@ -593,9 +562,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
                         version,
                     }
                 } else {
-                    worker_span.in_scope(||
-                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as a fatal error")
-                    );
+                    worker_span.in_scope(|| info!("Trap handled as a fatal error"));
                     WorkerError::FatalError(
                         FatalError::WorkflowTrap {
                             reason,
@@ -619,11 +586,11 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
                 }
                 match worker_partial_result {
                     WorkerPartialResult::FatalError(err, _version) => {
-                        worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a fatal error: {err}"));
+                        worker_span.in_scope(|| info!("Finished with a fatal error: {err}"));
                         WorkerResultRefactored::FatalError(err, workflow_ctx)
                     }
-                    WorkerPartialResult::InterruptRequested => {
-                        worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Interrupt requested"));
+                    WorkerPartialResult::InterruptDbUpdated => {
+                        worker_span.in_scope(|| info!("Interrupt requested"));
                         WorkerResultRefactored::Retriable(WorkerResult::DbUpdatedByWorkerOrWatcher)
                     }
                     WorkerPartialResult::DbError(db_err) => WorkerResultRefactored::Retriable(
@@ -652,7 +619,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
             .close_forgotten_join_sets()
             .await
             .map_err(|err| match err {
-                JoinSetCloseError::InterruptRequested => WorkerResult::DbUpdatedByWorkerOrWatcher,
+                JoinSetCloseError::InterruptDbUpdated => WorkerResult::DbUpdatedByWorkerOrWatcher,
                 JoinSetCloseError::DbError(db_error) => {
                     WorkerResult::Err(WorkerError::DbError(db_error))
                 }
@@ -661,7 +628,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> WorkflowWorker<C, S> {
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for WorkflowWorker<C, S> {
+impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
     fn exported_functions(&self) -> &[FunctionMetadata] {
         &self.exported_functions_noext
     }
@@ -675,12 +642,23 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for WorkflowWorker<C, S> {
         }
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.execution_deadline;
-        let (store, func, params) = match self.prepare_func(ctx).await {
-            Ok(ok) => ok,
-            Err(err) => return WorkerResult::Err(err), // errors here cannot affect joinset closing, as they happen before fn invocation
-        };
-        self.race_func_with_timeout(store, func, params, worker_span, execution_deadline)
-            .await
+        match self.prepare_func(ctx).await {
+            Ok((store, func, params)) => {
+                Self::call_func_convert_result(
+                    store,
+                    func,
+                    params,
+                    &worker_span,
+                    execution_deadline,
+                    self.config.retry_on_trap,
+                )
+                .await
+            }
+            Err(PrepareFuncErr::DbUpdatedByWorkerOrWatcher) => {
+                WorkerResult::DbUpdatedByWorkerOrWatcher
+            }
+            Err(PrepareFuncErr::WorkerError(err)) => WorkerResult::Err(err),
+        }
     }
 }
 
@@ -783,7 +761,6 @@ pub(crate) mod tests {
                 },
                 workflow_engine,
                 clock_fn.clone(),
-                TokioSleep,
             )
             .unwrap()
             .link(fn_registry)
@@ -939,14 +916,13 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    pub(crate) fn compile_workflow_worker<C: ClockFn, S: Sleep>(
+    pub(crate) fn compile_workflow_worker<C: ClockFn>(
         wasm_path: &str,
         db_pool: Arc<dyn DbPool>,
         clock_fn: C,
-        sleep: S,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
-    ) -> Arc<WorkflowWorker<C, S>> {
+    ) -> Arc<WorkflowWorker<C>> {
         let workflow_engine =
             Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
         Arc::new(
@@ -961,7 +937,6 @@ pub(crate) mod tests {
                 },
                 workflow_engine,
                 clock_fn,
-                sleep,
             )
             .unwrap()
             .link(fn_registry)
@@ -982,7 +957,6 @@ pub(crate) mod tests {
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),
             sim_clock.clone(),
-            TokioSleep,
             JoinNextBlockingStrategy::Interrupt,
             &TestingFnRegistry::new_from_components(vec![
                 compile_activity(
@@ -1057,7 +1031,6 @@ pub(crate) mod tests {
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 db_pool.clone(),
                 sim_clock.clone(),
-                TokioSleep,
                 join_next_blocking_strategy,
                 &fn_registry,
             );
@@ -1175,7 +1148,6 @@ pub(crate) mod tests {
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 db_pool.clone(),
                 sim_clock.clone(),
-                TokioSleep,
                 join_next_blocking_strategy,
                 &fn_registry,
             );
@@ -1582,7 +1554,6 @@ pub(crate) mod tests {
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),
             sim_clock.clone(),
-            TokioSleep,
             join_next_strategy,
             &fn_registry,
         );
@@ -1785,7 +1756,6 @@ pub(crate) mod tests {
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             db_pool.clone(),
             sim_clock.clone(),
-            TokioSleep,
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
         );
@@ -1923,7 +1893,6 @@ pub(crate) mod tests {
             workflow_wasm_path,
             db_pool.clone(),
             sim_clock.clone(),
-            TokioSleep,
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
         );

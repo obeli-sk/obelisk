@@ -35,3 +35,17 @@ impl ClockFn for Now {
         Utc::now()
     }
 }
+
+pub struct SleepFactory {
+    deadline: tokio::time::Instant,
+}
+impl SleepFactory {
+    pub fn new(duration: Duration) -> Self {
+        Self {
+            deadline: tokio::time::Instant::now() + duration,
+        }
+    }
+    pub fn new_sleep(&self) -> tokio::time::Sleep {
+        tokio::time::sleep_until(self.deadline)
+    }
+}

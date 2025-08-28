@@ -20,6 +20,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -528,6 +529,14 @@ pub enum DbError {
     Specific(#[from] SpecificError),
 }
 
+#[derive(thiserror::Error, Debug, PartialEq, Eq, Clone)]
+pub enum SubscribeError {
+    #[error("interrupted")]
+    Interrupted,
+    #[error(transparent)]
+    DbError(DbError),
+}
+
 pub type AppendResponse = Version;
 pub type PendingExecution = (ExecutionId, Version, Params, Option<DateTime<Utc>>);
 pub type LockResponse = (Vec<HistoryEvent>, Version);
@@ -761,11 +770,13 @@ pub trait DbConnection: Send + Sync {
 
     /// Get notified when a new response arrives.
     /// Parameter `start_idx` must be at most be equal to current size of responses in the execution log.
+    /// If no response arrives immediately and `interrupt_after` resolves, return an interrupt.
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
         start_idx: usize,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, DbError>;
+        interrupt_after: Pin<Box<dyn Future<Output = ()> + Send>>,
+    ) -> Result<Vec<JoinSetResponseEventOuter>, SubscribeError>;
 
     async fn wait_for_finished_result(
         &self,

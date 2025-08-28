@@ -36,6 +36,7 @@ pub enum WorkerResult {
         Version,
         Option<Vec<HttpClientTrace>>,
     ),
+    // If no write occured, the watcher will timeout the execution and retry after backoff which avoids the busy loop
     DbUpdatedByWorkerOrWatcher,
     Err(WorkerError),
 }

@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -10,7 +10,7 @@ use concepts::{
         ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEvent,
         ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
         JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockResponse,
-        Pagination, PendingState, ResponseWithCursor, Version, VersionType,
+        Pagination, PendingState, ResponseWithCursor, SubscribeError, Version, VersionType,
     },
     time::TokioSleep,
 };
@@ -187,9 +187,10 @@ impl DbConnection for DbConnectionProxy {
         &self,
         execution_id: &ExecutionId,
         start_idx: usize,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
+        interrupt_after: Pin<Box<dyn Future<Output = ()> + Send>>,
+    ) -> Result<Vec<JoinSetResponseEventOuter>, SubscribeError> {
         self.0
-            .subscribe_to_next_responses(execution_id, start_idx)
+            .subscribe_to_next_responses(execution_id, start_idx, interrupt_after)
             .await
     }
 

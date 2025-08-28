@@ -28,11 +28,13 @@ use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::JoinSetResponseEventOuter;
 use concepts::storage::PersistKind;
 use concepts::storage::SpecificError;
+use concepts::storage::SubscribeError;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse,
     JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
+use concepts::time::SleepFactory;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use hashbrown::HashMap;
@@ -87,16 +89,16 @@ pub(crate) enum ApplyError {
         root_cause_id: ExecutionIdDerived,
     },
     // retriable errors:
-    #[error("interrupt requested")]
-    InterruptRequested,
+    #[error("interrupt, db updated")]
+    InterruptDbUpdated,
     #[error(transparent)]
     DbError(DbError),
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub(crate) enum JoinSetCloseError {
-    #[error("interrupt requested")]
-    InterruptRequested,
+    #[error("interrupt, db updated")]
+    InterruptDbUpdated,
     #[error(transparent)]
     DbError(DbError),
 }
@@ -105,7 +107,7 @@ impl From<JoinSetCloseError> for ApplyError {
     fn from(value: JoinSetCloseError) -> Self {
         match value {
             JoinSetCloseError::DbError(db_error) => Self::DbError(db_error),
-            JoinSetCloseError::InterruptRequested => Self::InterruptRequested,
+            JoinSetCloseError::InterruptDbUpdated => Self::InterruptDbUpdated,
         }
     }
 }
@@ -129,6 +131,7 @@ pub(crate) struct EventHistory {
     non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     worker_span: Span,
+    sleep_factory: SleepFactory,
 }
 
 #[expect(clippy::large_enum_variant)]
@@ -159,6 +162,7 @@ impl EventHistory {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         execution_deadline: DateTime<Utc>,
         worker_span: Span,
+        sleep_factory: SleepFactory,
     ) -> Self {
         let non_blocking_event_batch_size = match join_next_blocking_strategy {
             JoinNextBlockingStrategy::Await {
@@ -212,6 +216,7 @@ impl EventHistory {
                 Some(Vec::with_capacity(non_blocking_event_batch_size))
             },
             worker_span,
+            sleep_factory,
         }
     }
 
@@ -372,10 +377,18 @@ impl EventHistory {
 
             // Subscribe to the next response.
             loop {
-                let next_responses = db_connection
-                    .subscribe_to_next_responses(&self.execution_id, self.responses.len())
+                let next_responses = match db_connection
+                    .subscribe_to_next_responses(
+                        &self.execution_id,
+                        self.responses.len(),
+                        Box::pin(self.sleep_factory.new_sleep()),
+                    )
                     .await
-                    .map_err(ApplyError::DbError)?;
+                {
+                    Ok(ok) => Ok(ok),
+                    Err(SubscribeError::DbError(err)) => Err(ApplyError::DbError(err)),
+                    Err(SubscribeError::Interrupted) => Err(ApplyError::InterruptDbUpdated),
+                }?;
                 debug!("Got next responses {next_responses:?}");
                 self.responses.extend(
                     next_responses
@@ -390,7 +403,7 @@ impl EventHistory {
             }
         } else {
             debug!(join_set_id = %join_next_variant.join_set_id(),  "Interrupting on {join_next_variant:?}");
-            Err(ApplyError::InterruptRequested)
+            Err(ApplyError::InterruptDbUpdated)
         }
     }
 
@@ -459,7 +472,7 @@ impl EventHistory {
                 .await
                 .map_err(JoinSetCloseError::DbError)?;
 
-            Err(JoinSetCloseError::InterruptRequested) // TODO: Implement the Await strategy.
+            Err(JoinSetCloseError::InterruptDbUpdated) // TODO: Implement the Await strategy.
         } else {
             // Clean up for `last_join_set`
             *self
@@ -2740,7 +2753,7 @@ mod tests {
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::{CreateRequest, HistoryEventScheduleAt};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
-    use concepts::time::ClockFn;
+    use concepts::time::{ClockFn, SleepFactory};
     use concepts::{
         ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, Params,
         SupportedFunctionReturnValue,
@@ -2775,8 +2788,9 @@ mod tests {
         let (event_history, version) = load_event_history(
             db_connection.as_ref(),
             execution_id.clone(),
-            sim_clock.now() + Duration::from_secs(1), // execution deadline
-            JoinNextBlockingStrategy::Interrupt,      // first run needs to interrupt
+            sim_clock.now(),
+            Duration::from_secs(1),              // execution deadline
+            JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
         )
         .await;
 
@@ -2796,7 +2810,7 @@ mod tests {
             )
             .await
             .unwrap_err(),
-            ApplyError::InterruptRequested,
+            ApplyError::InterruptDbUpdated,
             "should have ended with an interrupt"
         );
         db_connection
@@ -2819,7 +2833,8 @@ mod tests {
         let (event_history, version) = load_event_history(
             db_connection.as_ref(),
             execution_id,
-            sim_clock.now() + Duration::from_secs(1), // execution deadline
+            sim_clock.now(),
+            Duration::from_secs(1), // execution deadline
             second_run_strategy,
         )
         .await;
@@ -2860,7 +2875,8 @@ mod tests {
         let (mut event_history, mut version) = load_event_history(
             db_connection.as_ref(),
             execution_id.clone(),
-            sim_clock.now() + Duration::from_secs(1), // execution deadline
+            sim_clock.now(),
+            Duration::from_secs(1), // execution deadline
             join_next_blocking_strategy,
         )
         .await;
@@ -2902,7 +2918,8 @@ mod tests {
         let (mut event_history, mut version) = load_event_history(
             db_connection.as_ref(),
             execution_id,
-            sim_clock.now() + Duration::from_secs(1), // execution deadline
+            sim_clock.now(),
+            Duration::from_secs(1), // execution deadline
             join_next_blocking_strategy,
         )
         .await;
@@ -2982,8 +2999,9 @@ mod tests {
         let (mut event_history, mut version) = load_event_history(
             db_connection.as_ref(),
             execution_id.clone(),
-            sim_clock.now() + Duration::from_secs(1), // execution deadline
-            JoinNextBlockingStrategy::Interrupt,      // First blocking strategy is always Interrupt
+            sim_clock.now(),
+            Duration::from_secs(1),              // execution deadline
+            JoinNextBlockingStrategy::Interrupt, // First blocking strategy is always Interrupt
         )
         .await;
 
@@ -3008,7 +3026,7 @@ mod tests {
             )
             .await
             .unwrap_err(),
-            ApplyError::InterruptRequested
+            ApplyError::InterruptDbUpdated
         );
         // append two responses
         db_connection
@@ -3055,7 +3073,8 @@ mod tests {
         let (mut event_history, mut version) = load_event_history(
             db_connection.as_ref(),
             execution_id,
-            sim_clock.now(), // execution_deadline
+            sim_clock.now(),
+            Duration::ZERO, // execution_deadline
             JoinNextBlockingStrategy::Interrupt,
         )
         .await;
@@ -3132,7 +3151,8 @@ mod tests {
         let (mut event_history, mut version) = load_event_history(
             db_connection,
             execution_id.clone(),
-            sim_clock.now() + Duration::from_secs(1), // execution deadline
+            sim_clock.now(),
+            Duration::from_secs(1),              // execution deadline
             JoinNextBlockingStrategy::Interrupt, // does not matter, there are no blocking events
         )
         .await;
@@ -3193,7 +3213,8 @@ mod tests {
             let (mut event_history, mut version) = load_event_history(
                 db_connection,
                 execution_id.clone(),
-                sim_clock.now() + Duration::from_secs(1), // execution deadline
+                sim_clock.now(),
+                Duration::from_secs(1), // execution deadline
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3270,7 +3291,8 @@ mod tests {
             let (mut event_history, mut version) = load_event_history(
                 db_connection,
                 execution_id.clone(),
-                sim_clock.now() + Duration::from_secs(1),
+                sim_clock.now(),
+                Duration::from_secs(1),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3357,10 +3379,12 @@ mod tests {
     async fn load_event_history(
         db_connection: &dyn DbConnection,
         execution_id: ExecutionId,
-        execution_deadline: DateTime<Utc>,
+        now: DateTime<Utc>,
+        execution_deadline_duration: Duration,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) -> (EventHistory, Version) {
         let exec_log = db_connection.get(&execution_id).await.unwrap();
+        let execution_deadline = now + execution_deadline_duration;
         let event_history = EventHistory::new(
             execution_id.clone(),
             ComponentId::dummy_activity(),
@@ -3373,6 +3397,7 @@ mod tests {
             join_next_blocking_strategy,
             execution_deadline,
             info_span!("worker-test"),
+            SleepFactory::new(execution_deadline_duration),
         );
         (event_history, exec_log.next_version)
     }

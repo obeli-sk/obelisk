@@ -12,7 +12,7 @@ use concepts::{
         ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
         PendingState, PendingStateFinished, PendingStateFinishedResultKind, ResponseWithCursor,
-        SpecificError, Version, VersionType,
+        SpecificError, SubscribeError, Version, VersionType,
     },
     time::Sleep,
 };
@@ -21,7 +21,6 @@ use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Params, ToSql, Transaction, named_params,
     types::{FromSql, FromSqlError},
 };
-use std::fmt::Write as _;
 use std::{
     cmp::max,
     collections::VecDeque,
@@ -35,6 +34,7 @@ use std::{
     },
     time::Duration,
 };
+use std::{fmt::Write as _, pin::Pin};
 use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
@@ -2623,12 +2623,13 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
         .await
     }
 
-    #[instrument(level = Level::DEBUG, skip(self))]
+    #[instrument(level = Level::DEBUG, skip(self, interrupt_after))]
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
         start_idx: usize,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
+        interrupt_after: Pin<Box<dyn Future<Output = ()> + Send>>,
+    ) -> Result<Vec<JoinSetResponseEventOuter>, SubscribeError> {
         debug!("next_responses");
         let execution_id = execution_id.clone();
         let response_subscribers = self.0.response_subscribers.clone();
@@ -2650,13 +2651,16 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                 },
                 "subscribe_to_next_responses",
             )
-            .await?;
+            .await
+            .map_err(SubscribeError::DbError)?;
         match resp_or_receiver {
             itertools::Either::Left(resp) => Ok(resp),
-            itertools::Either::Right(receiver) => receiver
-                .await
-                .map(|resp| vec![resp])
-                .map_err(|_| DbError::Connection(DbConnectionError::RecvError)),
+            itertools::Either::Right(receiver) => {
+                tokio::select! {
+                    resp = receiver => resp.map(|resp| vec![resp]).map_err(|_| SubscribeError::DbError(DbError::Connection(DbConnectionError::RecvError))),
+                    _ = interrupt_after => Err(SubscribeError::Interrupted),
+                }
+            }
         }
     }
 
