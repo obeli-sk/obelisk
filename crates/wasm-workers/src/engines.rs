@@ -161,7 +161,7 @@ impl Engines {
     }
 
     #[cfg(test)]
-    pub fn get_activity_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+    pub fn get_activity_engine_test(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         Self::get_activity_engine_internal(config)
     }
     fn get_activity_engine_internal(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
@@ -172,7 +172,7 @@ impl Engines {
     }
 
     #[cfg(test)]
-    pub fn get_workflow_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+    pub fn get_workflow_engine_test(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         Self::get_workflow_engine_internal(config)
     }
     fn get_workflow_engine_internal(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {

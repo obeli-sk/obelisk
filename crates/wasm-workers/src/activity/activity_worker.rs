@@ -390,12 +390,12 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn compile_activity(wasm_path: &str) -> (WasmComponent, ComponentId) {
-        let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm)
     }
 
     pub(crate) fn compile_activity_stub(wasm_path: &str) -> (WasmComponent, ComponentId) {
-        let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityStub)
     }
 
@@ -460,7 +460,7 @@ pub(crate) mod tests {
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
     ) -> ExecutorTaskHandle {
-        let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let (worker, component_id) =
             new_activity_worker_with_config(wasm_path, engine, clock_fn.clone(), sleep, config_fn);
         let exec_config = ExecConfig {
@@ -569,7 +569,7 @@ pub(crate) mod tests {
             };
 
             let engine =
-                Engines::get_activity_engine(EngineConfig::pooling_nocache_testing(pool_opts))
+                Engines::get_activity_engine_test(EngineConfig::pooling_nocache_testing(pool_opts))
                     .unwrap();
 
             let (fibo_worker, _) = new_activity_worker(
@@ -634,7 +634,8 @@ pub(crate) mod tests {
                     leeway: Duration::ZERO,
                 },
             );
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
                 Duration::from_millis(EPOCH_MILLIS),
@@ -715,7 +716,8 @@ pub(crate) mod tests {
             const TIMEOUT: Duration = Duration::from_millis(200);
             test_utils::set_up();
 
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
                 Duration::from_millis(EPOCH_MILLIS),
@@ -766,7 +768,8 @@ pub(crate) mod tests {
         async fn execution_deadline_before_now_should_timeout() {
             test_utils::set_up();
 
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let sim_clock = SimClock::epoch();
             let (worker, _) = new_activity_worker(
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
@@ -822,7 +825,8 @@ pub(crate) mod tests {
             info!("All set up");
             let sim_clock = SimClock::default();
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let (worker, _) = new_activity_worker(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                 engine,
@@ -944,7 +948,8 @@ pub(crate) mod tests {
             info!("All set up");
             let sim_clock = SimClock::default();
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let (worker, _) = new_activity_worker(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                 engine,
@@ -1071,7 +1076,8 @@ pub(crate) mod tests {
             test_utils::set_up();
             let sim_clock = SimClock::default();
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let (worker, _) = new_activity_worker(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                 engine,

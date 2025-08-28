@@ -705,7 +705,7 @@ pub(crate) mod tests {
     const FFQN_WORKFLOW_HTTP_GET_RESP: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_RESP);
 
     pub(crate) fn compile_workflow(wasm_path: &str) -> (WasmComponent, ComponentId) {
-        let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
+        let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         compile_workflow_with_engine(wasm_path, &engine)
     }
 
@@ -729,7 +729,7 @@ pub(crate) mod tests {
         fn_registry: &Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         let workflow_engine =
-            Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let component_id =
             ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         let worker = Arc::new(
@@ -907,7 +907,7 @@ pub(crate) mod tests {
         fn_registry: &Arc<dyn FunctionRegistry>,
     ) -> Arc<WorkflowWorker<C>> {
         let workflow_engine =
-            Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         Arc::new(
             WorkflowWorkerCompiled::new_with_config(
                 WasmComponent::new(wasm_path, &workflow_engine, ComponentType::Workflow).unwrap(),
