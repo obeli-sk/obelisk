@@ -45,7 +45,6 @@ impl Default for JoinNextBlockingStrategy {
 pub struct WorkflowConfig {
     pub component_id: ComponentId,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
-    pub retry_on_trap: bool,
     pub backtrace_persist: bool,
     pub stub_wasi: bool,
 }
@@ -486,15 +485,13 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         params: Arc<[Val]>,
         worker_span: &Span,
         execution_deadline: DateTime<Utc>,
-        retry_on_trap: bool,
     ) -> WorkerResult {
         // call_func
         let elapsed = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         let res = Self::call_func(store, func, params).await;
         let elapsed = elapsed.elapsed();
         let worker_result_refactored =
-            Self::convert_result(res, worker_span, elapsed, execution_deadline, retry_on_trap)
-                .await;
+            Self::convert_result(res, worker_span, elapsed, execution_deadline).await;
         match worker_result_refactored {
             WorkerResultRefactored::Ok(res, mut workflow_ctx) => {
                 match Self::close_join_sets(&mut workflow_ctx).await {
@@ -524,7 +521,6 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         worker_span: &Span,
         #[expect(unused_variables)] elapsed: Duration,
         #[expect(unused_variables)] execution_deadline: DateTime<Utc>,
-        retry_on_trap: bool,
     ) -> WorkerResultRefactored<C> {
         match res {
             Ok((supported_result, mut workflow_ctx)) => {
@@ -552,25 +548,15 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                     ));
                 }
                 let version = workflow_ctx.version;
-                let err = if retry_on_trap {
-                    worker_span.in_scope(|| info!("Trap handled as an temporary error"));
-                    WorkerError::TemporaryWorkflowTrap {
+                worker_span.in_scope(|| info!("Trap handled as a fatal error"));
+                let err = WorkerError::FatalError(
+                    FatalError::WorkflowTrap {
                         reason,
-                        kind,
-                        detail: Some(detail),
-                        version,
-                    }
-                } else {
-                    worker_span.in_scope(|| info!("Trap handled as a fatal error"));
-                    WorkerError::FatalError(
-                        FatalError::WorkflowTrap {
-                            reason,
-                            trap_kind: kind,
-                            detail,
-                        },
-                        version,
-                    )
-                };
+                        trap_kind: kind,
+                        detail,
+                    },
+                    version,
+                );
 
                 WorkerResultRefactored::Retriable(WorkerResult::Err(err))
             }
@@ -649,7 +635,6 @@ impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
                     params,
                     &worker_span,
                     execution_deadline,
-                    self.config.retry_on_trap,
                 )
                 .await
             }
@@ -754,7 +739,6 @@ pub(crate) mod tests {
                 WorkflowConfig {
                     component_id: component_id.clone(),
                     join_next_blocking_strategy,
-                    retry_on_trap: false,
                     backtrace_persist: false,
                     stub_wasi: false,
                 },
@@ -930,7 +914,6 @@ pub(crate) mod tests {
                 WorkflowConfig {
                     component_id: ComponentId::dummy_workflow(),
                     join_next_blocking_strategy,
-                    retry_on_trap: false,
                     backtrace_persist: false,
                     stub_wasi: false,
                 },

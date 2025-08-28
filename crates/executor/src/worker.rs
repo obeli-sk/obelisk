@@ -81,14 +81,6 @@ pub enum WorkerError {
         version: Version,
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
-    /// Workflow trap when `retry_on_trap` is enabled.
-    #[error("workflow trap handled as temporary error: {reason}")]
-    TemporaryWorkflowTrap {
-        reason: String,
-        kind: TrapKind,
-        detail: Option<String>,
-        version: Version,
-    },
     // Resources are exhausted, retry after a delay as Unlocked, without increasing temporary event count.
     #[error("limit reached: {reason}")]
     LimitReached { reason: String, version: Version },

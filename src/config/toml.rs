@@ -521,8 +521,6 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) retry_exp_backoff: DurationConfig,
     #[serde(default)]
     pub(crate) blocking_strategy: BlockingStrategyConfigToml,
-    #[serde(default = "default_retry_on_trap")]
-    pub(crate) retry_on_trap: bool,
     #[serde(default = "default_convert_core_module")]
     pub(crate) convert_core_module: bool,
     #[serde(default)]
@@ -672,7 +670,6 @@ impl WorkflowComponentConfigToml {
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
             join_next_blocking_strategy: self.blocking_strategy.into(),
-            retry_on_trap: self.retry_on_trap,
             backtrace_persist: global_backtrace_persist,
             stub_wasi: self.stub_wasi,
         };
@@ -1210,10 +1207,6 @@ const fn default_lock_expiry() -> DurationConfig {
 
 const fn default_tick_sleep() -> DurationConfig {
     DurationConfig::Milliseconds(200)
-}
-
-const fn default_retry_on_trap() -> bool {
-    false
 }
 
 const fn default_convert_core_module() -> bool {

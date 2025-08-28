@@ -470,29 +470,6 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                             version,
                         )
                     }
-                    WorkerError::TemporaryWorkflowTrap {
-                        reason: reason_inner,
-                        kind,
-                        detail,
-                        version,
-                    } => {
-                        let duration = can_be_retried.expect("workflows are retried forever");
-                        let expires_at = result_obtained_at + duration;
-                        debug!(
-                            "Retrying workflow {kind} execution after {duration:?} at {expires_at}"
-                        );
-                        (
-                            ExecutionEventInner::TemporarilyFailed {
-                                backoff_expires_at: expires_at,
-                                reason_full: StrVariant::from(reason_full),
-                                reason_inner: StrVariant::from(reason_inner),
-                                detail,
-                                http_client_traces: None,
-                            },
-                            None,
-                            version,
-                        )
-                    }
                     WorkerError::LimitReached {
                         reason: inner_reason,
                         version: new_version,

@@ -166,7 +166,6 @@ mod bench {
                 WorkflowConfig {
                     component_id: component_id.clone(),
                     join_next_blocking_strategy,
-                    retry_on_trap: false,
                     backtrace_persist: false,
                     stub_wasi: false,
                 },
