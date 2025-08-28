@@ -205,7 +205,7 @@ impl DbConnection for InMemoryDbConnection {
                     .map(|it| vec![it])
                     .map_err(|_| SubscribeError::DbError(DbError::Connection(DbConnectionError::RecvError))),
 
-                    _ = interrupt_after => Err(SubscribeError::Interrupted),
+                    () = interrupt_after => Err(SubscribeError::Interrupted),
                 }
             }
         }

@@ -154,6 +154,7 @@ enum FindMatchingResponse {
 }
 
 impl EventHistory {
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
         component_id: ComponentId,

@@ -2658,7 +2658,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
             itertools::Either::Right(receiver) => {
                 tokio::select! {
                     resp = receiver => resp.map(|resp| vec![resp]).map_err(|_| SubscribeError::DbError(DbError::Connection(DbConnectionError::RecvError))),
-                    _ = interrupt_after => Err(SubscribeError::Interrupted),
+                    () = interrupt_after => Err(SubscribeError::Interrupted),
                 }
             }
         }

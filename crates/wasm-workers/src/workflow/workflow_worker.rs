@@ -480,7 +480,6 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         }
     }
 
-    #[expect(clippy::too_many_arguments)]
     async fn call_func_convert_result(
         store: Store<WorkflowCtx<C>>,
         func: wasmtime::component::Func,
