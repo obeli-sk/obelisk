@@ -163,7 +163,7 @@ pub(crate) struct DirectFnCall<'a> {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl DirectFnCall<'_> {
-    pub(crate) async fn call_imported_fn<C: ClockFn>(
+    async fn call_imported_fn<C: ClockFn>(
         self,
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
@@ -202,7 +202,7 @@ pub(crate) struct ScheduleFnCall<'a> {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl ScheduleFnCall<'_> {
-    pub(crate) async fn call_imported_fn<C: ClockFn>(
+    async fn call_imported_fn<C: ClockFn>(
         self,
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
@@ -305,7 +305,7 @@ pub(crate) struct AwaitNextFnCall {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl AwaitNextFnCall {
-    pub(crate) async fn call_imported_fn<C: ClockFn>(
+    async fn call_imported_fn<C: ClockFn>(
         self,
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
@@ -344,7 +344,7 @@ pub(crate) struct StubFnCall<'a> {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl StubFnCall<'_> {
-    pub(crate) async fn call_imported_fn<C: ClockFn>(
+    async fn call_imported_fn<C: ClockFn>(
         self,
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
@@ -412,10 +412,7 @@ pub(crate) struct GetFnCall {
     child_execution_id: ExecutionIdDerived,
 }
 impl GetFnCall {
-    pub(crate) fn call_imported_fn<C: ClockFn>(
-        self,
-        ctx: &mut WorkflowCtx<C>,
-    ) -> wasmtime::component::Val {
+    fn call_imported_fn<C: ClockFn>(self, ctx: &mut WorkflowCtx<C>) -> wasmtime::component::Val {
         let GetFnCall {
             target_ffqn,
             child_execution_id,
@@ -468,7 +465,7 @@ impl<'a> ImportedFnCall<'a> {
         }
     }
 
-    #[instrument(skip_all, fields(ffqn = %called_ffqn, otel.name = format!("imported_fn_call {called_ffqn}")), name = "imported_fn_call")]
+    #[instrument(skip_all, fields(ffqn = %called_ffqn, otel.name = format!("ImportedFnCall::new {called_ffqn}")), name = "ImportedFnCall::new")]
     pub(crate) fn new<'ctx, C: ClockFn>(
         called_ffqn: FunctionFqn,
         store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
