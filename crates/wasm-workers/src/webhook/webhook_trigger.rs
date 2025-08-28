@@ -371,10 +371,7 @@ struct WebhookEndpointCtx<C: ClockFn> {
 }
 
 impl<C: ClockFn> HostJoinSetId for WebhookEndpointCtx<C> {
-    fn id(
-        &mut self,
-        _resource: wasmtime::component::Resource<JoinSetId>,
-    ) -> wasmtime::component::__internal::String {
+    fn id(&mut self, _resource: wasmtime::component::Resource<JoinSetId>) -> String {
         unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }
 

@@ -30,7 +30,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::{Span, error, instrument, trace};
+use tracing::{Span, error, instrument};
 use val_json::wast_val::{WastVal, WastValWithType};
 use wasmtime::component::{Linker, Resource, Val};
 use wasmtime_wasi::{
@@ -163,6 +163,33 @@ pub(crate) struct DirectFnCall<'a> {
     #[debug(skip)]
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
+impl<'a> DirectFnCall<'a> {
+    pub(crate) async fn call_imported_fn<C: ClockFn>(
+        self,
+        ctx: &mut WorkflowCtx<C>,
+        called_at: DateTime<Utc>,
+    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+        let DirectFnCall {
+            ffqn,
+            fn_component_id,
+            fn_retry_config,
+            params,
+            wasm_backtrace,
+        } = self;
+        OneOffChildExecutionRequest::apply(
+            ffqn,
+            fn_component_id,
+            fn_retry_config,
+            Params::from_wasmtime(Arc::from(params)),
+            wasm_backtrace,
+            &mut ctx.event_history,
+            ctx.db_pool.connection().as_ref(),
+            &mut ctx.version,
+            called_at,
+        )
+        .await
+    }
+}
 
 #[derive(derive_more::Debug)]
 pub(crate) struct ScheduleFnCall<'a> {
@@ -174,6 +201,55 @@ pub(crate) struct ScheduleFnCall<'a> {
     target_params: &'a [Val],
     #[debug(skip)]
     wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+impl<'a> ScheduleFnCall<'a> {
+    pub(crate) async fn call_imported_fn<C: ClockFn>(
+        self,
+        ctx: &mut WorkflowCtx<C>,
+        called_at: DateTime<Utc>,
+        called_ffqn: &FunctionFqn,
+    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+        let ScheduleFnCall {
+            target_ffqn,
+            target_component_id,
+            target_retry_config,
+            schedule_at,
+            target_params,
+            wasm_backtrace,
+        } = self;
+        // TODO(edge case): handle ExecutionId conflict: This does not have to be deterministicly generated.
+        // Remove execution_id from EventCall::ScheduleRequest and add retries.
+        // Or use ExecutionId::generate(), but ignore the id when checking determinism.
+        let execution_id = ExecutionId::from_parts(
+            ctx.execution_id.get_top_level().timestamp_part(),
+            ctx.next_u128(),
+        );
+        let scheduled_at_if_new = schedule_at.as_date_time(called_at).map_err(|err| {
+            WorkflowFunctionError::ImportedFunctionCallError {
+                ffqn: called_ffqn.clone(),
+                reason: "schedule-at conversion error".into(),
+                detail: Some(format!("{err:?}")),
+            }
+        })?;
+        Schedule {
+            schedule_at,
+            scheduled_at_if_new,
+            execution_id,
+            ffqn: target_ffqn,
+            fn_component_id: target_component_id,
+            fn_retry_config: target_retry_config,
+            params: Params::from_wasmtime(Arc::from(target_params)),
+            wasm_backtrace,
+        }
+        .apply(
+            &mut ctx.event_history,
+            ctx.db_pool.connection().as_ref(),
+            &mut ctx.version,
+            called_at,
+        )
+        .await
+        .map(Some)
+    }
 }
 
 #[derive(derive_more::Debug)]
@@ -187,6 +263,40 @@ pub(crate) struct SubmitExecutionFnCall<'a> {
     #[debug(skip)]
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
+impl<'a> SubmitExecutionFnCall<'a> {
+    pub(crate) async fn call_imported_fn<C: ClockFn>(
+        self,
+        ctx: &mut WorkflowCtx<C>,
+        called_at: DateTime<Utc>,
+    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+        let SubmitExecutionFnCall {
+            target_ffqn,
+            target_component_id,
+            target_retry_config,
+            join_set_id,
+            target_params,
+            wasm_backtrace,
+        } = self;
+        let child_execution_id = ctx.next_child_id(&join_set_id);
+        SubmitChildExecution {
+            target_ffqn,
+            fn_component_id: target_component_id,
+            fn_retry_config: target_retry_config,
+            join_set_id,
+            params: Params::from_wasmtime(Arc::from(target_params)),
+            child_execution_id,
+            wasm_backtrace,
+        }
+        .apply(
+            &mut ctx.event_history,
+            ctx.db_pool.connection().as_ref(),
+            &mut ctx.version,
+            called_at,
+        )
+        .await
+        .map(Some)
+    }
+}
 
 #[derive(derive_more::Debug)]
 pub(crate) struct AwaitNextFnCall {
@@ -194,6 +304,32 @@ pub(crate) struct AwaitNextFnCall {
     join_set_id: JoinSetId,
     #[debug(skip)]
     wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+impl AwaitNextFnCall {
+    pub(crate) async fn call_imported_fn<C: ClockFn>(
+        self,
+        ctx: &mut WorkflowCtx<C>,
+        called_at: DateTime<Utc>,
+    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+        let AwaitNextFnCall {
+            target_ffqn,
+            join_set_id,
+            wasm_backtrace,
+        } = self;
+        JoinNextRequestingFfqn {
+            join_set_id,
+            wasm_backtrace,
+            requested_ffqn: target_ffqn,
+        }
+        .apply(
+            &mut ctx.event_history,
+            ctx.db_pool.connection().as_ref(),
+            &mut ctx.version,
+            called_at,
+        )
+        .await
+        .map(Some)
+    }
 }
 
 #[derive(derive_more::Debug)]
@@ -208,11 +344,97 @@ pub(crate) struct StubFnCall {
     #[debug(skip)]
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
+impl StubFnCall {
+    pub(crate) async fn call_imported_fn<C: ClockFn>(
+        self,
+        ctx: &mut WorkflowCtx<C>,
+        called_at: DateTime<Utc>,
+        called_ffqn: &FunctionFqn,
+    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+        let StubFnCall {
+            target_ffqn,
+            target_execution_id,
+            target_fn_metadata,
+            parent_id,
+            join_set_id,
+            return_value,
+            wasm_backtrace,
+        } = self;
+        let return_value_or_err = WastVal::try_from(return_value).map_err(|err| {
+            WorkflowFunctionError::ImportedFunctionCallError {
+                ffqn: called_ffqn.clone(),
+                reason: "cannot convert stub return value".into(),
+                detail: Some(format!("{err:?}")),
+            }
+        })?;
+        // Add TypeWrapper
+        let result = match (return_value_or_err, target_fn_metadata.return_type) {
+            (WastVal::Result(Err(None)), _) => Err(FinishedExecutionError::new_stubbed_error()),
+            (WastVal::Result(Ok(Some(return_value))), Some(return_type)) => {
+                // TODO: type check
+                Ok(SupportedFunctionReturnValue::from(WastValWithType {
+                    r#type: return_type.type_wrapper,
+                    value: *return_value,
+                }))
+            }
+            (WastVal::Result(Ok(None)), None) => Ok(SupportedFunctionReturnValue::None),
+            other => {
+                error!("Unexpected stub return value {other:?}");
+                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn.clone(),
+                    reason: "unexpected stub return value".into(),
+                    detail: None,
+                });
+            }
+        };
+
+        Stub {
+            target_ffqn: target_ffqn.clone(),
+            target_execution_id: target_execution_id.clone(),
+            parent_id,
+            join_set_id,
+            result,
+            wasm_backtrace,
+        }
+        .apply(
+            &mut ctx.event_history,
+            ctx.db_pool.connection().as_ref(),
+            &mut ctx.version,
+            called_at,
+        )
+        .await
+        .map(Some)
+    }
+}
 
 #[derive(derive_more::Debug)]
 pub(crate) struct GetFnCall {
     target_ffqn: FunctionFqn,
     child_execution_id: ExecutionIdDerived,
+}
+impl GetFnCall {
+    pub(crate) async fn call_imported_fn<C: ClockFn>(
+        self,
+        ctx: &mut WorkflowCtx<C>,
+    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+        let GetFnCall {
+            target_ffqn,
+            child_execution_id,
+        } = self;
+        let val = match ctx
+            .event_history
+            .get_processed_response(&child_execution_id, &target_ffqn)
+        {
+            Ok(option) => wasmtime::component::Val::Result(Ok(
+                option.map(|wast_val| Box::new(wast_val.as_val()))
+            )),
+            Err(get_extension_err) => wasmtime::component::Val::Result(Err(Some(Box::new(
+                wasmtime::component::Val::from(get_extension_err),
+            )))),
+        };
+
+        Ok(Some(val))
+    }
 }
 
 impl<'a> ImportedFnCall<'a> {
@@ -634,39 +856,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .await
     }
 
-    #[instrument(level = tracing::Level::DEBUG, skip_all, fields(ffqn = %imported_fn_call.ffqn()))]
-    pub(crate) async fn call_imported_fn(
-        &mut self,
-        imported_fn_call: ImportedFnCall<'_>,
-        results: &mut [Val],
-        called_ffqn: FunctionFqn,
-    ) -> Result<(), WorkflowFunctionError> {
-        let called_at = self.clock_fn.now();
-        trace!(?imported_fn_call, %called_at, "call_imported_fn start");
-        let val = self
-            .imported_fn_to_val(imported_fn_call, called_at, &called_ffqn)
-            .await?;
-
-        match (results.len(), val) {
-            (0, None) => {}
-            (1, Some(val)) => {
-                results[0] = val;
-            }
-            (expected, got) => {
-                error!(
-                    "Unexpected result length or type, runtime expects {expected}, got: {got:?}",
-                );
-                return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                    ffqn: called_ffqn,
-                    reason: StrVariant::Static("unexpected result length"),
-                    detail: Some(format!("expected {expected}, got: {got:?}")),
-                });
-            }
-        }
-        trace!(?results, "call_imported_fn finish");
-        Ok(())
-    }
-
     async fn persist_sleep(
         &mut self,
         schedule_at: HistoryEventScheduleAt,
@@ -797,7 +986,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 "random-u64",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (min, max_exclusive): (u64, u64)| {
-                    wasmtime::component::__internal::Box::new(async move {
+                    Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host.random_u64(min, max_exclusive).await;
                         host.backtrace = None;
@@ -815,7 +1004,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 "random-u64-inclusive",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (min, max_inclusive): (u64, u64)| {
-                    wasmtime::component::__internal::Box::new(async move {
+                    Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host.random_u64_inclusive(min, max_inclusive).await;
                         host.backtrace = None;
@@ -833,7 +1022,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 "random-string",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (min_length, max_length_exclusive): (u16, u16)| {
-                    wasmtime::component::__internal::Box::new(async move {
+                    Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host.random_string(min_length, max_length_exclusive).await;
                         host.backtrace = None;
@@ -852,7 +1041,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (join_set_id, schedule_at): (Resource<JoinSetId>, ScheduleAt_2_0_0)| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
-                    wasmtime::component::__internal::Box::new(async move {
+                    Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let join_set_id = host.resource_to_join_set_id(&join_set_id)?.clone();
                         let result = host.submit_delay(join_set_id, schedule_at).await;
@@ -872,7 +1061,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (schedule_at,): (ScheduleAt_2_0_0,)| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
-                    wasmtime::component::__internal::Box::new(async move {
+                    Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host.sleep(schedule_at).await;
                         host.backtrace = None;
@@ -890,7 +1079,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 "new-join-set-named",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (name, _closing_strategy): (String, ClosingStrategy_2_0_0)| {
-                    wasmtime::component::__internal::Box::new(async move {
+                    Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host.new_join_set_named(name).await;
                         host.backtrace = None;
@@ -908,7 +1097,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 "new-join-set-generated",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (_closing_strategy,): (ClosingStrategy_2_0_0,)| {
-                    wasmtime::component::__internal::Box::new(async move {
+                    Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let result = host.new_join_set_generated().await;
                         host.backtrace = None;
@@ -926,7 +1115,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 "join-next",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (join_set_id,): (Resource<JoinSetId>,)| {
-                    wasmtime::component::__internal::Box::new(async move {
+                    Box::new(async move {
                         let host = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let join_set_id = host.resource_to_join_set_id(&join_set_id)?.clone();
                         let result = host.join_next(join_set_id).await;
@@ -960,193 +1149,28 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .get_incremented_by(u64::try_from(count).unwrap())
     }
 
-    async fn imported_fn_to_val(
+    #[instrument(level = tracing::Level::DEBUG, skip_all, fields(%called_ffqn, ffqn = %imported_fn_call.ffqn()))]
+    pub(crate) async fn call_imported_fn(
         &mut self,
         imported_fn_call: ImportedFnCall<'_>,
         called_at: DateTime<Utc>,
         called_ffqn: &FunctionFqn,
     ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
         match imported_fn_call {
-            ImportedFnCall::Direct(DirectFnCall {
-                ffqn,
-                fn_component_id,
-                fn_retry_config,
-                params,
-                wasm_backtrace,
-            }) => {
-                OneOffChildExecutionRequest::apply(
-                    ffqn,
-                    fn_component_id,
-                    fn_retry_config,
-                    Params::from_wasmtime(Arc::from(params)),
-                    wasm_backtrace,
-                    &mut self.event_history,
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                    called_at,
-                )
-                .await
+            ImportedFnCall::Direct(direct) => direct.call_imported_fn(self, called_at).await,
+            ImportedFnCall::Schedule(schedule) => {
+                schedule
+                    .call_imported_fn(self, called_at, called_ffqn)
+                    .await
             }
-            ImportedFnCall::Schedule(ScheduleFnCall {
-                target_ffqn,
-                target_component_id,
-                target_retry_config,
-                schedule_at,
-                target_params,
-                wasm_backtrace,
-            }) => {
-                // TODO(edge case): handle ExecutionId conflict: This does not have to be deterministicly generated.
-                // Remove execution_id from EventCall::ScheduleRequest and add retries.
-                // Or use ExecutionId::generate(), but ignore the id when checking determinism.
-                let execution_id = ExecutionId::from_parts(
-                    self.execution_id.get_top_level().timestamp_part(),
-                    self.next_u128(),
-                );
-                let scheduled_at_if_new = schedule_at.as_date_time(called_at).map_err(|err| {
-                    WorkflowFunctionError::ImportedFunctionCallError {
-                        ffqn: called_ffqn.clone(),
-                        reason: "schedule-at conversion error".into(),
-                        detail: Some(format!("{err:?}")),
-                    }
-                })?;
-
-                Schedule {
-                    schedule_at,
-                    scheduled_at_if_new,
-                    execution_id,
-                    ffqn: target_ffqn,
-                    fn_component_id: target_component_id,
-                    fn_retry_config: target_retry_config,
-                    params: Params::from_wasmtime(Arc::from(target_params)),
-                    wasm_backtrace,
-                }
-                .apply(
-                    &mut self.event_history,
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                    called_at,
-                )
-                .await
-                .map(Some)
+            ImportedFnCall::SubmitExecution(submit) => {
+                submit.call_imported_fn(self, called_at).await
             }
-            ImportedFnCall::SubmitExecution(SubmitExecutionFnCall {
-                target_ffqn,
-                target_component_id,
-                target_retry_config,
-                join_set_id,
-                target_params,
-                wasm_backtrace,
-            }) => {
-                let child_execution_id = self.next_child_id(&join_set_id);
-                SubmitChildExecution {
-                    target_ffqn,
-                    fn_component_id: target_component_id,
-                    fn_retry_config: target_retry_config,
-                    join_set_id,
-                    params: Params::from_wasmtime(Arc::from(target_params)),
-                    child_execution_id,
-                    wasm_backtrace,
-                }
-                .apply(
-                    &mut self.event_history,
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                    called_at,
-                )
-                .await
-                .map(Some)
+            ImportedFnCall::AwaitNext(await_next) => {
+                await_next.call_imported_fn(self, called_at).await
             }
-            ImportedFnCall::AwaitNext(AwaitNextFnCall {
-                target_ffqn,
-                join_set_id,
-                wasm_backtrace,
-            }) => JoinNextRequestingFfqn {
-                join_set_id,
-                wasm_backtrace,
-                requested_ffqn: target_ffqn,
-            }
-            .apply(
-                &mut self.event_history,
-                self.db_pool.connection().as_ref(),
-                &mut self.version,
-                called_at,
-            )
-            .await
-            .map(Some),
-            ImportedFnCall::Stub(StubFnCall {
-                target_ffqn,
-                target_execution_id,
-                target_fn_metadata,
-                parent_id,
-                join_set_id,
-                return_value,
-                wasm_backtrace,
-            }) => {
-                let return_value_or_err = WastVal::try_from(return_value).map_err(|err| {
-                    WorkflowFunctionError::ImportedFunctionCallError {
-                        ffqn: called_ffqn.clone(),
-                        reason: "cannot convert stub return value".into(),
-                        detail: Some(format!("{err:?}")),
-                    }
-                })?;
-                // Add TypeWrapper
-                let result = match (return_value_or_err, target_fn_metadata.return_type) {
-                    (WastVal::Result(Err(None)), _) => {
-                        Err(FinishedExecutionError::new_stubbed_error())
-                    }
-                    (WastVal::Result(Ok(Some(return_value))), Some(return_type)) => {
-                        // TODO: type check
-                        Ok(SupportedFunctionReturnValue::from(WastValWithType {
-                            r#type: return_type.type_wrapper,
-                            value: *return_value,
-                        }))
-                    }
-                    (WastVal::Result(Ok(None)), None) => Ok(SupportedFunctionReturnValue::None),
-                    other => {
-                        error!("Unexpected stub return value {other:?}");
-                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                            ffqn: called_ffqn.clone(),
-                            reason: "unexpected stub return value".into(),
-                            detail: None,
-                        });
-                    }
-                };
-
-                Stub {
-                    target_ffqn: target_ffqn.clone(),
-                    target_execution_id: target_execution_id.clone(),
-                    parent_id,
-                    join_set_id,
-                    result,
-                    wasm_backtrace,
-                }
-                .apply(
-                    &mut self.event_history,
-                    self.db_pool.connection().as_ref(),
-                    &mut self.version,
-                    called_at,
-                )
-                .await
-                .map(Some)
-            }
-            ImportedFnCall::Get(GetFnCall {
-                target_ffqn,
-                child_execution_id,
-            }) => {
-                let val = match self
-                    .event_history
-                    .get_processed_response(&child_execution_id, &target_ffqn)
-                {
-                    Ok(option) => wasmtime::component::Val::Result(Ok(
-                        option.map(|wast_val| Box::new(wast_val.as_val()))
-                    )),
-                    Err(get_extension_err) => wasmtime::component::Val::Result(Err(Some(
-                        Box::new(wasmtime::component::Val::from(get_extension_err)),
-                    ))),
-                };
-
-                Ok(Some(val))
-            }
+            ImportedFnCall::Stub(stub) => stub.call_imported_fn(self, called_at, called_ffqn).await,
+            ImportedFnCall::Get(get) => get.call_imported_fn(self).await,
         }
     }
 }
@@ -1459,7 +1483,6 @@ pub(crate) mod tests {
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info, info_span};
     use utils::testing_fn_registry::fn_registry_dummy;
-    use wasmtime::component::Val;
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const FFQN_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
@@ -1603,10 +1626,11 @@ pub(crate) mod tests {
                                         params: &[],
                                         wasm_backtrace: None,
                                     }),
-                                    &mut [],
-                                    ffqn.clone(),
+                                    self.clock_fn.now(),
+                                    &ffqn,
                                 )
                                 .await
+                                .map(|_| ())
                         }
 
                         WorkflowStep::JoinSetCreateNamed { join_set_id } => {
@@ -1627,7 +1651,6 @@ pub(crate) mod tests {
                                 .get(&join_set_resource)
                                 .unwrap()
                                 .clone();
-                            let mut ret_val = vec![Val::Bool(false)];
                             let target_ifc = target_ffqn.ifc_fqn.clone();
                             let submit_ffqn = FunctionFqn {
                                 ifc_fqn: IfcFqnName::from_parts(
@@ -1655,10 +1678,11 @@ pub(crate) mod tests {
                                         target_params: &[],
                                         wasm_backtrace: None,
                                     }),
-                                    &mut ret_val,
-                                    submit_ffqn,
+                                    self.clock_fn.now(),
+                                    &submit_ffqn,
                                 )
                                 .await
+                                .map(|_| ())
                         }
                         WorkflowStep::SubmitDelay {
                             millis,

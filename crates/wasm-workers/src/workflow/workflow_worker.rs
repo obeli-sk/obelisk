@@ -229,10 +229,31 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
                             };
                             let ffqn = ffqn.clone();
                             Box::new(async move {
-                                Ok(store_ctx
-                                    .data_mut()
-                                    .call_imported_fn(imported_fn_call, results, ffqn)
-                                    .await?)
+                                let workflow_ctx = store_ctx.data_mut();
+                                let called_at = workflow_ctx.clock_fn.now();
+                                let val =
+                                workflow_ctx
+                                    .call_imported_fn(imported_fn_call, called_at, &ffqn)
+                                    .await
+                                    .map_err(wasmtime::Error::new)?;
+
+                                match (results.len(), val) {
+                                    (0, None) => Ok(()),
+                                    (1, Some(val)) => {
+                                        results[0] = val;
+                                        Ok(())
+                                    }
+                                    (expected, got) => {
+                                        error!(
+                                            "Unexpected result length or type, runtime expects {expected}, got: {got:?}",
+                                        );
+                                        Err(wasmtime::Error::new(WorkflowFunctionError::ImportedFunctionCallError {
+                                            ffqn,
+                                            reason: StrVariant::Static("unexpected result length"),
+                                            detail: Some(format!("expected {expected}, got: {got:?}")),
+                                        }))
+                                    }
+                                }
                             })
                         }
                     });
