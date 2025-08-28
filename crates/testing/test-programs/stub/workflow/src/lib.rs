@@ -67,17 +67,17 @@ impl Guest for Component {
             }
         }
         {
-            let join_set_a = new_join_set_named("a", ClosingStrategy::Complete);
+            let join_set_a = new_join_set_named("a", ClosingStrategy::Complete).unwrap();
             add_exec(&join_set_a, vec!["a", "aa"]);
-            let join_set_b = new_join_set_named("b", ClosingStrategy::Complete);
+            let join_set_b = new_join_set_named("b", ClosingStrategy::Complete).unwrap();
             add_exec(&join_set_b, vec!["b", "bb"]);
             let join_set_forgotten =
-                workflow_support::new_join_set_named("f", ClosingStrategy::Complete);
+                workflow_support::new_join_set_named("f", ClosingStrategy::Complete).unwrap();
             add_exec(&join_set_forgotten, vec!["f", "ff"]);
             std::mem::forget(join_set_forgotten);
         }
         log::info("after scope closed");
-        let join_set_c = new_join_set_named("c", ClosingStrategy::Complete);
+        let join_set_c = new_join_set_named("c", ClosingStrategy::Complete).unwrap();
         add_exec(&join_set_c, vec!["c", "cc"]);
     }
 }

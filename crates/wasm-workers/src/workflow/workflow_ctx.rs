@@ -55,8 +55,6 @@ pub(crate) enum WorkflowFunctionError {
         reason: StrVariant,
         detail: Option<String>,
     },
-    #[error("{reason}")]
-    JoinSetNameError { reason: String },
     // retriable errors:
     #[error("interrupt requested")]
     InterruptRequested,
@@ -106,9 +104,6 @@ impl WorkflowFunctionError {
                 },
                 version,
             ),
-            WorkflowFunctionError::JoinSetNameError { reason } => {
-                WorkerPartialResult::FatalError(FatalError::JoinSetNameError { reason }, version)
-            }
         }
     }
 }
@@ -991,7 +986,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 .map_err(JoinSetCreateError::ResourceTableError)?;
             Ok(join_set_id)
         } else {
-            Err(JoinSetCreateError::NameConflict)
+            Err(JoinSetCreateError::Conflict)
         }
     }
 
@@ -1248,13 +1243,14 @@ enum JoinSetCreateError {
     #[error(transparent)]
     ResourceTableError(ResourceTableError),
     #[error("join set name conflict")]
-    NameConflict,
+    Conflict,
 }
 
 mod workflow_support {
     use super::types_execution;
     use super::{ClockFn, WorkflowCtx, WorkflowFunctionError};
     use crate::workflow::event_history::{JoinNext, Persist, SubmitDelay};
+    use crate::workflow::host_exports;
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::HostJoinSetId;
     use crate::workflow::host_exports::v2_0_0::obelisk::workflow::workflow_support;
@@ -1420,28 +1416,37 @@ mod workflow_support {
             &mut self,
             name: String,
             wasm_backtrace: Option<storage::WasmBacktrace>,
-        ) -> wasmtime::Result<Resource<JoinSetId>> {
-            self.persist_join_set_with_kind(
-                name,
-                JoinSetKind::Named,
-                concepts::ClosingStrategy::Complete,
-                wasm_backtrace,
-            )
-            .await
-            .map_err(|err| match err {
-                JoinSetCreateError::InvalidNameError(_) | JoinSetCreateError::NameConflict => {
-                    wasmtime::Error::new(WorkflowFunctionError::JoinSetNameError {
-                        reason: err.to_string(),
-                    })
+        ) -> wasmtime::Result<
+            Result<
+                Resource<JoinSetId>,
+                host_exports::v2_0_0::obelisk::workflow::workflow_support::JoinSetCreateError,
+            >,
+        > {
+            match self
+                .persist_join_set_with_kind(
+                    name,
+                    JoinSetKind::Named,
+                    concepts::ClosingStrategy::Complete,
+                    wasm_backtrace,
+                )
+                .await
+            {
+                Ok(resource) => Ok(Ok(resource)),
+                Err(JoinSetCreateError::InvalidNameError(err)) => {
+                    Ok(Err(host_exports::v2_0_0::obelisk::workflow::workflow_support::JoinSetCreateError::InvalidName(err.to_string())))
                 }
-                JoinSetCreateError::ApplyError(apply_err) => {
-                    wasmtime::Error::new(WorkflowFunctionError::from(apply_err))
+                Err(JoinSetCreateError::Conflict) => {
+                    Ok(Err(host_exports::v2_0_0::obelisk::workflow::workflow_support::JoinSetCreateError::Conflict))
                 }
-                JoinSetCreateError::ResourceTableError(resource_table_error) => {
+                Err(JoinSetCreateError::ApplyError(apply_err)) => {
+                    // db errors etc
+                    Err(wasmtime::Error::new(WorkflowFunctionError::from(apply_err)))
+                }
+                Err(JoinSetCreateError::ResourceTableError(resource_table_error)) => {
                     // trap
-                    wasmtime::Error::new(resource_table_error)
+                    Err(wasmtime::Error::new(resource_table_error))
                 }
-            })
+            }
         }
 
         pub(crate) async fn new_join_set_generated(
@@ -1458,7 +1463,7 @@ mod workflow_support {
             )
             .await
             .map_err(|err| match err {
-                JoinSetCreateError::InvalidNameError(_) | JoinSetCreateError::NameConflict => {
+                JoinSetCreateError::InvalidNameError(_) | JoinSetCreateError::Conflict => {
                     unreachable!("generated index has been incremented")
                 }
                 JoinSetCreateError::ApplyError(apply_err) => {
@@ -1716,6 +1721,7 @@ pub(crate) mod tests {
                             workflow_ctx
                                 .new_join_set_named(join_set_id.name.to_string(), None)
                                 .await
+                                .unwrap()
                                 .unwrap();
                             Ok(())
                         }

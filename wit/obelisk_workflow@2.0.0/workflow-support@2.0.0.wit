@@ -14,6 +14,12 @@ interface workflow-support {
         // TODO: Implement cancel
     }
 
+    variant join-set-create-error {
+        conflict,
+        invalid-name(string),
+    }
+
+
     /// Returns a random u64 in the range [min, max).
     random-u64: func(min: u64, max-exclusive: u64) -> u64;
     /// Returns a random u64 in the range [min, max].
@@ -30,7 +36,7 @@ interface workflow-support {
     submit-delay: func(join-set-id: borrow<join-set-id>, timeout: schedule-at) -> delay-id;
 
     /// Create a new completing join set.
-    new-join-set-named: func(name: string, closing-strategy: closing-strategy) -> join-set-id;
+    new-join-set-named: func(name: string, closing-strategy: closing-strategy) -> result<join-set-id, join-set-create-error>;
 
     /// Create a new completing join set with a generated name.
     new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set-id;
