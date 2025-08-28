@@ -139,7 +139,6 @@ pub(crate) struct WorkflowCtx<C: ClockFn> {
     pub(crate) version: Version,
     component_logger: ComponentLogger,
     pub(crate) resource_table: wasmtime::component::ResourceTable,
-    backtrace: Option<WasmBacktrace>, // Temporary storage of current backtrace
     backtrace_persist: bool,
     wasi_ctx: WasiCtx,
 }
@@ -844,7 +843,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
             version,
             component_logger: ComponentLogger { span: worker_span },
             resource_table: wasmtime::component::ResourceTable::default(),
-            backtrace: None,
             backtrace_persist,
             wasi_ctx: wasi_ctx_builder.build(),
         }
@@ -859,6 +857,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
     async fn persist_sleep(
         &mut self,
         schedule_at: HistoryEventScheduleAt,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), WorkflowFunctionError> {
         let expires_at_if_new = schedule_at
             .as_date_time(self.clock_fn.now())
@@ -874,7 +873,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         OneOffDelayRequest::apply(
             schedule_at,
             expires_at_if_new,
-            self.backtrace.take(),
+            wasm_backtrace,
             &mut self.event_history,
             self.db_pool.connection().as_ref(),
             &mut self.version,
@@ -902,6 +901,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         name: String,
         kind: JoinSetKind,
         closing_strategy: ClosingStrategy,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<Resource<JoinSetId>, JoinSetCreateError> {
         if !self.event_history.join_set_name_exists(&name, kind) {
             let join_set_id = JoinSetId::new(kind, StrVariant::from(name))
@@ -909,7 +909,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             let join_set_id = JoinSetCreate {
                 join_set_id,
                 closing_strategy,
-                wasm_backtrace: self.backtrace.take(),
+                wasm_backtrace,
             }
             .apply(
                 &mut self.event_history,
@@ -930,11 +930,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
         }
     }
 
-    // NB: Caller must not forget to clear `host.backtrace` afterwards.
-    // TODO: Either add RAII-style guard or return a tuple.
     fn get_host_maybe_capture_backtrace<'a>(
         caller: &'a mut wasmtime::StoreContextMut<'_, Self>,
-    ) -> &'a mut WorkflowCtx<C> {
+    ) -> (&'a mut WorkflowCtx<C>, Option<storage::WasmBacktrace>) {
         let backtrace = if caller.data().backtrace_persist {
             let backtrace = wasmtime::WasmBacktrace::capture(&caller);
             WasmBacktrace::maybe_from(&backtrace)
@@ -942,8 +940,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             None
         };
         let host = caller.data_mut();
-        host.backtrace = backtrace;
-        host
+        (host, backtrace)
     }
 
     // Adding host functions using `func_wrap_async` so that we can capture the backtrace.
@@ -987,9 +984,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (min, max_exclusive): (u64, u64)| {
                     Box::new(async move {
-                        let host = Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.random_u64(min, max_exclusive).await;
-                        host.backtrace = None;
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let result = host.random_u64(min, max_exclusive, wasm_backtrace).await;
                         Ok((result?,))
                     })
                 },
@@ -1005,9 +1002,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (min, max_inclusive): (u64, u64)| {
                     Box::new(async move {
-                        let host = Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.random_u64_inclusive(min, max_inclusive).await;
-                        host.backtrace = None;
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let result = host
+                            .random_u64_inclusive(min, max_inclusive, wasm_backtrace)
+                            .await;
                         Ok((result?,))
                     })
                 },
@@ -1023,9 +1022,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (min_length, max_length_exclusive): (u16, u16)| {
                     Box::new(async move {
-                        let host = Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.random_string(min_length, max_length_exclusive).await;
-                        host.backtrace = None;
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let result = host
+                            .random_string(min_length, max_length_exclusive, wasm_backtrace)
+                            .await;
                         Ok((result?,))
                     })
                 },
@@ -1042,10 +1043,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
                       (join_set_id, schedule_at): (Resource<JoinSetId>, ScheduleAt_2_0_0)| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
-                        let host = Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let (host, wasm_backtrace) = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let join_set_id = host.resource_to_join_set_id(&join_set_id)?.clone();
-                        let result = host.submit_delay(join_set_id, schedule_at).await;
-                        host.backtrace = None;
+                        let result = host.submit_delay(join_set_id, schedule_at, wasm_backtrace).await;
                         Ok((result?,))
                     })
                 },
@@ -1062,10 +1062,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
                       (schedule_at,): (ScheduleAt_2_0_0,)| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
-                        let host = Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.sleep(schedule_at).await;
-                        host.backtrace = None;
-                        result
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        host.sleep(schedule_at, wasm_backtrace).await
                     })
                 },
             )
@@ -1080,9 +1079,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (name, _closing_strategy): (String, ClosingStrategy_2_0_0)| {
                     Box::new(async move {
-                        let host = Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.new_join_set_named(name).await;
-                        host.backtrace = None;
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let result = host.new_join_set_named(name, wasm_backtrace).await;
                         Ok((result?,))
                     })
                 },
@@ -1098,9 +1097,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (_closing_strategy,): (ClosingStrategy_2_0_0,)| {
                     Box::new(async move {
-                        let host = Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.new_join_set_generated().await;
-                        host.backtrace = None;
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let result = host.new_join_set_generated(wasm_backtrace).await;
                         Ok((result?,))
                     })
                 },
@@ -1116,10 +1115,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (join_set_id,): (Resource<JoinSetId>,)| {
                     Box::new(async move {
-                        let host = Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
                         let join_set_id = host.resource_to_join_set_id(&join_set_id)?.clone();
-                        let result = host.join_next(join_set_id).await;
-                        host.backtrace = None;
+                        let result = host.join_next(join_set_id, wasm_backtrace).await;
                         Ok((result?,))
                     })
                 },
@@ -1195,9 +1194,9 @@ mod workflow_support {
     use crate::workflow::host_exports::v2_0_0::obelisk::types::execution::HostJoinSetId;
     use crate::workflow::host_exports::v2_0_0::obelisk::workflow::workflow_support;
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_2, JoinSetCreateError};
-    use concepts::FunctionFqn;
     use concepts::storage::HistoryEventScheduleAt;
     use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind};
+    use concepts::{FunctionFqn, storage};
     use tracing::trace;
     use wasmtime::component::Resource;
 
@@ -1231,18 +1230,21 @@ mod workflow_support {
             &mut self,
             min: u64,
             max_exclusive: u64,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<u64> {
             let Some(max_inclusive) = max_exclusive.checked_add(1) else {
                 // Panic in host function would kill the worker task.
                 return Err(wasmtime::Error::msg("integer overflow"));
             };
-            self.random_u64_inclusive(min, max_inclusive).await
+            self.random_u64_inclusive(min, max_inclusive, wasm_backtrace)
+                .await
         }
 
         pub(crate) async fn random_u64_inclusive(
             &mut self,
             min: u64,
             max_inclusive: u64,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<u64> {
             let range = min..=max_inclusive;
             if range.is_empty() {
@@ -1255,7 +1257,7 @@ mod workflow_support {
                 value,
                 min,
                 max_inclusive,
-                self.backtrace.take(),
+                wasm_backtrace,
                 &mut self.event_history,
                 self.db_pool.connection().as_ref(),
                 &mut self.version,
@@ -1270,6 +1272,7 @@ mod workflow_support {
             &mut self,
             min_length: u16,
             max_length_exclusive: u16,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<String> {
             let value: String = {
                 let range = min_length..max_length_exclusive;
@@ -1294,7 +1297,7 @@ mod workflow_support {
                 value,
                 u64::from(min_length),
                 u64::from(max_length_exclusive),
-                self.backtrace.take(),
+                wasm_backtrace,
                 &mut self.event_history,
                 self.db_pool.connection().as_ref(),
                 &mut self.version,
@@ -1308,6 +1311,7 @@ mod workflow_support {
             &mut self,
             join_set_id: JoinSetId,
             schedule_at: HistoryEventScheduleAt,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> Result<types_execution::DelayId, WorkflowFunctionError> {
             let delay_id = self.event_history.next_delay_id(&join_set_id);
             let expires_at_if_new =
@@ -1328,7 +1332,7 @@ mod workflow_support {
                 join_set_id,
                 schedule_at,
                 expires_at_if_new,
-                wasm_backtrace: self.backtrace.take(),
+                wasm_backtrace,
             }
             .apply(
                 &mut self.event_history,
@@ -1342,18 +1346,21 @@ mod workflow_support {
         pub(crate) async fn sleep(
             &mut self,
             schedule_at: HistoryEventScheduleAt,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<()> {
-            Ok(self.persist_sleep(schedule_at).await?)
+            Ok(self.persist_sleep(schedule_at, wasm_backtrace).await?)
         }
 
         pub(crate) async fn new_join_set_named(
             &mut self,
             name: String,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<Resource<JoinSetId>> {
             self.persist_join_set_with_kind(
                 name,
                 JoinSetKind::Named,
                 concepts::ClosingStrategy::Complete,
+                wasm_backtrace,
             )
             .await
             .map_err(|err| match err {
@@ -1374,6 +1381,7 @@ mod workflow_support {
 
         pub(crate) async fn new_join_set_generated(
             &mut self,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<Resource<JoinSetId>> {
             let name = self.event_history.next_join_set_name_generated();
             trace!("new_join_set_generated: {name}");
@@ -1381,6 +1389,7 @@ mod workflow_support {
                 name,
                 JoinSetKind::Generated,
                 concepts::ClosingStrategy::Complete,
+                wasm_backtrace,
             )
             .await
             .map_err(|err| match err {
@@ -1399,6 +1408,7 @@ mod workflow_support {
         pub(crate) async fn join_next(
             &mut self,
             join_set_id: JoinSetId,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> Result<
             Result<types_execution::ResponseId, workflow_support::JoinNextError>,
             WorkflowFunctionError,
@@ -1406,7 +1416,7 @@ mod workflow_support {
             JoinNext {
                 join_set_id,
                 closing: false,
-                wasm_backtrace: self.backtrace.take(),
+                wasm_backtrace,
             }
             .apply(
                 &mut self.event_history,
@@ -1607,9 +1617,12 @@ pub(crate) mod tests {
                     match step {
                         WorkflowStep::Sleep { millis } => {
                             workflow_ctx
-                                .persist_sleep(HistoryEventScheduleAt::In(Duration::from_millis(
-                                    u64::from(*millis),
-                                )))
+                                .persist_sleep(
+                                    HistoryEventScheduleAt::In(Duration::from_millis(u64::from(
+                                        *millis,
+                                    ))),
+                                    None,
+                                )
                                 .await
                         }
                         WorkflowStep::Call { ffqn } => {
@@ -1636,7 +1649,7 @@ pub(crate) mod tests {
                         WorkflowStep::JoinSetCreateNamed { join_set_id } => {
                             assert_eq!(JoinSetKind::Named, join_set_id.kind);
                             workflow_ctx
-                                .new_join_set_named(join_set_id.name.to_string())
+                                .new_join_set_named(join_set_id.name.to_string(), None)
                                 .await
                                 .unwrap();
                             Ok(())
@@ -1645,7 +1658,7 @@ pub(crate) mod tests {
                         WorkflowStep::SubmitExecution { target_ffqn } => {
                             // Create new join set
                             let join_set_resource =
-                                workflow_ctx.new_join_set_generated().await.unwrap();
+                                workflow_ctx.new_join_set_generated(None).await.unwrap();
                             let join_set_id = workflow_ctx
                                 .resource_table
                                 .get(&join_set_resource)
@@ -1693,7 +1706,7 @@ pub(crate) mod tests {
                                 join_set_id.clone()
                             } else {
                                 let join_set_resource =
-                                    workflow_ctx.new_join_set_generated().await.unwrap();
+                                    workflow_ctx.new_join_set_generated(None).await.unwrap();
                                 workflow_ctx
                                     .resource_table
                                     .get(&join_set_resource)
@@ -1706,13 +1719,14 @@ pub(crate) mod tests {
                                     HistoryEventScheduleAt::In(Duration::from_millis(u64::from(
                                         *millis,
                                     ))),
+                                    None,
                                 )
                                 .await
                                 .map(|_| ())
                         }
                         WorkflowStep::RandomU64 { min, max_inclusive } => {
                             let value = workflow_ctx
-                                .random_u64_inclusive(*min, *max_inclusive)
+                                .random_u64_inclusive(*min, *max_inclusive, None)
                                 .await
                                 .unwrap();
                             assert!(value > *min);
@@ -1724,7 +1738,7 @@ pub(crate) mod tests {
                             max_length_exclusive,
                         } => {
                             let value = workflow_ctx
-                                .random_string(*min_length, *max_length_exclusive)
+                                .random_string(*min_length, *max_length_exclusive, None)
                                 .await
                                 .unwrap();
                             assert!(value.len() > *min_length as usize);
