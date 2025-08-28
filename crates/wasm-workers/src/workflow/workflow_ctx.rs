@@ -1151,7 +1151,7 @@ mod workflow_support {
             let join_set_id = self.resource_table.delete(resource)?;
             self.event_history
                 .join_set_close(
-                    &join_set_id,
+                    join_set_id,
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
                     self.clock_fn.now(),

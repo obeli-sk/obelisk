@@ -36,6 +36,7 @@ use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use hashbrown::HashMap;
+use hashbrown::HashSet;
 use indexmap::IndexMap;
 use indexmap::indexmap;
 use itertools::Either;
@@ -123,6 +124,7 @@ pub(crate) struct EventHistory {
     index_join_set_to_created_child_requests: IndexMap<JoinSetId, usize>,
     // Used for closing join sets.
     close_requests: std::collections::HashMap<JoinSetId, usize>,
+    closed_join_sets: HashSet<JoinSetId>,
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
@@ -185,6 +187,7 @@ impl EventHistory {
             index_child_exe_to_processed_response_idx: HashMap::default(),
             index_child_exe_to_ffqn: HashMap::default(),
             index_join_set_to_created_child_requests: IndexMap::default(),
+            closed_join_sets: HashSet::default(),
             event_history: event_history
                 .into_iter()
                 .filter_map(|event| {
@@ -393,7 +396,7 @@ impl EventHistory {
 
     pub(crate) async fn join_set_close(
         &mut self,
-        join_set_id: &JoinSetId,
+        join_set_id: JoinSetId,
         db_connection: &dyn DbConnection,
         version: &mut Version,
         called_at: DateTime<Utc>,
@@ -407,7 +410,7 @@ impl EventHistory {
     /// For each open join set deterministically emit `JoinNext` and wait for the response.
     async fn join_set_close_inner(
         &mut self,
-        join_set_id: &JoinSetId,
+        join_set_id: JoinSetId,
         db_connection: &dyn DbConnection,
         version: &mut Version,
         called_at: DateTime<Utc>,
@@ -417,15 +420,16 @@ impl EventHistory {
 
         let created_child_request_count = *self
             .index_join_set_to_created_child_requests
-            .get(join_set_id)
+            .get(&join_set_id)
             .expect("must have been created in JoinSetCreate");
 
         // TODO: optimize search for child execution responses.
         let processed_child_response_count = self.responses.iter().filter(|(event, status)| *status == Processed &&
-            matches!(event, JoinSetResponseEvent { join_set_id:found, event: JoinSetResponse::ChildExecutionFinished { .. } } if join_set_id == found)).count();
+            matches!(event, JoinSetResponseEvent { join_set_id:found, event: JoinSetResponse::ChildExecutionFinished { .. } }
+                if join_set_id == *found)).count();
         let close_count = self
             .close_requests
-            .get(join_set_id)
+            .get(&join_set_id)
             .copied()
             .unwrap_or_default();
         debug!(%join_set_id, created_child_request_count, processed_child_response_count,  close_count, "join_set_close");
@@ -444,7 +448,7 @@ impl EventHistory {
                         created_at: called_at,
                         event: ExecutionEventInner::HistoryEvent {
                             event: HistoryEvent::JoinNext {
-                                join_set_id: join_set_id.clone(),
+                                join_set_id,
                                 run_expires_at: called_at, // TODO: Implement the Await strategy.
                                 requested_ffqn: None,
                                 closing: true,
@@ -457,12 +461,12 @@ impl EventHistory {
 
             Err(JoinSetCloseError::InterruptRequested) // TODO: Implement the Await strategy.
         } else {
-            // Clean up for `close_forgotten_join_sets`
+            // Clean up for `last_join_set`
             *self
                 .index_join_set_to_created_child_requests
-                .get_mut(join_set_id)
+                .get_mut(&join_set_id)
                 .expect("must have been created in JoinSetCreate") = 0;
-
+            self.closed_join_sets.insert(join_set_id);
             Ok(())
         }
     }
@@ -489,7 +493,7 @@ impl EventHistory {
     ) -> Result<(), JoinSetCloseError> {
         debug!("close_forgotten_join_sets");
         while let Some(join_set_id) = self.last_join_set() {
-            self.join_set_close_inner(&join_set_id, db_connection, version, called_at)
+            self.join_set_close_inner(join_set_id, db_connection, version, called_at)
                 .await?;
             // No action was needed, continue with next join set.
         }
@@ -2043,9 +2047,7 @@ pub(crate) enum EventCall {
     Schedule(Schedule),
     Stub(Stub),
     JoinNextRequestingFfqn(JoinNextRequestingFfqn),
-    // join-next: func(join-set-id: borrow<join-set-id>) -> result<response-id, join-next-error>
     JoinNext(JoinNext),
-    /// combines [`Self::CreateJoinSet`] [`Self::StartAsync`] [`Self::BlockingChildJoinNext`]
     OneOffChildExecutionRequest(OneOffChildExecutionRequest),
     OneOffDelayRequest(OneOffDelayRequest),
     Persist(Persist),
@@ -2107,7 +2109,11 @@ impl SubmitChildExecution {
         version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val /* ExecutionId */, WorkflowFunctionError> {
-        assert!(self.join_set_id.kind != JoinSetKind::OneOff);
+        assert!(
+            self.join_set_id.kind != JoinSetKind::OneOff,
+            "one-off join set cannot be constructed outside of OneOff*Request"
+        );
+        assert!(!event_history.closed_join_sets.contains(&self.join_set_id));
         let join_set_id = self.join_set_id.clone();
         let value = event_history
             .apply(
@@ -2155,6 +2161,11 @@ impl SubmitDelay {
         version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<types_execution::DelayId, WorkflowFunctionError> {
+        assert!(
+            self.join_set_id.kind != JoinSetKind::OneOff,
+            "one-off join set cannot be constructed outside of OneOff*Request"
+        );
+        assert!(!event_history.closed_join_sets.contains(&self.join_set_id));
         let value = event_history
             .apply(
                 EventCall::SubmitDelay(self),
@@ -2241,9 +2252,9 @@ impl Stub {
     }
 }
 
+// -await-next: func(join-set-id: borrow<join-set-id>) -> result<(execution_id,?), await-next-extension-error>
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct JoinNextRequestingFfqn {
-    // `ffqn-await-next`
     pub(crate) join_set_id: JoinSetId,
     pub(crate) requested_ffqn: FunctionFqn,
     #[debug(skip)]
@@ -2260,7 +2271,11 @@ impl JoinNextRequestingFfqn {
         wasmtime::component::Val, /* result<?, await-next-extension-error> */
         WorkflowFunctionError,
     > {
-        assert!(self.join_set_id.kind != JoinSetKind::OneOff);
+        assert!(
+            self.join_set_id.kind != JoinSetKind::OneOff,
+            "one-off join set cannot be constructed outside of OneOff*Request"
+        );
+        assert!(!event_history.closed_join_sets.contains(&self.join_set_id));
         let value = event_history
             .apply(
                 EventCall::JoinNextRequestingFfqn(self),
@@ -2282,6 +2297,7 @@ impl JoinNextRequestingFfqn {
     }
 }
 
+// join-next: func(join-set-id: borrow<join-set-id>) -> result<response-id, join-next-error>
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct JoinNext {
     pub(crate) join_set_id: JoinSetId,
@@ -2298,6 +2314,11 @@ impl JoinNext {
         called_at: DateTime<Utc>,
     ) -> Result<Result<types_execution::ResponseId, workflow_support::JoinNextError>, ApplyError>
     {
+        assert!(
+            self.join_set_id.kind != JoinSetKind::OneOff,
+            "one-off join set cannot be constructed outside of OneOff*Request"
+        );
+        assert!(!event_history.closed_join_sets.contains(&self.join_set_id));
         let value = event_history
             .apply_inner(EventCall::JoinNext(self), db_connection, version, called_at)
             .await?;
