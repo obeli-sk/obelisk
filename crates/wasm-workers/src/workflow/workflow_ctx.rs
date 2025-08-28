@@ -19,9 +19,9 @@ use concepts::storage::{self, DbError, DbPool, HistoryEventScheduleAt, Version, 
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
-    ClosingStrategy, ComponentId, ExecutionId, FinishedExecutionError, FunctionRegistry,
-    IfcFqnName, InvalidNameError, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, StrVariant,
-    SupportedFunctionReturnValue,
+    ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FinishedExecutionError,
+    FunctionMetadata, FunctionRegistry, IfcFqnName, InvalidNameError, SUFFIX_PKG_EXT,
+    SUFFIX_PKG_SCHEDULE, StrVariant, SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
@@ -148,12 +148,16 @@ pub(crate) struct WorkflowCtx<C: ClockFn> {
 pub(crate) enum ImportedFnCall<'a> {
     Direct {
         ffqn: FunctionFqn,
+        fn_component_id: ComponentId,
+        fn_retry_config: ComponentRetryConfig,
         params: &'a [Val],
         #[debug(skip)]
         wasm_backtrace: Option<storage::WasmBacktrace>,
     },
     Schedule {
         target_ffqn: FunctionFqn,
+        target_component_id: ComponentId,
+        target_retry_config: ComponentRetryConfig,
         schedule_at: HistoryEventScheduleAt,
         #[debug(skip)]
         target_params: &'a [Val],
@@ -162,6 +166,8 @@ pub(crate) enum ImportedFnCall<'a> {
     },
     SubmitExecution {
         target_ffqn: FunctionFqn,
+        target_component_id: ComponentId,
+        target_retry_config: ComponentRetryConfig,
         join_set_id: JoinSetId,
         #[debug(skip)]
         target_params: &'a [Val],
@@ -177,6 +183,7 @@ pub(crate) enum ImportedFnCall<'a> {
     Stub {
         target_ffqn: FunctionFqn,
         target_execution_id: ExecutionIdDerived,
+        target_fn_metadata: FunctionMetadata,
         parent_id: ExecutionId,
         join_set_id: JoinSetId,
         #[debug(skip)]
@@ -228,6 +235,7 @@ impl<'a> ImportedFnCall<'a> {
         store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
         params: &'a [Val],
         backtrace_persist: bool,
+        fn_registry: &dyn FunctionRegistry,
     ) -> Result<ImportedFnCall<'a>, WorkflowFunctionError> {
         let wasm_backtrace = if backtrace_persist {
             let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
@@ -257,8 +265,13 @@ impl<'a> ImportedFnCall<'a> {
                             detail: Some(detail),
                         },
                     )?;
+                let (_fn_metadata, target_component_id, target_retry_config) = fn_registry
+                    .get_by_exported_function(&target_ffqn)
+                    .expect("function obtained from `fn_registry.all_exports()` must be found");
                 Ok(ImportedFnCall::SubmitExecution {
                     target_ffqn,
+                    target_component_id,
+                    target_retry_config,
                     join_set_id,
                     target_params: params,
                     wasm_backtrace,
@@ -395,9 +408,14 @@ impl<'a> ImportedFnCall<'a> {
                         });
                     }
                 };
+                let (_fn_metadata, target_component_id, target_retry_config) = fn_registry
+                    .get_by_exported_function(&target_ffqn)
+                    .expect("function obtained from `fn_registry.all_exports()` must be found");
 
                 Ok(ImportedFnCall::Schedule {
                     target_ffqn,
+                    target_component_id,
+                    target_retry_config,
                     schedule_at,
                     target_params: params,
                     wasm_backtrace,
@@ -472,9 +490,13 @@ impl<'a> ImportedFnCall<'a> {
                         });
                     }
                 };
+                let (target_fn_metadata, _target_component_id, _target_retry_config) = fn_registry
+                    .get_by_exported_function(&target_ffqn)
+                    .expect("function obtained from `fn_registry.all_exports()` must be found");
                 Ok(ImportedFnCall::Stub {
                     target_ffqn,
                     target_execution_id,
+                    target_fn_metadata,
                     parent_id,
                     join_set_id,
                     return_value,
@@ -489,10 +511,16 @@ impl<'a> ImportedFnCall<'a> {
                 })
             }
         } else {
+            let (_fn_metadata, fn_component_id, fn_retry_config) = fn_registry
+                .get_by_exported_function(&called_ffqn)
+                .expect("function obtained from `fn_registry.all_exports()` must be found");
+
             Ok(ImportedFnCall::Direct {
                 ffqn: called_ffqn,
                 params,
                 wasm_backtrace,
+                fn_component_id,
+                fn_retry_config,
             })
         }
     }
@@ -594,12 +622,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
         imported_fn_call: ImportedFnCall<'_>,
         results: &mut [Val],
         called_ffqn: FunctionFqn,
-        fn_registry: &dyn FunctionRegistry,
     ) -> Result<(), WorkflowFunctionError> {
         let called_at = self.clock_fn.now();
         trace!(?imported_fn_call, %called_at, "call_imported_fn start");
         let val = self
-            .imported_fn_to_val(imported_fn_call, fn_registry, called_at, &called_ffqn)
+            .imported_fn_to_val(imported_fn_call, called_at, &called_ffqn)
             .await?;
 
         match (results.len(), val) {
@@ -918,20 +945,17 @@ impl<C: ClockFn> WorkflowCtx<C> {
     async fn imported_fn_to_val(
         &mut self,
         imported_fn_call: ImportedFnCall<'_>,
-        fn_registry: &dyn FunctionRegistry,
         called_at: DateTime<Utc>,
         called_ffqn: &FunctionFqn,
     ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
         match imported_fn_call {
             ImportedFnCall::Direct {
                 ffqn,
+                fn_component_id,
+                fn_retry_config,
                 params,
                 wasm_backtrace,
             } => {
-                let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
-                    .get_by_exported_function(&ffqn)
-                    .expect("function obtained from fn_registry exports must be found");
-
                 OneOffChildExecutionRequest::apply(
                     ffqn,
                     fn_component_id,
@@ -947,6 +971,8 @@ impl<C: ClockFn> WorkflowCtx<C> {
             }
             ImportedFnCall::Schedule {
                 target_ffqn,
+                target_component_id,
+                target_retry_config,
                 schedule_at,
                 target_params,
                 wasm_backtrace,
@@ -958,9 +984,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     self.execution_id.get_top_level().timestamp_part(),
                     self.next_u128(),
                 );
-                let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
-                    .get_by_exported_function(&target_ffqn)
-                    .expect("function obtained from fn_registry exports must be found");
                 let scheduled_at_if_new = schedule_at.as_date_time(called_at).map_err(|err| {
                     WorkflowFunctionError::ImportedFunctionCallError {
                         ffqn: called_ffqn.clone(),
@@ -974,8 +997,8 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     scheduled_at_if_new,
                     execution_id,
                     ffqn: target_ffqn,
-                    fn_component_id,
-                    fn_retry_config,
+                    fn_component_id: target_component_id,
+                    fn_retry_config: target_retry_config,
                     params: Params::from_wasmtime(Arc::from(target_params)),
                     wasm_backtrace,
                 }
@@ -990,18 +1013,17 @@ impl<C: ClockFn> WorkflowCtx<C> {
             }
             ImportedFnCall::SubmitExecution {
                 target_ffqn,
+                target_component_id,
+                target_retry_config,
                 join_set_id,
                 target_params,
                 wasm_backtrace,
             } => {
                 let child_execution_id = self.next_child_id(&join_set_id);
-                let (_fn_meta, fn_component_id, fn_retry_config) = fn_registry
-                    .get_by_exported_function(&target_ffqn)
-                    .expect("function obtained from fn_registry exports must be found");
                 SubmitChildExecution {
                     target_ffqn,
-                    fn_component_id,
-                    fn_retry_config,
+                    fn_component_id: target_component_id,
+                    fn_retry_config: target_retry_config,
                     join_set_id,
                     params: Params::from_wasmtime(Arc::from(target_params)),
                     child_execution_id,
@@ -1036,15 +1058,12 @@ impl<C: ClockFn> WorkflowCtx<C> {
             ImportedFnCall::Stub {
                 target_ffqn,
                 target_execution_id,
+                target_fn_metadata,
                 parent_id,
                 join_set_id,
                 return_value,
                 wasm_backtrace,
             } => {
-                let (fn_meta, _, _) = fn_registry
-                    .get_by_exported_function(&target_ffqn)
-                    .expect("function obtained from fn_registry exports must be found");
-
                 let return_value_or_err = WastVal::try_from(return_value).map_err(|err| {
                     WorkflowFunctionError::ImportedFunctionCallError {
                         ffqn: called_ffqn.clone(),
@@ -1053,7 +1072,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     }
                 })?;
                 // Add TypeWrapper
-                let result = match (return_value_or_err, fn_meta.return_type) {
+                let result = match (return_value_or_err, target_fn_metadata.return_type) {
                     (WastVal::Result(Err(None)), _) => {
                         Err(FinishedExecutionError::new_stubbed_error())
                     }
@@ -1541,123 +1560,134 @@ pub(crate) mod tests {
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");
-                let res = match step {
-                    WorkflowStep::Sleep { millis } => {
-                        workflow_ctx
-                            .persist_sleep(HistoryEventScheduleAt::In(Duration::from_millis(
-                                u64::from(*millis),
-                            )))
-                            .await
-                    }
-                    WorkflowStep::Call { ffqn } => {
-                        workflow_ctx
-                            .call_imported_fn(
-                                ImportedFnCall::Direct {
-                                    ffqn: ffqn.clone(),
-                                    params: &[],
-                                    wasm_backtrace: None,
-                                },
-                                &mut [],
-                                ffqn.clone(),
-                                self.fn_registry.as_ref(),
-                            )
-                            .await
-                    }
+                let res =
+                    match step {
+                        WorkflowStep::Sleep { millis } => {
+                            workflow_ctx
+                                .persist_sleep(HistoryEventScheduleAt::In(Duration::from_millis(
+                                    u64::from(*millis),
+                                )))
+                                .await
+                        }
+                        WorkflowStep::Call { ffqn } => {
+                            let (_fn_metadata, fn_component_id, fn_retry_config) =
+                            self.fn_registry.get_by_exported_function(&ffqn).expect(
+                                "function obtained from `fn_registry.all_exports()` must be found",
+                            );
+                            workflow_ctx
+                                .call_imported_fn(
+                                    ImportedFnCall::Direct {
+                                        ffqn: ffqn.clone(),
+                                        fn_component_id,
+                                        fn_retry_config,
+                                        params: &[],
+                                        wasm_backtrace: None,
+                                    },
+                                    &mut [],
+                                    ffqn.clone(),
+                                )
+                                .await
+                        }
 
-                    WorkflowStep::JoinSetCreateNamed { join_set_id } => {
-                        assert_eq!(JoinSetKind::Named, join_set_id.kind);
-                        workflow_ctx
-                            .new_join_set_named(join_set_id.name.to_string())
-                            .await
-                            .unwrap();
-                        Ok(())
-                    }
+                        WorkflowStep::JoinSetCreateNamed { join_set_id } => {
+                            assert_eq!(JoinSetKind::Named, join_set_id.kind);
+                            workflow_ctx
+                                .new_join_set_named(join_set_id.name.to_string())
+                                .await
+                                .unwrap();
+                            Ok(())
+                        }
 
-                    WorkflowStep::SubmitExecution { target_ffqn } => {
-                        // Create new join set
-                        let join_set_resource =
-                            workflow_ctx.new_join_set_generated().await.unwrap();
-                        let join_set_id = workflow_ctx
-                            .resource_table
-                            .get(&join_set_resource)
-                            .unwrap()
-                            .clone();
-                        let mut ret_val = vec![Val::Bool(false)];
-                        let target_ifc = target_ffqn.ifc_fqn.clone();
-                        let submit_ffqn = FunctionFqn {
-                            ifc_fqn: IfcFqnName::from_parts(
-                                target_ifc.namespace(),
-                                &format!("{}{SUFFIX_PKG_EXT}", target_ifc.package_name()),
-                                target_ifc.ifc_name(),
-                                target_ifc.version(),
-                            ),
-                            function_name: concepts::FnName::from(format!(
-                                "{}{}",
-                                target_ffqn.function_name, SUFFIX_FN_SUBMIT
-                            )),
-                        };
-                        workflow_ctx
-                            .call_imported_fn(
-                                ImportedFnCall::SubmitExecution {
-                                    target_ffqn: target_ffqn.clone(),
-                                    join_set_id,
-                                    target_params: &[],
-                                    wasm_backtrace: None,
-                                },
-                                &mut ret_val,
-                                submit_ffqn,
-                                self.fn_registry.as_ref(),
-                            )
-                            .await
-                    }
-                    WorkflowStep::SubmitDelay {
-                        millis,
-                        join_set_id,
-                    } => {
-                        // Create new join set
-                        let join_set_id = if let Some(join_set_id) = join_set_id {
-                            join_set_id.clone()
-                        } else {
+                        WorkflowStep::SubmitExecution { target_ffqn } => {
+                            // Create new join set
                             let join_set_resource =
                                 workflow_ctx.new_join_set_generated().await.unwrap();
-                            workflow_ctx
+                            let join_set_id = workflow_ctx
                                 .resource_table
                                 .get(&join_set_resource)
                                 .unwrap()
-                                .clone()
-                        };
-                        workflow_ctx
-                            .submit_delay(
-                                join_set_id,
-                                HistoryEventScheduleAt::In(Duration::from_millis(u64::from(
-                                    *millis,
-                                ))),
-                            )
-                            .await
-                            .map(|_| ())
-                    }
-                    WorkflowStep::RandomU64 { min, max_inclusive } => {
-                        let value = workflow_ctx
-                            .random_u64_inclusive(*min, *max_inclusive)
-                            .await
-                            .unwrap();
-                        assert!(value > *min);
-                        assert!(value <= *max_inclusive);
-                        Ok(())
-                    }
-                    WorkflowStep::RandomString {
-                        min_length,
-                        max_length_exclusive,
-                    } => {
-                        let value = workflow_ctx
-                            .random_string(*min_length, *max_length_exclusive)
-                            .await
-                            .unwrap();
-                        assert!(value.len() > *min_length as usize);
-                        assert!(value.len() < usize::from(*max_length_exclusive));
-                        Ok(())
-                    }
-                };
+                                .clone();
+                            let mut ret_val = vec![Val::Bool(false)];
+                            let target_ifc = target_ffqn.ifc_fqn.clone();
+                            let submit_ffqn = FunctionFqn {
+                                ifc_fqn: IfcFqnName::from_parts(
+                                    target_ifc.namespace(),
+                                    &format!("{}{SUFFIX_PKG_EXT}", target_ifc.package_name()),
+                                    target_ifc.ifc_name(),
+                                    target_ifc.version(),
+                                ),
+                                function_name: concepts::FnName::from(format!(
+                                    "{}{}",
+                                    target_ffqn.function_name, SUFFIX_FN_SUBMIT
+                                )),
+                            };
+                            let (_fn_metadata, target_component_id, target_retry_config) =
+                            self.fn_registry.get_by_exported_function(&target_ffqn).expect(
+                                "function obtained from `fn_registry.all_exports()` must be found",
+                            );
+                            workflow_ctx
+                                .call_imported_fn(
+                                    ImportedFnCall::SubmitExecution {
+                                        target_ffqn: target_ffqn.clone(),
+                                        target_component_id,
+                                        target_retry_config,
+                                        join_set_id,
+                                        target_params: &[],
+                                        wasm_backtrace: None,
+                                    },
+                                    &mut ret_val,
+                                    submit_ffqn,
+                                )
+                                .await
+                        }
+                        WorkflowStep::SubmitDelay {
+                            millis,
+                            join_set_id,
+                        } => {
+                            // Create new join set
+                            let join_set_id = if let Some(join_set_id) = join_set_id {
+                                join_set_id.clone()
+                            } else {
+                                let join_set_resource =
+                                    workflow_ctx.new_join_set_generated().await.unwrap();
+                                workflow_ctx
+                                    .resource_table
+                                    .get(&join_set_resource)
+                                    .unwrap()
+                                    .clone()
+                            };
+                            workflow_ctx
+                                .submit_delay(
+                                    join_set_id,
+                                    HistoryEventScheduleAt::In(Duration::from_millis(u64::from(
+                                        *millis,
+                                    ))),
+                                )
+                                .await
+                                .map(|_| ())
+                        }
+                        WorkflowStep::RandomU64 { min, max_inclusive } => {
+                            let value = workflow_ctx
+                                .random_u64_inclusive(*min, *max_inclusive)
+                                .await
+                                .unwrap();
+                            assert!(value > *min);
+                            assert!(value <= *max_inclusive);
+                            Ok(())
+                        }
+                        WorkflowStep::RandomString {
+                            min_length,
+                            max_length_exclusive,
+                        } => {
+                            let value = workflow_ctx
+                                .random_string(*min_length, *max_length_exclusive)
+                                .await
+                                .unwrap();
+                            assert!(value.len() > *min_length as usize);
+                            assert!(value.len() < usize::from(*max_length_exclusive));
+                            Ok(())
+                        }
+                    };
                 if let Err(err) = res {
                     info!("Sending {err:?}");
                     return err.into_worker_partial_result(workflow_ctx.version).into();

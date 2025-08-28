@@ -218,6 +218,7 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
                                 &mut store_ctx,
                                 params,
                                 self.config.backtrace_persist,
+                                fn_registry.as_ref(),
                             ) {
                                 Ok(imported_fn_call) => imported_fn_call,
                                 Err(err) => {
@@ -227,16 +228,10 @@ impl<C: ClockFn, S: Sleep> WorkflowWorkerCompiled<C, S> {
                                 }
                             };
                             let ffqn = ffqn.clone();
-                            let fn_registry = fn_registry.clone();
                             Box::new(async move {
                                 Ok(store_ctx
                                     .data_mut()
-                                    .call_imported_fn(
-                                        imported_fn_call,
-                                        results,
-                                        ffqn,
-                                        fn_registry.as_ref(),
-                                    )
+                                    .call_imported_fn(imported_fn_call, results, ffqn)
                                     .await?)
                             })
                         }
