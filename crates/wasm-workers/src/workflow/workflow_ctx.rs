@@ -146,55 +146,73 @@ pub(crate) struct WorkflowCtx<C: ClockFn> {
 
 #[derive(derive_more::Debug)]
 pub(crate) enum ImportedFnCall<'a> {
-    Direct {
-        ffqn: FunctionFqn,
-        fn_component_id: ComponentId,
-        fn_retry_config: ComponentRetryConfig,
-        params: &'a [Val],
-        #[debug(skip)]
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-    },
-    Schedule {
-        target_ffqn: FunctionFqn,
-        target_component_id: ComponentId,
-        target_retry_config: ComponentRetryConfig,
-        schedule_at: HistoryEventScheduleAt,
-        #[debug(skip)]
-        target_params: &'a [Val],
-        #[debug(skip)]
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-    },
-    SubmitExecution {
-        target_ffqn: FunctionFqn,
-        target_component_id: ComponentId,
-        target_retry_config: ComponentRetryConfig,
-        join_set_id: JoinSetId,
-        #[debug(skip)]
-        target_params: &'a [Val],
-        #[debug(skip)]
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-    },
-    AwaitNext {
-        target_ffqn: FunctionFqn,
-        join_set_id: JoinSetId,
-        #[debug(skip)]
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-    },
-    Stub {
-        target_ffqn: FunctionFqn,
-        target_execution_id: ExecutionIdDerived,
-        target_fn_metadata: FunctionMetadata,
-        parent_id: ExecutionId,
-        join_set_id: JoinSetId,
-        #[debug(skip)]
-        return_value: wasmtime::component::Val,
-        #[debug(skip)]
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-    },
-    Get {
-        target_ffqn: FunctionFqn,
-        child_execution_id: ExecutionIdDerived,
-    },
+    Direct(DirectFnCall<'a>),
+    Schedule(ScheduleFnCall<'a>),
+    SubmitExecution(SubmitExecutionFnCall<'a>),
+    AwaitNext(AwaitNextFnCall),
+    Stub(StubFnCall),
+    Get(GetFnCall),
+}
+
+#[derive(derive_more::Debug)]
+pub(crate) struct DirectFnCall<'a> {
+    ffqn: FunctionFqn,
+    fn_component_id: ComponentId,
+    fn_retry_config: ComponentRetryConfig,
+    params: &'a [Val],
+    #[debug(skip)]
+    wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+
+#[derive(derive_more::Debug)]
+pub(crate) struct ScheduleFnCall<'a> {
+    target_ffqn: FunctionFqn,
+    target_component_id: ComponentId,
+    target_retry_config: ComponentRetryConfig,
+    schedule_at: HistoryEventScheduleAt,
+    #[debug(skip)]
+    target_params: &'a [Val],
+    #[debug(skip)]
+    wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+
+#[derive(derive_more::Debug)]
+pub(crate) struct SubmitExecutionFnCall<'a> {
+    target_ffqn: FunctionFqn,
+    target_component_id: ComponentId,
+    target_retry_config: ComponentRetryConfig,
+    join_set_id: JoinSetId,
+    #[debug(skip)]
+    target_params: &'a [Val],
+    #[debug(skip)]
+    wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+
+#[derive(derive_more::Debug)]
+pub(crate) struct AwaitNextFnCall {
+    target_ffqn: FunctionFqn,
+    join_set_id: JoinSetId,
+    #[debug(skip)]
+    wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+
+#[derive(derive_more::Debug)]
+pub(crate) struct StubFnCall {
+    target_ffqn: FunctionFqn,
+    target_execution_id: ExecutionIdDerived,
+    target_fn_metadata: FunctionMetadata,
+    parent_id: ExecutionId,
+    join_set_id: JoinSetId,
+    #[debug(skip)]
+    return_value: wasmtime::component::Val,
+    #[debug(skip)]
+    wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+
+#[derive(derive_more::Debug)]
+pub(crate) struct GetFnCall {
+    target_ffqn: FunctionFqn,
+    child_execution_id: ExecutionIdDerived,
 }
 
 impl<'a> ImportedFnCall<'a> {
@@ -268,14 +286,14 @@ impl<'a> ImportedFnCall<'a> {
                 let (_fn_metadata, target_component_id, target_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from `fn_registry.all_exports()` must be found");
-                Ok(ImportedFnCall::SubmitExecution {
+                Ok(ImportedFnCall::SubmitExecution(SubmitExecutionFnCall {
                     target_ffqn,
                     target_component_id,
                     target_retry_config,
                     join_set_id,
                     target_params: params,
                     wasm_backtrace,
-                })
+                }))
             } else if let Some(function_name) =
                 called_ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
             {
@@ -304,11 +322,11 @@ impl<'a> ImportedFnCall<'a> {
                         ffqn: called_ffqn,
                     });
                 }
-                Ok(ImportedFnCall::AwaitNext {
+                Ok(ImportedFnCall::AwaitNext(AwaitNextFnCall {
                     target_ffqn,
                     join_set_id,
                     wasm_backtrace,
-                })
+                }))
             } else if let Some(function_name) =
                 called_ffqn.function_name.strip_suffix(SUFFIX_FN_GET)
             {
@@ -349,10 +367,10 @@ impl<'a> ImportedFnCall<'a> {
                     }
                 };
 
-                Ok(ImportedFnCall::Get {
+                Ok(ImportedFnCall::Get(GetFnCall {
                     target_ffqn,
                     child_execution_id,
-                })
+                }))
             } else {
                 error!("Unrecognized `{SUFFIX_PKG_EXT}` interface function {called_ffqn}");
                 Err(WorkflowFunctionError::ImportedFunctionCallError {
@@ -412,14 +430,14 @@ impl<'a> ImportedFnCall<'a> {
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from `fn_registry.all_exports()` must be found");
 
-                Ok(ImportedFnCall::Schedule {
+                Ok(ImportedFnCall::Schedule(ScheduleFnCall {
                     target_ffqn,
                     target_component_id,
                     target_retry_config,
                     schedule_at,
                     target_params: params,
                     wasm_backtrace,
-                })
+                }))
             } else {
                 error!("Unrecognized `{SUFFIX_PKG_SCHEDULE}` interface function {called_ffqn}");
                 Err(WorkflowFunctionError::ImportedFunctionCallError {
@@ -493,7 +511,7 @@ impl<'a> ImportedFnCall<'a> {
                 let (target_fn_metadata, _target_component_id, _target_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from `fn_registry.all_exports()` must be found");
-                Ok(ImportedFnCall::Stub {
+                Ok(ImportedFnCall::Stub(StubFnCall {
                     target_ffqn,
                     target_execution_id,
                     target_fn_metadata,
@@ -501,7 +519,7 @@ impl<'a> ImportedFnCall<'a> {
                     join_set_id,
                     return_value,
                     wasm_backtrace,
-                })
+                }))
             } else {
                 error!("Unrecognized `-obelisk-stub` interface function {called_ffqn}");
                 Err(WorkflowFunctionError::ImportedFunctionCallError {
@@ -515,34 +533,34 @@ impl<'a> ImportedFnCall<'a> {
                 .get_by_exported_function(&called_ffqn)
                 .expect("function obtained from `fn_registry.all_exports()` must be found");
 
-            Ok(ImportedFnCall::Direct {
+            Ok(ImportedFnCall::Direct(DirectFnCall {
                 ffqn: called_ffqn,
                 params,
                 wasm_backtrace,
                 fn_component_id,
                 fn_retry_config,
-            })
+            }))
         }
     }
 
     fn ffqn(&self) -> &FunctionFqn {
         match self {
-            Self::Direct { ffqn, .. }
-            | Self::Schedule {
+            Self::Direct(DirectFnCall { ffqn, .. })
+            | Self::Schedule(ScheduleFnCall {
                 target_ffqn: ffqn, ..
-            }
-            | Self::SubmitExecution {
+            })
+            | Self::SubmitExecution(SubmitExecutionFnCall {
                 target_ffqn: ffqn, ..
-            }
-            | Self::AwaitNext {
+            })
+            | Self::AwaitNext(AwaitNextFnCall {
                 target_ffqn: ffqn, ..
-            }
-            | Self::Stub {
+            })
+            | Self::Stub(StubFnCall {
                 target_ffqn: ffqn, ..
-            }
-            | Self::Get {
+            })
+            | Self::Get(GetFnCall {
                 target_ffqn: ffqn, ..
-            } => ffqn,
+            }) => ffqn,
         }
     }
 }
@@ -949,13 +967,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
         called_ffqn: &FunctionFqn,
     ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
         match imported_fn_call {
-            ImportedFnCall::Direct {
+            ImportedFnCall::Direct(DirectFnCall {
                 ffqn,
                 fn_component_id,
                 fn_retry_config,
                 params,
                 wasm_backtrace,
-            } => {
+            }) => {
                 OneOffChildExecutionRequest::apply(
                     ffqn,
                     fn_component_id,
@@ -969,14 +987,14 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 )
                 .await
             }
-            ImportedFnCall::Schedule {
+            ImportedFnCall::Schedule(ScheduleFnCall {
                 target_ffqn,
                 target_component_id,
                 target_retry_config,
                 schedule_at,
                 target_params,
                 wasm_backtrace,
-            } => {
+            }) => {
                 // TODO(edge case): handle ExecutionId conflict: This does not have to be deterministicly generated.
                 // Remove execution_id from EventCall::ScheduleRequest and add retries.
                 // Or use ExecutionId::generate(), but ignore the id when checking determinism.
@@ -1011,14 +1029,14 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 .await
                 .map(Some)
             }
-            ImportedFnCall::SubmitExecution {
+            ImportedFnCall::SubmitExecution(SubmitExecutionFnCall {
                 target_ffqn,
                 target_component_id,
                 target_retry_config,
                 join_set_id,
                 target_params,
                 wasm_backtrace,
-            } => {
+            }) => {
                 let child_execution_id = self.next_child_id(&join_set_id);
                 SubmitChildExecution {
                     target_ffqn,
@@ -1038,11 +1056,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 .await
                 .map(Some)
             }
-            ImportedFnCall::AwaitNext {
+            ImportedFnCall::AwaitNext(AwaitNextFnCall {
                 target_ffqn,
                 join_set_id,
                 wasm_backtrace,
-            } => JoinNextRequestingFfqn {
+            }) => JoinNextRequestingFfqn {
                 join_set_id,
                 wasm_backtrace,
                 requested_ffqn: target_ffqn,
@@ -1055,7 +1073,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             )
             .await
             .map(Some),
-            ImportedFnCall::Stub {
+            ImportedFnCall::Stub(StubFnCall {
                 target_ffqn,
                 target_execution_id,
                 target_fn_metadata,
@@ -1063,7 +1081,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 join_set_id,
                 return_value,
                 wasm_backtrace,
-            } => {
+            }) => {
                 let return_value_or_err = WastVal::try_from(return_value).map_err(|err| {
                     WorkflowFunctionError::ImportedFunctionCallError {
                         ffqn: called_ffqn.clone(),
@@ -1111,10 +1129,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 .await
                 .map(Some)
             }
-            ImportedFnCall::Get {
+            ImportedFnCall::Get(GetFnCall {
                 target_ffqn,
                 child_execution_id,
-            } => {
+            }) => {
                 let val = match self
                     .event_history
                     .get_processed_response(&child_execution_id, &target_ffqn)
@@ -1404,7 +1422,9 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
 pub(crate) mod tests {
     use crate::workflow::event_history::JoinSetCloseError;
     use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
-    use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
+    use crate::workflow::workflow_ctx::{
+        DirectFnCall, ImportedFnCall, SubmitExecutionFnCall, WorkerPartialResult,
+    };
     use crate::{
         workflow::workflow_ctx::WorkflowCtx, workflow::workflow_worker::JoinNextBlockingStrategy,
     };
@@ -1576,13 +1596,13 @@ pub(crate) mod tests {
                             );
                             workflow_ctx
                                 .call_imported_fn(
-                                    ImportedFnCall::Direct {
+                                    ImportedFnCall::Direct(DirectFnCall {
                                         ffqn: ffqn.clone(),
                                         fn_component_id,
                                         fn_retry_config,
                                         params: &[],
                                         wasm_backtrace: None,
-                                    },
+                                    }),
                                     &mut [],
                                     ffqn.clone(),
                                 )
@@ -1627,14 +1647,14 @@ pub(crate) mod tests {
                             );
                             workflow_ctx
                                 .call_imported_fn(
-                                    ImportedFnCall::SubmitExecution {
+                                    ImportedFnCall::SubmitExecution(SubmitExecutionFnCall {
                                         target_ffqn: target_ffqn.clone(),
                                         target_component_id,
                                         target_retry_config,
                                         join_set_id,
                                         target_params: &[],
                                         wasm_backtrace: None,
-                                    },
+                                    }),
                                     &mut ret_val,
                                     submit_ffqn,
                                 )
