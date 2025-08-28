@@ -1090,6 +1090,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     called_at,
                 )
                 .await
+                .map(Some)
             }
             ImportedFnCall::Get {
                 target_ffqn,

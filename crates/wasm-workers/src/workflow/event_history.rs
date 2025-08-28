@@ -2218,6 +2218,7 @@ impl Schedule {
     }
 }
 
+// -stub: func(execution-id: execution-id, return-value: result<?>) -> result<_, stub-error>
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct Stub {
     pub(crate) target_ffqn: FunctionFqn,
@@ -2236,17 +2237,17 @@ impl Stub {
         db_connection: &dyn DbConnection,
         version: &mut Version,
         called_at: DateTime<Utc>,
-    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+    ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let value = event_history
             .apply(EventCall::Stub(self), db_connection, version, called_at)
             .await?;
 
         match value {
-            ChildReturnValue::None => Ok(None),
-            ChildReturnValue::WastVal(wast_val) => Ok(Some(wast_val.as_val())),
-
-            ChildReturnValue::JoinSetCreate(_) | ChildReturnValue::JoinNext(_) => {
-                unreachable!("must be WastVal or None")
+            ChildReturnValue::WastVal(wast_val) => Ok(wast_val.as_val()),
+            ChildReturnValue::None
+            | ChildReturnValue::JoinSetCreate(_)
+            | ChildReturnValue::JoinNext(_) => {
+                unreachable!("must be WastVal")
             }
         }
     }
