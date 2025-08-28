@@ -396,9 +396,11 @@ impl IfcFqnName {
     }
 
     #[must_use]
-    // Returns true if this is an `-obelisk-*` extended function (including `-stub`).
+    /// Returns true if this is an `-obelisk-*` extended function
+    /// (`-submit`, `-await-next`, `-schedule`, `-stub`).
     pub fn is_extension(&self) -> bool {
         self.package_name().ends_with(SUFFIX_PKG_EXT)
+            || self.package_name().ends_with(SUFFIX_PKG_SCHEDULE)
             || self.package_name().ends_with(SUFFIX_PKG_STUB)
     }
 
