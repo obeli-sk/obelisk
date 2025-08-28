@@ -202,6 +202,56 @@ pub(crate) struct ScheduleFnCall<'a> {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl ScheduleFnCall<'_> {
+    fn new<'a>(
+        target_ffqn: FunctionFqn,
+        called_ffqn: FunctionFqn,
+        params: &'a [Val],
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        fn_registry: &dyn FunctionRegistry,
+    ) -> Result<ScheduleFnCall<'a>, WorkflowFunctionError> {
+        let Some((schedule_at, params)) = params.split_first() else {
+            return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                ffqn: called_ffqn,
+                reason: StrVariant::Static("exepcted at least one parameter of type `schedule-at`"),
+                detail: None,
+            });
+        };
+        let schedule_at = match WastVal::try_from(schedule_at.clone()) {
+            Ok(ok) => ok,
+            Err(err) => {
+                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: format!(
+                        "cannot convert `schedule-at` to internal representation - {err}"
+                    )
+                    .into(),
+                    detail: Some(format!("{err:?}")),
+                });
+            }
+        };
+        let schedule_at = match history_event_schedule_at_from_wast_val(&schedule_at) {
+            Ok(ok) => ok,
+            Err(detail) => {
+                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: "first parameter type must be `schedule-at`".into(),
+                    detail: Some(detail.to_string()),
+                });
+            }
+        };
+        let (_fn_metadata, target_component_id, target_retry_config) = fn_registry
+            .get_by_exported_function(&target_ffqn)
+            .expect("function obtained from `fn_registry.all_exports()` must be found");
+        Ok(ScheduleFnCall {
+            target_ffqn,
+            target_component_id,
+            target_retry_config,
+            schedule_at,
+            target_params: params,
+            wasm_backtrace,
+        })
+    }
+
     async fn call_imported_fn<C: ClockFn>(
         self,
         ctx: &mut WorkflowCtx<C>,
@@ -263,7 +313,37 @@ pub(crate) struct SubmitExecutionFnCall<'a> {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl SubmitExecutionFnCall<'_> {
-    pub(crate) async fn call_imported_fn<C: ClockFn>(
+    fn new<'a, C: ClockFn>(
+        target_ffqn: FunctionFqn,
+        called_ffqn: FunctionFqn,
+        store_ctx: &mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
+        params: &'a [Val],
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        fn_registry: &dyn FunctionRegistry,
+    ) -> Result<SubmitExecutionFnCall<'a>, WorkflowFunctionError> {
+        let (join_set_id, params) =
+            ImportedFnCall::extract_join_set_id(&called_ffqn, store_ctx, params).map_err(
+                |detail| WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: StrVariant::Static("cannot extract join set id"),
+                    detail: Some(detail),
+                },
+            )?;
+        let (_fn_metadata, target_component_id, target_retry_config) = fn_registry
+            .get_by_exported_function(&target_ffqn)
+            .expect("function obtained from `fn_registry.all_exports()` must be found");
+
+        Ok(SubmitExecutionFnCall {
+            target_ffqn,
+            target_component_id,
+            target_retry_config,
+            join_set_id,
+            target_params: params,
+            wasm_backtrace,
+        })
+    }
+
+    async fn call_imported_fn<C: ClockFn>(
         self,
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
@@ -305,6 +385,41 @@ pub(crate) struct AwaitNextFnCall {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl AwaitNextFnCall {
+    fn new<'a, C: ClockFn>(
+        target_ffqn: FunctionFqn,
+        called_ffqn: FunctionFqn,
+        store_ctx: &mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
+        params: &'a [Val],
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+    ) -> Result<AwaitNextFnCall, WorkflowFunctionError> {
+        let (join_set_id, params) =
+            match ImportedFnCall::extract_join_set_id(&called_ffqn, store_ctx, params) {
+                Ok(ok) => ok,
+                Err(detail) => {
+                    return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                        ffqn: called_ffqn,
+                        reason: "cannot extract join set id".into(),
+                        detail: Some(detail),
+                    });
+                }
+            };
+        if !params.is_empty() {
+            return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                reason: StrVariant::Static("wrong parameter length"),
+                detail: Some(format!(
+                    "wrong parameter length, expected single string parameter containing join-set-id, got {} other parameters",
+                    params.len()
+                )),
+                ffqn: called_ffqn,
+            });
+        }
+        Ok(AwaitNextFnCall {
+            target_ffqn,
+            join_set_id,
+            wasm_backtrace,
+        })
+    }
+
     async fn call_imported_fn<C: ClockFn>(
         self,
         ctx: &mut WorkflowCtx<C>,
@@ -344,6 +459,66 @@ pub(crate) struct StubFnCall<'a> {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl StubFnCall<'_> {
+    fn new<'a>(
+        target_ffqn: FunctionFqn,
+        called_ffqn: FunctionFqn,
+        params: &'a [Val],
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        fn_registry: &dyn FunctionRegistry,
+    ) -> Result<StubFnCall<'a>, WorkflowFunctionError> {
+        let Some((target_execution_id, [return_value])) = params.split_first() else {
+            return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                ffqn: called_ffqn,
+                reason: StrVariant::Static("-stub function exepcts two parameters"),
+                detail: None,
+            });
+        };
+
+        let target_execution_id = match ExecutionId::try_from(target_execution_id) {
+            Ok(ExecutionId::Derived(derived)) => derived,
+            Ok(ExecutionId::TopLevel(_)) => {
+                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: "first parameter must not be a top-level `execution-id`".into(),
+                    detail: None,
+                });
+            }
+            Err(err) => {
+                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: format!("cannot parse first parameter as `execution-id`: {err}").into(),
+                    detail: Some(format!("{err:?}")),
+                });
+            }
+        };
+
+        let (parent_id, join_set_id) = match target_execution_id.split_to_parts() {
+            Ok(ok) => ok,
+            Err(err) => {
+                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: format!(
+                        "cannot split target execution id to parts in `-stub` function - {err}"
+                    )
+                    .into(),
+                    detail: Some(format!("{err:?}")),
+                });
+            }
+        };
+        let (target_fn_metadata, _target_component_id, _target_retry_config) = fn_registry
+            .get_by_exported_function(&target_ffqn)
+            .expect("function obtained from `fn_registry.all_exports()` must be found");
+        Ok(StubFnCall {
+            target_ffqn,
+            target_execution_id,
+            target_fn_metadata_return_type: target_fn_metadata.return_type,
+            parent_id,
+            join_set_id,
+            return_value,
+            wasm_backtrace,
+        })
+    }
+
     async fn call_imported_fn<C: ClockFn>(
         self,
         ctx: &mut WorkflowCtx<C>,
@@ -412,6 +587,48 @@ pub(crate) struct GetFnCall {
     child_execution_id: ExecutionIdDerived,
 }
 impl GetFnCall {
+    fn new(
+        target_ffqn: FunctionFqn,
+        called_ffqn: FunctionFqn,
+        params: &[Val],
+    ) -> Result<GetFnCall, WorkflowFunctionError> {
+        let Some((child_execution_id, [])) = params.split_first() else {
+            return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                ffqn: called_ffqn,
+                reason: StrVariant::Static("-get function exepcts one parameter"),
+                detail: Some(format!(
+                    "wrong parameter length, expected single parameter of type `execution-id`, got {} parameters",
+                    params.len()
+                )),
+            });
+        };
+
+        let child_execution_id = match ExecutionId::try_from(child_execution_id) {
+            Ok(ExecutionId::Derived(derived)) => derived,
+            Ok(ExecutionId::TopLevel(_)) => {
+                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: "first parameter must not be a top-level `execution-id`".into(),
+                    detail: None,
+                });
+            }
+            Err(err) => {
+                return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                    ffqn: called_ffqn,
+                    reason: format!(
+                        "cannot parse first parameter as a derived `execution-id`: {err}"
+                    )
+                    .into(),
+                    detail: Some(format!("{err:?}")),
+                });
+            }
+        };
+        Ok(GetFnCall {
+            target_ffqn,
+            child_execution_id,
+        })
+    }
+
     fn call_imported_fn<C: ClockFn>(self, ctx: &mut WorkflowCtx<C>) -> wasmtime::component::Val {
         let GetFnCall {
             target_ffqn,
@@ -487,31 +704,20 @@ impl<'a> ImportedFnCall<'a> {
                 called_ffqn.ifc_fqn.ifc_name(),
                 called_ffqn.ifc_fqn.version(),
             );
-
             if let Some(function_name) = called_ffqn.function_name.strip_suffix(SUFFIX_FN_SUBMIT) {
                 let target_ffqn = FunctionFqn::new_arc(
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let (join_set_id, params) =
-                    Self::extract_join_set_id(&called_ffqn, store_ctx, params).map_err(
-                        |detail| WorkflowFunctionError::ImportedFunctionCallError {
-                            ffqn: called_ffqn,
-                            reason: StrVariant::Static("cannot extract join set id"),
-                            detail: Some(detail),
-                        },
-                    )?;
-                let (_fn_metadata, target_component_id, target_retry_config) = fn_registry
-                    .get_by_exported_function(&target_ffqn)
-                    .expect("function obtained from `fn_registry.all_exports()` must be found");
-                Ok(ImportedFnCall::SubmitExecution(SubmitExecutionFnCall {
+                let submit = SubmitExecutionFnCall::new(
                     target_ffqn,
-                    target_component_id,
-                    target_retry_config,
-                    join_set_id,
-                    target_params: params,
+                    called_ffqn,
+                    store_ctx,
+                    params,
                     wasm_backtrace,
-                }))
+                    fn_registry,
+                )?;
+                Ok(ImportedFnCall::SubmitExecution(submit))
             } else if let Some(function_name) =
                 called_ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
             {
@@ -519,32 +725,15 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let (join_set_id, params) =
-                    match Self::extract_join_set_id(&called_ffqn, store_ctx, params) {
-                        Ok(ok) => ok,
-                        Err(detail) => {
-                            return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                                ffqn: called_ffqn,
-                                reason: "cannot extract join set id".into(),
-                                detail: Some(detail),
-                            });
-                        }
-                    };
-                if !params.is_empty() {
-                    return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                        reason: StrVariant::Static("wrong parameter length"),
-                        detail: Some(format!(
-                            "wrong parameter length, expected single string parameter containing join-set-id, got {} other parameters",
-                            params.len()
-                        )),
-                        ffqn: called_ffqn,
-                    });
-                }
-                Ok(ImportedFnCall::AwaitNext(AwaitNextFnCall {
+                let await_next = AwaitNextFnCall::new(
                     target_ffqn,
-                    join_set_id,
+                    called_ffqn,
+                    store_ctx,
+                    params,
                     wasm_backtrace,
-                }))
+                )?;
+
+                Ok(ImportedFnCall::AwaitNext(await_next))
             } else if let Some(function_name) =
                 called_ffqn.function_name.strip_suffix(SUFFIX_FN_GET)
             {
@@ -552,43 +741,8 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-
-                let Some((child_execution_id, [])) = params.split_first() else {
-                    return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                        ffqn: called_ffqn,
-                        reason: StrVariant::Static("-get function exepcts one parameter"),
-                        detail: Some(format!(
-                            "wrong parameter length, expected single parameter of type `execution-id`, got {} parameters",
-                            params.len()
-                        )),
-                    });
-                };
-
-                let child_execution_id = match ExecutionId::try_from(child_execution_id) {
-                    Ok(ExecutionId::Derived(derived)) => derived,
-                    Ok(ExecutionId::TopLevel(_)) => {
-                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                            ffqn: called_ffqn,
-                            reason: "first parameter must not be a top-level `execution-id`".into(),
-                            detail: None,
-                        });
-                    }
-                    Err(err) => {
-                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                            ffqn: called_ffqn,
-                            reason: format!(
-                                "cannot parse first parameter as a derived `execution-id`: {err}"
-                            )
-                            .into(),
-                            detail: Some(format!("{err:?}")),
-                        });
-                    }
-                };
-
-                Ok(ImportedFnCall::Get(GetFnCall {
-                    target_ffqn,
-                    child_execution_id,
-                }))
+                let get = GetFnCall::new(target_ffqn, called_ffqn, params)?;
+                Ok(ImportedFnCall::Get(get))
             } else {
                 error!("Unrecognized `{SUFFIX_PKG_EXT}` interface function {called_ffqn}");
                 Err(WorkflowFunctionError::ImportedFunctionCallError {
@@ -612,50 +766,14 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let Some((schedule_at, params)) = params.split_first() else {
-                    return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                        ffqn: called_ffqn,
-                        reason: StrVariant::Static(
-                            "exepcted at least one parameter of type `schedule-at`",
-                        ),
-                        detail: None,
-                    });
-                };
-                let schedule_at = match WastVal::try_from(schedule_at.clone()) {
-                    Ok(ok) => ok,
-                    Err(err) => {
-                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                            ffqn: called_ffqn,
-                            reason: format!(
-                                "cannot convert `schedule-at` to internal representation - {err}"
-                            )
-                            .into(),
-                            detail: Some(format!("{err:?}")),
-                        });
-                    }
-                };
-                let schedule_at = match history_event_schedule_at_from_wast_val(&schedule_at) {
-                    Ok(ok) => ok,
-                    Err(detail) => {
-                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                            ffqn: called_ffqn,
-                            reason: "first parameter type must be `schedule-at`".into(),
-                            detail: Some(detail.to_string()),
-                        });
-                    }
-                };
-                let (_fn_metadata, target_component_id, target_retry_config) = fn_registry
-                    .get_by_exported_function(&target_ffqn)
-                    .expect("function obtained from `fn_registry.all_exports()` must be found");
-
-                Ok(ImportedFnCall::Schedule(ScheduleFnCall {
+                let schedule = ScheduleFnCall::new(
                     target_ffqn,
-                    target_component_id,
-                    target_retry_config,
-                    schedule_at,
-                    target_params: params,
+                    called_ffqn,
+                    params,
                     wasm_backtrace,
-                }))
+                    fn_registry,
+                )?;
+                Ok(ImportedFnCall::Schedule(schedule))
             } else {
                 error!("Unrecognized `{SUFFIX_PKG_SCHEDULE}` interface function {called_ffqn}");
                 Err(WorkflowFunctionError::ImportedFunctionCallError {
@@ -680,59 +798,14 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-
-                let Some((target_execution_id, [return_value])) = params.split_first() else {
-                    return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                        ffqn: called_ffqn,
-                        reason: StrVariant::Static("-stub function exepcts two parameters"),
-                        detail: None,
-                    });
-                };
-
-                let target_execution_id = match ExecutionId::try_from(target_execution_id) {
-                    Ok(ExecutionId::Derived(derived)) => derived,
-                    Ok(ExecutionId::TopLevel(_)) => {
-                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                            ffqn: called_ffqn,
-                            reason: "first parameter must not be a top-level `execution-id`".into(),
-                            detail: None,
-                        });
-                    }
-                    Err(err) => {
-                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                            ffqn: called_ffqn,
-                            reason: format!(
-                                "cannot parse first parameter as `execution-id`: {err}"
-                            )
-                            .into(),
-                            detail: Some(format!("{err:?}")),
-                        });
-                    }
-                };
-
-                let (parent_id, join_set_id) = match target_execution_id.split_to_parts() {
-                    Ok(ok) => ok,
-                    Err(err) => {
-                        return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                            ffqn: called_ffqn,
-                            reason: format!("cannot split target execution id to parts in `-stub` function - {err}")
-                                .into(),
-                            detail: Some(format!("{err:?}")),
-                        });
-                    }
-                };
-                let (target_fn_metadata, _target_component_id, _target_retry_config) = fn_registry
-                    .get_by_exported_function(&target_ffqn)
-                    .expect("function obtained from `fn_registry.all_exports()` must be found");
-                Ok(ImportedFnCall::Stub(StubFnCall {
+                let stub = StubFnCall::new(
                     target_ffqn,
-                    target_execution_id,
-                    target_fn_metadata_return_type: target_fn_metadata.return_type,
-                    parent_id,
-                    join_set_id,
-                    return_value,
+                    called_ffqn,
+                    params,
                     wasm_backtrace,
-                }))
+                    fn_registry,
+                )?;
+                Ok(ImportedFnCall::Stub(stub))
             } else {
                 error!("Unrecognized `-obelisk-stub` interface function {called_ffqn}");
                 Err(WorkflowFunctionError::ImportedFunctionCallError {
