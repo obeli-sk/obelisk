@@ -165,6 +165,7 @@ impl HistoryJoinNextEventProps {
                 )
                 .unwrap();
             }
+            None => {}
             other => {
                 error!("Unknown format {other:?}");
             }
