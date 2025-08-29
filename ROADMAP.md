@@ -1,13 +1,14 @@
 # Immediate goals
 
-## feat: Heterogenous join sets, allowing one join set to combine multiple function signatures and delays
+## feat: Expose network configuration for activities, webhooks
+Enable allow/deny lists of remote hosts.
 
-## feat: `execution-id.get()`, can be called multiple times
+## Upcoming goals
 
 ## feat: Add `obelisk generate`
 `obelisk generate config` blank(just webui),fibo, testing, stargazers
 `obelisk generate wit -c obelisk.toml --out-dir wit/deps/ my-activity`
-`obelisk generate wit` - based on deps.toml tool + extensions based on component type, e.g. just `-schedule` for webhooks
+`obelisk generate wit` - based on obelisk-deps.toml tool + extensions based on component type, e.g. just `-schedule` for webhooks
 `obelisk new` - show templates, blank workflow should have obelisk types and workflow support
 `obelisk add --oci path` - add WIT files + extensions
 
@@ -26,13 +27,7 @@ Similar to a webhook endpoint, new component type with `main`, restarts on exit 
 Can listen to a HTTP stream and trigger an execution.
 Could be used to monitor MQTT, UDP etc.
 
-## feat: Expose network configuration for activities, webhooks
-Enable allow/deny lists of remote hosts.
-
 ## feat: Keepalives for activities, extending the lock until completion
-
-## fix: Track all unhandled execution errors when closing join sets
-Currently only the first unhandled error is tracked, as well as only one root cause.
 
 ## fix: Change FFQN - allow dots in function name
 Accomodate for resource functions.
