@@ -292,7 +292,7 @@ gloo = "0.11.0"
 id-arena = "2.2.1"
 log = "0.4.27"
 semver = "1.0.26"
-tonic-web-wasm-client = "0.7.1"
+tonic-web-wasm-client = "0.8.0"
 wasm-bindgen = "=0.2.100" # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml.
 wasm-bindgen-futures = "=0.4.50" # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/futures/Cargo.toml
 web-sys = { version = "=0.3.77", features = [
@@ -375,6 +375,3 @@ strip = "debuginfo"
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/obelisk-{ target }.tar.gz"
 pkg-fmt = "tgz"
-
-[patch.crates-io]
-tonic-web-wasm-client = {git="https://github.com/devashishdxt/tonic-web-wasm-client", rev="dfa85d06f182d72ebf1af680ac4ae191607b8982"}
