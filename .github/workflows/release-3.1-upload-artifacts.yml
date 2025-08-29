@@ -89,7 +89,7 @@ jobs:
         run: nix build '.#obeliskCross-${{ matrix.target }}'
 
       - name: Generate attestation for obelisk binary
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with:
           subject-path: 'result/bin/obelisk'
 
@@ -97,7 +97,7 @@ jobs:
         run: tar czf archive.tar.gz --transform='s/^result\/bin\///' result/bin/obelisk
 
       - name: Generate attestation for tar.gz
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with:
           subject-path: 'archive.tar.gz'
 
