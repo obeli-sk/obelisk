@@ -7,15 +7,19 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Customize PRAGMA statements. Switch to "FULL" sync to perform fsync on each commit.
 ## Defaults are in `crates/db-sqlite/src/sqlite_dao.rs`.
 # sqlite.pragma = { "cache_size" = "3000", "synchronous" = "FULL" }
+
+## Global WASM Configuration
+# [wasm]
 ## WASM Cache dir
 ## Path to directory where downloaded or transformed WASM files are stored. Supports path prefixes.
 ## By default "${CACHE_DIR}/wasm" or "./cache/wasm" if no valid home directory path could be retrieved from the operating system.
-# wasm.cache_directory = "${CACHE_DIR}/wasm"
+# cache_directory = "${CACHE_DIR}/wasm"
+# backtrace.persist = true        # Persist backtraces on effect calls for all workflows and webhook endpoints.
+# allocator_config = "auto"       # One of "auto"|"on_demand"|"pooling"
+# global_executor_instance_limiter = "unlimited" # If set to an integer, limits the number of concurrent workflow and activity executions.
+# global_webhook_instance_limiter = "unlimited" # If set to an integer, limits the number of concurrent webhook requests.
 
-# wasm.backtrace.persist = true        # Persist backtraces on effect calls for all workflows and webhook endpoints.
-# wasm.allocator_config = "auto"       # One of "auto"|"on_demand"|"pooling"
-
-## Global Preopened Directories Config
+## Global Preopened Directories Configuration
 # [activities.directories]
 # enabled = false                           # Disabled by default.
 # parent_directory = "${TEMP_DIR}/obelisk"  # Make sure the folder is not on a RAM-backed filesystem if you plan to write large files.
@@ -28,7 +32,8 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # enabled = true
 # directory = "${CACHE_DIR}/codegen" # Path to directory where generated code is cached. Supports path prefixes.
 
-### WASM Component configuration
+### WASM Component Configuration
+## Each WASM component is configured separately in a `[[activity_wasm]]`, `[[workflow]]` or `[[webhook_endpoint]]` table.
 ## Common settings for all components
 # name = "name" # Each component must be named.
 ## Location can be a file path or an OCI registry reference.
@@ -40,7 +45,6 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # exec.batch_size = 5 # Number of executions to lock for every event loop tick.
 # exec.lock_expiry.seconds = 1 # Each execution is locked for 1s by default.
 # exec.tick_sleep.milliseconds = 200 # Sleep between event loop ticks.
-# exec.max_inflight_instances = "unlimited" # If set to an integer, limits the number of inflight instances.
 
 ### WASM Activity components configuration
 # [[activity_wasm]]

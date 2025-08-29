@@ -137,6 +137,10 @@ pub(crate) struct WasmGlobalConfigToml {
     cache_directory: Option<String>,
     #[serde(default)]
     pub(crate) allocator_config: WasmtimeAllocatorConfig,
+    #[serde(default)]
+    pub(crate) global_executor_instance_limiter: InflightSemaphore,
+    #[serde(default)]
+    pub(crate) global_webhook_instance_limiter: InflightSemaphore,
 }
 
 impl WasmGlobalConfigToml {
@@ -351,8 +355,6 @@ pub(crate) struct ExecConfigToml {
     lock_expiry: DurationConfig,
     #[serde(default = "default_tick_sleep")]
     tick_sleep: DurationConfig,
-    #[serde(default)]
-    pub(crate) max_inflight_instances: InflightSemaphore,
 }
 
 impl Default for ExecConfigToml {
@@ -361,7 +363,6 @@ impl Default for ExecConfigToml {
             batch_size: default_batch_size(),
             lock_expiry: default_lock_expiry(),
             tick_sleep: default_tick_sleep(),
-            max_inflight_instances: InflightSemaphore::default(),
         }
     }
 }
@@ -370,13 +371,14 @@ impl ExecConfigToml {
     pub(crate) fn into_exec_exec_config(
         self,
         component_id: ComponentId,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> executor::executor::ExecConfig {
         executor::executor::ExecConfig {
             lock_expiry: self.lock_expiry.into(),
             tick_sleep: self.tick_sleep.into(),
             batch_size: self.batch_size,
             component_id,
-            task_limiter: self.max_inflight_instances.into(),
+            task_limiter: global_executor_instance_limiter,
             executor_id: ExecutorId::generate(),
         }
     }
@@ -458,6 +460,7 @@ impl ActivityComponentConfigToml {
         path_prefixes: Arc<PathPrefixes>,
         ignore_missing_env_vars: bool,
         parent_preopen_dir: Option<Arc<Path>>,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
         let component_id = ComponentId::new(
             if self.stub {
@@ -501,7 +504,9 @@ impl ActivityComponentConfigToml {
             content_digest: common.content_digest,
             wasm_path,
             activity_config,
-            exec_config: self.exec.into_exec_exec_config(component_id),
+            exec_config: self
+                .exec
+                .into_exec_exec_config(component_id, global_executor_instance_limiter),
             retry_config: ComponentRetryConfig {
                 max_retries: self.max_retries,
                 retry_exp_backoff: self.retry_exp_backoff.into(),
@@ -641,6 +646,7 @@ impl WorkflowComponentConfigToml {
         metadata_dir: Arc<Path>,
         path_prefixes: Arc<PathPrefixes>,
         global_backtrace_persist: bool,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
         let component_id = ComponentId::new(
             ComponentType::Workflow,
@@ -679,7 +685,9 @@ impl WorkflowComponentConfigToml {
             content_digest: common.content_digest,
             wasm_path,
             workflow_config,
-            exec_config: self.exec.into_exec_exec_config(component_id),
+            exec_config: self
+                .exec
+                .into_exec_exec_config(component_id, global_executor_instance_limiter),
             retry_config: ComponentRetryConfig {
                 max_retries: u32::MAX,
                 retry_exp_backoff,
@@ -962,9 +970,8 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 
 pub(crate) mod webhook {
     use super::{
-        BacktraceFrameFilesToSourcesVerified, ComponentCommon, ConfigName, InflightSemaphore,
-        StdOutput, WorkflowComponentBacktraceConfig, resolve_env_vars,
-        verify_frame_files_to_sources,
+        BacktraceFrameFilesToSourcesVerified, ComponentCommon, ConfigName, StdOutput,
+        WorkflowComponentBacktraceConfig, resolve_env_vars, verify_frame_files_to_sources,
     };
     use crate::config::{config_holder::PathPrefixes, env_var::EnvVarConfig};
     use anyhow::Context;
@@ -984,8 +991,6 @@ pub(crate) mod webhook {
     pub(crate) struct HttpServer {
         pub(crate) name: ConfigName,
         pub(crate) listening_addr: SocketAddr,
-        #[serde(default)]
-        pub(crate) max_inflight_requests: InflightSemaphore,
     }
 
     #[derive(Debug, Deserialize, JsonSchema)]
@@ -1135,12 +1140,12 @@ pub(crate) enum Unlimited {
     Unlimited,
 }
 
-impl From<InflightSemaphore> for Option<Arc<tokio::sync::Semaphore>> {
-    fn from(value: InflightSemaphore) -> Self {
-        match value {
+impl InflightSemaphore {
+    pub(crate) fn as_semaphore(&self) -> Option<Arc<tokio::sync::Semaphore>> {
+        match self {
             InflightSemaphore::Unlimited(_) => None,
             InflightSemaphore::Some(permits) => Some(Arc::new(tokio::sync::Semaphore::new(
-                usize::try_from(permits).expect("usize >= u32"),
+                usize::try_from(*permits).expect("usize >= u32"),
             ))),
         }
     }

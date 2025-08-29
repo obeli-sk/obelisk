@@ -11,7 +11,6 @@ use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
-use crate::config::toml::InflightSemaphore;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::StdOutput;
 use crate::config::toml::WasmtimeAllocatorConfig;
@@ -1150,6 +1149,10 @@ async fn run_internal(
             .with_context(|| format!("cannot create database directory {db_dir:?}"))?;
     }
 
+    let global_webhook_instance_limiter = config
+        .wasm_global_config
+        .global_webhook_instance_limiter
+        .as_semaphore();
     let (compiled_and_linked, component_source_map) = Box::pin(verify_internal(
         config,
         config_holder,
@@ -1162,10 +1165,14 @@ async fn run_internal(
     .instrument(span.clone())
     .await?;
 
-    let (init, component_registry_ro) =
-        ServerInit::spawn_tasks_and_threads(compiled_and_linked, &sqlite_file, sqlite_config)
-            .instrument(span)
-            .await?;
+    let (init, component_registry_ro) = ServerInit::spawn_tasks_and_threads(
+        compiled_and_linked,
+        &sqlite_file,
+        sqlite_config,
+        global_webhook_instance_limiter,
+    )
+    .instrument(span)
+    .await?;
     let grpc_server = Arc::new(GrpcServer::new(
         init.db_pool.clone(),
         component_registry_ro,
@@ -1258,7 +1265,6 @@ impl ServerVerified {
                 listening_addr: webui_listening_addr
                     .parse()
                     .context("error converting `webui.listening_addr` to a socket address")?,
-                max_inflight_requests: InflightSemaphore::default(),
             });
             webhooks.push(webhook::WebhookComponentConfigToml {
                 common: ComponentCommon {
@@ -1305,6 +1311,10 @@ impl ServerVerified {
             path_prefixes,
             global_backtrace_persist,
             parent_preopen_dir.clone(),
+            config
+                .wasm_global_config
+                .global_executor_instance_limiter
+                .as_semaphore(),
         )
         .await?;
         debug!("Verified config: {config:#?}");
@@ -1384,6 +1394,7 @@ impl ServerInit {
         mut server_compiled_linked: ServerCompiledLinked,
         sqlite_file: &Path,
         sqlite_config: SqliteConfig,
+        global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
         // Start components requiring a database
         let epoch_ticker = EpochTicker::spawn_new(
@@ -1456,6 +1467,7 @@ impl ServerInit {
             &server_compiled_linked.engines,
             db_pool.clone(),
             Arc::from(server_compiled_linked.component_registry_ro.clone()),
+            global_webhook_instance_limiter.clone(),
         )
         .await?;
         Ok((
@@ -1503,6 +1515,7 @@ async fn start_webhooks(
     engines: &Engines,
     db_pool: Arc<dyn DbPool>,
     fn_registry: Arc<dyn FunctionRegistry>,
+    global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
     let mut abort_handles = Vec::with_capacity(http_servers_to_webhooks.len());
     let engine = &engines.webhook_engine;
@@ -1541,7 +1554,7 @@ async fn start_webhooks(
                 db_pool.clone(),
                 Now,
                 fn_registry.clone(),
-                http_server.max_inflight_requests.into(),
+                global_webhook_instance_limiter.clone(),
             ))
             .abort_handle(),
         );
@@ -1573,6 +1586,7 @@ impl ConfigVerified {
         path_prefixes: PathPrefixes,
         global_backtrace_persist: bool,
         parent_preopen_dir: Option<Arc<Path>>,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<ConfigVerified, anyhow::Error> {
         // Check uniqueness of server and webhook names.
         {
@@ -1641,6 +1655,7 @@ impl ConfigVerified {
                             path_prefixes.clone(),
                             ignore_missing_env_vars,
                             parent_preopen_dir.clone(),
+                            global_executor_instance_limiter.clone(),
                         )
                         .in_current_span()
                 })
@@ -1657,6 +1672,7 @@ impl ConfigVerified {
                             metadata_dir.clone(),
                             path_prefixes.clone(),
                             global_backtrace_persist,
+                            global_executor_instance_limiter.clone(),
                         )
                         .in_current_span(),
                 )

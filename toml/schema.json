@@ -442,9 +442,6 @@
         "lock_expiry": {
           "$ref": "#/$defs/DurationConfig"
         },
-        "max_inflight_instances": {
-          "$ref": "#/$defs/InflightSemaphore"
-        },
         "tick_sleep": {
           "$ref": "#/$defs/DurationConfig"
         }
@@ -456,9 +453,6 @@
       "properties": {
         "listening_addr": {
           "type": "string"
-        },
-        "max_inflight_requests": {
-          "$ref": "#/$defs/InflightSemaphore"
         },
         "name": {
           "$ref": "#/$defs/ConfigName"
@@ -658,6 +652,12 @@
             "null"
           ],
           "default": null
+        },
+        "global_executor_instance_limiter": {
+          "$ref": "#/$defs/InflightSemaphore"
+        },
+        "global_webhook_instance_limiter": {
+          "$ref": "#/$defs/InflightSemaphore"
         }
       },
       "additionalProperties": false

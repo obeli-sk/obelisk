@@ -26,7 +26,10 @@ use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{Instrument, Level, Span, debug, error, info, info_span, instrument, trace};
+use tokio::sync::OwnedSemaphorePermit;
+use tracing::{
+    Instrument, Level, Span, debug, debug_span, error, info, info_span, instrument, trace,
+};
 use types_v2_0_0::obelisk::types::execution::Host as ExecutionHost;
 use types_v2_0_0::obelisk::types::execution::HostJoinSetId;
 use utils::wasm_tools::{ExIm, HTTP_HANDLER_FFQN, WasmComponent};
@@ -77,7 +80,6 @@ pub struct WebhookEndpointCompiled {
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
     backtrace_persist: bool,
-
     pub wasm_component: WasmComponent,
 }
 
@@ -289,7 +291,7 @@ pub async fn server<C: ClockFn + 'static>(
     db_pool: Arc<dyn DbPool>,
     clock_fn: C,
     fn_registry: Arc<dyn FunctionRegistry>,
-    task_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    max_inflight_requests: Option<Arc<tokio::sync::Semaphore>>,
 ) -> Result<(), WebhookServerError> {
     let router = Arc::new(router);
     loop {
@@ -297,16 +299,11 @@ pub async fn server<C: ClockFn + 'static>(
             .accept()
             .await
             .map_err(WebhookServerError::SocketError)?;
-        let io = TokioIo::new(stream);
-        let task_limiter_guard = if let Some(task_limiter) = task_limiter.clone() {
-            task_limiter.try_acquire_owned().map(Some)
-        } else {
-            Ok(None)
-        };
-        if let Ok(task_limiter_guard) = task_limiter_guard {
-            // Spawn a tokio task for each connection
-            // TODO: cancel on connection drop and on server exit
-            tokio::task::spawn({
+        let stream = TokioIo::new(stream);
+
+        // Spawn a tokio task for each TCP stream.
+        // TODO: cancel on connection drop and on server exit
+        tokio::task::spawn({
                 let router = router.clone();
                 let engine = engine.clone();
                 let clock_fn = clock_fn.clone();
@@ -314,10 +311,11 @@ pub async fn server<C: ClockFn + 'static>(
                 let fn_registry = fn_registry.clone();
                 let http_server = http_server.clone();
                 let connection_span = info_span!("webhook_endpoint", %http_server);
+                let max_inflight_requests = max_inflight_requests.clone();
                 async move {
                     let res = http1::Builder::new()
                         .serve_connection(
-                            io,
+                            stream,
                             hyper::service::service_fn(move |req| {
                                 let execution_id = ExecutionId::generate().get_top_level();
                                 debug!(%execution_id, method = %req.method(), uri = %req.uri(), "Processing request");
@@ -329,30 +327,16 @@ pub async fn server<C: ClockFn + 'static>(
                                     execution_id,
                                     router: router.clone(),
                                 }
-                                .handle_request(req)
-                                }.instrument(connection_span.clone())),
+                                .handle_request(req, max_inflight_requests.clone())
+                                }.instrument(info_span!(parent: &connection_span, "Connection"))
+                            )
                         )
                         .await;
                     if let Err(err) = res {
                         info!(%http_server, "Error serving connection: {err:?}");
                     }
-                    drop(task_limiter_guard);
                 }
-                }.instrument(Span::current()));
-        } else {
-            let _ = http1::Builder::new()
-                .serve_connection(
-                    io,
-                    hyper::service::service_fn(move |req| {
-                        debug!(method = %req.method(), uri = %req.uri(), "Out of permits");
-                        std::future::ready(Ok::<_, hyper::Error>(resp(
-                            "Out of permits",
-                            StatusCode::SERVICE_UNAVAILABLE,
-                        )))
-                    }),
-                )
-                .await;
-        }
+                }.instrument(debug_span!("tcp stream")));
     }
 }
 
@@ -826,8 +810,19 @@ impl<C: ClockFn + 'static> RequestHandler<C> {
     async fn handle_request(
         self,
         req: hyper::Request<hyper::body::Incoming>,
+        max_inflight_requests: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<hyper::Response<HyperOutgoingBody>, hyper::Error> {
-        self.handle_request_inner(req, Span::current())
+        let http_request_guard = if let Some(http_request_semaphore) = &max_inflight_requests {
+            http_request_semaphore.clone().try_acquire_owned().map(Some)
+        } else {
+            Ok(None)
+        };
+        let Ok(http_request_guard) = http_request_guard else {
+            debug!(method = %req.method(), uri = %req.uri(), "Too many requests");
+            return Ok::<_, hyper::Error>(resp("Out of permits", StatusCode::TOO_MANY_REQUESTS));
+        };
+
+        self.handle_request_inner(req, http_request_guard, Span::current())
             .await
             .or_else(|err| {
                 debug!("{err:?}");
@@ -855,6 +850,9 @@ impl<C: ClockFn + 'static> RequestHandler<C> {
                         resp("Route not found", StatusCode::NOT_FOUND)
                     }
                     HandleRequestError::Timeout => resp("Timeout", StatusCode::REQUEST_TIMEOUT),
+                    HandleRequestError::InstanceLimitReached => {
+                        resp("Instance limit reached", StatusCode::SERVICE_UNAVAILABLE)
+                    }
                 })
             })
     }
@@ -862,6 +860,7 @@ impl<C: ClockFn + 'static> RequestHandler<C> {
     async fn handle_request_inner(
         self,
         req: hyper::Request<hyper::body::Incoming>,
+        http_request_guard: Option<OwnedSemaphorePermit>,
         request_span: Span,
     ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
         #[derive(Debug, thiserror::Error)]
@@ -900,6 +899,7 @@ impl<C: ClockFn + 'static> RequestHandler<C> {
 
             let task = tokio::task::spawn(
                 async move {
+                    let _http_request_guard = http_request_guard;
                     let result = proxy
                         .wasi_http_incoming_handler()
                         .call_handle(&mut store, req, out)
@@ -960,6 +960,8 @@ pub enum HandleRequestError {
     ExecutionError(StdError),
     #[error("route not found")]
     RouteNotFound,
+    #[error("instance limit reached")]
+    InstanceLimitReached,
     #[error("timeout")]
     Timeout,
 }

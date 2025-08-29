@@ -247,6 +247,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 tokio::spawn({
                     let worker_span2 = worker_span.clone();
                     async move {
+                        let _permit = permit;
                         let res = Self::run_worker(
                             worker,
                             db_pool.as_ref(),
@@ -259,7 +260,6 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         if let Err(db_error) = res {
                             error!("Execution will be timed out not writing `{db_error:?}`");
                         }
-                        drop(permit);
                     }
                     .instrument(worker_span)
                 })
