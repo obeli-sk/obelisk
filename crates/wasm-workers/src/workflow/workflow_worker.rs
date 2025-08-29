@@ -252,17 +252,12 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                         }
                     });
                     if let Err(err) = res {
-                        if err.to_string() == format!("import `{function_name}` not found") {
-                            // FIXME: Add test for error message stability
-                            warn!("Skipping mocking of {ffqn}");
-                        } else {
-                            return Err(WasmFileError::LinkingError {
-                                context: StrVariant::Arc(Arc::from(format!(
-                                    "cannot add mock for imported function {ffqn}"
-                                ))),
-                                err: err.into(),
-                            });
-                        }
+                        return Err(WasmFileError::LinkingError {
+                            context: StrVariant::Arc(Arc::from(format!(
+                                "cannot add mock for imported function {ffqn}"
+                            ))),
+                            err: err.into(),
+                        });
                     }
                 }
             } else {
