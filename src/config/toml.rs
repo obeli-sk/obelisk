@@ -297,7 +297,6 @@ impl CodegenCache {
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(deny_unknown_fields)]
-
 pub(crate) struct TimersWatcher {
     #[serde(default = "default_timers_watcher_leeway")]
     // TODO: Add `derivative`,

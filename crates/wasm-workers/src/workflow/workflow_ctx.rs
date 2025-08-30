@@ -1552,7 +1552,6 @@ pub(crate) mod tests {
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
-    use executor::expired_timers_watcher::TickProgress;
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
