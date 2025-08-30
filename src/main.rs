@@ -22,7 +22,7 @@ use tonic::{codec::CompressionEncoding, transport::Channel};
 async fn main() -> Result<(), anyhow::Error> {
     match Args::parse().command {
         Subcommand::Server(Server::Run {
-            clean_db,
+            clean_sqlite_directory,
             clean_cache,
             clean_codegen_cache,
             config,
@@ -32,7 +32,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 BaseDirs::new(),
                 config,
                 RunParams {
-                    clean_db,
+                    clean_sqlite_directory,
                     clean_cache,
                     clean_codegen_cache,
                 },

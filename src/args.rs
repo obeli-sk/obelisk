@@ -45,7 +45,7 @@ pub(crate) enum Server {
     Run {
         /// Clean the sqlite database directory
         #[arg(long)]
-        clean_db: bool,
+        clean_sqlite_directory: bool,
         /// Clean the codegen and OCI cache directories
         #[arg(long)]
         clean_cache: bool,

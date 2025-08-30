@@ -1013,7 +1013,7 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
 }
 
 pub(crate) struct RunParams {
-    pub(crate) clean_db: bool,
+    pub(crate) clean_sqlite_directory: bool,
     pub(crate) clean_cache: bool,
     pub(crate) clean_codegen_cache: bool,
 }
@@ -1139,7 +1139,8 @@ async fn run_internal(
         .await?;
     let sqlite_config = config.sqlite.as_sqlite_config();
     let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
-    if params.clean_db {
+    if params.clean_sqlite_directory {
+        warn!("Deleting sqlite directory {db_dir:?}");
         tokio::fs::remove_dir_all(&db_dir)
             .await
             .or_else(ignore_not_found)
