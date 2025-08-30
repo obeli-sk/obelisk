@@ -13,10 +13,6 @@ use std::{
 };
 use tracing::{debug, error, info, trace, warn};
 use val_json::type_wrapper::{TypeConversionError, TypeWrapper};
-use wasmtime::{
-    Engine,
-    component::{Component, ComponentExportIndex, types::ComponentItem},
-};
 use wit_component::{ComponentEncoder, WitPrinter};
 use wit_parser::{Resolve, WorldItem, WorldKey, decoding::DecodedWasm};
 
@@ -30,7 +26,7 @@ type FfqnToMetadataMap = hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetada
 #[derive(derive_more::Debug)]
 pub struct WasmComponent {
     #[debug(skip)]
-    pub wasmtime_component: Component,
+    pub wasmtime_component: wasmtime::component::Component,
     pub exim: ExIm,
     #[debug(skip)]
     pub decoded: DecodedWasm,
@@ -156,7 +152,7 @@ impl WasmComponent {
 
     pub fn new<P: AsRef<Path>>(
         wasm_path: P,
-        engine: &Engine,
+        engine: &wasmtime::Engine,
         component_type: ComponentType,
     ) -> Result<Self, DecodeError> {
         let wasm_path = wasm_path.as_ref();
@@ -164,12 +160,13 @@ impl WasmComponent {
         trace!("Decoding using wasmtime");
         let wasmtime_component = {
             let stopwatch = std::time::Instant::now();
-            let component = Component::from_file(engine, wasm_path).map_err(|err| {
+            let wasmtime_component = wasmtime::component::Component::from_file(engine, wasm_path)
+                .map_err(|err| {
                 error!("Cannot parse {wasm_path:?} using wasmtime - {err:?}");
                 DecodeError::CannotReadComponent { source: err }
             })?;
             debug!("Parsed with wasmtime in {:?}", stopwatch.elapsed());
-            component
+            wasmtime_component
         };
         let (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta, decoded) =
             Self::decode_using_wit_parser(wasm_path)?;
@@ -210,7 +207,10 @@ impl WasmComponent {
 
     pub fn index_exported_functions(
         &self,
-    ) -> Result<hashbrown::HashMap<FunctionFqn, ComponentExportIndex>, DecodeError> {
+    ) -> Result<
+        hashbrown::HashMap<FunctionFqn, wasmtime::component::ComponentExportIndex>,
+        DecodeError,
+    > {
         let mut exported_ffqn_to_index = hashbrown::HashMap::new();
         for FunctionMetadata { ffqn, .. } in &self.exim.exports_flat_noext {
             let Some(ifc_export_index) = self
@@ -294,7 +294,7 @@ impl ExIm {
 
     fn decode(
         wasmtime_component_type: &wasmtime::component::types::Component,
-        engine: &Engine,
+        engine: &wasmtime::Engine,
         exported_ffqns_to_wit_parsed_meta: hashbrown::HashMap<
             FunctionFqn,
             WitParsedFunctionMetadata,
@@ -721,19 +721,19 @@ fn merge_function_params_with_wasmtime(
     wasmtime_component_type: &wasmtime::component::types::Component,
     exports: bool,
     component_type: ComponentType,
-    engine: &Engine,
+    engine: &wasmtime::Engine,
     ffqns_to_wit_parsed_meta: FfqnToMetadataMap,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
     if exports {
         merge_function_params_with_wasmtime_internal(
-            component_type != ComponentType::ActivityStub, // stub executions must be created by workflows
+            component_type != ComponentType::ActivityStub, // not submittable, stub executions must be created by workflows
             wasmtime_component_type.exports(engine),
             engine,
             ffqns_to_wit_parsed_meta,
         )
     } else {
         merge_function_params_with_wasmtime_internal(
-            false,
+            false, // imports are not submittable
             wasmtime_component_type.imports(engine),
             engine,
             ffqns_to_wit_parsed_meta,
@@ -746,11 +746,17 @@ fn merge_function_params_with_wasmtime(
 // Add return types WIT types in string representation.
 fn merge_function_params_with_wasmtime_internal<'a>(
     submittable: bool,
-    wasmtime_parsed_interfaces: impl ExactSizeIterator<Item = (&'a str /* ifc_fqn */, ComponentItem)>
-    + 'a,
-    engine: &Engine,
+    wasmtime_parsed_interfaces: impl ExactSizeIterator<
+        Item = (
+            &'a str, /* ifc_fqn */
+            wasmtime::component::types::ComponentItem,
+        ),
+    > + 'a,
+    engine: &wasmtime::Engine,
     mut ffqns_to_wit_parsed_meta: FfqnToMetadataMap,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
+    use wasmtime::component::types::ComponentItem;
+
     let mut vec = Vec::new();
     for (ifc_fqn, item) in wasmtime_parsed_interfaces {
         let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
@@ -859,7 +865,7 @@ struct WitParsedFunctionMetadata {
 #[cfg_attr(test, derive(serde::Serialize))]
 #[derive(Debug)]
 struct ParameterNameWitType {
-    name: String,
+    name: StrVariant,
     wit_type: StrVariant,
 }
 
@@ -907,7 +913,7 @@ fn create_ffqn_to_metadata_map<'a>(
                     .map(|(param_name, param_ty)| {
                         let mut printer = WitPrinter::default();
                         ParameterNameWitType {
-                            name: param_name.to_string(),
+                            name: StrVariant::from(param_name.to_string()),
                             wit_type: printer
                                 .print_type_name(resolve, param_ty)
                                 .ok()
