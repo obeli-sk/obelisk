@@ -53,6 +53,7 @@ mod bench {
             env_vars: Arc::from([]),
             retry_on_err: true,
             directories_config: None,
+            fuel: None,
         }
     }
 
@@ -168,6 +169,7 @@ mod bench {
                     join_next_blocking_strategy,
                     backtrace_persist: false,
                     stub_wasi: false,
+                    fuel: None,
                 },
                 workflow_engine,
                 clock_fn.clone(),
@@ -232,7 +234,7 @@ mod bench {
         .canonicalize()
         .unwrap();
         let codegen_cache = workspace_dir.join("test-codegen-cache");
-        let engines = Arc::new(Engines::on_demand(Some(codegen_cache)).unwrap());
+        let engines = Arc::new(Engines::on_demand(Some(codegen_cache), false).unwrap()); // TODO test with pooling engine as well.
 
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity_with_engine(

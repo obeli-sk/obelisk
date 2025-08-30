@@ -12,7 +12,7 @@ use concepts::time::ClockFn;
 use concepts::{
     ClosingStrategy, ComponentId, ComponentType, ExecutionId, ExecutionMetadata,
     FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName,
-    JoinSetKind, Params, PermanentFailureKind, SUFFIX_PKG_SCHEDULE, StrVariant,
+    JoinSetKind, Params, PermanentFailureKind, SUFFIX_PKG_SCHEDULE, StrVariant, TrapKind,
 };
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use http_body_util::combinators::BoxBody;
@@ -75,31 +75,19 @@ pub enum WebhookServerError {
 }
 
 pub struct WebhookEndpointCompiled {
-    pub component_id: ComponentId,
-    forward_stdout: Option<StdOutput>,
-    forward_stderr: Option<StdOutput>,
-    env_vars: Arc<[EnvVar]>,
-    backtrace_persist: bool,
+    pub config: WebhookEndpointConfig,
     pub wasm_component: WasmComponent,
 }
 
 impl WebhookEndpointCompiled {
     pub fn new(
+        config: WebhookEndpointConfig,
         wasm_path: impl AsRef<Path>,
         engine: &Engine,
-        component_id: ComponentId,
-        forward_stdout: Option<StdOutput>,
-        forward_stderr: Option<StdOutput>,
-        env_vars: Arc<[EnvVar]>,
-        backtrace_persist: bool,
     ) -> Result<Self, WasmFileError> {
         let wasm_component = WasmComponent::new(wasm_path, engine, ComponentType::WebhookEndpoint)?;
         Ok(Self {
-            component_id,
-            forward_stdout,
-            forward_stderr,
-            env_vars,
-            backtrace_persist,
+            config,
             wasm_component,
         })
     }
@@ -109,7 +97,7 @@ impl WebhookEndpointCompiled {
         &self.wasm_component.exim.imports_flat
     }
 
-    #[instrument(skip_all, fields(component_id = %self.component_id), err)]
+    #[instrument(skip_all, fields(component_id = %self.config.component_id), err)]
     pub fn link<C: ClockFn>(
         self,
         engine: &Engine,
@@ -158,7 +146,7 @@ impl WebhookEndpointCompiled {
                               params: &[Val],
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
-                            let wasm_backtrace = if self.backtrace_persist {
+                            let wasm_backtrace = if self.config.backtrace_persist {
                                 let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
                                 concepts::storage::WasmBacktrace::maybe_from(&wasm_backtrace)
                             } else {
@@ -202,10 +190,7 @@ impl WebhookEndpointCompiled {
         })?);
 
         Ok(WebhookEndpointInstance {
-            component_id: self.component_id,
-            forward_stdout: self.forward_stdout,
-            forward_stderr: self.forward_stderr,
-            env_vars: self.env_vars,
+            config: self.config,
             exim: self.wasm_component.exim,
             proxy_pre,
         })
@@ -216,10 +201,7 @@ impl WebhookEndpointCompiled {
 pub struct WebhookEndpointInstance<C: ClockFn> {
     #[debug(skip)]
     proxy_pre: Arc<ProxyPre<WebhookEndpointCtx<C>>>,
-    pub component_id: ComponentId,
-    forward_stdout: Option<StdOutput>,
-    forward_stderr: Option<StdOutput>,
-    env_vars: Arc<[EnvVar]>,
+    pub config: WebhookEndpointConfig,
     exim: ExIm,
 }
 
@@ -333,6 +315,16 @@ pub async fn server<C: ClockFn + 'static>(
                 }
                 }.instrument(debug_span!("tcp stream")));
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct WebhookEndpointConfig {
+    pub component_id: ComponentId,
+    pub forward_stdout: Option<StdOutput>,
+    pub forward_stderr: Option<StdOutput>,
+    pub env_vars: Arc<[EnvVar]>,
+    pub fuel: Option<u64>,
+    pub backtrace_persist: bool,
 }
 
 struct WebhookEndpointCtx<C: ClockFn> {
@@ -658,28 +650,37 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
     #[must_use]
     #[expect(clippy::too_many_arguments)]
     fn new<'a>(
-        component_id: ComponentId,
+        config: WebhookEndpointConfig,
         engine: &Engine,
         clock_fn: C,
         db_pool: Arc<dyn DbPool>,
         fn_registry: Arc<dyn FunctionRegistry>,
         params: impl Iterator<Item = (&'a str, &'a str)>,
         execution_id: ExecutionIdTopLevel,
-        forward_stdout: Option<StdOutput>,
-        forward_stderr: Option<StdOutput>,
-        env_vars: &[EnvVar],
         request_span: Span,
     ) -> Store<WebhookEndpointCtx<C>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
-        if let Some(stdout) = forward_stdout {
-            let stdout = LogStream::new(format!("[{component_id} {execution_id} stdout]"), stdout);
+        if let Some(stdout) = config.forward_stdout {
+            let stdout = LogStream::new(
+                format!(
+                    "[{component_id} {execution_id} stdout]",
+                    component_id = config.component_id
+                ),
+                stdout,
+            );
             wasi_ctx.stdout(stdout);
         }
-        if let Some(stderr) = forward_stderr {
-            let stderr = LogStream::new(format!("[{component_id} {execution_id} stderr]"), stderr);
+        if let Some(stderr) = config.forward_stderr {
+            let stderr = LogStream::new(
+                format!(
+                    "[{component_id} {execution_id} stderr]",
+                    component_id = config.component_id
+                ),
+                stderr,
+            );
             wasi_ctx.stderr(stderr);
         }
-        for env_var in env_vars {
+        for env_var in config.env_vars.as_ref() {
             wasi_ctx.env(&env_var.key, &env_var.val);
         }
         for (key, val) in params {
@@ -695,18 +696,78 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             wasi_ctx,
             http_ctx: WasiHttpCtx::new(),
             version: None,
-            component_id,
+            component_id: config.component_id,
             next_join_set_idx: JOIN_SET_START_IDX,
             execution_id,
             component_logger: ComponentLogger { span: request_span },
         };
         let mut store = Store::new(engine, ctx);
+
+        // Set fuel.
+        if let Some(fuel) = config.fuel {
+            store
+                .set_fuel(fuel)
+                .expect("engine must have `consume_fuel` enabled");
+        }
+
         // Configure epoch callback before running the initialization to avoid interruption
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
         store
     }
 
-    async fn close(self, res: wasmtime::Result<()>) -> wasmtime::Result<()> {
+    async fn close(
+        self,
+        original_result: wasmtime::Result<()>,
+        assigned_fuel: Option<u64>,
+    ) -> wasmtime::Result<()> {
+        #[derive(Debug, thiserror::Error)]
+        #[error("webhook {trap_kind}: {reason}")]
+        struct WebhookTrap {
+            reason: String,
+            trap_kind: TrapKind,
+            detail: Option<String>,
+        }
+
+        let result = match &original_result {
+            Ok(()) => Ok(SupportedFunctionReturnValue::None),
+            Err(err) => {
+                let err = if let Some(trap) = err
+                    .source()
+                    .and_then(|source| source.downcast_ref::<wasmtime::Trap>())
+                {
+                    if *trap == wasmtime::Trap::OutOfFuel {
+                        WebhookTrap {
+                            reason: format!(
+                                "total fuel consumed: {}",
+                                assigned_fuel
+                                    .expect("must have been set as it was the reason of trap")
+                            ),
+                            detail: None,
+                            trap_kind: TrapKind::OutOfFuel,
+                        }
+                    } else {
+                        WebhookTrap {
+                            reason: trap.to_string(),
+                            detail: Some(format!("{err:?}")),
+                            trap_kind: TrapKind::Trap,
+                        }
+                    }
+                } else {
+                    WebhookTrap {
+                        reason: err.to_string(),
+                        trap_kind: TrapKind::HostFunctionError,
+                        detail: Some(format!("{err:?}")),
+                    }
+                };
+
+                Err(FinishedExecutionError::PermanentFailure {
+                    reason_full: err.to_string(),
+                    reason_inner: err.reason,
+                    kind: PermanentFailureKind::WebhookEndpointError,
+                    detail: err.detail,
+                })
+            }
+        };
         if let Some(version) = self.version {
             self.db_pool
                 .connection()
@@ -716,22 +777,14 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     AppendRequest {
                         created_at: self.clock_fn.now(),
                         event: ExecutionEventInner::Finished {
-                            result: res
-                                .as_ref()
-                                .map(|()| SupportedFunctionReturnValue::None)
-                                .map_err(|err| FinishedExecutionError::PermanentFailure {
-                                    reason_full: err.to_string(),
-                                    reason_inner: err.to_string(),
-                                    kind: PermanentFailureKind::WebhookEndpointError,
-                                    detail: Some(format!("{err:?}")),
-                                }),
+                            result,
                             http_client_traces: None,
                         },
                     },
                 )
                 .await?;
         }
-        res
+        original_result
     }
 }
 
@@ -866,16 +919,13 @@ impl<C: ClockFn + 'static> RequestHandler<C> {
             let found_instance = matched.handler();
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let mut store = WebhookEndpointCtx::new(
-                found_instance.component_id.clone(),
+                found_instance.config.clone(),
                 &self.engine,
                 self.clock_fn,
                 self.db_pool,
                 self.fn_registry,
                 matched.params().iter(),
                 self.execution_id,
-                found_instance.forward_stdout,
-                found_instance.forward_stderr,
-                &found_instance.env_vars,
                 request_span.clone(),
             );
             let req = store
@@ -892,7 +942,8 @@ impl<C: ClockFn + 'static> RequestHandler<C> {
                 .await
                 .map_err(|err| HandleRequestError::InstantiationError(err.into()))?;
 
-            let task = tokio::task::spawn(
+            let task = tokio::task::spawn({
+                let assigned_fuel = found_instance.config.fuel;
                 async move {
                     let _http_request_guard = http_request_guard;
                     let result = proxy
@@ -901,10 +952,10 @@ impl<C: ClockFn + 'static> RequestHandler<C> {
                         .await
                         .inspect_err(|err| error!("Webhook instance returned error: {err:?}"));
                     let ctx = store.into_data();
-                    ctx.close(result).await
+                    ctx.close(result, assigned_fuel).await
                 }
-                .instrument(request_span),
-            );
+                .instrument(request_span)
+            });
             match receiver.await {
                 Ok(Ok(resp)) => {
                     debug!("Streaming the response");
@@ -977,7 +1028,9 @@ pub(crate) mod tests {
         use super::*;
         use crate::activity::activity_worker::tests::{FIBO_10_OUTPUT, compile_activity};
         use crate::engines::{EngineConfig, Engines};
-        use crate::webhook::webhook_trigger::{self, WebhookEndpointCompiled};
+        use crate::webhook::webhook_trigger::{
+            self, WebhookEndpointCompiled, WebhookEndpointConfig,
+        };
         use crate::workflow::workflow_worker::tests::compile_workflow;
         use crate::{
             activity::activity_worker::tests::spawn_activity_fibo,
@@ -1050,13 +1103,16 @@ pub(crate) mod tests {
 
                 let router = {
                     let instance = WebhookEndpointCompiled::new(
+                        WebhookEndpointConfig {
+                            component_id: ComponentId::dummy_activity(),
+                            forward_stdout: None,
+                            forward_stderr: None,
+                            env_vars: Arc::from([]),
+                            fuel: None,
+                            backtrace_persist: false,
+                        },
                         test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
                         &engine,
-                        ComponentId::dummy_activity(),
-                        None,
-                        None,
-                        Arc::from([]),
-                        false,
                     )
                     .unwrap()
                     .link(&engine, fn_registry.as_ref())

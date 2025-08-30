@@ -47,6 +47,7 @@ pub struct WorkflowConfig {
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub backtrace_persist: bool,
     pub stub_wasi: bool,
+    pub fuel: Option<u64>,
 }
 
 pub struct WorkflowWorkerCompiled<C: ClockFn> {
@@ -314,10 +315,10 @@ enum RunError<C: ClockFn + 'static> {
     ResultParsingError(ResultParsingError, WorkflowCtx<C>),
     /// Error from the wasmtime runtime that can be downcast to `WorkflowFunctionError`
     WorkerPartialResult(WorkerPartialResult, WorkflowCtx<C>),
-    /// Error that happened while running the function, which cannot be downcast to `WorkflowFunctionError`
+    /// Error that happened while running the function.
     Trap {
         reason: String,
-        detail: String,
+        detail: Option<String>,
         workflow_ctx: WorkflowCtx<C>,
         kind: TrapKind,
     },
@@ -368,6 +369,13 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         );
 
         let mut store = Store::new(&self.engine, workflow_ctx);
+
+        // Set fuel.
+        if let Some(fuel) = self.config.fuel {
+            store
+                .set_fuel(fuel)
+                .expect("engine must have `consume_fuel` enabled");
+        }
 
         // Configure epoch callback before running the initialization to avoid interruption
         store.epoch_deadline_callback(|_store_ctx| {
@@ -424,6 +432,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         mut store: Store<WorkflowCtx<C>>,
         func: wasmtime::component::Func,
         params: Arc<[Val]>,
+        assigned_fuel: Option<u64>,
     ) -> CallFuncResult<C> {
         let result_types = func.results(&mut store);
         let mut results = vec![Val::Bool(false); result_types.len()];
@@ -433,7 +442,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         {
             return Err(RunError::Trap {
                 reason: post_return_err.to_string(),
-                detail: format!("{post_return_err:?}"),
+                detail: Some(format!("{post_return_err:?}")),
                 workflow_ctx: store.into_data(),
                 kind: TrapKind::PostReturnTrap,
             });
@@ -462,12 +471,35 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                         worker_partial_result,
                         workflow_ctx,
                     ))
+                } else if let Some(trap) = err
+                    .source()
+                    .and_then(|source| source.downcast_ref::<wasmtime::Trap>())
+                {
+                    if *trap == wasmtime::Trap::OutOfFuel {
+                        Err(RunError::Trap {
+                            reason: format!(
+                                "total fuel consumed: {}",
+                                assigned_fuel
+                                    .expect("must have been set as it was the reason of trap")
+                            ),
+                            detail: None,
+                            workflow_ctx,
+                            kind: TrapKind::OutOfFuel,
+                        })
+                    } else {
+                        Err(RunError::Trap {
+                            reason: trap.to_string(),
+                            detail: Some(format!("{err:?}")),
+                            workflow_ctx,
+                            kind: TrapKind::Trap,
+                        })
+                    }
                 } else {
                     Err(RunError::Trap {
                         reason: err.to_string(),
-                        detail: format!("{err:?}"),
+                        detail: Some(format!("{err:?}")),
                         workflow_ctx,
-                        kind: TrapKind::Trap,
+                        kind: TrapKind::HostFunctionError,
                     })
                 }
             }
@@ -480,10 +512,11 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         params: Arc<[Val]>,
         worker_span: &Span,
         execution_deadline: DateTime<Utc>,
+        assigned_fuel: Option<u64>,
     ) -> WorkerResult {
         // call_func
         let elapsed = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
-        let res = Self::call_func(store, func, params).await;
+        let res = Self::call_func(store, func, params, assigned_fuel).await;
         let elapsed = elapsed.elapsed();
         let worker_result_refactored =
             Self::convert_result(res, worker_span, elapsed, execution_deadline).await;
@@ -536,7 +569,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             }) => {
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(||
-                        error!("Database flush error: {db_err:?} while handling: {detail}, execution will be retried")
+                        error!("Database flush error: {db_err:?} while handling {kind}: `{reason}`, `{detail:?}`, execution will be retried")
                     );
                     return WorkerResultRefactored::Retriable(WorkerResult::Err(
                         WorkerError::DbError(db_err),
@@ -630,6 +663,7 @@ impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
                     params,
                     &worker_span,
                     execution_deadline,
+                    self.config.fuel,
                 )
                 .await
             }
@@ -736,6 +770,7 @@ pub(crate) mod tests {
                     join_next_blocking_strategy,
                     backtrace_persist: false,
                     stub_wasi: false,
+                    fuel: None,
                 },
                 workflow_engine,
                 clock_fn.clone(),
@@ -911,6 +946,7 @@ pub(crate) mod tests {
                     join_next_blocking_strategy,
                     backtrace_persist: false,
                     stub_wasi: false,
+                    fuel: None,
                 },
                 workflow_engine,
                 clock_fn,

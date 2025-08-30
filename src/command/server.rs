@@ -120,6 +120,7 @@ use wasm_workers::preopens_cleaner::PreopensCleaner;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointCompiled;
+use wasm_workers::webhook::webhook_trigger::WebhookEndpointConfig;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstance;
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
@@ -1248,16 +1249,23 @@ impl ServerVerified {
         ignore_missing_env_vars: bool,
         path_prefixes: PathPrefixes,
     ) -> Result<(Self, ComponentSourceMap), anyhow::Error> {
+        let fuel: Option<u64> = config.wasm_global_config.fuel.into();
         let engines = {
+            let consume_fuel = fuel.is_some();
             match config.wasm_global_config.allocator_config {
                 WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_dir,
+                    consume_fuel,
                 )?,
-                WasmtimeAllocatorConfig::OnDemand => Engines::on_demand(codegen_cache_dir)?,
-                WasmtimeAllocatorConfig::Pooling => {
-                    Engines::pooling(config.wasmtime_pooling_config.into(), codegen_cache_dir)?
+                WasmtimeAllocatorConfig::OnDemand => {
+                    Engines::on_demand(codegen_cache_dir, consume_fuel)?
                 }
+                WasmtimeAllocatorConfig::Pooling => Engines::pooling(
+                    config.wasmtime_pooling_config.into(),
+                    codegen_cache_dir,
+                    consume_fuel,
+                )?,
             }
         };
         let mut http_servers = config.http_servers;
@@ -1319,6 +1327,7 @@ impl ServerVerified {
                 .wasm_global_config
                 .global_executor_instance_limiter
                 .as_semaphore(),
+            fuel,
         )
         .await?;
         debug!("Verified config: {config:#?}");
@@ -1365,6 +1374,7 @@ impl ServerCompiledLinked {
             server_verified.config.workflows,
             server_verified.config.webhooks_by_names,
             server_verified.config.global_backtrace_persist,
+            server_verified.config.fuel,
         )
         .await?;
         Ok(Self {
@@ -1575,6 +1585,7 @@ struct ConfigVerified {
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     global_backtrace_persist: bool,
+    fuel: Option<u64>,
 }
 
 impl ConfigVerified {
@@ -1592,6 +1603,7 @@ impl ConfigVerified {
         global_backtrace_persist: bool,
         parent_preopen_dir: Option<Arc<Path>>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
     ) -> Result<ConfigVerified, anyhow::Error> {
         // Check uniqueness of server and webhook names.
         {
@@ -1661,6 +1673,7 @@ impl ConfigVerified {
                             ignore_missing_env_vars,
                             parent_preopen_dir.clone(),
                             global_executor_instance_limiter.clone(),
+                            fuel,
                         )
                         .in_current_span()
                 })
@@ -1678,6 +1691,7 @@ impl ConfigVerified {
                             path_prefixes.clone(),
                             global_backtrace_persist,
                             global_executor_instance_limiter.clone(),
+                            fuel,
                         )
                         .in_current_span(),
                 )
@@ -1726,7 +1740,7 @@ impl ConfigVerified {
                     let (k, v) = webhook??;
                     webhooks_by_names.insert(k, v);
                 }
-                Ok(ConfigVerified {wasm_activities, workflows, webhooks_by_names, http_servers_to_webhook_names, global_backtrace_persist})
+                Ok(ConfigVerified {wasm_activities, workflows, webhooks_by_names, http_servers_to_webhook_names, global_backtrace_persist, fuel})
             },
             sigint = tokio::signal::ctrl_c() => {
                 sigint.expect("failed to listen for SIGINT event");
@@ -1766,6 +1780,7 @@ async fn compile_and_verify(
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
     global_backtrace_persist: bool,
+    fuel: Option<u64>,
 ) -> Result<
     (
         LinkedComponents,
@@ -1842,14 +1857,18 @@ async fn compile_and_verify(
                     tokio::task::spawn_blocking(move || {
                         span.in_scope(|| {
                             let component_id = webhook.component_id;
+                            let config = WebhookEndpointConfig {
+                                component_id,
+                                forward_stdout: webhook.forward_stdout,
+                                forward_stderr: webhook.forward_stderr,
+                                env_vars: webhook.env_vars,
+                                fuel,
+                                backtrace_persist: global_backtrace_persist,
+                            };
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
+                                config,
                                 webhook.wasm_path,
                                 &engines.webhook_engine,
-                                component_id.clone(),
-                                webhook.forward_stdout,
-                                webhook.forward_stderr,
-                                webhook.env_vars,
-                                global_backtrace_persist,
                             )?;
                             Ok(CompiledComponent::Webhook {
                                 webhook_name,
@@ -1880,7 +1899,7 @@ async fn compile_and_verify(
                     },
                     CompiledComponent::Webhook{webhook_name, webhook_compiled, routes, content_digest} => {
                         let component = ComponentConfig {
-                            component_id: webhook_compiled.component_id.clone(),
+                            component_id: webhook_compiled.config.component_id.clone(),
                             imports: webhook_compiled.imports().to_vec(),
                             content_digest, workflow_or_activity_config: None,
                             wit: webhook_compiled.wasm_component.wit()

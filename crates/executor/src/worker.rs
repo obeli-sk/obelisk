@@ -64,7 +64,7 @@ pub enum WorkerError {
     ActivityTrap {
         reason: String,
         trap_kind: TrapKind,
-        detail: String,
+        detail: Option<String>,
         version: Version,
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
@@ -129,8 +129,10 @@ pub enum FatalError {
     WorkflowTrap {
         reason: String,
         trap_kind: TrapKind,
-        detail: String,
+        detail: Option<String>,
     },
+    #[error("out of fuel: {reason}")]
+    OutOfFuel { reason: String },
     /// Workflow attempted to create a join set with the same name twice, or with an invalid character.
     #[error("{reason}")]
     JoinSetNameError { reason: String },
@@ -197,7 +199,15 @@ impl From<FatalError> for FinishedExecutionError {
                 reason_inner,
                 reason_full,
                 kind: PermanentFailureKind::WorkflowTrap,
-                detail: Some(detail),
+                detail,
+            },
+            FatalError::OutOfFuel {
+                reason: reason_inner,
+            } => FinishedExecutionError::PermanentFailure {
+                reason_inner,
+                reason_full,
+                kind: PermanentFailureKind::OutOfFuel,
+                detail: None,
             },
             FatalError::JoinSetNameError { reason } => FinishedExecutionError::PermanentFailure {
                 reason_inner: reason,

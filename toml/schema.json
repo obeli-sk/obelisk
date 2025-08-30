@@ -642,6 +642,18 @@
         "unlimited"
       ]
     },
+    "ValueOrUnlimited": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Unlimited"
+        },
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      ]
+    },
     "WasmGlobalBacktrace": {
       "type": "object",
       "properties": {
@@ -667,6 +679,9 @@
             "null"
           ],
           "default": null
+        },
+        "fuel": {
+          "$ref": "#/$defs/ValueOrUnlimited"
         },
         "global_executor_instance_limiter": {
           "$ref": "#/$defs/InflightSemaphore"

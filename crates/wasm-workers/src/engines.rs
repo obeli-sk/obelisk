@@ -54,6 +54,7 @@ pub struct PoolingOptions {
 pub struct EngineConfig {
     pooling_opts: Option<PoolingOptions>,
     codegen_cache_dir: Option<PathBuf>,
+    consume_fuel: bool,
 }
 
 impl EngineConfig {
@@ -105,6 +106,7 @@ impl EngineConfig {
         Self {
             pooling_opts: None,
             codegen_cache_dir: Some(codegen_cache),
+            consume_fuel: false,
         }
     }
     #[cfg(test)]
@@ -112,6 +114,7 @@ impl EngineConfig {
         Self {
             pooling_opts: Some(opts),
             codegen_cache_dir: None,
+            consume_fuel: false,
         }
     }
 }
@@ -157,6 +160,7 @@ impl Engines {
         let mut wasmtime_config = wasmtime::Config::new();
         wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
         wasmtime_config.epoch_interruption(true);
+        wasmtime_config.consume_fuel(config.consume_fuel);
         Self::configure_common(wasmtime_config, config)
     }
 
@@ -168,6 +172,7 @@ impl Engines {
         let mut wasmtime_config = wasmtime::Config::new();
         wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
         wasmtime_config.epoch_interruption(true);
+        wasmtime_config.consume_fuel(config.consume_fuel);
         Self::configure_common(wasmtime_config, config)
     }
 
@@ -183,14 +188,19 @@ impl Engines {
         // https://bytecodealliance.zulipchat.com/#narrow/channel/206238-general/topic/Determinism.20of.20Wasm.20SIMD.20in.20Wasmtime
         wasmtime_config.cranelift_nan_canonicalization(true);
         wasmtime_config.relaxed_simd_deterministic(true);
+        wasmtime_config.consume_fuel(config.consume_fuel);
         Self::configure_common(wasmtime_config, config)
     }
 
     #[instrument(skip_all)]
-    pub fn on_demand(codegen_cache_dir: Option<PathBuf>) -> Result<Self, EngineError> {
+    pub fn on_demand(
+        codegen_cache_dir: Option<PathBuf>,
+        consume_fuel: bool,
+    ) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: None,
             codegen_cache_dir,
+            consume_fuel,
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine_internal(engine_config.clone())?,
@@ -201,12 +211,14 @@ impl Engines {
 
     #[instrument(skip_all)]
     pub fn pooling(
-        opts: PoolingOptions,
+        pooling_opts: PoolingOptions,
         codegen_cache_dir: Option<PathBuf>,
+        consume_fuel: bool,
     ) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
-            pooling_opts: Some(opts),
+            pooling_opts: Some(pooling_opts),
             codegen_cache_dir,
+            consume_fuel,
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine_internal(engine_config.clone())?,
@@ -218,11 +230,12 @@ impl Engines {
     pub fn auto_detect_allocator(
         pooling_opts: PoolingOptions,
         codegen_cache_dir: Option<PathBuf>,
+        consume_fuel: bool,
     ) -> Result<Self, EngineError> {
-        Self::pooling(pooling_opts, codegen_cache_dir.clone()).or_else(|err| {
+        Self::pooling(pooling_opts, codegen_cache_dir.clone(), consume_fuel).or_else(|err| {
             warn!("Falling back to on-demand allocator - {err}");
             debug!("{err:?}");
-            Self::on_demand(codegen_cache_dir)
+            Self::on_demand(codegen_cache_dir, consume_fuel)
         })
     }
 }

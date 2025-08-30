@@ -29,6 +29,7 @@ pub struct ActivityConfig {
     pub env_vars: Arc<[EnvVar]>,
     pub retry_on_err: bool,
     pub directories_config: Option<ActivityDirectoriesConfig>,
+    pub fuel: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -130,129 +131,168 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
         assert!(ctx.event_history.is_empty());
         let http_client_traces = HttpClientTracesContainer::default();
 
-        let preopened_dir = if let Some(directories_config) = &self.config.directories_config {
-            let preopened_dir = directories_config
-                .parent_preopen_dir
-                .join(ctx.execution_id.to_string());
-            if !directories_config.reuse_on_retry {
-                // Attempt to `rm -rf` before (re)creating the directory.
-                match tokio::fs::remove_dir_all(&preopened_dir).await {
-                    Ok(()) => {}
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(err) => {
-                        return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
-                            reason_kind: "cannot remove old preopened directory that is in the way",
-                            reason_inner: err.to_string(),
-                            version: ctx.version,
-                        });
+        let call_function = {
+            let preopened_dir = if let Some(directories_config) = &self.config.directories_config {
+                let preopened_dir = directories_config
+                    .parent_preopen_dir
+                    .join(ctx.execution_id.to_string());
+                if !directories_config.reuse_on_retry {
+                    // Attempt to `rm -rf` before (re)creating the directory.
+                    match tokio::fs::remove_dir_all(&preopened_dir).await {
+                        Ok(()) => {}
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(err) => {
+                            return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
+                                reason_kind: "cannot remove old preopened directory that is in the way",
+                                reason_inner: err.to_string(),
+                                version: ctx.version,
+                            });
+                        }
                     }
                 }
-            }
-            let res = tokio::fs::create_dir_all(&preopened_dir).await;
-            if let Err(err) = res {
-                return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
-                    reason_kind: "cannot create preopened directory",
-                    reason_inner: err.to_string(),
-                    version: ctx.version,
-                });
-            }
-            Some(preopened_dir)
-        } else {
-            None
-        };
-
-        let mut store = match activity_ctx::store(
-            &self.engine,
-            &ctx.execution_id,
-            &self.config,
-            ctx.worker_span.clone(),
-            self.clock_fn.clone(),
-            http_client_traces.clone(),
-            preopened_dir,
-        ) {
-            Ok(store) => store,
-            Err(err) => {
-                return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
-                    reason_kind: "not found although preopened directory was just created",
-                    reason_inner: err.0,
-                    version: ctx.version,
-                });
-            }
-        };
-
-        // Configure epoch callback before running the initialization to avoid interruption
-        store.epoch_deadline_callback(|_store_ctx| {
-            Ok(UpdateDeadline::YieldCustom(
-                1,
-                Box::pin(tokio::task::yield_now()),
-            ))
-        });
-
-        let instance = match self.instance_pre.instantiate_async(&mut store).await {
-            Ok(instance) => instance,
-            Err(err) => {
-                let reason = err.to_string();
-                if reason.starts_with("maximum concurrent") {
-                    return WorkerResult::Err(WorkerError::LimitReached {
-                        reason,
+                let res = tokio::fs::create_dir_all(&preopened_dir).await;
+                if let Err(err) = res {
+                    return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
+                        reason_kind: "cannot create preopened directory",
+                        reason_inner: err.to_string(),
                         version: ctx.version,
                     });
                 }
-                return WorkerResult::Err(WorkerError::FatalError(
-                    FatalError::CannotInstantiate {
-                        reason: format!("{err}"),
-                        detail: format!("{err:?}"),
-                    },
-                    ctx.version,
-                ));
-            }
-        };
+                Some(preopened_dir)
+            } else {
+                None
+            };
 
-        let func = {
-            let fn_export_index = self
-                .exported_ffqn_to_index
-                .get(&ctx.ffqn)
-                .expect("executor only calls `run` with ffqns that are exported");
-            instance
-                .get_func(&mut store, fn_export_index)
-                .expect("exported function must be found")
-        };
+            let mut store = match activity_ctx::store(
+                &self.engine,
+                &ctx.execution_id,
+                &self.config,
+                ctx.worker_span.clone(),
+                self.clock_fn.clone(),
+                http_client_traces.clone(),
+                preopened_dir,
+            ) {
+                Ok(store) => store,
+                Err(err) => {
+                    return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
+                        reason_kind: "not found although preopened directory was just created",
+                        reason_inner: err.0,
+                        version: ctx.version,
+                    });
+                }
+            };
 
-        let params = match ctx.params.as_vals(func.params(&store)) {
-            Ok(params) => params,
-            Err(err) => {
-                return WorkerResult::Err(WorkerError::FatalError(
-                    FatalError::ParamsParsingError(err),
-                    ctx.version,
-                ));
+            // Set fuel.
+            if let Some(fuel) = self.config.fuel {
+                store
+                    .set_fuel(fuel)
+                    .expect("engine must have `consume_fuel` enabled");
             }
-        };
-        let result_types = func.results(&mut store);
-        let mut results = vec![Val::Bool(false); result_types.len()];
-        let retry_on_err = self.config.retry_on_err;
-        let call_function = {
+
+            // Configure epoch callback before running the initialization to avoid interruption
+            store.epoch_deadline_callback(|_store_ctx| {
+                Ok(UpdateDeadline::YieldCustom(
+                    1,
+                    Box::pin(tokio::task::yield_now()),
+                ))
+            });
+
+            let instance = match self.instance_pre.instantiate_async(&mut store).await {
+                Ok(instance) => instance,
+                Err(err) => {
+                    let reason = err.to_string();
+                    if reason.starts_with("maximum concurrent") {
+                        return WorkerResult::Err(WorkerError::LimitReached {
+                            reason,
+                            version: ctx.version,
+                        });
+                    }
+                    return WorkerResult::Err(WorkerError::FatalError(
+                        FatalError::CannotInstantiate {
+                            reason: format!("{err}"),
+                            detail: format!("{err:?}"),
+                        },
+                        ctx.version,
+                    ));
+                }
+            };
+            let func = {
+                let fn_export_index = self
+                    .exported_ffqn_to_index
+                    .get(&ctx.ffqn)
+                    .expect("executor only calls `run` with ffqns that are exported");
+                instance
+                    .get_func(&mut store, fn_export_index)
+                    .expect("exported function must be found")
+            };
+
+            let params = match ctx.params.as_vals(func.params(&store)) {
+                Ok(params) => params,
+                Err(err) => {
+                    return WorkerResult::Err(WorkerError::FatalError(
+                        FatalError::ParamsParsingError(err),
+                        ctx.version,
+                    ));
+                }
+            };
+            let result_types = func.results(&mut store);
+            let mut results = vec![Val::Bool(false); result_types.len()];
+            let retry_on_err = self.config.retry_on_err;
             let worker_span = ctx.worker_span.clone();
             let http_client_traces = http_client_traces.clone();
             let version = ctx.version.clone();
+            let assigned_fuel = self.config.fuel;
             async move {
                 let res = func.call_async(&mut store, &params, &mut results).await;
-                let http_client_traces = http_client_traces
-                    .lock()
-                    .unwrap()
-                    .drain(..)
-                    .map(|(req, mut resp)| HttpClientTrace {
-                        req,
-                        resp: resp.try_recv().ok(),
-                    })
-                    .collect_vec();
+                let http_client_traces = Some(
+                    http_client_traces
+                        .lock()
+                        .unwrap()
+                        .drain(..)
+                        .map(|(req, mut resp)| HttpClientTrace {
+                            req,
+                            resp: resp.try_recv().ok(),
+                        })
+                        .collect_vec(),
+                );
                 if let Err(err) = res {
-                    return WorkerResult::Err(WorkerError::ActivityTrap {
-                        reason: err.to_string(),
-                        trap_kind: TrapKind::Trap,
-                        detail: format!("{err:?}"),
-                        version,
-                        http_client_traces: Some(http_client_traces),
-                    });
+                    return WorkerResult::Err(
+                        if let Some(trap) = err
+                            .source()
+                            .and_then(|source| source.downcast_ref::<wasmtime::Trap>())
+                        {
+                            if *trap == wasmtime::Trap::OutOfFuel {
+                                WorkerError::ActivityTrap {
+                                    reason: format!(
+                                        "total fuel consumed: {}",
+                                        assigned_fuel.expect(
+                                            "must have been set as it was the reason of trap"
+                                        )
+                                    ),
+                                    detail: None,
+                                    trap_kind: TrapKind::OutOfFuel,
+                                    version,
+                                    http_client_traces,
+                                }
+                            } else {
+                                WorkerError::ActivityTrap {
+                                    reason: trap.to_string(),
+                                    detail: Some(format!("{err:?}")),
+                                    trap_kind: TrapKind::Trap,
+                                    version,
+                                    http_client_traces,
+                                }
+                            }
+                        } else {
+                            WorkerError::ActivityTrap {
+                                reason: err.to_string(),
+                                trap_kind: TrapKind::HostFunctionError,
+                                detail: Some(format!("{err:?}")),
+                                version,
+                                http_client_traces,
+                            }
+                        },
+                    );
                 }
                 let result = match SupportedFunctionReturnValue::new(
                     results.into_iter().zip(result_types.iter().cloned()),
@@ -270,9 +310,9 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                     return WorkerResult::Err(WorkerError::ActivityTrap {
                         reason: err.to_string(),
                         trap_kind: TrapKind::PostReturnTrap,
-                        detail: format!("{err:?}"),
+                        detail: Some(format!("{err:?}")),
                         version,
-                        http_client_traces: Some(http_client_traces),
+                        http_client_traces,
                     });
                 }
 
@@ -286,7 +326,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                             return WorkerResult::Err(WorkerError::ActivityReturnedError {
                                 detail: Some(detail),
                                 version,
-                                http_client_traces: Some(http_client_traces),
+                                http_client_traces,
                             });
                         }
                         // else: log and pass the retval as is to be stored.
@@ -295,7 +335,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         });
                     }
                 }
-                WorkerResult::Ok(result, version, Some(http_client_traces))
+                WorkerResult::Ok(result, version, http_client_traces)
             }
         };
         let started_at = self.clock_fn.now();
@@ -326,7 +366,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                 ctx.worker_span.in_scope(||
                         info!(duration = ?stopwatch_for_reporting.elapsed(), %started_at, ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %self.clock_fn.now(), "Timed out")
                     );
-                let http_client_traces = http_client_traces
+                let http_client_traces = Some(http_client_traces
                     .lock()
                     .unwrap()
                     .drain(..)
@@ -334,9 +374,9 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                             req,
                             resp: resp.try_recv().ok(),
                         })
-                        .collect_vec();
+                        .collect_vec());
                 return WorkerResult::Err(WorkerError::TemporaryTimeout{
-                    http_client_traces: Some(http_client_traces),
+                    http_client_traces,
                     version: ctx.version,
                 });
             }
@@ -386,6 +426,7 @@ pub(crate) mod tests {
             env_vars: Arc::from([]),
             retry_on_err: true,
             directories_config: None,
+            fuel: None,
         }
     }
 
@@ -1271,6 +1312,7 @@ pub(crate) mod tests {
                         reuse_on_retry: true, // relies on continuing in the same folder
                         process_provider: None,
                     }),
+                    fuel: None,
                 },
             );
             // Create an execution.
@@ -1340,6 +1382,7 @@ pub(crate) mod tests {
                         reuse_on_retry: false,
                         process_provider: Some(ProcessProvider::Native),
                     }),
+                    fuel: None,
                 },
             );
             // Create an execution.
@@ -1416,6 +1459,7 @@ pub(crate) mod tests {
                         reuse_on_retry: false,
                         process_provider: Some(ProcessProvider::Native),
                     }),
+                    fuel: None,
                 },
             );
             // Create an execution.
@@ -1487,6 +1531,7 @@ pub(crate) mod tests {
                     env_vars: Arc::default(),
                     retry_on_err: false,
                     directories_config: None,
+                    fuel: None,
                 },
             );
             // Create an execution.
@@ -1541,6 +1586,7 @@ pub(crate) mod tests {
                     env_vars: Arc::default(),
                     retry_on_err: false,
                     directories_config: None,
+                    fuel: None,
                 },
             );
             // Create an execution.

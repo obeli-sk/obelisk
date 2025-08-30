@@ -90,24 +90,26 @@ impl FinishedExecutionError {
 pub enum PermanentFailureKind {
     /// Applicable to Workflow
     NondeterminismDetected,
-    /// Applicable to Workflow, Activity
+    /// Applicable to Workflow, WASM Activity
     ParamsParsingError,
-    /// Applicable to Workflow, Activity
+    /// Applicable to Workflow, WASM Activity
     CannotInstantiate,
-    /// Applicable to Workflow, Activity
+    /// Applicable to Workflow, WASM Activity
     ResultParsingError,
     /// Applicable to Workflow
     ImportedFunctionCallError,
-    /// Applicable to Activity
+    /// Applicable to WASM Activity
     ActivityTrap,
     /// Applicable to Workflow
     WorkflowTrap,
     /// Applicable to Workflow
     JoinSetNameError,
-    /// Applicable to webhook endpoint
+    /// Applicable to Webhook
     WebhookEndpointError,
     /// Applicable to Stub Activity
     StubbedError,
+    /// Applicable to Webhook, Workflow, WASM Activity
+    OutOfFuel,
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +119,10 @@ pub enum TrapKind {
     Trap,
     #[display("post_return_trap")]
     PostReturnTrap,
+    #[display("out of fuel")]
+    OutOfFuel,
+    #[display("host function error")]
+    HostFunctionError,
 }
 
 #[derive(Clone, Eq, derive_more::Display)]

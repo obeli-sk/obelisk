@@ -258,7 +258,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         )
                         .await;
                         if let Err(db_error) = res {
-                            error!("Execution will be timed out not writing `{db_error:?}`");
+                            error!("Got DbError `{db_error:?}`, expecting watcher to mark execution as timed out");
                         }
                     }
                     .instrument(worker_span)
@@ -429,7 +429,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         reason_full,
                         reason_inner,
                         trap_kind, // short reason like `trap` for logs
-                        Some(detail),
+                        detail,
                         version,
                         http_client_traces,
                     ),
@@ -978,7 +978,7 @@ mod tests {
             WorkerError::ActivityTrap {
                 reason: expected_reason.to_string(),
                 trap_kind: concepts::TrapKind::Trap,
-                detail: expected_detail.to_string(),
+                detail: Some(expected_detail.to_string()),
                 version: Version::new(2),
                 http_client_traces: None,
             },
@@ -1109,7 +1109,7 @@ mod tests {
             WorkerError::ActivityTrap {
                 reason: expected_reason.to_string(),
                 trap_kind: concepts::TrapKind::Trap,
-                detail: expected_detail.to_string(),
+                detail: Some(expected_detail.to_string()),
                 version: Version::new(2),
                 http_client_traces: None,
             },
@@ -1154,7 +1154,7 @@ mod tests {
         let worker_error = WorkerError::ActivityTrap {
             reason: "error reason".to_string(),
             trap_kind: TrapKind::Trap,
-            detail: "detail".to_string(),
+            detail: Some("detail".to_string()),
             version: Version::new(2),
             http_client_traces: None,
         };

@@ -143,6 +143,8 @@ pub(crate) struct WasmGlobalConfigToml {
     pub(crate) global_executor_instance_limiter: InflightSemaphore,
     #[serde(default)]
     pub(crate) global_webhook_instance_limiter: InflightSemaphore,
+    #[serde(default)]
+    pub(crate) fuel: ValueOrUnlimited<u64>,
 }
 
 impl WasmGlobalConfigToml {
@@ -474,6 +476,7 @@ impl ActivityWasmConfigVerified {
 
 impl ActivityComponentConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
@@ -482,6 +485,7 @@ impl ActivityComponentConfigToml {
         ignore_missing_env_vars: bool,
         parent_preopen_dir: Option<Arc<Path>>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
         let component_id = ComponentId::new(
             if self.stub {
@@ -520,6 +524,7 @@ impl ActivityComponentConfigToml {
             env_vars,
             retry_on_err: self.retry_on_err,
             directories_config,
+            fuel,
         };
         Ok(ActivityWasmConfigVerified {
             content_digest: common.content_digest,
@@ -668,6 +673,7 @@ impl WorkflowComponentConfigToml {
         path_prefixes: Arc<PathPrefixes>,
         global_backtrace_persist: bool,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
         let component_id = ComponentId::new(
             ComponentType::Workflow,
@@ -699,6 +705,7 @@ impl WorkflowComponentConfigToml {
             join_next_blocking_strategy: self.blocking_strategy.into(),
             backtrace_persist: global_backtrace_persist,
             stub_wasi: self.stub_wasi,
+            fuel,
         };
         let frame_files_to_sources =
             verify_frame_files_to_sources(self.backtrace.frame_files_to_sources, &path_prefixes);
@@ -1143,11 +1150,31 @@ pub(crate) mod webhook {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
+pub(crate) enum ValueOrUnlimited<T> {
+    Unlimited(Unlimited),
+    Some(T),
+}
+impl<T> Default for ValueOrUnlimited<T> {
+    fn default() -> Self {
+        Self::Unlimited(Unlimited::Unlimited)
+    }
+}
+impl<T> From<ValueOrUnlimited<T>> for Option<T> {
+    fn from(value: ValueOrUnlimited<T>) -> Self {
+        match value {
+            ValueOrUnlimited::Some(val) => Some(val),
+            ValueOrUnlimited::Unlimited(Unlimited::Unlimited) => None,
+        }
+    }
+}
+
+// TODO: Unify with ValueOrUnlimited
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
 pub(crate) enum InflightSemaphore {
     Unlimited(Unlimited),
     Some(u32),
 }
-
 impl Default for InflightSemaphore {
     fn default() -> Self {
         Self::Unlimited(Unlimited::Unlimited)
