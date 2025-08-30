@@ -1,7 +1,7 @@
 fn main() {
     let pkg_version = std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION must be set");
     println!("cargo:rustc-env=PKG_VERSION={pkg_version}");
-
+    println!("cargo:rerun-if-changed=proto/obelisk.proto");
     tonic_prost_build::configure()
         .protoc_arg("--experimental_allow_proto3_optional") // not needed anymore with protoc  25.3
         .compile_well_known_types(true)
