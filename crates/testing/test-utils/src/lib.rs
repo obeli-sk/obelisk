@@ -104,7 +104,7 @@ pub fn get_seed() -> Box<dyn Iterator<Item = u64>> {
                 vec.push(seed);
             }
             Box::new(vec.into_iter().inspect(|&seed| {
-                println!("TEST_SEED={seed}");
+                println!("\n\n\nTEST_SEED={seed}");
             }))
         }
         _ => unreachable!(),

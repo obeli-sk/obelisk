@@ -2435,7 +2435,7 @@ pub(crate) mod tests {
                         expires_at,
                         ..
                     } => {
-                        info!("Moving time to {expires_at} - {delay_id}");
+                        info!("DelayRequest {delay_id} moving time to {expires_at}");
                         assert!(delay_request_count > 0);
                         sim_clock.move_time_to(expires_at);
                         delay_request_count -= 1;
@@ -2443,13 +2443,7 @@ pub(crate) mod tests {
                             expired_timers_watcher::tick_test(db_connection.as_ref(), expires_at)
                                 .await
                                 .unwrap();
-                        assert_eq!(
-                            TickProgress {
-                                expired_locks: 0,
-                                expired_async_timers: 1
-                            },
-                            actual_progress
-                        );
+                        assert!(actual_progress.expired_async_timers > 0); // Ignore SubmitDelay-s that were fullfiled by the watcher.
                     }
                     JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
                         assert!(child_execution_count > 0);
