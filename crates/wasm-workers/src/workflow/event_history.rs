@@ -45,6 +45,7 @@ use itertools::Either;
 use itertools::Itertools;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::time::Duration;
 use strum::IntoStaticStr;
 use tracing::Level;
 use tracing::Span;
@@ -117,7 +118,7 @@ pub(crate) struct EventHistory {
     execution_id: ExecutionId,
     component_id: ComponentId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
-    execution_deadline: DateTime<Utc>,
+    deadline: DateTime<Utc>,
     event_history: Vec<(HistoryEvent, ProcessingStatus)>,
     // Used for `-get`ting the processed response by Execution Id.
     index_child_exe_to_processed_response_idx: HashMap<ExecutionIdDerived, usize>,
@@ -131,7 +132,7 @@ pub(crate) struct EventHistory {
     non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     worker_span: Span,
-    sleep_factory: SleepFactory,
+    deadline_tracker: SleepFactory,
 }
 
 #[expect(clippy::large_enum_variant)]
@@ -161,9 +162,9 @@ impl EventHistory {
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        execution_deadline: DateTime<Utc>,
+        deadline: DateTime<Utc>,
         worker_span: Span,
-        sleep_factory: SleepFactory,
+        deadline_duration: Duration,
     ) -> Self {
         let non_blocking_event_batch_size = match join_next_blocking_strategy {
             JoinNextBlockingStrategy::Await {
@@ -209,7 +210,7 @@ impl EventHistory {
                 .map(|event| (event, Unprocessed))
                 .collect(),
             join_next_blocking_strategy,
-            execution_deadline,
+            deadline,
             non_blocking_event_batch_size,
             non_blocking_event_batch: if non_blocking_event_batch_size == 0 {
                 None
@@ -217,7 +218,7 @@ impl EventHistory {
                 Some(Vec::with_capacity(non_blocking_event_batch_size))
             },
             worker_span,
-            sleep_factory,
+            deadline_tracker: SleepFactory::new(deadline_duration),
         }
     }
 
@@ -303,7 +304,7 @@ impl EventHistory {
             if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
                 called_at
             } else {
-                self.execution_deadline
+                self.deadline
             };
         let Some(join_next_variant) = event_call.join_next_variant() else {
             // Events that cannot block, e.g. creating new join sets, persisting random value, getting processed responses.
@@ -377,12 +378,12 @@ impl EventHistory {
             let key = join_next_variant.as_key();
 
             // Subscribe to the next response.
-            while !self.sleep_factory.deadline_reached() {
+            while !self.deadline_tracker.deadline_reached() {
                 let next_responses = match db_connection
                     .subscribe_to_next_responses(
                         &self.execution_id,
                         self.responses.len(),
-                        Box::pin(self.sleep_factory.new_sleep()),
+                        Box::pin(self.deadline_tracker.new_sleep()),
                     )
                     .await
                 {
@@ -2755,7 +2756,7 @@ mod tests {
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::{CreateRequest, HistoryEventScheduleAt};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
-    use concepts::time::{ClockFn, SleepFactory};
+    use concepts::time::ClockFn;
     use concepts::{
         ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, Params,
         SupportedFunctionReturnValue,
@@ -3076,7 +3077,7 @@ mod tests {
             db_connection.as_ref(),
             execution_id,
             sim_clock.now(),
-            Duration::ZERO, // execution_deadline
+            Duration::ZERO, // deadline
             JoinNextBlockingStrategy::Interrupt,
         )
         .await;
@@ -3382,11 +3383,11 @@ mod tests {
         db_connection: &dyn DbConnection,
         execution_id: ExecutionId,
         now: DateTime<Utc>,
-        execution_deadline_duration: Duration,
+        deadline_duration: Duration,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) -> (EventHistory, Version) {
         let exec_log = db_connection.get(&execution_id).await.unwrap();
-        let execution_deadline = now + execution_deadline_duration;
+        let execution_deadline = now + deadline_duration;
         let event_history = EventHistory::new(
             execution_id.clone(),
             ComponentId::dummy_activity(),
@@ -3399,7 +3400,7 @@ mod tests {
             join_next_blocking_strategy,
             execution_deadline,
             info_span!("worker-test"),
-            SleepFactory::new(execution_deadline_duration),
+            deadline_duration,
         );
         (event_history, exec_log.next_version)
     }

@@ -27,7 +27,8 @@ mod bench {
     use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorker};
     use wasm_workers::engines::Engines;
     use wasm_workers::workflow::workflow_worker::{
-        JoinNextBlockingStrategy, WorkflowConfig, WorkflowWorkerCompiled,
+        DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
+        WorkflowWorkerCompiled,
     };
     use wasmtime::Engine;
 
@@ -252,7 +253,9 @@ mod bench {
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
             Now,
-            JoinNextBlockingStrategy::default(),
+            JoinNextBlockingStrategy::Await {
+                non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
+            },
             &fn_registry,
             engines.workflow_engine.clone(),
         );

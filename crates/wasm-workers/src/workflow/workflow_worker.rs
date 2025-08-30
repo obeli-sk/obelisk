@@ -5,7 +5,7 @@ use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::storage::DbPool;
-use concepts::time::{ClockFn, SleepFactory, now_tokio_instant};
+use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
     ComponentId, FunctionFqn, FunctionMetadata, PackageIfcFns, ResultParsingError, StrVariant,
     TrapKind,
@@ -33,13 +33,6 @@ pub enum JoinNextBlockingStrategy {
     Await { non_blocking_event_batching: u32 },
 }
 pub const DEFAULT_NON_BLOCKING_EVENT_BATCHING: u32 = 100;
-impl Default for JoinNextBlockingStrategy {
-    fn default() -> Self {
-        JoinNextBlockingStrategy::Await {
-            non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct WorkflowConfig {
@@ -365,7 +358,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             ctx.execution_deadline,
             ctx.worker_span,
             self.config.backtrace_persist,
-            SleepFactory::new(deadline_duration),
+            deadline_duration,
         );
 
         let mut store = Store::new(&self.engine, workflow_ctx);

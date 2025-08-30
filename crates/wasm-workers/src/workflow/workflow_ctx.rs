@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::{self, DbError, DbPool, HistoryEventScheduleAt, Version, WasmBacktrace};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
-use concepts::time::{ClockFn, SleepFactory};
+use concepts::time::ClockFn;
 use concepts::{
     ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FinishedExecutionError,
     FunctionRegistry, IfcFqnName, InvalidNameError, ReturnType, SUFFIX_PKG_EXT,
@@ -30,6 +30,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{Span, error, instrument};
 use val_json::wast_val::{WastVal, WastValWithType};
 use wasmtime::component::{Linker, Resource, Val};
@@ -877,10 +878,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         db_pool: Arc<dyn DbPool>,
         version: Version,
-        execution_deadline: DateTime<Utc>,
+        deadline: DateTime<Utc>,
         worker_span: Span,
         backtrace_persist: bool,
-        sleep_factory: SleepFactory,
+        deadline_duration: Duration,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -895,9 +896,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 event_history,
                 responses,
                 join_next_blocking_strategy,
-                execution_deadline,
+                deadline,
                 worker_span.clone(),
-                sleep_factory,
+                deadline_duration,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -1544,7 +1545,7 @@ pub(crate) mod tests {
         PendingStateFinished, PendingStateFinishedResultKind,
     };
     use concepts::storage::{ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter};
-    use concepts::time::{ClockFn, Now, SleepFactory};
+    use concepts::time::{ClockFn, Now};
     use concepts::{
         ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, JoinSetId, JoinSetKind,
         SUFFIX_PKG_EXT,
@@ -1668,11 +1669,6 @@ pub(crate) mod tests {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             info!("Starting");
             let seed = ctx.execution_id.random_seed();
-            let sleep_factory = SleepFactory::new(
-                (ctx.execution_deadline - self.clock_fn.now())
-                    .to_std()
-                    .unwrap(),
-            );
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id.clone(),
                 ComponentId::dummy_activity(),
@@ -1686,7 +1682,9 @@ pub(crate) mod tests {
                 ctx.execution_deadline,
                 tracing::info_span!("workflow-test"),
                 false,
-                sleep_factory,
+                (ctx.execution_deadline - self.clock_fn.now())
+                    .to_std()
+                    .unwrap(),
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");

@@ -41,9 +41,9 @@ pub struct SleepFactory {
 }
 impl SleepFactory {
     #[must_use]
-    pub fn new(duration: Duration) -> Self {
+    pub fn new(deadline_duration: Duration) -> Self {
         Self {
-            deadline: tokio::time::Instant::now() + duration,
+            deadline: tokio::time::Instant::now() + deadline_duration,
         }
     }
     pub fn new_sleep(&self) -> tokio::time::Sleep {
