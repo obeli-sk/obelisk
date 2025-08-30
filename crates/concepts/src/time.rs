@@ -49,4 +49,8 @@ impl SleepFactory {
     pub fn new_sleep(&self) -> tokio::time::Sleep {
         tokio::time::sleep_until(self.deadline)
     }
+
+    pub fn deadline_reached(&self) -> bool {
+        self.deadline <= tokio::time::Instant::now()
+    }
 }

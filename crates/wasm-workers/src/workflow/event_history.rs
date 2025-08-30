@@ -377,7 +377,7 @@ impl EventHistory {
             let key = join_next_variant.as_key();
 
             // Subscribe to the next response.
-            loop {
+            while !self.sleep_factory.deadline_reached() {
                 let next_responses = match db_connection
                     .subscribe_to_next_responses(
                         &self.execution_id,
@@ -386,10 +386,10 @@ impl EventHistory {
                     )
                     .await
                 {
-                    Ok(ok) => Ok(ok),
-                    Err(SubscribeError::DbError(err)) => Err(ApplyError::DbError(err)),
-                    Err(SubscribeError::Interrupted) => Err(ApplyError::InterruptDbUpdated),
-                }?;
+                    Ok(ok) => ok,
+                    Err(SubscribeError::DbError(err)) => return Err(ApplyError::DbError(err)),
+                    Err(SubscribeError::Interrupted) => return Err(ApplyError::InterruptDbUpdated),
+                };
                 debug!("Got next responses {next_responses:?}");
                 self.responses.extend(
                     next_responses
@@ -402,6 +402,7 @@ impl EventHistory {
                     return Ok(accept_resp);
                 }
             }
+            Err(ApplyError::InterruptDbUpdated)
         } else {
             debug!(join_set_id = %join_next_variant.join_set_id(),  "Interrupting on {join_next_variant:?}");
             Err(ApplyError::InterruptDbUpdated)
