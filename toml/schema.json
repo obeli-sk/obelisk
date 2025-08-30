@@ -40,6 +40,9 @@
     "sqlite": {
       "$ref": "#/$defs/SqliteConfigToml"
     },
+    "timers_watcher": {
+      "$ref": "#/$defs/TimersWatcher"
+    },
     "wasm": {
       "$ref": "#/$defs/WasmGlobalConfigToml"
     },
@@ -620,6 +623,18 @@
         "stdout",
         "stderr"
       ]
+    },
+    "TimersWatcher": {
+      "type": "object",
+      "properties": {
+        "leeway": {
+          "$ref": "#/$defs/DurationConfig"
+        },
+        "tick_sleep": {
+          "$ref": "#/$defs/DurationConfig"
+        }
+      },
+      "additionalProperties": false
     },
     "Unlimited": {
       "type": "string",

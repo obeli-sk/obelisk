@@ -29,7 +29,11 @@ use tracing::{debug, info, instrument};
 pub struct TimersWatcherConfig<C: ClockFn> {
     pub tick_sleep: Duration,
     pub clock_fn: C,
-    pub leeway: Duration, // A short duration that will be subtracted from now() so that a hot workflow can win.
+    // A short duration that will be subtracted from now() so that:
+    // a workflow that made progress (is blocked by join set) and is subscribed can either win or
+    // the executor can lock it.
+    // If watcher wins, the execution will be scheduled based on its backoff settings.
+    pub leeway: Duration,
 }
 
 #[derive(Debug, PartialEq)]
@@ -103,7 +107,7 @@ pub(crate) async fn tick(
             } => {
                 let append = if max_retries == u32::MAX && locked_at_version.0 + 1 < version.0 {
                     // Workflow that made progress is unlocked and immediately available for locking.
-                    debug!(%execution_id, "Unlocking workflow execution");
+                    info!(%execution_id, "Unlocking workflow execution");
                     Append {
                         created_at: executed_at,
                         primary_event: AppendRequest {
@@ -123,7 +127,7 @@ pub(crate) async fn tick(
                     retry_exp_backoff,
                 ) {
                     let backoff_expires_at = executed_at + duration;
-                    debug!(%execution_id, "Retrying execution with expired lock after {duration:?} at {backoff_expires_at}");
+                    info!(%execution_id, "Retrying execution with expired lock after {duration:?} at {backoff_expires_at}");
                     Append {
                         created_at: executed_at,
                         primary_event: AppendRequest {

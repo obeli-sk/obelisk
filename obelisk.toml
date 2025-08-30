@@ -32,6 +32,12 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # enabled = true
 # directory = "${CACHE_DIR}/codegen" # Path to directory where generated code is cached. Supports path prefixes.
 
+## Timers Watcher Configuration
+# [timers_watcher]
+# leeway.milliseconds = 500
+# tick_sleep.milliseconds = 100
+
+
 ### WASM Component Configuration
 ## Each WASM component is configured separately in a `[[activity_wasm]]`, `[[workflow]]` or `[[webhook_endpoint]]` table.
 ## Common settings for all components

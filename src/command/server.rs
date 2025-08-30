@@ -13,6 +13,7 @@ use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::StdOutput;
+use crate::config::toml::TimersWatcher;
 use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowComponentBacktraceConfig;
 use crate::config::toml::WorkflowComponentConfigToml;
@@ -1154,6 +1155,7 @@ async fn run_internal(
         .wasm_global_config
         .global_webhook_instance_limiter
         .as_semaphore();
+    let timers_watcher = config.timers_watcher;
     let (compiled_and_linked, component_source_map) = Box::pin(verify_internal(
         config,
         config_holder,
@@ -1171,6 +1173,7 @@ async fn run_internal(
         &sqlite_file,
         sqlite_config,
         global_webhook_instance_limiter,
+        timers_watcher,
     )
     .instrument(span)
     .await?;
@@ -1396,6 +1399,7 @@ impl ServerInit {
         sqlite_file: &Path,
         sqlite_config: SqliteConfig,
         global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        timers_watcher: TimersWatcher,
     ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
         // Start components requiring a database
         let epoch_ticker = EpochTicker::spawn_new(
@@ -1411,9 +1415,9 @@ impl ServerInit {
         let timers_watcher = expired_timers_watcher::spawn_new(
             db_pool.clone(),
             TimersWatcherConfig {
-                tick_sleep: Duration::from_millis(100),
+                tick_sleep: timers_watcher.tick_sleep.into(),
                 clock_fn: Now,
-                leeway: Duration::from_millis(100), // TODO: Make configurable
+                leeway: timers_watcher.leeway.into(),
             },
         );
 

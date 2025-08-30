@@ -53,6 +53,8 @@ pub(crate) struct ConfigToml {
     pub(crate) activities_global_config: ActivitiesGlobalConfigToml,
     #[serde(default)]
     pub(crate) codegen_cache: CodegenCache,
+    #[serde(default)]
+    pub(crate) timers_watcher: TimersWatcher,
     #[serde(default, rename = "activity_wasm")]
     pub(crate) wasm_activities: Vec<ActivityComponentConfigToml>,
     #[serde(default, rename = "workflow")]
@@ -289,6 +291,26 @@ impl CodegenCache {
                 .map(Some)
         } else {
             Ok(None)
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+
+pub(crate) struct TimersWatcher {
+    #[serde(default = "default_timers_watcher_leeway")]
+    // TODO: Add `derivative`,
+    // #[derivative(Default(value = "default_timers_watcher_leeway()"))]
+    pub(crate) leeway: DurationConfig,
+    #[serde(default = "default_timers_watcher_tick_sleep")]
+    pub(crate) tick_sleep: DurationConfig,
+}
+impl Default for TimersWatcher {
+    fn default() -> Self {
+        Self {
+            leeway: default_timers_watcher_leeway(),
+            tick_sleep: default_timers_watcher_tick_sleep(),
         }
     }
 }
@@ -1245,6 +1267,13 @@ fn default_dir_cleanup_older_than() -> DurationConfig {
 }
 fn default_dir_cleanup_enabled() -> bool {
     true
+}
+
+fn default_timers_watcher_leeway() -> DurationConfig {
+    DurationConfig::Milliseconds(500)
+}
+fn default_timers_watcher_tick_sleep() -> DurationConfig {
+    DurationConfig::Milliseconds(100)
 }
 
 #[cfg(test)]
