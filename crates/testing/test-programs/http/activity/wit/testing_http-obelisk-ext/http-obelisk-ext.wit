@@ -1,0 +1,31 @@
+package testing:http-obelisk-ext;
+
+interface http-get {
+  use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
+  use testing:http/http-get.{response, stargazers};
+
+  get-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
+
+  get-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+
+  get-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+
+  get-resp-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
+
+  get-resp-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<response, string>>, await-next-extension-error>;
+
+  get-resp-get: func(execution-id: execution-id) -> result<result<response, string>, get-extension-error>;
+
+  get-stargazers-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+
+  get-stargazers-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<stargazers, string>>, await-next-extension-error>;
+
+  get-stargazers-get: func(execution-id: execution-id) -> result<result<stargazers, string>, get-extension-error>;
+
+  get-successful-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
+
+  get-successful-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+
+  get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+}
+

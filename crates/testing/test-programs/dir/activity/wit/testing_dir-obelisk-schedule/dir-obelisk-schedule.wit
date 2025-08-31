@@ -1,0 +1,9 @@
+package testing:dir-obelisk-schedule;
+
+interface dir {
+  use obelisk:types/execution@2.0.0.{execution-id};
+  use obelisk:types/time@2.0.0.{schedule-at};
+
+  io-schedule: func(schedule-at: schedule-at) -> execution-id;
+}
+

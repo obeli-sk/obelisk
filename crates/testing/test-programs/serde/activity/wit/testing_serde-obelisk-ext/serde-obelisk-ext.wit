@@ -1,0 +1,19 @@
+package testing:serde-obelisk-ext;
+
+interface serde {
+  use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
+  use testing:serde/serde.{my-record, my-variant};
+
+  rec-submit: func(join-set-id: borrow<join-set-id>, my-record: my-record) -> execution-id;
+
+  rec-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, my-record>, await-next-extension-error>;
+
+  rec-get: func(execution-id: execution-id) -> result<my-record, get-extension-error>;
+
+  var-submit: func(join-set-id: borrow<join-set-id>, my-variant: my-variant) -> execution-id;
+
+  var-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, my-variant>, await-next-extension-error>;
+
+  var-get: func(execution-id: execution-id) -> result<my-variant, get-extension-error>;
+}
+

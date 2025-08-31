@@ -1,0 +1,42 @@
+package testing:http-workflow-obelisk-ext;
+
+interface workflow {
+  use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
+
+  get-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
+
+  get-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+
+  get-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+
+  get-resp-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
+
+  get-resp-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+
+  get-resp-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+
+  get-stargazers-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+
+  get-stargazers-await-next: func(join-set-id: borrow<join-set-id>) -> result<execution-id, await-next-extension-error>;
+
+  get-stargazers-get: func(execution-id: execution-id) -> result<_, get-extension-error>;
+
+  get-successful-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
+
+  get-successful-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+
+  get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+
+  get-successful-concurrently-submit: func(join-set-id: borrow<join-set-id>, urls: list<string>) -> execution-id;
+
+  get-successful-concurrently-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>;
+
+  get-successful-concurrently-get: func(execution-id: execution-id) -> result<result<list<string>, string>, get-extension-error>;
+
+  get-successful-concurrently-stress-submit: func(join-set-id: borrow<join-set-id>, url: string, concurrency: u32) -> execution-id;
+
+  get-successful-concurrently-stress-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>;
+
+  get-successful-concurrently-stress-get: func(execution-id: execution-id) -> result<result<list<string>, string>, get-extension-error>;
+}
+

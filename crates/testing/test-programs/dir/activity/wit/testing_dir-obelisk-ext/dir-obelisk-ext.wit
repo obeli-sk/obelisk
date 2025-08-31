@@ -1,0 +1,12 @@
+package testing:dir-obelisk-ext;
+
+interface dir {
+  use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
+
+  io-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+
+  io-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<_, string>>, await-next-extension-error>;
+
+  io-get: func(execution-id: execution-id) -> result<result<_, string>, get-extension-error>;
+}
+

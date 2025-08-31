@@ -1,0 +1,17 @@
+package testing:process-obelisk-schedule;
+
+interface process {
+  use obelisk:types/execution@2.0.0.{execution-id};
+  use obelisk:types/time@2.0.0.{schedule-at};
+
+  touch-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  stdio-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  kill-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  exec-sleep-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  subscribe-wait-schedule: func(schedule-at: schedule-at) -> execution-id;
+}
+

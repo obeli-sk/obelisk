@@ -1,0 +1,26 @@
+package testing:stub-workflow-obelisk-schedule;
+
+interface workflow {
+  use testing:stub-workflow/workflow.{execution-id};
+  use obelisk:types/time@2.0.0.{schedule-at};
+  use testing:stub-workflow/workflow.{stub-error};
+
+  submit-stub-await-schedule: func(schedule-at: schedule-at, arg: string) -> execution-id;
+
+  submit-await-schedule: func(schedule-at: schedule-at, arg: string) -> execution-id;
+
+  noret-submit-await-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  submit-race-join-next-stub-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  submit-race-join-next-stub-error-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  submit-race-join-next-delay-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  stub-subworkflow-schedule: func(schedule-at: schedule-at, execution-id: execution-id, retval: string) -> execution-id;
+
+  await-next-produces-all-processed-error-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  join-next-in-scope-schedule: func(schedule-at: schedule-at) -> execution-id;
+}
+

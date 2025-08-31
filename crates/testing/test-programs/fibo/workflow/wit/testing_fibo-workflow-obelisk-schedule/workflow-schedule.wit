@@ -1,9 +1,0 @@
-package testing:fibo-workflow-obelisk-schedule;
-
-interface workflow {
-    use obelisk:types/execution@2.0.0.{execution-id};
-    use obelisk:types/time@2.0.0.{schedule-at};
-
-    fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
-
-}
