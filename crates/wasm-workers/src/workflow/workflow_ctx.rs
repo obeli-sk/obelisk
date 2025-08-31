@@ -1527,6 +1527,7 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::testing_fn_registry::fn_registry_dummy;
     use crate::workflow::event_history::JoinSetCloseError;
     use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
     use crate::workflow::workflow_ctx::{
@@ -1564,7 +1565,6 @@ pub(crate) mod tests {
     use test_utils::get_seed;
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info, info_span};
-    use utils::testing_fn_registry::fn_registry_dummy;
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const FFQN_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");

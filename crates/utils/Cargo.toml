@@ -11,7 +11,7 @@ version.workspace = true
 
 [dependencies]
 concepts.workspace = true
-val-json = { workspace = true, features = ["wasmtime", "wit-parser"] }
+val-json = { workspace = true, features = ["wit-parser"] }
 
 anyhow.workspace = true
 async-trait.workspace = true
@@ -28,9 +28,6 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 wasmparser.workspace = true
-wasmtime-wasi-http.workspace = true
-wasmtime-wasi.workspace = true
-wasmtime.workspace = true
 wit-component.workspace = true
 wit-parser.workspace = true
 
@@ -47,9 +44,6 @@ test-programs-sleep-workflow-builder.workspace = true
 test-programs-stub-activity-builder.workspace = true
 test-utils.workspace = true
 tokio.workspace = true
-
-[features]
-test = []
 
 [lints]
 workspace = true

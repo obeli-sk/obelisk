@@ -22,10 +22,10 @@ mod bench {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::runtime::Handle;
-    use utils::testing_fn_registry::TestingFnRegistry;
-    use utils::wasm_tools::WasmComponent;
+    use wasm_workers::RunnableComponent;
     use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorker};
     use wasm_workers::engines::Engines;
+    use wasm_workers::testing_fn_registry::TestingFnRegistry;
     use wasm_workers::workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
         WorkflowWorkerCompiled,
@@ -37,11 +37,11 @@ mod bench {
     pub(crate) fn compile_activity_with_engine(
         wasm_path: &'static str,
         engine: &Engine,
-    ) -> (WasmComponent, ComponentId) {
+    ) -> (RunnableComponent, ComponentId) {
         let component_id =
             ComponentId::new(ComponentType::ActivityWasm, wasm_file_name(wasm_path)).unwrap();
         (
-            WasmComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
+            RunnableComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
             component_id,
         )
     }
@@ -142,11 +142,11 @@ mod bench {
     pub(crate) fn compile_workflow_with_engine(
         wasm_path: &'static str,
         engine: &Engine,
-    ) -> (WasmComponent, ComponentId) {
+    ) -> (RunnableComponent, ComponentId) {
         let component_id =
             ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         (
-            WasmComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
+            RunnableComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
             component_id,
         )
     }
@@ -163,7 +163,7 @@ mod bench {
             ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         let worker = Arc::new(
             WorkflowWorkerCompiled::new_with_config(
-                WasmComponent::new(wasm_path, &workflow_engine, component_id.component_type)
+                RunnableComponent::new(wasm_path, &workflow_engine, component_id.component_type)
                     .unwrap(),
                 WorkflowConfig {
                     component_id: component_id.clone(),

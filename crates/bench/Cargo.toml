@@ -20,8 +20,8 @@ executor = { workspace = true, features = ["test"] }
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-utils.workspace = true
-utils = { workspace = true, features = ["test"] }
-wasm-workers.workspace = true
+utils.workspace = true
+wasm-workers = { workspace = true, features = ["test"] }
 
 assert_matches.workspace = true
 tokio.workspace = true

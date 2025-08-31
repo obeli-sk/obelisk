@@ -110,9 +110,9 @@ use tracing::instrument;
 use tracing::warn;
 use tracing::{debug, info, trace};
 use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
-use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
 use val_json::wast_val_ser::deserialize_slice;
+use wasm_workers::RunnableComponent;
 use wasm_workers::activity::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
@@ -1798,18 +1798,26 @@ async fn compile_and_verify(
                 span.in_scope(|| {
                     if activity.component_id().component_type == ComponentType::ActivityStub {
                         let engine = engines.activity_engine.clone();
-                        let wasm_component = WasmComponent::new(
+                        let runnable_component = RunnableComponent::new(
                             activity.wasm_path,
                             &engine,
                             activity.activity_config.component_id.component_type,
                         )?;
-                        let wit = wasm_component
+                        let wit = runnable_component
+                            .wasm_component
                             .wit()
                             .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
                             .ok();
-                        let exports_ext = wasm_component.exim.get_exports(true).to_vec();
-                        let exports_hierarchy_ext =
-                            wasm_component.exim.get_exports_hierarchy_ext().to_vec();
+                        let exports_ext = runnable_component
+                            .wasm_component
+                            .exim
+                            .get_exports(true)
+                            .to_vec();
+                        let exports_hierarchy_ext = runnable_component
+                            .wasm_component
+                            .exim
+                            .get_exports_hierarchy_ext()
+                            .to_vec();
                         let component_config_importable = ComponentConfigImportable {
                             exports_ext,
                             exports_hierarchy_ext,
@@ -1902,7 +1910,7 @@ async fn compile_and_verify(
                             component_id: webhook_compiled.config.component_id.clone(),
                             imports: webhook_compiled.imports().to_vec(),
                             content_digest, workflow_or_activity_config: None,
-                            wit: webhook_compiled.wasm_component.wit()
+                            wit: webhook_compiled.runnable_component.wasm_component.wit()
                                 .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
                                 .ok()
                         };
@@ -1949,13 +1957,14 @@ fn prespawn_activity(
     trace!(?activity, "Full configuration");
     let engine = engines.activity_engine.clone();
     let component_type = activity.component_id().component_type;
-    let wasm_component = WasmComponent::new(activity.wasm_path, &engine, component_type)?;
-    let wit = wasm_component
+    let runnable_component = RunnableComponent::new(activity.wasm_path, &engine, component_type)?;
+    let wit = runnable_component
+        .wasm_component
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
         .ok();
     let worker = ActivityWorker::new_with_config(
-        wasm_component,
+        runnable_component,
         activity.activity_config,
         engine,
         Now,
@@ -1984,13 +1993,14 @@ fn prespawn_workflow(
     trace!(?workflow, "Full configuration");
     let engine = engines.workflow_engine.clone();
     let component_type = workflow.component_id().component_type;
-    let wasm_component = WasmComponent::new(&workflow.wasm_path, &engine, component_type)?;
-    let wit = wasm_component
+    let runnable_component = RunnableComponent::new(&workflow.wasm_path, &engine, component_type)?;
+    let wit = runnable_component
+        .wasm_component
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
         .ok();
     let worker = WorkflowWorkerCompiled::new_with_config(
-        wasm_component,
+        runnable_component,
         workflow.workflow_config,
         engine,
         Now,

@@ -192,12 +192,6 @@ fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType
         }
     }
 
-    let engine = {
-        let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_component_model(true);
-        wasmtime_config.async_support(true);
-        wasmtime::Engine::new(&wasmtime_config).unwrap()
-    };
     let mut generated_code = String::new();
     writeln!(
         generated_code,
@@ -206,9 +200,8 @@ fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType
     )
     .unwrap();
 
-    let component =
-        utils::wasm_tools::WasmComponent::new(wasm_path, &engine, component_type.into())
-            .expect("cannot decode wasm component");
+    let component = utils::wasm_tools::WasmComponent::new(wasm_path, component_type.into())
+        .expect("cannot decode wasm component");
     generated_code += "pub mod exports {\n";
     let mut outer_map: IndexMap<String, Value> = IndexMap::new();
     for export in component.exim.get_exports_hierarchy_ext() {

@@ -23,8 +23,6 @@ pub const HTTP_HANDLER_FFQN: FunctionFqn =
 
 #[derive(derive_more::Debug)]
 pub struct WasmComponent {
-    #[debug(skip)]
-    pub wasmtime_component: wasmtime::component::Component,
     pub exim: ExIm,
     #[debug(skip)]
     decoded: DecodedWasm,
@@ -165,28 +163,12 @@ impl WasmComponent {
 
     pub fn new<P: AsRef<Path>>(
         wasm_path: P,
-        engine: &wasmtime::Engine,
         component_type: ComponentType,
     ) -> Result<Self, DecodeError> {
         let wasm_path = wasm_path.as_ref();
-
-        trace!("Decoding using wasmtime");
-        let wasmtime_component = {
-            let stopwatch = std::time::Instant::now();
-            let wasmtime_component = wasmtime::component::Component::from_file(engine, wasm_path)
-                .map_err(|err| {
-                error!("Cannot parse {wasm_path:?} using wasmtime - {err:?}");
-                DecodeError::CannotReadComponent { source: err }
-            })?;
-            debug!("Parsed with wasmtime in {:?}", stopwatch.elapsed());
-            wasmtime_component
-        };
         let (wit_parsed, decoded) = Self::decode_using_wit_parser(wasm_path, component_type)?;
-
         let exim = ExIm::decode(wit_parsed, component_type)?;
-
         Ok(Self {
-            wasmtime_component,
             exim,
             decoded,
             component_type,
@@ -209,37 +191,6 @@ impl WasmComponent {
     #[must_use]
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         &self.exim.imports_flat
-    }
-
-    pub fn index_exported_functions(
-        &self,
-    ) -> Result<
-        hashbrown::HashMap<FunctionFqn, wasmtime::component::ComponentExportIndex>,
-        DecodeError,
-    > {
-        let mut exported_ffqn_to_index = hashbrown::HashMap::new();
-        for FunctionMetadata { ffqn, .. } in &self.exim.exports_flat_noext {
-            let Some(ifc_export_index) = self
-                .wasmtime_component
-                .get_export_index(None, &ffqn.ifc_fqn)
-            else {
-                error!("Cannot find exported interface `{}`", ffqn.ifc_fqn);
-                return Err(DecodeError::CannotReadComponentWithReason {
-                    reason: format!("cannot find exported interface {ffqn}"),
-                });
-            };
-            let Some(fn_export_index) = self
-                .wasmtime_component
-                .get_export_index(Some(&ifc_export_index), &ffqn.function_name)
-            else {
-                error!("Cannot find exported function {ffqn}");
-                return Err(DecodeError::CannotReadComponentWithReason {
-                    reason: format!("cannot find exported function {ffqn}"),
-                });
-            };
-            exported_ffqn_to_index.insert(ffqn.clone(), fn_export_index);
-        }
-        Ok(exported_ffqn_to_index)
     }
 }
 
@@ -827,16 +778,8 @@ pub(crate) mod tests {
     use crate::wasm_tools::{ProcessingKind, WasmComponent};
     use concepts::ComponentType;
     use rstest::rstest;
-    use std::{path::PathBuf, sync::Arc};
-    use wasmtime::Engine;
+    use std::path::PathBuf;
     use wit_parser::decoding::DecodedWasm;
-
-    pub(crate) fn engine() -> Arc<Engine> {
-        let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_component_model(true);
-        wasmtime_config.async_support(true);
-        Arc::new(Engine::new(&wasmtime_config).unwrap())
-    }
 
     #[derive(Debug, Clone, Copy)]
     enum ExIm {
@@ -856,8 +799,7 @@ pub(crate) mod tests {
 
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
-        let engine = engine();
-        let component = WasmComponent::new(&wasm_path, &engine, ComponentType::Workflow).unwrap();
+        let component = WasmComponent::new(&wasm_path, ComponentType::Workflow).unwrap();
         match exim {
             ExIm::Exports => {
                 let exports = component

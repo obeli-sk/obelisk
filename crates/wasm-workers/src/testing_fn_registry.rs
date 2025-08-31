@@ -5,6 +5,8 @@ use concepts::{
 use indexmap::IndexMap;
 use std::{sync::Arc, time::Duration};
 
+use crate::RunnableComponent;
+
 pub struct TestingFnRegistry {
     ffqn_to_fn_details:
         hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ComponentId, ComponentRetryConfig)>,
@@ -14,15 +16,15 @@ pub struct TestingFnRegistry {
 impl TestingFnRegistry {
     #[must_use]
     pub fn new_from_components(
-        wasm_components: Vec<(crate::wasm_tools::WasmComponent, ComponentId)>,
+        wasm_components: Vec<(RunnableComponent, ComponentId)>,
     ) -> Arc<dyn FunctionRegistry> {
         let mut ffqn_to_fn_details = hashbrown::HashMap::new();
         let mut export_hierarchy: hashbrown::HashMap<
             IfcFqnName,
             IndexMap<FnName, FunctionMetadata>,
         > = hashbrown::HashMap::new();
-        for (wasm_component, component_id) in wasm_components {
-            for exported_function in wasm_component.exim.get_exports(true) {
+        for (runnable_component, component_id) in wasm_components {
+            for exported_function in runnable_component.wasm_component.exim.get_exports(true) {
                 let ffqn = exported_function.ffqn.clone();
                 ffqn_to_fn_details.insert(
                     ffqn.clone(),

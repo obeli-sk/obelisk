@@ -718,7 +718,6 @@ fn from_pkg_fqn_to_wit_package_name(pkg_fqn: PkgFqn) -> Result<PackageName, semv
 #[cfg(test)]
 mod tests {
     use crate::wasm_tools::WasmComponent;
-    use crate::wasm_tools::tests::engine;
     use concepts::ComponentType;
     use rstest::rstest;
     use std::path::PathBuf;
@@ -757,8 +756,7 @@ mod tests {
     ) {
         test_utils::set_up();
 
-        let engine = engine();
-        let component = WasmComponent::new(wasm_path, &engine, component_type).unwrap();
+        let component = WasmComponent::new(wasm_path, component_type).unwrap();
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
         let wit = component.wit().unwrap();

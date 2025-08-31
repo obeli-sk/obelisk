@@ -43,6 +43,9 @@ wasmtime-wasi-io.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 
+[features]
+test = []
+
 [dev-dependencies]
 concepts = { workspace = true, features = ["test"] }
 db-mem.workspace = true
@@ -64,7 +67,7 @@ test-programs-sleep-workflow-builder.workspace = true
 test-programs-stub-activity-builder.workspace = true
 test-programs-stub-workflow-builder.workspace = true
 test-utils.workspace = true
-utils = { workspace = true, features = ["test"] }
+utils.workspace = true
 
 async-trait.workspace = true
 futures-util.workspace = true

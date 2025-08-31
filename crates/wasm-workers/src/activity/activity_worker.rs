@@ -1,10 +1,10 @@
 use super::activity_ctx::{self, ActivityCtx};
 use super::activity_ctx_process::process_support_outer::v1_0_0::obelisk::activity::process as process_support;
-use crate::WasmFileError;
 use crate::activity::activity_ctx::HttpClientTracesContainer;
 use crate::component_logger::log_activities;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
+use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
@@ -16,7 +16,7 @@ use itertools::Itertools;
 use std::path::Path;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{info, trace};
-use utils::wasm_tools::{ExIm, WasmComponent};
+use utils::wasm_tools::ExIm;
 use wasmtime::UpdateDeadline;
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{Engine, component::Val};
@@ -58,7 +58,7 @@ pub struct ActivityWorker<C: ClockFn, S: Sleep> {
 impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
     #[tracing::instrument(skip_all, fields(%config.component_id), err)]
     pub fn new_with_config(
-        wasm_component: WasmComponent,
+        runnable_component: RunnableComponent,
         config: ActivityConfig,
         engine: Arc<Engine>,
         clock_fn: C,
@@ -90,15 +90,15 @@ impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
         }
         // Attempt to pre-instantiate to catch missing imports
         let instance_pre = linker
-            .instantiate_pre(&wasm_component.wasmtime_component)
+            .instantiate_pre(&runnable_component.wasmtime_component)
             .map_err(linking_err)?;
 
-        let exported_ffqn_to_index = wasm_component
+        let exported_ffqn_to_index = runnable_component
             .index_exported_functions()
             .map_err(WasmFileError::DecodeError)?;
         Ok(Self {
             engine,
-            exim: wasm_component.exim,
+            exim: runnable_component.wasm_component.exim,
             clock_fn,
             sleep,
             exported_ffqn_to_index,
@@ -430,12 +430,12 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn compile_activity(wasm_path: &str) -> (WasmComponent, ComponentId) {
+    pub(crate) fn compile_activity(wasm_path: &str) -> (RunnableComponent, ComponentId) {
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm)
     }
 
-    pub(crate) fn compile_activity_stub(wasm_path: &str) -> (WasmComponent, ComponentId) {
+    pub(crate) fn compile_activity_stub(wasm_path: &str) -> (RunnableComponent, ComponentId) {
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityStub)
     }
@@ -444,10 +444,10 @@ pub(crate) mod tests {
         wasm_path: &str,
         engine: &Engine,
         component_type: ComponentType,
-    ) -> (WasmComponent, ComponentId) {
+    ) -> (RunnableComponent, ComponentId) {
         let component_id = ComponentId::new(component_type, wasm_file_name(wasm_path)).unwrap();
         (
-            WasmComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
+            RunnableComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
             component_id,
         )
     }

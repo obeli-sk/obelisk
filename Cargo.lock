@@ -3129,9 +3129,6 @@ dependencies = [
  "tokio",
  "tracing",
  "wasmparser 0.237.0",
- "wasmtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
  "wit-component 0.237.0",
  "wit-parser 0.237.0",
 ]
@@ -3281,7 +3278,6 @@ dependencies = [
  "indexmap 2.11.0",
  "obeli-sk-concepts",
  "obeli-sk-utils",
- "wasmtime",
 ]
 
 [[package]]

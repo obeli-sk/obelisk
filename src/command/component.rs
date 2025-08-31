@@ -6,7 +6,6 @@ use concepts::ComponentType;
 use concepts::{FunctionFqn, FunctionMetadata};
 use std::path::PathBuf;
 use utils::wasm_tools::WasmComponent;
-use wasmtime::Engine;
 
 pub(crate) async fn inspect(
     wasm_path: PathBuf,
@@ -30,12 +29,8 @@ pub(crate) async fn inspect(
     } else {
         wasm_path
     };
-    let engine = {
-        let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_component_model(true);
-        Engine::new(&wasmtime_config).unwrap()
-    };
-    let wasm_component = WasmComponent::new(wasm_path, &engine, component_type)?;
+
+    let wasm_component = WasmComponent::new(wasm_path, component_type)?;
 
     println!("Exports:");
     inspect_fns(wasm_component.exported_functions(extensions));

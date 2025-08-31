@@ -1,6 +1,4 @@
 pub mod sha256sum;
-#[cfg(feature = "test")]
-pub mod testing_fn_registry;
 pub mod wasm_tools;
 mod wit;
 

@@ -1,8 +1,8 @@
-use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
+use crate::{RunnableComponent, WasmFileError};
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, ClientError, CreateRequest, DbError, DbPool, ExecutionEventInner,
@@ -32,7 +32,7 @@ use tracing::{
 };
 use types_v2_0_0::obelisk::types::execution::Host as ExecutionHost;
 use types_v2_0_0::obelisk::types::execution::HostJoinSetId;
-use utils::wasm_tools::{ExIm, HTTP_HANDLER_FFQN, WasmComponent};
+use utils::wasm_tools::{ExIm, HTTP_HANDLER_FFQN};
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
@@ -76,7 +76,7 @@ pub enum WebhookServerError {
 
 pub struct WebhookEndpointCompiled {
     pub config: WebhookEndpointConfig,
-    pub wasm_component: WasmComponent,
+    pub runnable_component: RunnableComponent,
 }
 
 impl WebhookEndpointCompiled {
@@ -85,16 +85,17 @@ impl WebhookEndpointCompiled {
         wasm_path: impl AsRef<Path>,
         engine: &Engine,
     ) -> Result<Self, WasmFileError> {
-        let wasm_component = WasmComponent::new(wasm_path, engine, ComponentType::WebhookEndpoint)?;
+        let runnable_component =
+            RunnableComponent::new(wasm_path, engine, ComponentType::WebhookEndpoint)?;
         Ok(Self {
             config,
-            wasm_component,
+            runnable_component,
         })
     }
 
     #[must_use]
     pub fn imports(&self) -> &[FunctionMetadata] {
-        &self.wasm_component.exim.imports_flat
+        &self.runnable_component.wasm_component.exim.imports_flat
     }
 
     #[instrument(skip_all, fields(component_id = %self.config.component_id), err)]
@@ -177,7 +178,7 @@ impl WebhookEndpointCompiled {
 
         // Pre-instantiate to catch missing imports
         let proxy_pre = linker
-            .instantiate_pre(&self.wasm_component.wasmtime_component)
+            .instantiate_pre(&self.runnable_component.wasmtime_component)
             .map_err(|err: wasmtime::Error| WasmFileError::LinkingError {
                 context: StrVariant::Static("linking error while creating instantiate_pre"),
                 err: err.into(),
@@ -191,7 +192,7 @@ impl WebhookEndpointCompiled {
 
         Ok(WebhookEndpointInstance {
             config: self.config,
-            exim: self.wasm_component.exim,
+            exim: self.runnable_component.wasm_component.exim,
             proxy_pre,
         })
     }
@@ -1026,8 +1027,10 @@ pub(crate) mod tests {
 
     pub(crate) mod nosim {
         use super::*;
+        use crate::RunnableComponent;
         use crate::activity::activity_worker::tests::{FIBO_10_OUTPUT, compile_activity};
         use crate::engines::{EngineConfig, Engines};
+        use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
             self, WebhookEndpointCompiled, WebhookEndpointConfig,
         };
@@ -1048,8 +1051,6 @@ pub(crate) mod tests {
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
         use tracing::info;
-        use utils::testing_fn_registry::TestingFnRegistry;
-        use utils::wasm_tools::WasmComponent;
         use val_json::type_wrapper::TypeWrapper;
         use val_json::wast_val::{WastVal, WastValWithType};
 
@@ -1060,9 +1061,9 @@ pub(crate) mod tests {
             }
         }
 
-        pub(crate) fn compile_webhook(wasm_path: &str) -> WasmComponent {
+        pub(crate) fn compile_webhook(wasm_path: &str) -> RunnableComponent {
             let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
-            WasmComponent::new(wasm_path, &engine, ComponentType::WebhookEndpoint).unwrap()
+            RunnableComponent::new(wasm_path, &engine, ComponentType::WebhookEndpoint).unwrap()
         }
 
         struct SetUpFiboWebhook {

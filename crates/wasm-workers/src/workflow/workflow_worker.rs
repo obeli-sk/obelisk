@@ -1,7 +1,7 @@
 use super::event_history::JoinSetCloseError;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
-use crate::WasmFileError;
 use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
+use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::storage::DbPool;
@@ -18,7 +18,7 @@ use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{Span, debug, error, info, instrument, trace, warn};
-use utils::wasm_tools::{DecodeError, WasmComponent};
+use utils::wasm_tools::DecodeError;
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{Engine, component::Val};
 use wasmtime::{Store, UpdateDeadline};
@@ -81,12 +81,13 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
     // If `config.stub_wasi` is set, this function must remove WASI exports and imports.
     #[tracing::instrument(skip_all, fields(%config.component_id))]
     pub fn new_with_config(
-        wasm_component: WasmComponent,
+        runnable_component: RunnableComponent,
         config: WorkflowConfig,
         engine: Arc<Engine>,
         clock_fn: C,
     ) -> Result<Self, DecodeError> {
-        let exported_functions_ext = wasm_component
+        let exported_functions_ext = runnable_component
+            .wasm_component
             .exim
             .get_exports(true)
             .iter()
@@ -100,7 +101,8 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
             })
             .cloned()
             .collect();
-        let exports_hierarchy_ext = wasm_component
+        let exports_hierarchy_ext = runnable_component
+            .wasm_component
             .exim
             .get_exports_hierarchy_ext()
             .iter()
@@ -115,7 +117,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
             .cloned()
             .collect();
 
-        let mut exported_ffqn_to_index = wasm_component.index_exported_functions()?;
+        let mut exported_ffqn_to_index = runnable_component.index_exported_functions()?;
         exported_ffqn_to_index.retain(|ffqn, _| {
             if config.stub_wasi {
                 // Hide wasi exports
@@ -125,7 +127,8 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
             }
         });
 
-        let exported_functions_noext = wasm_component
+        let exported_functions_noext = runnable_component
+            .wasm_component
             .exim
             .get_exports(false)
             .iter()
@@ -140,7 +143,8 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
             .cloned()
             .collect();
 
-        let imported_functions = wasm_component
+        let imported_functions = runnable_component
+            .wasm_component
             .exim
             .imports_flat
             .into_iter()
@@ -158,7 +162,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
             config,
             engine,
             clock_fn,
-            wasmtime_component: wasm_component.wasmtime_component,
+            wasmtime_component: runnable_component.wasmtime_component,
             exported_functions_ext,
             exports_hierarchy_ext,
             exported_ffqn_to_index,
@@ -672,6 +676,7 @@ impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
 pub(crate) mod tests {
     use super::*;
     use crate::activity::activity_worker::tests::compile_activity_stub;
+    use crate::testing_fn_registry::{TestingFnRegistry, fn_registry_dummy};
     use crate::{
         activity::activity_worker::tests::{
             FIBO_10_INPUT, FIBO_10_OUTPUT, compile_activity, spawn_activity_fibo, wasm_file_name,
@@ -700,7 +705,6 @@ pub(crate) mod tests {
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::info_span;
-    use utils::testing_fn_registry::{TestingFnRegistry, fn_registry_dummy};
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -726,7 +730,7 @@ pub(crate) mod tests {
     const FFQN_WORKFLOW_HTTP_GET_SUCCESSFUL: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
     const FFQN_WORKFLOW_HTTP_GET_RESP: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_RESP);
 
-    pub(crate) fn compile_workflow(wasm_path: &str) -> (WasmComponent, ComponentId) {
+    pub(crate) fn compile_workflow(wasm_path: &str) -> (RunnableComponent, ComponentId) {
         let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         compile_workflow_with_engine(wasm_path, &engine)
     }
@@ -734,11 +738,11 @@ pub(crate) mod tests {
     pub(crate) fn compile_workflow_with_engine(
         wasm_path: &str,
         engine: &Engine,
-    ) -> (WasmComponent, ComponentId) {
+    ) -> (RunnableComponent, ComponentId) {
         let component_id =
             ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         (
-            WasmComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
+            RunnableComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
             component_id,
         )
     }
@@ -756,7 +760,7 @@ pub(crate) mod tests {
             ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
         let worker = Arc::new(
             WorkflowWorkerCompiled::new_with_config(
-                WasmComponent::new(wasm_path, &workflow_engine, component_id.component_type)
+                RunnableComponent::new(wasm_path, &workflow_engine, component_id.component_type)
                     .unwrap(),
                 WorkflowConfig {
                     component_id: component_id.clone(),
@@ -933,7 +937,8 @@ pub(crate) mod tests {
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         Arc::new(
             WorkflowWorkerCompiled::new_with_config(
-                WasmComponent::new(wasm_path, &workflow_engine, ComponentType::Workflow).unwrap(),
+                RunnableComponent::new(wasm_path, &workflow_engine, ComponentType::Workflow)
+                    .unwrap(),
                 WorkflowConfig {
                     component_id: ComponentId::dummy_workflow(),
                     join_next_blocking_strategy,
