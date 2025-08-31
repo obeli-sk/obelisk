@@ -110,6 +110,7 @@ use tracing::instrument;
 use tracing::warn;
 use tracing::{debug, info, trace};
 use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
+use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::RunnableComponent;
@@ -1797,27 +1798,17 @@ async fn compile_and_verify(
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     if activity.component_id().component_type == ComponentType::ActivityStub {
-                        let engine = engines.activity_engine.clone();
-                        let runnable_component = RunnableComponent::new(
+                        let wasm_component = WasmComponent::new(
                             activity.wasm_path,
-                            &engine,
                             activity.activity_config.component_id.component_type,
                         )?;
-                        let wit = runnable_component
-                            .wasm_component
+                        let wit = wasm_component
                             .wit()
                             .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
                             .ok();
-                        let exports_ext = runnable_component
-                            .wasm_component
-                            .exim
-                            .get_exports(true)
-                            .to_vec();
-                        let exports_hierarchy_ext = runnable_component
-                            .wasm_component
-                            .exim
-                            .get_exports_hierarchy_ext()
-                            .to_vec();
+                        let exports_ext = wasm_component.exim.get_exports(true).to_vec();
+                        let exports_hierarchy_ext =
+                            wasm_component.exim.get_exports_hierarchy_ext().to_vec();
                         let component_config_importable = ComponentConfigImportable {
                             exports_ext,
                             exports_hierarchy_ext,
