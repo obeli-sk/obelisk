@@ -32,7 +32,7 @@ use tracing::{
 };
 use types_v2_0_0::obelisk::types::execution::Host as ExecutionHost;
 use types_v2_0_0::obelisk::types::execution::HostJoinSetId;
-use utils::wasm_tools::{ExIm, HTTP_HANDLER_FFQN};
+use utils::wasm_tools::ExIm;
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
@@ -43,6 +43,9 @@ use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 use wasmtime_wasi_io::IoView;
+
+const HTTP_HANDLER_FFQN: FunctionFqn =
+    FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
 
 pub(crate) mod types_v2_0_0 {
     wasmtime::component::bindgen!({

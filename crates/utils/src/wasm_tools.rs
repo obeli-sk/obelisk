@@ -18,9 +18,6 @@ use wit_parser::{Resolve, WorldItem, WorldKey, decoding::DecodedWasm};
 
 pub const EXTENSION_FN_SUFFIX_SCHEDULE: &str = "-schedule";
 
-pub const HTTP_HANDLER_FFQN: FunctionFqn =
-    FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
-
 #[derive(derive_more::Debug)]
 pub struct WasmComponent {
     pub exim: ExIm,
@@ -102,7 +99,7 @@ impl WasmComponent {
     pub fn verify_wasm<P: AsRef<Path>>(wasm_path: P) -> Result<(), DecodeError> {
         let wasm_path = wasm_path.as_ref();
         Self::decode_using_wit_parser_inner(
-            wasm_path, false, // does not matter
+            wasm_path, false, // `submittable_exports` parameter does not matter
         )?;
         Ok(())
     }

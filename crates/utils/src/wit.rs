@@ -1,4 +1,4 @@
-use crate::wasm_tools::ExIm;
+use crate::wasm_tools::{EXTENSION_FN_SUFFIX_SCHEDULE, ExIm};
 use anyhow::Context;
 use concepts::{
     ComponentType, FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB,
@@ -418,7 +418,7 @@ fn add_ext_exports(
                 }
                 if component_type != ComponentType::ActivityStub {
                     // -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
-                    let fn_name = format!("{fn_name}-schedule");
+                    let fn_name = format!("{fn_name}{EXTENSION_FN_SUFFIX_SCHEDULE}");
                     let schedule_at_param_name =
                         generate_param_name("schedule-at", &original_fn.params);
                     let mut params = vec![(
