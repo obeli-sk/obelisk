@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use semver::{BuildMetadata, Prerelease, Version};
 use std::{ops::Deref, path::PathBuf};
 use tracing::{error, warn};
-use wit_component::{DecodedWasm, WitPrinter};
+use wit_component::WitPrinter;
 use wit_parser::{
     Function, FunctionKind, Handle, Interface, InterfaceId, PackageId, PackageName, Resolve, Type,
     TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup,
@@ -30,22 +30,47 @@ const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!(concat!(
 
 pub(crate) fn wit(
     component_type: ComponentType,
-    decoded: &DecodedWasm,
+    resolve: &Resolve,
+    main_package: PackageId,
     exim: &ExIm,
 ) -> Result<String, anyhow::Error> {
-    let resolve = decoded.resolve();
-    let mut ids = resolve
+    let (resolve, main_package) = add_exports(component_type, resolve, main_package, exim)?;
+    // print all packages, with the main package as root, others as nested.
+    let ids = packages_except_main(&resolve, main_package, false);
+    let mut printer = WitPrinter::default();
+    printer.print(&resolve, main_package, &ids)?;
+    Ok(printer.output.to_string())
+}
+
+pub(crate) fn add_exports(
+    component_type: ComponentType,
+    resolve: &Resolve,
+    main_package: PackageId,
+    exim: &ExIm,
+) -> Result<(Resolve, PackageId), anyhow::Error> {
+    let ids = packages_except_main(resolve, main_package, true);
+    let mut printer = WitPrinter::default();
+    printer.print(resolve, main_package, &ids)?;
+    let wit = printer.output.to_string();
+    add_ext_exports(&wit, exim, component_type)
+}
+
+pub(crate) fn packages_except_main(
+    resolve: &Resolve,
+    main_package: PackageId,
+    sorted: bool,
+) -> Vec<PackageId> {
+    let mut packages = resolve
         .packages
         .iter()
         .map(|(id, _)| id)
         // The main package would show as a nested package as well
-        .filter(|id| *id != decoded.package())
+        .filter(|id| *id != main_package)
         .collect::<Vec<_>>();
-    ids.sort();
-    let mut printer = WitPrinter::default();
-    printer.print(resolve, decoded.package(), &ids)?;
-    let wit = printer.output.to_string();
-    add_ext_exports(wit, exim, component_type)
+    if sorted {
+        packages.sort();
+    }
+    packages
 }
 
 // Replace obelisk:types from the actual WASM file because it may not contain all types we are going to need in exported functions.
@@ -57,7 +82,6 @@ fn replace_obelisk_types(wit: &str) -> String {
         types_nesting.push('}');
         types_nesting
     };
-
     const TYPES_NESTED_PACKAGE_FIRST_LINE: &str =
         formatcp!("package {OBELISK_TYPES_PACKAGE_NAME} {{");
     let wit = remove_nested_package(wit, TYPES_NESTED_PACKAGE_FIRST_LINE);
@@ -66,17 +90,18 @@ fn replace_obelisk_types(wit: &str) -> String {
 }
 
 fn add_ext_exports(
-    wit: String,
+    wit: &str,
     exim: &ExIm,
     component_type: ComponentType,
-) -> Result<String, anyhow::Error> {
-    if component_type == ComponentType::WebhookEndpoint {
-        return Ok(wit);
-    }
-    let wit = replace_obelisk_types(&wit);
+) -> Result<(Resolve, PackageId), anyhow::Error> {
+    let wit = replace_obelisk_types(wit);
     let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit)?;
     let mut resolve = Resolve::new();
     let main_id = resolve.push_group(group)?;
+    if component_type == ComponentType::WebhookEndpoint {
+        // no extension exports for webhooks
+        return Ok((resolve, main_id));
+    }
     let exported_pkg_to_ifc_to_details_map = get_exported_pkg_to_ifc_to_details_map_noext(exim);
 
     // Find necessary handles
@@ -222,11 +247,20 @@ fn add_ext_exports(
     };
 
     for (pkg_fqn, ifc_to_fns) in exported_pkg_to_ifc_to_details_map {
-        // Get or create the -obelisk-ext variant of the exported package.
+        // Get or create extension packages.
+        // `-obelisk-ext`
         let obelisk_ext_pkg_id = get_or_create_package(&pkg_fqn, SUFFIX_PKG_EXT, &mut resolve)?;
-        let obelisk_schedule_pkg_id =
-            get_or_create_package(&pkg_fqn, SUFFIX_PKG_SCHEDULE, &mut resolve)?;
-        // Get or create the -obelisk-stub variant of the exported package.
+        // `-obelisk-schedule`
+        let obelisk_schedule_pkg_id = if component_type != ComponentType::ActivityStub {
+            Some(get_or_create_package(
+                &pkg_fqn,
+                SUFFIX_PKG_SCHEDULE,
+                &mut resolve,
+            )?)
+        } else {
+            None
+        };
+        // `-obelisk-stub`
         let obelisk_stub_pkg_id = if component_type == ComponentType::ActivityStub {
             Some(get_or_create_package(
                 &pkg_fqn,
@@ -269,7 +303,7 @@ fn add_ext_exports(
                     package: Some(obelisk_ext_pkg_id),
                 }
             };
-            let mut schedule_ifc = {
+            let mut schedule_ifc = if let Some(obelisk_schedule_pkg_id) = obelisk_schedule_pkg_id {
                 let mut types = IndexMap::new();
                 types.insert("execution-id".to_string(), type_id_execution_id);
                 types.insert("schedule-at".to_string(), type_id_schedule_at);
@@ -279,14 +313,17 @@ fn add_ext_exports(
                     &mut types,
                     &mut resolve.types,
                 );
-                Interface {
+                let ifc = Interface {
                     name: Some(ifc_fqn.ifc_name().to_string()),
                     types,
                     functions: IndexMap::default(),
                     docs: wit_parser::Docs::default(),
                     stability: wit_parser::Stability::default(),
                     package: Some(obelisk_ext_pkg_id),
-                }
+                };
+                Some((obelisk_schedule_pkg_id, ifc))
+            } else {
+                None
             };
             let mut stub_ifc = if let Some(obelisk_stub_pkg_id) = obelisk_stub_pkg_id {
                 let mut types = IndexMap::new();
@@ -298,17 +335,15 @@ fn add_ext_exports(
                     &mut types,
                     &mut resolve.types,
                 );
-                Some((
-                    obelisk_stub_pkg_id,
-                    Interface {
-                        name: Some(ifc_fqn.ifc_name().to_string()),
-                        types,
-                        functions: IndexMap::default(),
-                        docs: wit_parser::Docs::default(),
-                        stability: wit_parser::Stability::default(),
-                        package: Some(obelisk_stub_pkg_id),
-                    },
-                ))
+                let ifc = Interface {
+                    name: Some(ifc_fqn.ifc_name().to_string()),
+                    types,
+                    functions: IndexMap::default(),
+                    docs: wit_parser::Docs::default(),
+                    stability: wit_parser::Stability::default(),
+                    package: Some(obelisk_stub_pkg_id),
+                };
+                Some((obelisk_stub_pkg_id, ifc))
             } else {
                 None
             };
@@ -416,7 +451,7 @@ fn add_ext_exports(
                     };
                     ext_ifc.functions.insert(fn_name, fn_ext);
                 }
-                if component_type != ComponentType::ActivityStub {
+                if let Some((_, schedule_ifc)) = &mut schedule_ifc {
                     // -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
                     let fn_name = format!("{fn_name}{EXTENSION_FN_SUFFIX_SCHEDULE}");
                     let schedule_at_param_name =
@@ -491,8 +526,9 @@ fn add_ext_exports(
                     stub_ifc.functions.insert(fn_name, fn_stub);
                 }
             }
+            // Add Interface-s to `resolve`.
             {
-                // Add the `-obelisk-ext` Interface to `resolve`.
+                // `-obelisk-ext`
                 let ext_ifc_id = resolve.interfaces.alloc(ext_ifc);
                 resolve
                     .packages
@@ -501,8 +537,8 @@ fn add_ext_exports(
                     .interfaces
                     .insert(ifc_fqn.ifc_name().to_string(), ext_ifc_id);
             }
-            {
-                // Add the `-obelisk-schedule` Interface to `resolve`.
+            if let Some((obelisk_schedule_pkg_id, schedule_ifc)) = schedule_ifc {
+                // `-obelisk-schedule`
                 let schedule_ifc_id = resolve.interfaces.alloc(schedule_ifc);
                 resolve
                     .packages
@@ -512,7 +548,7 @@ fn add_ext_exports(
                     .insert(ifc_fqn.ifc_name().to_string(), schedule_ifc_id);
             }
             if let Some((obelisk_stub_pkg_id, stub_ifc)) = stub_ifc {
-                // Add the `-obelisk-stub` Interface to `resolve`.
+                // `-obelisk-stub`
                 let stub_ifc_id = resolve.interfaces.alloc(stub_ifc);
                 resolve
                     .packages
@@ -523,18 +559,7 @@ fn add_ext_exports(
             }
         }
     }
-
-    let ids = resolve
-        .packages
-        .iter()
-        .map(|(id, _)| id)
-        // The main package would show as a nested package as well
-        .filter(|id| *id != main_id)
-        .collect::<Vec<_>>();
-
-    let mut printer = WitPrinter::default();
-    printer.print(&resolve, main_id, &ids)?;
-    Ok(printer.output.to_string())
+    Ok((resolve, main_id))
 }
 
 fn generate_param_name(param_name: &str, params: &[(String, Type)]) -> String {
@@ -694,7 +719,7 @@ fn try_from_ifc_fqn_name(ifc_fqn: &IfcFqnName) -> Result<PackageName, anyhow::Er
     })
 }
 
-fn from_wit_package_name_to_pkg_fqn(package_name: &PackageName) -> PkgFqn {
+pub(crate) fn from_wit_package_name_to_pkg_fqn(package_name: &PackageName) -> PkgFqn {
     PkgFqn {
         namespace: package_name.namespace.clone(),
         package_name: package_name.name.clone(),

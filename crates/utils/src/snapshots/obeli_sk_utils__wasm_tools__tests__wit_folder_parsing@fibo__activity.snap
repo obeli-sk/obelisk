@@ -1,0 +1,29 @@
+---
+source: crates/utils/src/wasm_tools.rs
+assertion_line: 995
+expression: snapshot
+---
+testing:fibo-obelisk-ext
+package testing:fibo-obelisk-ext;
+
+interface fibo {
+  use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
+
+  fibo-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
+
+  fibo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, u64>, await-next-extension-error>;
+
+  fibo-get: func(execution-id: execution-id) -> result<u64, get-extension-error>;
+}
+
+
+
+testing:fibo-obelisk-schedule
+package testing:fibo-obelisk-schedule;
+
+interface fibo {
+  use obelisk:types/execution@2.0.0.{execution-id};
+  use obelisk:types/time@2.0.0.{schedule-at};
+
+  fibo-schedule: func(schedule-at: schedule-at, n: u8) -> execution-id;
+}

@@ -32,6 +32,8 @@ wit-component.workspace = true
 wit-parser.workspace = true
 
 [dev-dependencies]
+concepts = { workspace = true, features = ["test"] }
+
 insta.workspace = true
 rstest.workspace = true
 serde.workspace = true

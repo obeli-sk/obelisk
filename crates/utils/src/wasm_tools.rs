@@ -1,9 +1,9 @@
-use crate::sha256sum::calculate_sha256_file;
+use crate::{sha256sum::calculate_sha256_file, wit::from_wit_package_name_to_pkg_fqn};
 use anyhow::Context;
 use concepts::{
     ComponentType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
-    PackageIfcFns, ParameterType, ParameterTypes, ReturnType, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE,
-    SUFFIX_PKG_STUB, StrVariant,
+    PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType, SUFFIX_PKG_EXT,
+    SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -14,7 +14,7 @@ use std::{
 use tracing::{debug, error, info, trace};
 use val_json::type_wrapper::{TypeConversionError, TypeWrapper};
 use wit_component::{ComponentEncoder, WitPrinter};
-use wit_parser::{Resolve, WorldItem, WorldKey, decoding::DecodedWasm};
+use wit_parser::{PackageId, Resolve, World, WorldItem, WorldKey, decoding::DecodedWasm};
 
 pub const EXTENSION_FN_SUFFIX_SCHEDULE: &str = "-schedule";
 
@@ -22,8 +22,9 @@ pub const EXTENSION_FN_SUFFIX_SCHEDULE: &str = "-schedule";
 pub struct WasmComponent {
     pub exim: ExIm,
     #[debug(skip)]
-    decoded: DecodedWasm,
+    resolve_hoder: ResolveHolder,
     component_type: ComponentType,
+    main_package: PackageId,
 }
 
 impl WasmComponent {
@@ -96,7 +97,7 @@ impl WasmComponent {
 
     /// Attempt to open the WASM file, parse it using `wit_parser`.
     /// Check that the file is a WASM Component.
-    pub fn verify_wasm<P: AsRef<Path>>(wasm_path: P) -> Result<(), DecodeError> {
+    pub fn verify_wasm(wasm_path: impl AsRef<Path>) -> Result<(), DecodeError> {
         let wasm_path = wasm_path.as_ref();
         Self::decode_using_wit_parser_inner(
             wasm_path, false, // `submittable_exports` parameter does not matter
@@ -104,8 +105,8 @@ impl WasmComponent {
         Ok(())
     }
 
-    pub fn new<P: AsRef<Path>>(
-        wasm_path: P,
+    pub fn new(
+        wasm_path: impl AsRef<Path>,
         component_type: ComponentType,
     ) -> Result<Self, DecodeError> {
         let wasm_path = wasm_path.as_ref();
@@ -113,13 +114,33 @@ impl WasmComponent {
         let exim = ExIm::decode(wit_parsed, component_type)?;
         Ok(Self {
             exim,
-            decoded,
+            main_package: decoded.package(),
+            resolve_hoder: ResolveHolder::DecodedWasm(decoded),
             component_type,
         })
     }
 
-    pub fn wit(&self) -> Result<String, anyhow::Error> {
-        crate::wit::wit(self.component_type, &self.decoded, &self.exim)
+    pub fn new_from_wit_folder(
+        path: impl AsRef<Path>,
+        component_type: ComponentType,
+    ) -> Result<Self, DecodeError> {
+        let mut resolve = Resolve::default();
+        let (main_package, _) = resolve
+            .push_dir(path)
+            .map_err(|source| DecodeError::WitDirectoryParsingError { source })?;
+        let world_id = resolve
+            .select_world(main_package, None)
+            .map_err(|source| DecodeError::WorldSelectionError { source })?;
+        let world = resolve.worlds.get(world_id).expect("world must exist");
+        let wit_parsed =
+            Self::create_wit_parsed(&resolve, world, has_submittable_exports(component_type))?;
+        let exim = ExIm::decode(wit_parsed, component_type)?;
+        Ok(Self {
+            exim,
+            resolve_hoder: ResolveHolder::Own(resolve),
+            main_package,
+            component_type,
+        })
     }
 
     #[must_use]
@@ -136,14 +157,60 @@ impl WasmComponent {
         &self.exim.imports_flat
     }
 
+    pub fn wit(&self) -> Result<String, anyhow::Error> {
+        crate::wit::wit(
+            self.component_type,
+            self.resolve_hoder.resolve(),
+            self.main_package,
+            &self.exim,
+        )
+    }
+
+    pub fn exported_extension_wits(
+        &self,
+    ) -> Result<hashbrown::HashMap<PkgFqn, String>, anyhow::Error> {
+        let (resolve, _main_package) = crate::wit::add_exports(
+            self.component_type,
+            self.resolve_hoder.resolve(),
+            self.main_package,
+            &self.exim,
+        )?;
+        let mut pkgs_to_wits = hashbrown::HashMap::new();
+
+        let exported_ext_packages: hashbrown::HashSet<_> = self
+            .exim
+            .exports_hierarchy_ext
+            .iter()
+            .filter_map(|pkg_ifc_fns| {
+                if pkg_ifc_fns.extension {
+                    Some(pkg_ifc_fns.ifc_fqn.pkg_fqn_name().to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (package_id, package) in resolve
+            .packages
+            .iter()
+            .filter(|(_, package)| exported_ext_packages.contains(&package.name.to_string()))
+        {
+            let pkg_fqn = from_wit_package_name_to_pkg_fqn(&package.name);
+
+            let mut printer = wit_component::WitPrinter::default();
+            printer.print(&resolve, package_id, &[]).unwrap();
+            let wit = printer.output.to_string();
+
+            pkgs_to_wits.insert(pkg_fqn, wit);
+        }
+        Ok(pkgs_to_wits)
+    }
+
     fn decode_using_wit_parser(
         wasm_path: &Path,
         component_type: ComponentType,
     ) -> Result<(WitParsed, DecodedWasm), DecodeError> {
-        Self::decode_using_wit_parser_inner(
-            wasm_path,
-            component_type != ComponentType::ActivityStub, // not submittable, stub executions must be created by workflows
-        )
+        Self::decode_using_wit_parser_inner(wasm_path, has_submittable_exports(component_type))
     }
 
     fn decode_using_wit_parser_inner(
@@ -175,6 +242,21 @@ impl WasmComponent {
         };
 
         let world = resolve.worlds.get(*world_id).expect("world must exist");
+        let wit_parsed = Self::create_wit_parsed(resolve, world, submittable_exports)?;
+        debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
+        trace!(
+            "Exports: {exports:?}, imports: {imports:?}",
+            exports = wit_parsed.exports,
+            imports = wit_parsed.imports
+        );
+        Ok((wit_parsed, decoded))
+    }
+
+    fn create_wit_parsed(
+        resolve: &Resolve,
+        world: &World,
+        submittable_exports: bool,
+    ) -> Result<WitParsed, DecodeError> {
         let exports = populate_ifcs(
             resolve,
             world.exports.iter(),
@@ -185,10 +267,25 @@ impl WasmComponent {
             },
         )?;
         let imports = populate_ifcs(resolve, world.imports.iter(), ProcessingKind::Imports)?;
-        debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
-        trace!("Exports: {exports:?}, imports: {imports:?}");
-        Ok((WitParsed { imports, exports }, decoded))
+        Ok(WitParsed { imports, exports })
     }
+}
+
+enum ResolveHolder {
+    DecodedWasm(DecodedWasm),
+    Own(Resolve),
+}
+impl ResolveHolder {
+    fn resolve(&self) -> &Resolve {
+        match self {
+            ResolveHolder::DecodedWasm(decoded) => decoded.resolve(),
+            ResolveHolder::Own(resolve) => resolve,
+        }
+    }
+}
+
+fn has_submittable_exports(component_type: ComponentType) -> bool {
+    component_type != ComponentType::ActivityStub // not submittable, stub executions must be created by workflows
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -215,6 +312,16 @@ pub enum DecodeError {
     EmptyInterface,
     #[error("invalid package `{0}`, {SUFFIX_PKG_EXT} is reserved")]
     ReservedPackageSuffix(String),
+    #[error("cannot parse the WIT directory")]
+    WitDirectoryParsingError {
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("cannot select the default world")]
+    WorldSelectionError {
+        #[source]
+        source: anyhow::Error,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -857,5 +964,45 @@ pub(crate) mod tests {
                 .collect::<hashbrown::HashMap<_, _>>();
             insta::with_settings!({ sort_maps => true,  snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
         }
+    }
+
+    #[rstest]
+    #[case("fibo/activity", ComponentType::ActivityWasm)]
+    #[case("fibo/workflow", ComponentType::Workflow)]
+    #[case("fibo/webhook", ComponentType::WebhookEndpoint)]
+    #[case("stub/activity", ComponentType::ActivityStub)]
+    fn test_wit_folder_parsing(#[case] path: &'static str, #[case] component_type: ComponentType) {
+        use std::fmt::Write;
+
+        let workspace_dir = PathBuf::from(
+            std::env::var("CARGO_WORKSPACE_DIR")
+                .as_deref()
+                .unwrap_or("."),
+        )
+        .canonicalize()
+        .unwrap();
+        let wasm_component = WasmComponent::new_from_wit_folder(
+            workspace_dir
+                .join("crates/testing/test-programs")
+                .join(path)
+                .join("wit"),
+            component_type,
+        )
+        .unwrap();
+
+        let mut pkgs_to_wits: Vec<_> = wasm_component
+            .exported_extension_wits()
+            .unwrap()
+            .into_iter()
+            .map(|(pkg_fqn, wit)| (pkg_fqn.to_string(), wit))
+            .collect();
+        pkgs_to_wits.sort_by(|(pkg_fqn, _), (pkg_fqn2, _)| pkg_fqn.cmp(pkg_fqn2));
+
+        let mut snapshot = String::new();
+        for (pkg_fqn, wit) in pkgs_to_wits {
+            write!(&mut snapshot, "{pkg_fqn}\n{wit}\n\n").unwrap();
+        }
+
+        insta::with_settings!({  snapshot_suffix => format!("{path}")}, {insta::assert_snapshot!(snapshot)});
     }
 }

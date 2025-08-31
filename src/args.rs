@@ -38,6 +38,15 @@ pub(crate) enum Generate {
         /// Filename to write the schema to, defaults to `<stdout>`.
         output: Option<PathBuf>,
     },
+    /// Generate extension WIT files that are automatically implemented by Obelisk
+    /// based on the exported interfaces of the component.
+    ExportedExtWits {
+        #[arg(long, short)]
+        /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
+        component_type: ComponentType,
+        input_wit_directory: PathBuf,
+        output_deps_directory: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]

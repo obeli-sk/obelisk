@@ -296,6 +296,7 @@ impl<T> From<String> for Name<T> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 pub struct PkgFqn {
     pub namespace: String,
     pub package_name: String,
@@ -313,33 +314,6 @@ impl Display for PkgFqn {
         } else {
             write!(f, "{namespace}:{package_name}")
         }
-    }
-}
-
-impl PkgFqn {
-    #[must_use]
-    pub fn is_extension(&self) -> bool {
-        self.package_name.ends_with(SUFFIX_PKG_EXT)
-    }
-
-    #[must_use]
-    pub fn package_strip_extension_suffix(&self) -> Option<&str> {
-        self.package_name.as_str().strip_suffix(SUFFIX_PKG_EXT)
-    }
-
-    #[must_use]
-    pub fn is_namespace_obelisk(&self) -> bool {
-        self.namespace == NAMESPACE_OBELISK
-    }
-
-    #[must_use]
-    pub fn ifc_fqn_name(&self, ifc_name: &str) -> IfcFqnName {
-        IfcFqnName::from_parts(
-            &self.namespace,
-            &self.package_name,
-            ifc_name,
-            self.version.as_deref(),
-        )
     }
 }
 
@@ -1899,7 +1873,7 @@ impl Display for ParameterTypes {
 #[derive(Debug, Clone)]
 pub struct PackageIfcFns {
     pub ifc_fqn: IfcFqnName,
-    pub extension: bool, // interface ending with `-obelisk-ext` or `-obelisk-stub`
+    pub extension: bool, // one of `-obelisk-ext`, `-obelisk-schedule`, `-obelisk-stub`
     pub fns: IndexMap<FnName, FunctionMetadata>,
 }
 

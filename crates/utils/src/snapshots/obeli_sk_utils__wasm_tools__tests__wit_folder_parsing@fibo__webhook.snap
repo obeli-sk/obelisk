@@ -1,0 +1,5 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: snapshot
+---
+
