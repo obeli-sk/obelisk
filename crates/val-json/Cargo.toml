@@ -19,6 +19,7 @@ serde.workspace = true
 thiserror.workspace = true
 wasmtime = { workspace = true, optional = true }
 wast.workspace = true
+wit-parser = { workspace = true, optional = true }
 
 [dev-dependencies]
 assert_matches.workspace = true
@@ -26,6 +27,7 @@ insta.workspace = true
 
 [features]
 wasmtime = ["dep:wasmtime"]
+wit-parser = ["dep:wit-parser"]
 
 [lints]
 workspace = true

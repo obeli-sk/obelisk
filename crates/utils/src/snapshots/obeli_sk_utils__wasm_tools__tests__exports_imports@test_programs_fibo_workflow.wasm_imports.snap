@@ -262,6 +262,35 @@ expression: imports
     "extension": null,
     "submittable": false
   },
+  "testing:fibo-workflow/workflow-nesting.fibo-start-fiboas": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow/workflow-nesting",
+      "function_name": "fibo-start-fiboas"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "fiboas",
+        "wit_type": "u32"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations-per-fiboa",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": "u64",
+      "wit_type": "u64"
+    },
+    "extension": null,
+    "submittable": false
+  },
   "testing:fibo/fibo.fibo": {
     "ffqn": {
       "ifc_fqn": "testing:fibo/fibo",

@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 use val_json::type_wrapper::{TypeConversionError, TypeWrapper};
 use wit_component::{ComponentEncoder, WitPrinter};
 use wit_parser::{Resolve, WorldItem, WorldKey, decoding::DecodedWasm};
@@ -21,15 +21,13 @@ pub const EXTENSION_FN_SUFFIX_SCHEDULE: &str = "-schedule";
 pub const HTTP_HANDLER_FFQN: FunctionFqn =
     FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
 
-type FfqnToMetadataMap = hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>;
-
 #[derive(derive_more::Debug)]
 pub struct WasmComponent {
     #[debug(skip)]
     pub wasmtime_component: wasmtime::component::Component,
     pub exim: ExIm,
     #[debug(skip)]
-    pub decoded: DecodedWasm,
+    decoded: DecodedWasm,
     component_type: ComponentType,
 }
 
@@ -105,13 +103,26 @@ impl WasmComponent {
     /// Check that the file is a WASM Component.
     pub fn verify_wasm<P: AsRef<Path>>(wasm_path: P) -> Result<(), DecodeError> {
         let wasm_path = wasm_path.as_ref();
-        Self::decode_using_wit_parser(wasm_path)?;
+        Self::decode_using_wit_parser_inner(
+            wasm_path, false, // does not matter
+        )?;
         Ok(())
     }
 
     fn decode_using_wit_parser(
         wasm_path: &Path,
-    ) -> Result<(FfqnToMetadataMap, FfqnToMetadataMap, DecodedWasm), DecodeError> {
+        component_type: ComponentType,
+    ) -> Result<(WitParsed, DecodedWasm), DecodeError> {
+        Self::decode_using_wit_parser_inner(
+            wasm_path,
+            component_type != ComponentType::ActivityStub, // not submittable, stub executions must be created by workflows
+        )
+    }
+
+    fn decode_using_wit_parser_inner(
+        wasm_path: &Path,
+        submittable_exports: bool, // whether exported functions + `-schedule` extensions should be submittable
+    ) -> Result<(WitParsed, DecodedWasm), DecodeError> {
         trace!("Decoding using wit_parser");
 
         let wasm_file = std::fs::File::open(wasm_path)
@@ -137,17 +148,19 @@ impl WasmComponent {
         };
 
         let world = resolve.worlds.get(*world_id).expect("world must exist");
-        let exported_ffqns_to_wit_meta =
-            create_ffqn_to_metadata_map(resolve, world.exports.iter())?;
-        let imported_ffqns_to_wit_meta =
-            create_ffqn_to_metadata_map(resolve, world.imports.iter())?;
+        let exports = populate_ifcs(
+            resolve,
+            world.exports.iter(),
+            if submittable_exports {
+                ProcessingKind::ExportsSubmittable
+            } else {
+                ProcessingKind::ExportsOfActivityStub
+            },
+        )?;
+        let imports = populate_ifcs(resolve, world.imports.iter(), ProcessingKind::Imports)?;
         debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
-        trace!("Exports: {exported_ffqns_to_wit_meta:?}, imports: {imported_ffqns_to_wit_meta:?}");
-        Ok((
-            exported_ffqns_to_wit_meta,
-            imported_ffqns_to_wit_meta,
-            decoded,
-        ))
+        trace!("Exports: {exports:?}, imports: {imports:?}");
+        Ok((WitParsed { imports, exports }, decoded))
     }
 
     pub fn new<P: AsRef<Path>>(
@@ -168,16 +181,9 @@ impl WasmComponent {
             debug!("Parsed with wasmtime in {:?}", stopwatch.elapsed());
             wasmtime_component
         };
-        let (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta, decoded) =
-            Self::decode_using_wit_parser(wasm_path)?;
+        let (wit_parsed, decoded) = Self::decode_using_wit_parser(wasm_path, component_type)?;
 
-        let exim = ExIm::decode(
-            &wasmtime_component.component_type(),
-            engine,
-            exported_ffqns_to_wit_meta,
-            imported_ffqns_to_wit_meta,
-            component_type,
-        )?;
+        let exim = ExIm::decode(wit_parsed, component_type)?;
 
         Ok(Self {
             wasmtime_component,
@@ -292,26 +298,8 @@ impl ExIm {
             .filter(|pif| !pif.extension)
     }
 
-    fn decode(
-        wasmtime_component_type: &wasmtime::component::types::Component,
-        engine: &wasmtime::Engine,
-        exported_ffqns_to_wit_parsed_meta: hashbrown::HashMap<
-            FunctionFqn,
-            WitParsedFunctionMetadata,
-        >,
-        imported_ffqns_to_wit_parsed_meta: hashbrown::HashMap<
-            FunctionFqn,
-            WitParsedFunctionMetadata,
-        >,
-        component_type: ComponentType,
-    ) -> Result<ExIm, DecodeError> {
-        let mut exports_hierarchy_ext = merge_function_params_with_wasmtime(
-            wasmtime_component_type,
-            true,
-            component_type,
-            engine,
-            exported_ffqns_to_wit_parsed_meta,
-        )?;
+    fn decode(wit_parsed: WitParsed, component_type: ComponentType) -> Result<ExIm, DecodeError> {
+        let mut exports_hierarchy_ext = wit_parsed.exports;
         // Verify that there is no -obelisk-ext export
         for PackageIfcFns {
             ifc_fqn,
@@ -333,13 +321,7 @@ impl ExIm {
         let exports_flat_noext = Self::flatten(&exports_hierarchy_ext);
         Self::enrich_exports_with_extensions(&mut exports_hierarchy_ext, component_type);
         let exports_flat_ext = Self::flatten(&exports_hierarchy_ext);
-        let imports_hierarchy = merge_function_params_with_wasmtime(
-            wasmtime_component_type,
-            false,
-            component_type,
-            engine,
-            imported_ffqns_to_wit_parsed_meta,
-        )?;
+        let imports_hierarchy = wit_parsed.imports;
         let imports_flat = Self::flatten(&imports_hierarchy);
         Ok(Self {
             exports_hierarchy_ext,
@@ -715,165 +697,30 @@ impl ExIm {
     }
 }
 
-// Merge parameters obtained using the wit-parser passed as `ffqns_to_wit_parsed_meta` with `TypeWrapper` obtained from wasmtime representation.
-// TODO: Implement wit-parser -> TypeWrapper conversion which would simplify this operation
-fn merge_function_params_with_wasmtime(
-    wasmtime_component_type: &wasmtime::component::types::Component,
-    exports: bool,
-    component_type: ComponentType,
-    engine: &wasmtime::Engine,
-    ffqns_to_wit_parsed_meta: FfqnToMetadataMap,
-) -> Result<Vec<PackageIfcFns>, DecodeError> {
-    if exports {
-        merge_function_params_with_wasmtime_internal(
-            component_type != ComponentType::ActivityStub, // not submittable, stub executions must be created by workflows
-            wasmtime_component_type.exports(engine),
-            engine,
-            ffqns_to_wit_parsed_meta,
-        )
-    } else {
-        merge_function_params_with_wasmtime_internal(
-            false, // imports are not submittable
-            wasmtime_component_type.imports(engine),
-            engine,
-            ffqns_to_wit_parsed_meta,
-        )
+struct WitParsed {
+    imports: Vec<PackageIfcFns>,
+    exports: Vec<PackageIfcFns>,
+}
+
+#[derive(Clone, Copy)]
+enum ProcessingKind {
+    Imports,
+    ExportsOfActivityStub,
+    ExportsSubmittable,
+}
+impl ProcessingKind {
+    fn is_submittable_export(&self) -> bool {
+        matches!(self, ProcessingKind::ExportsSubmittable)
     }
 }
 
-// Iterate over wasmtime's imports or exports, and add wasmtools' metadata:
-// Add param names and WIT types in string representation.
-// Add return types WIT types in string representation.
-fn merge_function_params_with_wasmtime_internal<'a>(
-    submittable: bool,
-    wasmtime_parsed_interfaces: impl ExactSizeIterator<
-        Item = (
-            &'a str, /* ifc_fqn */
-            wasmtime::component::types::ComponentItem,
-        ),
-    > + 'a,
-    engine: &wasmtime::Engine,
-    mut ffqns_to_wit_parsed_meta: FfqnToMetadataMap,
-) -> Result<Vec<PackageIfcFns>, DecodeError> {
-    use wasmtime::component::types::ComponentItem;
-
-    let mut vec = Vec::new();
-    for (ifc_fqn, item) in wasmtime_parsed_interfaces {
-        let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
-        if let ComponentItem::ComponentInstance(instance) = item {
-            let exports = instance.exports(engine);
-            let mut fns = IndexMap::new();
-            for (function_name, export) in exports {
-                if let ComponentItem::ComponentFunc(func) = export {
-                    let function_name: Arc<str> = Arc::from(function_name);
-                    let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), function_name.clone());
-                    let (wit_meta_params, wit_meta_res) =
-                        ffqns_to_wit_parsed_meta.remove(&ffqn).map_or_else(
-                            || panic!("function {ffqn} from wasmtime must be found"),
-                            |meta| (meta.params, meta.return_type),
-                        );
-
-                    let mut return_type = func.results();
-                    // Obtain return type's TypeWrapper
-                    let return_type = if return_type.len() <= 1 {
-                        match return_type.next().map(TypeWrapper::try_from).transpose() {
-                            Ok(type_wrapper) => type_wrapper.map(|type_wrapper| ReturnType {
-                                type_wrapper,
-                                wit_type: wit_meta_res.expect(
-                                    "return value must have a single type according to wasmtime",
-                                ),
-                            }),
-                            Err(err) => {
-                                return Err(DecodeError::TypeNotSupported {
-                                    err,
-                                    ffqn: FunctionFqn::new_arc(ifc_fqn, function_name),
-                                });
-                            }
-                        }
-                    } else {
-                        return Err(DecodeError::MultiValueResultNotSupported(
-                            FunctionFqn::new_arc(ifc_fqn, function_name),
-                        ));
-                    };
-                    // Obtain parameters' TypeWrappers
-                    let param_type_wrappers = match func
-                        .params()
-                        .map(|(_param_name, param_type)| TypeWrapper::try_from(param_type))
-                        .collect::<Result<Vec<_>, _>>()
-                    {
-                        Ok(params) => params,
-                        Err(err) => {
-                            return Err(DecodeError::TypeNotSupported {
-                                err,
-                                ffqn: FunctionFqn::new_arc(ifc_fqn, function_name),
-                            });
-                        }
-                    };
-                    let parameter_types = {
-                        if wit_meta_params.len() != param_type_wrappers.len() {
-                            return Err(DecodeError::ParameterCardinalityMismatch(
-                                FunctionFqn::new_arc(ifc_fqn, function_name),
-                            ));
-                        }
-                        ParameterTypes(
-                            wit_meta_params
-                                .into_iter()
-                                .zip(param_type_wrappers)
-                                .map(|(name_wit, type_wrapper)| ParameterType {
-                                    name: StrVariant::from(name_wit.name),
-                                    wit_type: name_wit.wit_type,
-                                    type_wrapper,
-                                })
-                                .collect(),
-                        )
-                    };
-                    fns.insert(
-                        FnName::new_arc(function_name),
-                        FunctionMetadata {
-                            ffqn,
-                            parameter_types,
-                            return_type,
-                            extension: None,
-                            submittable,
-                        },
-                    );
-                } else {
-                    trace!("Ignoring export - not a ComponentFunc: {export:?}");
-                }
-            }
-            vec.push(PackageIfcFns {
-                ifc_fqn: IfcFqnName::new_arc(ifc_fqn),
-                fns,
-                extension: false,
-            });
-        } else {
-            warn!(
-                "Ignoring {ifc_fqn}.{item:?} - only component functions nested in component instances are supported"
-            );
-        }
-    }
-    Ok(vec)
-}
-
-#[cfg_attr(test, derive(serde::Serialize))]
-#[derive(Debug)]
-struct WitParsedFunctionMetadata {
-    params: Vec<ParameterNameWitType>,
-    return_type: Option<StrVariant>,
-}
-
-#[cfg_attr(test, derive(serde::Serialize))]
-#[derive(Debug)]
-struct ParameterNameWitType {
-    name: StrVariant,
-    wit_type: StrVariant,
-}
-
-fn create_ffqn_to_metadata_map<'a>(
+fn populate_ifcs<'a>(
     resolve: &'a Resolve,
     iter: impl Iterator<Item = (&'a WorldKey, &'a WorldItem)>,
-) -> Result<FfqnToMetadataMap, DecodeError> {
-    let mut res_map = hashbrown::HashMap::new();
+    processing_kind: ProcessingKind,
+) -> Result<Vec<PackageIfcFns>, DecodeError> {
+    let mut vec = Vec::new();
+    let submittable = processing_kind.is_submittable_export();
     for (_, item) in iter {
         if let wit_parser::WorldItem::Interface {
             id: ifc_id,
@@ -904,15 +751,22 @@ fn create_ffqn_to_metadata_map<'a>(
                 format!("{package}/{ifc_name}")
             };
             let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
+            let mut fns = IndexMap::new();
             for (function_name, function) in &ifc.functions {
                 let ffqn =
                     FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
-                let params = function
-                    .params
-                    .iter()
-                    .map(|(param_name, param_ty)| {
+                let parameter_types = ParameterTypes({
+                    let mut params = Vec::new();
+                    for (param_name, param_ty) in &function.params {
                         let mut printer = WitPrinter::default();
-                        ParameterNameWitType {
+                        let item = ParameterType {
+                            type_wrapper: match TypeWrapper::from_wit_parser_type(resolve, param_ty)
+                            {
+                                Ok(ok) => ok,
+                                Err(err) => {
+                                    return Err(DecodeError::TypeNotSupported { err, ffqn });
+                                }
+                            },
                             name: StrVariant::from(param_name.to_string()),
                             wit_type: printer
                                 .print_type_name(resolve, param_ty)
@@ -920,35 +774,57 @@ fn create_ffqn_to_metadata_map<'a>(
                                 .map_or(StrVariant::Static("unknown"), |()| {
                                     StrVariant::from(printer.output.to_string())
                                 }),
-                        }
-                    })
-                    .collect();
+                        };
+                        params.push(item);
+                    }
+                    params
+                });
                 let return_type = if let Some(return_type) = function.result {
                     let mut printer = WitPrinter::default();
-                    printer
+                    let wit_type = printer
                         .print_type_name(resolve, &return_type)
                         .ok()
-                        .map(|()| StrVariant::from(printer.output.to_string()))
+                        .map_or(StrVariant::Static("unknown"), |()| {
+                            StrVariant::from(printer.output.to_string())
+                        });
+                    Some(ReturnType {
+                        type_wrapper: match TypeWrapper::from_wit_parser_type(resolve, &return_type)
+                        {
+                            Ok(ok) => ok,
+                            Err(err) => {
+                                return Err(DecodeError::TypeNotSupported { err, ffqn });
+                            }
+                        },
+                        wit_type,
+                    })
                 } else {
                     None
                 };
-                res_map.insert(
-                    ffqn,
-                    WitParsedFunctionMetadata {
-                        params,
+                fns.insert(
+                    ffqn.function_name.clone(),
+                    FunctionMetadata {
+                        ffqn,
+                        parameter_types,
                         return_type,
+                        extension: None,
+                        submittable,
                     },
                 );
             }
+            vec.push(PackageIfcFns {
+                ifc_fqn: IfcFqnName::new_arc(ifc_fqn),
+                fns,
+                extension: false,
+            });
         }
     }
-    Ok(res_map)
+    Ok(vec)
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::create_ffqn_to_metadata_map;
-    use crate::wasm_tools::WasmComponent;
+    use super::populate_ifcs;
+    use crate::wasm_tools::{ProcessingKind, WasmComponent};
     use concepts::ComponentType;
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
@@ -1022,19 +898,25 @@ pub(crate) mod tests {
         };
         let world = resolve.worlds.get(world_id).expect("world must exist");
         if exports {
-            let exports = create_ffqn_to_metadata_map(&resolve, world.exports.iter())
-                .unwrap()
-                .into_iter()
-                .map(|(ffqn, val)| (ffqn.to_string(), val))
-                .collect::<hashbrown::HashMap<_, _>>();
-            insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
+            let exports = populate_ifcs(
+                &resolve,
+                world.exports.iter(),
+                ProcessingKind::ExportsSubmittable,
+            )
+            .unwrap()
+            .into_iter()
+            .flat_map(|ifc| ifc.fns)
+            .map(|(_fn_name, fn_metadata)| (fn_metadata.ffqn.to_string(), fn_metadata))
+            .collect::<hashbrown::HashMap<_, _>>();
+            insta::with_settings!({sort_maps => true,  snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
         } else {
-            let imports = create_ffqn_to_metadata_map(&resolve, world.imports.iter())
+            let imports = populate_ifcs(&resolve, world.imports.iter(), ProcessingKind::Imports)
                 .unwrap()
                 .into_iter()
-                .map(|(ffqn, val)| (ffqn.to_string(), (val, ffqn.ifc_fqn, ffqn.function_name)))
+                .flat_map(|ifc| ifc.fns)
+                .map(|(_fn_name, fn_metadata)| (fn_metadata.ffqn.to_string(), fn_metadata))
                 .collect::<hashbrown::HashMap<_, _>>();
-            insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
+            insta::with_settings!({ sort_maps => true,  snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
         }
     }
 }

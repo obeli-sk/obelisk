@@ -11,7 +11,7 @@ version.workspace = true
 
 [dependencies]
 concepts.workspace = true
-val-json.workspace = true
+val-json = { workspace = true, features = ["wasmtime", "wit-parser"] }
 
 anyhow.workspace = true
 async-trait.workspace = true

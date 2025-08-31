@@ -3151,6 +3151,7 @@ dependencies = [
  "thiserror 2.0.16",
  "wasmtime",
  "wast 237.0.0",
+ "wit-parser 0.237.0",
 ]
 
 [[package]]

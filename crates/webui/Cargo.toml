@@ -11,7 +11,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-val-json = { workspace = true }
+val-json.workspace = true
 
 anyhow.workspace = true
 assert_matches.workspace = true

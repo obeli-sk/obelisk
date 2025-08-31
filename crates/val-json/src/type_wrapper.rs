@@ -232,6 +232,119 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
     }
 }
 
+#[cfg(feature = "wit-parser")]
+impl TypeWrapper {
+    pub fn from_wit_parser_type(
+        resolve: &wit_parser::Resolve,
+        ty: &wit_parser::Type,
+    ) -> Result<TypeWrapper, TypeConversionError> {
+        use wit_parser::{Type, TypeDefKind};
+
+        match ty {
+            Type::Bool => Ok(TypeWrapper::Bool),
+            Type::U8 => Ok(TypeWrapper::U8),
+            Type::U16 => Ok(TypeWrapper::U16),
+            Type::U32 => Ok(TypeWrapper::U32),
+            Type::U64 => Ok(TypeWrapper::U64),
+            Type::S8 => Ok(TypeWrapper::S8),
+            Type::S16 => Ok(TypeWrapper::S16),
+            Type::S32 => Ok(TypeWrapper::S32),
+            Type::S64 => Ok(TypeWrapper::S64),
+            Type::F32 => Ok(TypeWrapper::F32),
+            Type::F64 => Ok(TypeWrapper::F64),
+            Type::Char => Ok(TypeWrapper::Char),
+            Type::String => Ok(TypeWrapper::String),
+
+            Type::ErrorContext => Err(TypeConversionError::UnsupportedType("error-context")),
+
+            Type::Id(id) => {
+                let ty = &resolve.types[*id];
+
+                match &ty.kind {
+                    TypeDefKind::Handle(wit_parser::Handle::Own(_)) => Ok(TypeWrapper::Own),
+                    TypeDefKind::Handle(wit_parser::Handle::Borrow(_)) => Ok(TypeWrapper::Borrow),
+                    TypeDefKind::Resource => {
+                        Err(TypeConversionError::UnsupportedType("resource type"))
+                    }
+                    TypeDefKind::Tuple(tuple) => Ok(TypeWrapper::Tuple(
+                        tuple
+                            .types
+                            .iter()
+                            .map(|ty| TypeWrapper::from_wit_parser_type(resolve, ty))
+                            .collect::<Result<_, _>>()?,
+                    )),
+                    TypeDefKind::Option(inner) => Ok(TypeWrapper::Option(Box::new(
+                        TypeWrapper::from_wit_parser_type(resolve, inner)?,
+                    ))),
+                    TypeDefKind::Result(wit_parser::Result_ { ok, err }) => {
+                        Ok(TypeWrapper::Result {
+                            ok: ok
+                                .as_ref()
+                                .map(|inner| TypeWrapper::from_wit_parser_type(resolve, inner))
+                                .transpose()?
+                                .map(Box::new),
+                            err: err
+                                .as_ref()
+                                .map(|inner| TypeWrapper::from_wit_parser_type(resolve, inner))
+                                .transpose()?
+                                .map(Box::new),
+                        })
+                    }
+                    TypeDefKind::Record(record) => {
+                        let map = record
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                TypeWrapper::from_wit_parser_type(resolve, &field.ty)
+                                    .map(|ty| (Box::from(field.name.clone()), ty))
+                            })
+                            .collect::<Result<_, _>>()?;
+                        Ok(TypeWrapper::Record(map))
+                    }
+                    TypeDefKind::Flags(flags) => Ok(TypeWrapper::Flags(
+                        flags
+                            .flags
+                            .iter()
+                            .map(|f| Box::from(f.name.clone()))
+                            .collect(),
+                    )),
+                    TypeDefKind::Enum(en) => Ok(TypeWrapper::Enum(
+                        en.cases
+                            .iter()
+                            .map(|case| Box::from(case.name.clone()))
+                            .collect(),
+                    )),
+                    TypeDefKind::Variant(variant) => {
+                        let map = variant
+                            .cases
+                            .iter()
+                            .map(|case| {
+                                if let Some(ty) = &case.ty {
+                                    TypeWrapper::from_wit_parser_type(resolve, ty)
+                                        .map(|ty| (Box::from(case.name.clone()), Some(ty)))
+                                } else {
+                                    Ok((Box::from(case.name.clone()), None))
+                                }
+                            })
+                            .collect::<Result<_, _>>()?;
+                        Ok(TypeWrapper::Variant(map))
+                    }
+                    TypeDefKind::List(inner) => Ok(TypeWrapper::List(Box::new(
+                        TypeWrapper::from_wit_parser_type(resolve, inner)?,
+                    ))),
+                    TypeDefKind::FixedSizeList(_inner, _size) => {
+                        Err(TypeConversionError::UnsupportedType("FixedSizeList")) // TODO
+                    }
+                    TypeDefKind::Type(inner) => TypeWrapper::from_wit_parser_type(resolve, inner),
+                    TypeDefKind::Future(_) => Err(TypeConversionError::UnsupportedType("Future")),
+                    TypeDefKind::Stream(_) => Err(TypeConversionError::UnsupportedType("Stream")),
+                    TypeDefKind::Unknown => unreachable!(),
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::TypeWrapper;
