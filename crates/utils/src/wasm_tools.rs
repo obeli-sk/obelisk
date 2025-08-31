@@ -104,6 +104,38 @@ impl WasmComponent {
         Ok(())
     }
 
+    pub fn new<P: AsRef<Path>>(
+        wasm_path: P,
+        component_type: ComponentType,
+    ) -> Result<Self, DecodeError> {
+        let wasm_path = wasm_path.as_ref();
+        let (wit_parsed, decoded) = Self::decode_using_wit_parser(wasm_path, component_type)?;
+        let exim = ExIm::decode(wit_parsed, component_type)?;
+        Ok(Self {
+            exim,
+            decoded,
+            component_type,
+        })
+    }
+
+    pub fn wit(&self) -> Result<String, anyhow::Error> {
+        crate::wit::wit(self.component_type, &self.decoded, &self.exim)
+    }
+
+    #[must_use]
+    pub fn exported_functions(&self, extensions: bool) -> &[FunctionMetadata] {
+        if extensions {
+            &self.exim.exports_flat_ext
+        } else {
+            &self.exim.exports_flat_noext
+        }
+    }
+
+    #[must_use]
+    pub fn imported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.imports_flat
+    }
+
     fn decode_using_wit_parser(
         wasm_path: &Path,
         component_type: ComponentType,
@@ -156,38 +188,6 @@ impl WasmComponent {
         debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
         trace!("Exports: {exports:?}, imports: {imports:?}");
         Ok((WitParsed { imports, exports }, decoded))
-    }
-
-    pub fn new<P: AsRef<Path>>(
-        wasm_path: P,
-        component_type: ComponentType,
-    ) -> Result<Self, DecodeError> {
-        let wasm_path = wasm_path.as_ref();
-        let (wit_parsed, decoded) = Self::decode_using_wit_parser(wasm_path, component_type)?;
-        let exim = ExIm::decode(wit_parsed, component_type)?;
-        Ok(Self {
-            exim,
-            decoded,
-            component_type,
-        })
-    }
-
-    pub fn wit(&self) -> Result<String, anyhow::Error> {
-        crate::wit::wit(self.component_type, &self.decoded, &self.exim)
-    }
-
-    #[must_use]
-    pub fn exported_functions(&self, extensions: bool) -> &[FunctionMetadata] {
-        if extensions {
-            &self.exim.exports_flat_ext
-        } else {
-            &self.exim.exports_flat_noext
-        }
-    }
-
-    #[must_use]
-    pub fn imported_functions(&self) -> &[FunctionMetadata] {
-        &self.exim.imports_flat
     }
 }
 
