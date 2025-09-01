@@ -3,6 +3,120 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.0](https://github.com/obeli-sk/obelisk/compare/v0.23.2...v0.24.0)
+
+This release represents a major refactoring of both the WIT schemas and features provided. Most notable features include:
+* Heterogenous join sets, allowing mixing different functions as well as delays into one join set.
+* Stub activities
+* Join sets are closed when they get out of scope.
+* Fuel configuration for all WASM components.
+* Ability to generate extension WIT files.
+
+### ⛰️ Features
+
+- *(toml)* Add Timers Watcher configuration - ([4abbf91](https://github.com/obeli-sk/obelisk/commit/4abbf91484adba825eb28490148b6f97ba4720fa))
+- *(toml)* [**breaking**] Add global limiters on executors and webhook requests - ([5789ca4](https://github.com/obeli-sk/obelisk/commit/5789ca4b8a5c7be21d09f55b412e079dd322d5aa))
+- *(toml)* [**breaking**] Remove forwarding of errors on join set close - ([310d3b7](https://github.com/obeli-sk/obelisk/commit/310d3b706ddc0beda3c45cda1e24b3a85c7b51a3))
+- *(toml)* Allow path prefixes in `location.path` - ([4408b6e](https://github.com/obeli-sk/obelisk/commit/4408b6eaad5ea060d32aca76fa0fda27223626cf))
+- *(wit)* [**breaking**] Allow stubing execution errors - ([1427e43](https://github.com/obeli-sk/obelisk/commit/1427e43b2f67cc0c76e5de3e0c72651a1af5e60f))
+- *(wit,db)* [**breaking**] Add `workflow-support@2.0.0` - ([2af5ea4](https://github.com/obeli-sk/obelisk/commit/2af5ea4ade9044941a7ae4f402764b6b4c26cdcb))
+- Add `obelisk generate exported-ext-wits` - ([42dcb66](https://github.com/obeli-sk/obelisk/commit/42dcb66d8eb58cf8a07b79390623f4bd663e5de0))
+- Add configuratble fuel - ([e381967](https://github.com/obeli-sk/obelisk/commit/e3819672c011e53be15cd1d89cc3c6a2023378d9))
+- Add `-get` extension - ([edac0eb](https://github.com/obeli-sk/obelisk/commit/edac0ebc60db51d8fdef13cfdb14e32b75cbdbba))
+- Close join sets on drop - ([128db5f](https://github.com/obeli-sk/obelisk/commit/128db5f0bc2df81d3a29e7645d7ed000713d8a98))
+- Implement `join-next` - ([d9c6b68](https://github.com/obeli-sk/obelisk/commit/d9c6b6887fc1d7ac18c75730e1f9f9ccd4914855))
+
+### 🐛 Bug Fixes
+
+- *(db)* Return `all-processed` when awaiting nonexistent submision - ([7be126b](https://github.com/obeli-sk/obelisk/commit/7be126b9426153341242010b0a08c65bd9be6f50))
+- *(wit)* Avoid parameter name conflict in extension functions - ([645bbaf](https://github.com/obeli-sk/obelisk/commit/645bbaf1a05bc135aa2a96918535d41322c0e60a))
+
+### 📚 Documentation
+
+- Update roadmap - ([3b7d5dc](https://github.com/obeli-sk/obelisk/commit/3b7d5dc456e1b82549a29fe3a3cfb822184c7bf6))
+- Add note about full sync in sqlite config - ([9521728](https://github.com/obeli-sk/obelisk/commit/9521728817bb032e2c18856098f4dcc57507b038))
+- Clean up the roadmap - ([4213172](https://github.com/obeli-sk/obelisk/commit/4213172b5391d4f3baaa0c948122ad4f98b62581))
+- Correct `reuse_on_retry` - ([8a8f4b4](https://github.com/obeli-sk/obelisk/commit/8a8f4b4c6a02a21ec0a5f949e1da4eb4d1d8c28b))
+
+### ◀️ Revert
+
+- "chore: Bump `wasm-bindgen` fork" - ([54f9972](https://github.com/obeli-sk/obelisk/commit/54f9972f3eed3bea774a869088486930ca5a4132))
+
+### 🚜 Refactor
+
+- *(db)* [**breaking**] Rename stub `return_value`,`target_result` - ([551a1f3](https://github.com/obeli-sk/obelisk/commit/551a1f34a6dd58cbc622a9079a4a77704b27aaf2))
+- *(db)* [**breaking**] Rename `HistoryEvent::Schedule.scheduled_at` - ([8fd94f5](https://github.com/obeli-sk/obelisk/commit/8fd94f54a8fcb8bc2f95ad05b3a88342643b02b4))
+- *(db)* [**breaking**] Make `DelayId` generation conflict free - ([544f793](https://github.com/obeli-sk/obelisk/commit/544f7930f0f2c5d44c883662e757b57adfbb4cfe))
+- *(grpc)* [**breaking**] Allow sending stub errors via cli and web ui - ([feaed66](https://github.com/obeli-sk/obelisk/commit/feaed664dfc1cfdfb172f0d5742b5a781ce22099))
+- *(toml)* [**breaking**] Remove `retry_on_trap` - ([5a77a3b](https://github.com/obeli-sk/obelisk/commit/5a77a3bbef16a324ded915754b510521098e72e8))
+- *(wit)* [**breaking**] Make `new-join-set-named` fallible - ([76edb46](https://github.com/obeli-sk/obelisk/commit/76edb4612b93a5adf1a32410554cf40b42b804ea))
+- *(wit)* [**breaking**] Rename `execution-error` to `await-next-extension-error` - ([f5267fe](https://github.com/obeli-sk/obelisk/commit/f5267fec740b2543a6478fa68877fe45deea2147))
+- *(wit)* Rename `await-next` to `join-next` - ([bc3b5b8](https://github.com/obeli-sk/obelisk/commit/bc3b5b8b4c194627fdc5417bc5cb9e0c27b97ff4))
+- *(wit)* [**breaking**] Move scheduled fns to `-obelisk-scheduled` interface - ([c33e8a6](https://github.com/obeli-sk/obelisk/commit/c33e8a63b6ffd39887120caf7eaeababbbf3da59))
+- *(wit)* [**breaking**] Readd `function-mismatch` - ([b187ff0](https://github.com/obeli-sk/obelisk/commit/b187ff011b470f9c4b9b9d8ba4822f3414616fc2))
+- *(wit)* Extract opaque join next - ([a42a157](https://github.com/obeli-sk/obelisk/commit/a42a1572d6d3cca128547f89a47ea4ecb9888379))
+- *(wit)* [**breaking**] Add `execution-error::all-processed` variant - ([32a8f1c](https://github.com/obeli-sk/obelisk/commit/32a8f1cd33baa5aac32690a641c6c536b5bc578a))
+- *(wit)* Introduce `get-execution-error` - ([29b23dc](https://github.com/obeli-sk/obelisk/commit/29b23dc200fd79a8baee69049345bfbabfd97365))
+- *(wit)* Introduce `join-set-await-next-error` - ([f08f1b2](https://github.com/obeli-sk/obelisk/commit/f08f1b25afa80fae36c8a32a25805e3bf917f879))
+- *(wit)* [**breaking**] Move execution ID to `execution-error` - ([8f12da7](https://github.com/obeli-sk/obelisk/commit/8f12da74541f1f200ec5ecc01a479306e0ca25fa))
+- Extract stub activity config to `[[activity_stub]]` - ([fb1101b](https://github.com/obeli-sk/obelisk/commit/fb1101b791accb094ec103918647b3e76155393f))
+- Add Obelisk version to the generated header - ([30aa959](https://github.com/obeli-sk/obelisk/commit/30aa9596bab92de776bd9a363e3b7e2f0df4255e))
+- Add "Generated by" header to the generated WIT files - ([fd45100](https://github.com/obeli-sk/obelisk/commit/fd45100055b2f78b4d05307ebda64cf8feda62d4))
+- Remove `wasmtime` from `ActivityStub` initialization - ([b3bf721](https://github.com/obeli-sk/obelisk/commit/b3bf721c75989b9a0ae2eb5bdf78a02575d235bd))
+- Remove `wasmtime` from `utils` - ([2c5deef](https://github.com/obeli-sk/obelisk/commit/2c5deef6f049b741e7362cf416e409a1b8ba1d6f))
+- Populate `ExIm` exclusively using `wit-parser` - ([d67ffaf](https://github.com/obeli-sk/obelisk/commit/d67ffaf14020f842ed094fa0ae8cfeb355db4897))
+- Skip `build.rs` unless `obelisk.proto` changes - ([1df2a1d](https://github.com/obeli-sk/obelisk/commit/1df2a1d13549e1fea602e1654a3bafd720e67ccf))
+- Make deletion of sqlite dir more explicit - ([8322c8d](https://github.com/obeli-sk/obelisk/commit/8322c8d3a3ba2e87bc26c6280673e0e69dff4fce))
+- Remove race between workflow and timeout - ([c16f810](https://github.com/obeli-sk/obelisk/commit/c16f8102c9ae3309c8bf1fca0a1f148607ab5a81))
+- Support submitting a single delay request - ([f27f8ca](https://github.com/obeli-sk/obelisk/commit/f27f8ca192ced0141211598374dd29b9ae352752))
+- Disable ANSII when not running in a terminal - ([356bf69](https://github.com/obeli-sk/obelisk/commit/356bf69ff4860d4bc378297f91d59048729c680f))
+- Send `reason` in stubbed error - ([3708347](https://github.com/obeli-sk/obelisk/commit/37083471788ab92664c0aa8c3608428bf5a16367))
+- Add `ScheduleAtConversionError` - ([e8b61c5](https://github.com/obeli-sk/obelisk/commit/e8b61c5e09e14e9967a572e180ff642bf525e88a))
+- Move `SleepFactory` to `event_history` - ([d86c045](https://github.com/obeli-sk/obelisk/commit/d86c045663dfcf75f45be512bc67498ce6bf995c))
+- Do not subscribe if deadline  has been reached - ([834435a](https://github.com/obeli-sk/obelisk/commit/834435ad013b1a28b120957c2264082a8aa6f03b))
+- Include `-schedule` in `is_extension()` - ([2f8a0d4](https://github.com/obeli-sk/obelisk/commit/2f8a0d47ed1d33adeb9840ba2dd9e0a8261e66ed))
+- Unify join set naming errors - ([78e430d](https://github.com/obeli-sk/obelisk/commit/78e430d526c9bc5481fa458e6cba4f3271664d91))
+- Change `random_part` to return `u128` - ([e906fad](https://github.com/obeli-sk/obelisk/commit/e906fad21379b5de27e91ec94573e07378a88d2e))
+- Replace `wasmtime` imports with full type names - ([eac59ad](https://github.com/obeli-sk/obelisk/commit/eac59ad7465c6f1c59efd66ca4b4384d3c32c772))
+- Simplify `-await-next` insertion in `wasm_tools` - ([d8ffbb3](https://github.com/obeli-sk/obelisk/commit/d8ffbb309ef97a19ff4f79fe805ed198bceb01e5))
+- Update the `-stub` parameter in `wit` module - ([2fe9516](https://github.com/obeli-sk/obelisk/commit/2fe951631f189ce687b2d255621908c0d21b6d40))
+- Remove "Import not found" error handling - ([b925e76](https://github.com/obeli-sk/obelisk/commit/b925e76c74e802c8d7678884542c45d42f280bb7))
+- Extract `*FnCall::new` - ([93db847](https://github.com/obeli-sk/obelisk/commit/93db84784bc839fbe28f2b5394d1e061434c5562))
+- Remove `backtrace` from `WorkflowCtx` - ([034b70e](https://github.com/obeli-sk/obelisk/commit/034b70ee75e1a8c067091999b7358dc0252e73dc))
+- Extract separate `call_imported_fn` for each struct - ([0337016](https://github.com/obeli-sk/obelisk/commit/03370162e35a60971a297c227c2d4d63a3e995c8))
+- Extract `*FnCall` structs - ([f1f50cb](https://github.com/obeli-sk/obelisk/commit/f1f50cb8953440f7483c2ed7d6d034bca937e750))
+- Move fn metadata resolution to `ImportedFnCall::new` - ([da99a3f](https://github.com/obeli-sk/obelisk/commit/da99a3ffedc94d62801947f7829a98ec7421600a))
+- Remove `Optional` from retval of `Stub::apply` - ([30abab0](https://github.com/obeli-sk/obelisk/commit/30abab061d1926b32ae9121030b63c2c79e6eb85))
+- Add asserts preventing use of closed join sets - ([2008a2e](https://github.com/obeli-sk/obelisk/commit/2008a2ea03d06dd1e638c3fbd9bb1857538994c3))
+- Add `Stub::apply` - ([ab5c862](https://github.com/obeli-sk/obelisk/commit/ab5c862ed9128d0dab51ed287506922cd09fa381))
+- Add `JoinNextRequestingFfqn::apply` - ([4a6a23b](https://github.com/obeli-sk/obelisk/commit/4a6a23b1b0256eaa4f6d341670bbdf10675e77bb))
+- Add `SubmitExecution::apply` - ([be2995e](https://github.com/obeli-sk/obelisk/commit/be2995e78943d3c46de6602725d6584ca77e38ce))
+- Add `Schedule::apply` - ([27b4edf](https://github.com/obeli-sk/obelisk/commit/27b4edfe0a3bd09683cf416024dd60dbf3ab7c9b))
+- Add `OneOffChildExecutionRequest::apply` - ([752adeb](https://github.com/obeli-sk/obelisk/commit/752adeb00d67900dff760b16e7438b62a7af531f))
+- Add `OneOffDelayRequest::apply` - ([7817280](https://github.com/obeli-sk/obelisk/commit/7817280f6fa38621e0bbb8cf1f7dce61d1834fdb))
+- Add `JoinSetCreate::apply` - ([ad38f27](https://github.com/obeli-sk/obelisk/commit/ad38f27297764b8a8ec9489249c867e6f079d5ec))
+- Add `apply` to `JoinNext` - ([3e31b09](https://github.com/obeli-sk/obelisk/commit/3e31b098a22fb7be3efd159b7d6fd20f97895c88))
+- Add `apply` to `Persist`, `SubmitDelay` - ([b0e1884](https://github.com/obeli-sk/obelisk/commit/b0e1884aba95d0be0203346377d3328a6c90c2a6))
+- Rename `EventHistoryKey` to `DeterministicKey` - ([1ad2898](https://github.com/obeli-sk/obelisk/commit/1ad2898e14e0f53c36a62c538a36350ea000616c))
+- Extract `EventCall` variants into struts - ([aff4403](https://github.com/obeli-sk/obelisk/commit/aff440351f323fb1baf3f2081dabfbc9c14436f0))
+- Add dummy `close_opened_join_set` - ([1d0c771](https://github.com/obeli-sk/obelisk/commit/1d0c7717426683b02d91f7f9ab0e982f49fa7d95))
+- Correct Execution ID: response mapping to fix `-get` - ([93bc645](https://github.com/obeli-sk/obelisk/commit/93bc645ac31b2d8cbda16679a0664d0ba0b0ccc9))
+- Add `Processed` flag on matching `await-next` with `all-processed` - ([683ca80](https://github.com/obeli-sk/obelisk/commit/683ca80cdb969d4d244bc4f760ee3af7d3f103b7))
+- Add `Processed` flag on matching `JoinNext` with `all-processed` - ([eed87a0](https://github.com/obeli-sk/obelisk/commit/eed87a00b67beccae9d10cb768055da6688e7fb2))
+- Return `response-id` when matched `ChildExecutionFinished` - ([3b50456](https://github.com/obeli-sk/obelisk/commit/3b5045621abe176ef0f80c6efdad81567644264b))
+- Implement `all-processed` error for `join-next` - ([0326607](https://github.com/obeli-sk/obelisk/commit/0326607d7fc241187fd761b7c56c3361036149b3))
+- Disregard unprocessed events when determining `all-processed` - ([3bb6df3](https://github.com/obeli-sk/obelisk/commit/3bb6df356d84866caed154cabc780bbc67463bff))
+- Generate delay IDs with unique name per join set - ([20e7951](https://github.com/obeli-sk/obelisk/commit/20e7951759fd80f1cf58cedc583c2808e25ed49e))
+- Use `trappable_error_type` for `spawn-error` - ([e024fdc](https://github.com/obeli-sk/obelisk/commit/e024fdc5964b17a5e8ddb63d86e61827dfcda84b))
+- Rename `EventCall:BlockingJoinNext` to `JoinNextClosing` - ([6958d04](https://github.com/obeli-sk/obelisk/commit/6958d047bf34a3337626f4f834255884b5dcf0f7))
+- Move one-off join set creation to `event_history` - ([7836194](https://github.com/obeli-sk/obelisk/commit/78361948f858a84b309941acb4b3aad890be1dff))
+- Remove `ClockFn` from `event_history` - ([76298ec](https://github.com/obeli-sk/obelisk/commit/76298ec6fbb589e33fe1f4883c953f0e35c3c7cc))
+
+### Wip
+
+- Modify `-await-next` to never return a mismatched response - ([b32c5c4](https://github.com/obeli-sk/obelisk/commit/b32c5c4d24c7d3a9a5d6bd7d03bca4e8d603b9b7))
+
+
 ## [0.23.2](https://github.com/obeli-sk/obelisk/compare/v0.23.1...v0.23.2)
 
 ### ⛰️ Features
