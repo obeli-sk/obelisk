@@ -2,7 +2,7 @@ use clap::{ArgGroup, Parser};
 use concepts::{ComponentType, ExecutionId, FunctionFqn, prefixed_ulid::ExecutionIdDerived};
 use std::path::PathBuf;
 
-mod shadow {
+pub(crate) mod shadow {
     pub(crate) const PKG_VERSION: &str = env!("PKG_VERSION");
 }
 
