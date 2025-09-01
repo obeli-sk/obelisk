@@ -234,7 +234,9 @@
             # Used to execute scripts/cargo-publish-workspace.sh
             buildInputs = with pkgs;
               [
-                (rust-bin.nightly."2025-04-01".default.override
+                # Use nightly because `cargo package --workspace` is not stable yet
+                #
+                (rust-bin.nightly."2025-08-20".default.override
                   {
                     extensions = [ "rust-src" "rustfmt" "clippy" ];
                   })
