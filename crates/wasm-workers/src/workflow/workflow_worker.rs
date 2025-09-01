@@ -2009,7 +2009,7 @@ pub(crate) mod tests {
             }
         );
         let execution_log = db_connection.get(&execution_id).await.unwrap();
-        insta::with_settings!({snapshot_suffix => format!("{ffqn}")}, {insta::assert_json_snapshot!(execution_log)});
+        insta::with_settings!({snapshot_suffix => ffqn.to_string().replace(':', "_")}, {insta::assert_json_snapshot!(execution_log)});
         assert_matches!(
             execution_log.into_finished_result(),
             Some(Ok(SupportedFunctionReturnValue::None))
