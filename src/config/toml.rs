@@ -56,7 +56,7 @@ pub(crate) struct ConfigToml {
     #[serde(default)]
     pub(crate) timers_watcher: TimersWatcher,
     #[serde(default, rename = "activity_wasm")]
-    pub(crate) wasm_activities: Vec<ActivityComponentConfigToml>,
+    pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
     #[serde(default, rename = "workflow")]
     pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
     #[serde(default)]
@@ -409,7 +409,7 @@ impl ExecConfigToml {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ActivityComponentConfigToml {
+pub(crate) struct ActivityWasmComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     #[serde(default)]
@@ -474,7 +474,7 @@ impl ActivityWasmConfigVerified {
     }
 }
 
-impl ActivityComponentConfigToml {
+impl ActivityWasmComponentConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn fetch_and_verify(

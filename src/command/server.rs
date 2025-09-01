@@ -6,7 +6,7 @@ use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
 use crate::config::toml::ActivitiesDirectoriesGlobalConfigToml;
-use crate::config::toml::ActivityComponentConfigToml;
+use crate::config::toml::ActivityWasmComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ConfigName;
@@ -1314,7 +1314,7 @@ impl ServerVerified {
             .get_directories()
             .and_then(ActivitiesDirectoriesGlobalConfigToml::get_cleanup);
         let mut config = ConfigVerified::fetch_and_verify_all(
-            config.wasm_activities,
+            config.activities_wasm,
             config.workflows,
             http_servers,
             webhooks,
@@ -1593,7 +1593,7 @@ impl ConfigVerified {
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
-        wasm_activities: Vec<ActivityComponentConfigToml>,
+        wasm_activities: Vec<ActivityWasmComponentConfigToml>,
         workflows: Vec<WorkflowComponentConfigToml>,
         http_servers: Vec<webhook::HttpServer>,
         webhooks: Vec<webhook::WebhookComponentConfigToml>,
