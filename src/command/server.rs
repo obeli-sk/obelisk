@@ -6,6 +6,8 @@ use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
 use crate::config::toml::ActivitiesDirectoriesGlobalConfigToml;
+use crate::config::toml::ActivityStubComponentConfigToml;
+use crate::config::toml::ActivityStubConfigVerified;
 use crate::config::toml::ActivityWasmComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ComponentCommon;
@@ -1315,6 +1317,7 @@ impl ServerVerified {
             .and_then(ActivitiesDirectoriesGlobalConfigToml::get_cleanup);
         let mut config = ConfigVerified::fetch_and_verify_all(
             config.activities_wasm,
+            config.activities_stub,
             config.workflows,
             http_servers,
             webhooks,
@@ -1371,7 +1374,8 @@ impl ServerCompiledLinked {
     async fn new(server_verified: ServerVerified) -> Result<Self, anyhow::Error> {
         let (compiled_components, component_registry_ro, supressed_errors) = compile_and_verify(
             &server_verified.engines,
-            server_verified.config.wasm_activities,
+            server_verified.config.activities_wasm,
+            server_verified.config.activities_stub,
             server_verified.config.workflows,
             server_verified.config.webhooks_by_names,
             server_verified.config.global_backtrace_persist,
@@ -1581,7 +1585,8 @@ async fn start_webhooks(
 
 #[derive(Debug)]
 struct ConfigVerified {
-    wasm_activities: Vec<ActivityWasmConfigVerified>,
+    activities_wasm: Vec<ActivityWasmConfigVerified>,
+    activities_stub: Vec<ActivityStubConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
@@ -1593,7 +1598,8 @@ impl ConfigVerified {
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
-        wasm_activities: Vec<ActivityWasmComponentConfigToml>,
+        activities_wasm: Vec<ActivityWasmComponentConfigToml>,
+        activities_stub: Vec<ActivityStubComponentConfigToml>,
         workflows: Vec<WorkflowComponentConfigToml>,
         http_servers: Vec<webhook::HttpServer>,
         webhooks: Vec<webhook::WebhookComponentConfigToml>,
@@ -1662,11 +1668,11 @@ impl ConfigVerified {
         let path_prefixes = Arc::new(path_prefixes);
         // Download WASM files from OCI registries if needed.
         // TODO!: Switch to `JoinSet` when madsim supports it.
-        let activities = wasm_activities
+        let activities_wasm = activities_wasm
             .into_iter()
-            .map(|activity| {
+            .map(|activity_wasm| {
                 tokio::spawn({
-                    activity
+                    activity_wasm
                         .fetch_and_verify(
                             wasm_cache_dir.clone(),
                             metadata_dir.clone(),
@@ -1675,6 +1681,21 @@ impl ConfigVerified {
                             parent_preopen_dir.clone(),
                             global_executor_instance_limiter.clone(),
                             fuel,
+                        )
+                        .in_current_span()
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let activities_stub = activities_stub
+            .into_iter()
+            .map(|activity_stub| {
+                tokio::spawn({
+                    activity_stub
+                        .fetch_and_verify(
+                            wasm_cache_dir.clone(),
+                            metadata_dir.clone(),
+                            path_prefixes.clone(),
                         )
                         .in_current_span()
                 })
@@ -1721,16 +1742,21 @@ impl ConfigVerified {
         // If an error happens or Ctrl-C is pressed the whole process will shut down.
         // Downloading metadata and content must be robust enough to handle it.
         // We do not need to abort the tasks here.
-        let all = futures_util::future::join3(
-            futures_util::future::join_all(activities),
+        let all = futures_util::future::join4(
+            futures_util::future::join_all(activities_wasm),
+            futures_util::future::join_all(activities_stub),
             futures_util::future::join_all(workflows),
             futures_util::future::join_all(webhooks_by_names),
         );
         tokio::select! {
-            (activity_results, workflow_results, webhook_results) = all => {
-                let mut wasm_activities = Vec::with_capacity(activity_results.len());
-                for a in activity_results {
-                    wasm_activities.push(a??);
+            (activity_wasm_results, activity_stub_results, workflow_results, webhook_results) = all => {
+                let mut activities_wasm = Vec::with_capacity(activity_wasm_results.len());
+                for a in activity_wasm_results {
+                    activities_wasm.push(a??);
+                }
+                let mut activities_stub = Vec::with_capacity(activity_stub_results.len());
+                for a in activity_stub_results {
+                    activities_stub.push(a??);
                 }
                 let mut workflows = Vec::with_capacity(workflow_results.len());
                 for w in workflow_results {
@@ -1741,7 +1767,7 @@ impl ConfigVerified {
                     let (k, v) = webhook??;
                     webhooks_by_names.insert(k, v);
                 }
-                Ok(ConfigVerified {wasm_activities, workflows, webhooks_by_names, http_servers_to_webhook_names, global_backtrace_persist, fuel})
+                Ok(ConfigVerified {activities_wasm, activities_stub, workflows, webhooks_by_names, http_servers_to_webhook_names, global_backtrace_persist, fuel})
             },
             sigint = tokio::signal::ctrl_c() => {
                 sigint.expect("failed to listen for SIGINT event");
@@ -1777,7 +1803,8 @@ enum CompiledComponent {
 #[instrument(skip_all)]
 async fn compile_and_verify(
     engines: &Engines,
-    wasm_activities: Vec<ActivityWasmConfigVerified>,
+    activities_wasm: Vec<ActivityWasmConfigVerified>,
+    activities_stub: Vec<ActivityStubConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
     global_backtrace_persist: bool,
@@ -1790,49 +1817,54 @@ async fn compile_and_verify(
     ),
     anyhow::Error,
 > {
-    let pre_spawns: Vec<tokio::task::JoinHandle<Result<_, anyhow::Error>>> = wasm_activities
+    let pre_spawns: Vec<tokio::task::JoinHandle<Result<_, anyhow::Error>>> = activities_wasm
         .into_iter()
-        .map(|activity| {
+        .map(|activity_wasm| {
             let engines = engines.clone();
-            let span = info_span!("activity_compile", component_id = %activity.component_id());
+            let span =
+                info_span!("activity_wasm_compile", component_id = %activity_wasm.component_id());
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
-                    if activity.component_id().component_type == ComponentType::ActivityStub {
-                        let wasm_component = WasmComponent::new(
-                            activity.wasm_path,
-                            activity.activity_config.component_id.component_type,
-                        )?;
-                        let wit = wasm_component
-                            .wit()
-                            .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
-                            .ok();
-                        let exports_ext = wasm_component.exim.get_exports(true).to_vec();
-                        let exports_hierarchy_ext =
-                            wasm_component.exim.get_exports_hierarchy_ext().to_vec();
-                        let component_config_importable = ComponentConfigImportable {
-                            exports_ext,
-                            exports_hierarchy_ext,
-                            retry_config: ComponentRetryConfig::ZERO,
-                        };
-                        let component_config = ComponentConfig {
-                            component_id: activity.activity_config.component_id,
-                            imports: vec![],
-                            workflow_or_activity_config: Some(component_config_importable),
-                            content_digest: activity.content_digest,
-                            wit,
-                        };
-                        Ok(CompiledComponent::ActivityStub { component_config })
-                    } else {
-                        prespawn_activity(activity, &engines).map(|(worker, component_config)| {
-                            CompiledComponent::ActivityOrWorkflow {
-                                worker,
-                                component_config,
-                            }
-                        })
-                    }
+                    prespawn_activity(activity_wasm, &engines).map(|(worker, component_config)| {
+                        CompiledComponent::ActivityOrWorkflow {
+                            worker,
+                            component_config,
+                        }
+                    })
                 })
             })
         })
+        .chain(activities_stub.into_iter().map(|activity_stub| {
+            let span = info_span!("activity_stub_init", component_id = %activity_stub.component_id);
+            tokio::task::spawn_blocking(move || {
+                span.in_scope(|| {
+                    let wasm_component = WasmComponent::new(
+                        activity_stub.wasm_path,
+                        activity_stub.component_id.component_type,
+                    )?;
+                    let wit = wasm_component
+                        .wit()
+                        .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
+                        .ok();
+                    let exports_ext = wasm_component.exim.get_exports(true).to_vec();
+                    let exports_hierarchy_ext =
+                        wasm_component.exim.get_exports_hierarchy_ext().to_vec();
+                    let component_config_importable = ComponentConfigImportable {
+                        exports_ext,
+                        exports_hierarchy_ext,
+                        retry_config: ComponentRetryConfig::ZERO,
+                    };
+                    let component_config = ComponentConfig {
+                        component_id: activity_stub.component_id,
+                        imports: vec![],
+                        workflow_or_activity_config: Some(component_config_importable),
+                        content_digest: activity_stub.content_digest,
+                        wit,
+                    };
+                    Ok(CompiledComponent::ActivityStub { component_config })
+                })
+            })
+        }))
         .chain(workflows.into_iter().map(|workflow| {
             let engines = engines.clone();
             let span = info_span!("workflow_compile", component_id = %workflow.component_id());

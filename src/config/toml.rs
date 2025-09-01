@@ -57,6 +57,8 @@ pub(crate) struct ConfigToml {
     pub(crate) timers_watcher: TimersWatcher,
     #[serde(default, rename = "activity_wasm")]
     pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
+    #[serde(default, rename = "activity_stub")]
+    pub(crate) activities_stub: Vec<ActivityStubComponentConfigToml>,
     #[serde(default, rename = "workflow")]
     pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
     #[serde(default)]
@@ -428,8 +430,44 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     pub(crate) retry_on_err: bool,
     #[serde(default)]
     pub(crate) directories: ActivityDirectoriesConfigToml,
-    #[serde(default)]
-    pub(crate) stub: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivityStubComponentConfigToml {
+    #[serde(flatten)]
+    pub(crate) common: ComponentCommon,
+}
+#[derive(Debug)]
+pub(crate) struct ActivityStubConfigVerified {
+    pub(crate) wasm_path: PathBuf,
+    pub(crate) component_id: ComponentId,
+    pub(crate) content_digest: ContentDigest,
+}
+impl ActivityStubComponentConfigToml {
+    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
+    pub(crate) async fn fetch_and_verify(
+        self,
+        wasm_cache_dir: Arc<Path>,
+        metadata_dir: Arc<Path>,
+        path_prefixes: Arc<PathPrefixes>,
+    ) -> Result<ActivityStubConfigVerified, anyhow::Error> {
+        let component_id = ComponentId::new(
+            ComponentType::ActivityStub,
+            StrVariant::from(self.common.name.clone()),
+        )?;
+        tracing::Span::current().record("component_id", tracing::field::display(&component_id));
+
+        let (common, wasm_path) = self
+            .common
+            .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
+            .await?;
+        Ok(ActivityStubConfigVerified {
+            content_digest: common.content_digest,
+            wasm_path,
+            component_id,
+        })
+    }
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -488,11 +526,7 @@ impl ActivityWasmComponentConfigToml {
         fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
         let component_id = ComponentId::new(
-            if self.stub {
-                ComponentType::ActivityStub
-            } else {
-                ComponentType::ActivityWasm
-            },
+            ComponentType::ActivityWasm,
             StrVariant::from(self.common.name.clone()),
         )?;
         tracing::Span::current().record("component_id", tracing::field::display(&component_id));

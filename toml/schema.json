@@ -6,10 +6,16 @@
     "activities": {
       "$ref": "#/$defs/ActivitiesGlobalConfigToml"
     },
+    "activity_stub": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActivityStubComponentConfigToml"
+      }
+    },
     "activity_wasm": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/ActivityComponentConfigToml"
+        "$ref": "#/$defs/ActivityWasmComponentConfigToml"
       }
     },
     "api": {
@@ -115,7 +121,47 @@
         "directories"
       ]
     },
-    "ActivityComponentConfigToml": {
+    "ActivityDirectoriesConfigToml": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "process_provider": {
+          "$ref": "#/$defs/ActivityDirectoriesProcessProvider"
+        },
+        "reuse_on_retry": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActivityDirectoriesProcessProvider": {
+      "type": "string",
+      "enum": [
+        "none",
+        "native"
+      ]
+    },
+    "ActivityStubComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "$ref": "#/$defs/ComponentLocation"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location"
+      ]
+    },
+    "ActivityWasmComponentConfigToml": {
       "type": "object",
       "properties": {
         "directories": {
@@ -154,40 +200,12 @@
         "retry_on_err": {
           "type": "boolean",
           "default": true
-        },
-        "stub": {
-          "type": "boolean",
-          "default": false
         }
       },
       "additionalProperties": false,
       "required": [
         "name",
         "location"
-      ]
-    },
-    "ActivityDirectoriesConfigToml": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": false
-        },
-        "process_provider": {
-          "$ref": "#/$defs/ActivityDirectoriesProcessProvider"
-        },
-        "reuse_on_retry": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "additionalProperties": false
-    },
-    "ActivityDirectoriesProcessProvider": {
-      "type": "string",
-      "enum": [
-        "none",
-        "native"
       ]
     },
     "ApiConfig": {
