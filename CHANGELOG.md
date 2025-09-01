@@ -38,10 +38,6 @@ This release represents a major refactoring of both the WIT schemas and features
 - Clean up the roadmap - ([4213172](https://github.com/obeli-sk/obelisk/commit/4213172b5391d4f3baaa0c948122ad4f98b62581))
 - Correct `reuse_on_retry` - ([8a8f4b4](https://github.com/obeli-sk/obelisk/commit/8a8f4b4c6a02a21ec0a5f949e1da4eb4d1d8c28b))
 
-### ◀️ Revert
-
-- "chore: Bump `wasm-bindgen` fork" - ([54f9972](https://github.com/obeli-sk/obelisk/commit/54f9972f3eed3bea774a869088486930ca5a4132))
-
 ### 🚜 Refactor
 
 - *(db)* [**breaking**] Rename stub `return_value`,`target_result` - ([551a1f3](https://github.com/obeli-sk/obelisk/commit/551a1f34a6dd58cbc622a9079a4a77704b27aaf2))
@@ -111,10 +107,6 @@ This release represents a major refactoring of both the WIT schemas and features
 - Rename `EventCall:BlockingJoinNext` to `JoinNextClosing` - ([6958d04](https://github.com/obeli-sk/obelisk/commit/6958d047bf34a3337626f4f834255884b5dcf0f7))
 - Move one-off join set creation to `event_history` - ([7836194](https://github.com/obeli-sk/obelisk/commit/78361948f858a84b309941acb4b3aad890be1dff))
 - Remove `ClockFn` from `event_history` - ([76298ec](https://github.com/obeli-sk/obelisk/commit/76298ec6fbb589e33fe1f4883c953f0e35c3c7cc))
-
-### Wip
-
-- Modify `-await-next` to never return a mismatched response - ([b32c5c4](https://github.com/obeli-sk/obelisk/commit/b32c5c4d24c7d3a9a5d6bd7d03bca4e8d603b9b7))
 
 
 ## [0.23.2](https://github.com/obeli-sk/obelisk/compare/v0.23.1...v0.23.2)
