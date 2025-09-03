@@ -20,7 +20,7 @@ jobs:
         run: nix develop --command cargo codspeed build -p bench --jobs 1
 
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@v3
+        uses: CodSpeedHQ/action@v4
         with:
           token: ${{ secrets.CODSPEED_TOKEN }}
           run: nix develop --command cargo codspeed run -p bench
