@@ -6,7 +6,7 @@ mod grpc_util;
 mod init;
 mod oci;
 
-use args::{Args, Client, ClientSubcommand, Generate, Server, Subcommand};
+use args::{Args, Client, ClientSubcommand, Generate, Server, Subcommand, params::parse_params};
 use clap::Parser;
 use command::{
     execution::{GetStatusOptions, SubmitOutputOpts},
@@ -116,7 +116,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 } else {
                     SubmitOutputOpts::PlainFollow { no_reconnect }
                 };
-                command::execution::submit(client, ffqn, params, follow, opts).await
+                command::execution::submit(client, ffqn, parse_params(params)?, follow, opts).await
             }
             ClientSubcommand::Execution(args::Execution::Stub(args::Stub {
                 execution_id,

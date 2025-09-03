@@ -331,7 +331,6 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         }
     }
 
-    // FIXME: On a slow execution: race between `expired_timers_watcher` this if retry_exp_backoff is 0.
     /// Map the `WorkerError` to an temporary or a permanent failure.
     fn worker_result_to_execution_event(
         execution_id: ExecutionId,
