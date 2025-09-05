@@ -107,11 +107,13 @@ pub(crate) enum ClientSubcommand {
 pub(crate) enum Component {
     /// Parse WASM file and output its metadata.
     Inspect {
-        #[arg(required(true))]
-        path: PathBuf,
         /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
         #[arg(required(true))]
         component_type: ComponentType,
+
+        /// Path to the WASM file
+        #[arg(required(true))]
+        path: PathBuf,
 
         /// Show component imports
         #[arg(short, long)]
