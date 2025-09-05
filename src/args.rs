@@ -42,7 +42,6 @@ pub(crate) enum Generate {
     /// based on the exported interfaces of the component.
     ExportedExtWits {
         /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
-        #[arg(long, short)]
         component_type: ComponentType,
         /// Path to the `wit` folder, containing the target world and possibly `deps` subfolder.
         input_wit_directory: PathBuf,
