@@ -40,7 +40,7 @@ pub(crate) enum Generate {
     },
     /// Generate extension WIT files that are automatically implemented by Obelisk
     /// based on the exported interfaces of the component.
-    ExportedExtWits {
+    Extensions {
         /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
         component_type: ComponentType,
         /// Path to the `wit` folder, containing the target world and possibly `deps` subfolder.

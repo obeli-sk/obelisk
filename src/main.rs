@@ -157,7 +157,7 @@ async fn main() -> Result<(), anyhow::Error> {
         Subcommand::Generate(Generate::ConfigSchema { output }) => {
             command::generate::generate_toml_schema(output)
         }
-        Subcommand::Generate(Generate::ExportedExtWits {
+        Subcommand::Generate(Generate::Extensions {
             component_type,
             input_wit_directory,
             output_deps_directory,
