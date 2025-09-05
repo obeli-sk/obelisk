@@ -41,10 +41,12 @@ pub(crate) enum Generate {
     /// Generate extension WIT files that are automatically implemented by Obelisk
     /// based on the exported interfaces of the component.
     ExportedExtWits {
-        #[arg(long, short)]
         /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
+        #[arg(long, short)]
         component_type: ComponentType,
+        /// Path to the `wit` folder, containing the target world and possibly `deps` subfolder.
         input_wit_directory: PathBuf,
+        /// Optional. If not set, WIT files will be written to the input directory.
         output_deps_directory: Option<PathBuf>,
     },
 }
@@ -61,6 +63,7 @@ pub(crate) enum Server {
         /// Clean the codegen cache directory
         #[arg(long)]
         clean_codegen_cache: bool,
+        /// Path to the TOML configuration
         #[arg(long, short)]
         config: Option<PathBuf>,
     },
@@ -73,8 +76,10 @@ pub(crate) enum Server {
         /// Clean the codegen cache
         #[arg(long)]
         clean_codegen_cache: bool,
+        /// Path to the TOML configuration
         #[arg(long, short)]
         config: Option<PathBuf>,
+        /// Do not verify existence of environment variables
         #[arg(long, short)]
         ignore_missing_env_vars: bool,
     },
@@ -104,19 +109,28 @@ pub(crate) enum Component {
     Inspect {
         #[arg(required(true))]
         path: PathBuf,
+        /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
         #[arg(required(true))]
         component_type: ComponentType,
+
+        /// Show component imports
         #[arg(short, long)]
         imports: bool,
+
+        /// Show auto-generated export extensions
         #[arg(short, long)]
         extensions: bool,
+
+        /// Attempt to convert Core WASM Module to a WASM Component
         #[arg(short, long)]
         convert_core_module: bool,
     },
     /// List components.
     List {
+        /// Show component imports
         #[arg(short, long)]
         imports: bool,
+        /// Show auto-generated export extensions
         #[arg(short, long)]
         extensions: bool,
     },
