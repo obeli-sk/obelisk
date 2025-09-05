@@ -133,9 +133,6 @@ pub enum FatalError {
     },
     #[error("out of fuel: {reason}")]
     OutOfFuel { reason: String },
-    /// Workflow attempted to create a join set with the same name twice, or with an invalid character.
-    #[error("{reason}")]
-    JoinSetNameError { reason: String },
 }
 
 impl From<FatalError> for FinishedExecutionError {
@@ -207,12 +204,6 @@ impl From<FatalError> for FinishedExecutionError {
                 reason_inner,
                 reason_full,
                 kind: PermanentFailureKind::OutOfFuel,
-                detail: None,
-            },
-            FatalError::JoinSetNameError { reason } => FinishedExecutionError::PermanentFailure {
-                reason_inner: reason,
-                reason_full,
-                kind: PermanentFailureKind::JoinSetNameError,
                 detail: None,
             },
         }

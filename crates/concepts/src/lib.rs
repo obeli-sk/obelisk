@@ -102,8 +102,6 @@ pub enum PermanentFailureKind {
     ActivityTrap,
     /// Applicable to Workflow
     WorkflowTrap,
-    /// Applicable to Workflow
-    JoinSetNameError,
     /// Applicable to Webhook
     WebhookEndpointError,
     /// Applicable to Stub Activity
