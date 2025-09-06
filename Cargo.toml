@@ -184,7 +184,7 @@ bytes = "1.10"
 cargo_metadata = "0.22"
 cfg-if = "1.0.3"
 chrono = { version = "0.4.41", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.46", features = ["derive"] }
+clap = { version = "4.5.47", features = ["derive"] }
 config = { version = "0.15.15", default-features = false, features = [
     "toml",
     "preserve_order",
@@ -217,7 +217,7 @@ http-body-util = "0.1"
 hyper = "1.7.0"
 hyper-util = { version = "0.1", features = ["tokio"] }
 indexmap = { version = "2.11", features = ["serde"] }
-insta = { version = "1.43.1", features = ["json"] }
+insta = { version = "1.43.2", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
 libc = "0.2.175"
@@ -272,10 +272,10 @@ tokio = { version = "1", features = [
 ] }
 tokio-stream = "0.1.17"
 toml = { version = "0.9.5", features = ["preserve_order"] }
-tonic = { version = "0.14.1", default-features = false }
-tonic-prost = "0.14.1"
-tonic-prost-build = "0.14.1"
-tonic-web = "0.14.1"
+tonic = { version = "0.14.2", default-features = false }
+tonic-prost = "0.14.2"
+tonic-prost-build = "0.14.2"
+tonic-web = "0.14.2"
 tower = "0.5.2"
 tower-http = { version = "0.6.6", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
@@ -291,7 +291,7 @@ wiremock = "0.6"
 # webui
 gloo = "0.11.0"
 id-arena = "2.2.1"
-log = "0.4.27"
+log = "0.4.28"
 semver = "1.0.26"
 tonic-web-wasm-client = "0.8.0"
 wasm-bindgen = "=0.2.100" # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml.
@@ -321,7 +321,7 @@ wasmparser = "0.237.0"
 wit-component = "0.237.0"
 
 # testing components
-wasi = "0.14.3"
+wasi = "0.14.4"
 wit-bindgen = "0.44.0"
 
 # otlp
