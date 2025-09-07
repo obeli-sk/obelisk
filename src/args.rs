@@ -162,14 +162,15 @@ pub(crate) enum Execution {
         /// Print output as JSON
         #[arg(long)]
         json: bool, // TODO: output=json|jsonl|plain
-        /// Parameters for the function. Accepts one of the following formats:
+        /// Accepted Parameter Formats:
         ///
-        /// - A single argument containing a JSON array string (e.g., '["a", "b"]')
+        /// - JSON array string, e.g. '["first", "second", null, 1]'
         ///
-        /// - A single argument prefixed with '@' referencing a file that contains the JSON array
+        /// - File reference prefixed with @, e.g. @file.json (file must contain a valid JSON array)
         ///
-        /// - Multiple individual arguments following '--' (e.g., -- "a" @secondparam.json null 1)
-        #[expect(clippy::doc_link_with_quotes)] // Intentional use of '
+        /// - Multiple arguments after --, e.g. -- '"first"' @secondparam.json null 1
+        ///
+        /// - For functions with no parameters: [] (JSON array variant) or no arguments.
         #[arg(name = "parameters")]
         params: Vec<String>,
     },
