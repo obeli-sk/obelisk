@@ -1,4 +1,4 @@
 [toolchain]
-channel = "1.89"
+channel = "1.89" # NB: Update rust-toolchain-cross.toml and Cargo.toml as well
 targets = ["wasm32-unknown-unknown", "wasm32-wasip2"]
 components = ["rustfmt", "clippy", "rust-src", "rust-analyzer", "cargo"]
