@@ -29,13 +29,17 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::debug;
 use tracing::instrument;
 
-pub struct InMemoryDbConnection(Arc<tokio::sync::Mutex<DbHolder>>);
+pub struct InMemoryDbConnection(Arc<std::sync::Mutex<DbHolder>>);
 
 #[async_trait]
 impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-        self.0.lock().await.create(req).map_err(DbError::Specific)
+        self.0
+            .lock()
+            .unwrap()
+            .create(req)
+            .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all)]
@@ -50,7 +54,7 @@ impl DbConnection for InMemoryDbConnection {
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
     ) -> Result<LockPendingResponse, DbError> {
-        Ok(self.0.lock().await.lock_pending(
+        Ok(self.0.lock().unwrap().lock_pending(
             batch_size,
             pending_at_or_sooner,
             &ffqns,
@@ -64,7 +68,7 @@ impl DbConnection for InMemoryDbConnection {
 
     #[instrument(skip_all)]
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
-        Ok(self.0.lock().await.get_expired_timers(at))
+        Ok(self.0.lock().unwrap().get_expired_timers(at))
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -80,7 +84,7 @@ impl DbConnection for InMemoryDbConnection {
     ) -> Result<LockResponse, DbError> {
         self.0
             .lock()
-            .await
+            .unwrap()
             .lock(
                 created_at,
                 component_id,
@@ -102,7 +106,7 @@ impl DbConnection for InMemoryDbConnection {
     ) -> Result<AppendResponse, DbError> {
         self.0
             .lock()
-            .await
+            .unwrap()
             .append(req.created_at, &execution_id, appending_version, req.event)
             .map_err(DbError::Specific)
     }
@@ -117,7 +121,7 @@ impl DbConnection for InMemoryDbConnection {
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
             .lock()
-            .await
+            .unwrap()
             .append_batch(batch, &execution_id, appending_version)
             .map_err(DbError::Specific)
     }
@@ -133,7 +137,7 @@ impl DbConnection for InMemoryDbConnection {
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
             .lock()
-            .await
+            .unwrap()
             .append_batch_create_child(batch, &execution_id, version, child_req)
             .map_err(DbError::Specific)
     }
@@ -150,7 +154,7 @@ impl DbConnection for InMemoryDbConnection {
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
             .lock()
-            .await
+            .unwrap()
             .append_batch_respond_to_parent(
                 &execution_id,
                 batch,
@@ -166,7 +170,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbError> {
         self.0
             .lock()
-            .await
+            .unwrap()
             .get(execution_id)
             .map_err(DbError::Specific)
     }
@@ -176,7 +180,7 @@ impl DbConnection for InMemoryDbConnection {
         execution_id: &ExecutionId,
         version: &Version,
     ) -> Result<ExecutionEvent, DbError> {
-        let execution_log = self.0.lock().await.get(execution_id)?;
+        let execution_log = self.0.lock().unwrap().get(execution_id)?;
         Ok(execution_log
             .events
             .get(usize::try_from(version.0).unwrap())
@@ -190,13 +194,13 @@ impl DbConnection for InMemoryDbConnection {
         start_idx: usize,
         interrupt_after: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, SubscribeError> {
-        let either = self
-            .0
-            .lock()
-            .await
-            .subscribe_to_next_responses(execution_id, start_idx)
-            .map_err(SubscribeError::DbError)?;
-        // unlock
+        let either = {
+            let mut guard = self.0.lock().unwrap();
+            guard
+                .subscribe_to_next_responses(execution_id, start_idx)
+                .map_err(SubscribeError::DbError)?
+        };
+        // unlocked now
         match either {
             Either::Left(resp) => Ok(resp),
             Either::Right(receiver) => {
@@ -220,7 +224,7 @@ impl DbConnection for InMemoryDbConnection {
     ) -> Result<(), DbError> {
         self.0
             .lock()
-            .await
+            .unwrap()
             .append_response(
                 &execution_id,
                 JoinSetResponseEventOuter {
@@ -237,12 +241,11 @@ impl DbConnection for InMemoryDbConnection {
         ffqns: Arc<[FunctionFqn]>,
         max_wait: Duration,
     ) {
-        let either = self
-            .0
-            .lock()
-            .await
-            .subscribe_to_pending(pending_at_or_sooner, &ffqns);
-        // unlock
+        let either = {
+            let mut guard = self.0.lock().unwrap();
+            guard.subscribe_to_pending(pending_at_or_sooner, &ffqns)
+        };
+        // unlocked now
         match either {
             Either::Left(()) => {} // Got results immediately
             Either::Right(mut receiver) => {
@@ -262,12 +265,10 @@ impl DbConnection for InMemoryDbConnection {
         let execution_log = {
             let fut = async move {
                 loop {
-                    let execution_log = self
-                        .0
-                        .lock()
-                        .await
-                        .get(execution_id)
-                        .map_err(DbError::Specific)?;
+                    let execution_log = {
+                        let mut guard = self.0.lock().unwrap();
+                        guard.get(execution_id).map_err(DbError::Specific)?
+                    };
                     if execution_log.pending_state.is_finished() {
                         return Ok(execution_log);
                     }
@@ -293,7 +294,7 @@ impl DbConnection for InMemoryDbConnection {
         Ok(self
             .0
             .lock()
-            .await
+            .unwrap()
             .get(execution_id)
             .map_err(DbError::Specific)?
             .pending_state)
@@ -478,7 +479,7 @@ mod index {
 }
 
 #[derive(Clone)]
-pub struct InMemoryPool(Arc<tokio::sync::Mutex<DbHolder>>, Arc<AtomicBool>);
+pub struct InMemoryPool(Arc<std::sync::Mutex<DbHolder>>, Arc<AtomicBool>);
 
 impl Default for InMemoryPool {
     fn default() -> Self {
@@ -490,7 +491,7 @@ impl InMemoryPool {
     #[must_use]
     pub fn new() -> Self {
         Self(
-            Arc::new(tokio::sync::Mutex::new(DbHolder {
+            Arc::new(std::sync::Mutex::new(DbHolder {
                 journals: BTreeMap::default(),
                 index: JournalsIndex::default(),
                 ffqn_to_pending_subscription: hashbrown::HashMap::default(),
