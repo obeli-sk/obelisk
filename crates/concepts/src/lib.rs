@@ -1026,7 +1026,7 @@ pub mod prefixed_ulid {
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
     pub type ExecutionIdTopLevel = PrefixedUlid<prefix::E>;
     pub type RunId = PrefixedUlid<prefix::Run>;
-    pub type DelayIdTopLevel = PrefixedUlid<prefix::Delay>;
+    pub type DelayIdTopLevel = PrefixedUlid<prefix::Delay>; // Never used directly, tracking top level ExecutionId
 
     #[cfg(any(test, feature = "test"))]
     impl<'a, T> arbitrary::Arbitrary<'a> for PrefixedUlid<T> {
@@ -1358,6 +1358,7 @@ pub mod prefixed_ulid {
         }
     }
 
+    /// Mirrors [`ExecutionId`], with different prefix and `idx` for tracking each delay within the join set.
     #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, SerializeDisplay, DeserializeFromStr)]
     pub struct DelayId {
         top_level: DelayIdTopLevel,
