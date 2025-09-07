@@ -3,6 +3,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.1](https://github.com/obeli-sk/obelisk/compare/v0.24.0...v0.24.1)
+This release improves `obelisk client` ergonomics.
+
+### ⛰️ Features
+
+- *(cli)* Make `exported-ext-wits` accept component type as its 1st arg - ([b1930dc](https://github.com/obeli-sk/obelisk/commit/b1930dce6edf7973e1ebeee3fb9de07ba9e041f6))
+- *(cli)* Make `inspect` accept the component type as its 1st arg - ([6dba0ab](https://github.com/obeli-sk/obelisk/commit/6dba0ab3edcde4257ffbf784aac74b94ed4e57aa))
+- *(cli)* Allow referencing json files when submitting - ([3445ef1](https://github.com/obeli-sk/obelisk/commit/3445ef175756558bac49a072d113120427228211))
+
+### 📚 Documentation
+
+- Describe various cli options and args - ([0e8b977](https://github.com/obeli-sk/obelisk/commit/0e8b97739ca84bd3b699e609034fef6bfff7f86a))
+
+### 🚜 Refactor
+
+- *(cli)* Rename `exported-ext-wit` to `extensions` - ([5402fbe](https://github.com/obeli-sk/obelisk/commit/5402fbe5f79b44da1dc94e3e35d0e981993cf1c0))
+
+
 ## [0.24.0](https://github.com/obeli-sk/obelisk/compare/v0.23.2...v0.24.0)
 
 This release represents a major refactoring of both the WIT schemas and features provided. Most notable features include:
