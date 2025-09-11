@@ -53,18 +53,8 @@ pub(crate) async fn pull_to_cache_dir(
         content_digest
     } else {
         info!("Fetching metadata for {image}");
-        // Workaround for bug somewhere in `WasmClient::pull_manifest_and_config`
-        // metadata digest must be removed from Reference, otherwise no matter
-        // what the pulled image contains, we get the specified digest.
-        let image_without_digest = Reference::with_tag(
-            image.registry().to_string(),
-            image.repository().to_string(),
-            image.tag().unwrap_or("latest").to_string(),
-        );
-        let (_oci_config, wasm_config, metadata_digest) = client
-            .pull_manifest_and_config(&image_without_digest, &auth)
-            .instrument(info_span!("pull_manifest_and_config"))
-            .await?;
+        let (_oci_config, wasm_config, metadata_digest) =
+            client.pull_manifest_and_config(image, &auth).await?;
         match image.digest() {
             None => warn!(
                 "Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}"
@@ -72,8 +62,8 @@ pub(crate) async fn pull_to_cache_dir(
             Some(specified) => {
                 debug!("Fetched metadata digest {metadata_digest}");
                 if specified != metadata_digest {
-                    bail!(
-                        "metadata digest mismatch. Specified:\n{image_without_digest}@{specified}\nActually got:\n{image_without_digest}@{metadata_digest}"
+                    unreachable!(
+                        "metadata digest mismatch. Specified: {image}\nActual: {metadata_digest}"
                     )
                 }
             }
