@@ -129,7 +129,7 @@ impl WasmComponent {
             .push_dir(path)
             .map_err(|source| DecodeError::WitDirectoryParsingError { source })?;
         let world_id = resolve
-            .select_world(main_package, None)
+            .select_world(&[main_package], None)
             .map_err(|source| DecodeError::WorldSelectionError { source })?;
         let world = resolve.worlds.get(world_id).expect("world must exist");
         let wit_parsed =

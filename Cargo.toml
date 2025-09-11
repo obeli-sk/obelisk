@@ -183,7 +183,7 @@ async-trait = "0.1"
 bytes = "1.10"
 cargo_metadata = "0.22"
 cfg-if = "1.0.3"
-chrono = { version = "0.4.41", features = ["arbitrary", "serde"] }
+chrono = { version = "0.4.42", features = ["arbitrary", "serde"] }
 clap = { version = "4.5.47", features = ["derive"] }
 config = { version = "0.15.15", default-features = false, features = [
     "toml",
@@ -210,7 +210,7 @@ futures-concurrency = "7.6.3"
 futures-util = "0.3.31"
 fxhash = "0.2.1"
 getrandom = "0.2"
-hashbrown = { version = "0.15.5", features = ["serde"] }
+hashbrown = { version = "0.16.0", features = ["serde"] }
 hdrhistogram = "7.5.4"
 http = "1.3.1"
 http-body-util = "0.1"
@@ -315,14 +315,14 @@ wasmtime-wasi-io = "36.0.2"
 wasmtime-wasi-http = "36.0.2"
 wasmtime-environ = "36.0.2"
 # wasm-tools
-wast = "237.0.0"
-wit-parser = "0.237.0"
-wasmparser = "0.237.0"
-wit-component = "0.237.0"
+wast = "239.0.0"
+wit-parser = "0.239.0"
+wasmparser = "0.239.0"
+wit-component = "0.239.0"
 
 # testing components
-wasi = "0.14.4"
-wit-bindgen = "0.44.0"
+wasi = "0.14.5"
+wit-bindgen = "0.46.0"
 
 # otlp
 opentelemetry = "0.30.0"
