@@ -104,7 +104,7 @@ pub(crate) async fn pull_to_cache_dir(
     }
     info!("Pulling image to {wasm_path:?}");
     let data = client
-        // FIXME: do not download all layers at once to memory, based on a size limit
+        // FIXME: do not download to memory
         .pull(image, &auth)
         .instrument(info_span!("pull"))
         .await
@@ -209,18 +209,20 @@ impl WasmClientWithRetry {
         }
     }
 
-    async fn retry<O, E, F: Future<Output = Result<O, E>>>(
+    async fn retry<O, E: std::fmt::Debug, F: Future<Output = Result<O, E>>>(
         &self,
         what: impl Fn() -> F,
+        reason: &'static str,
     ) -> Result<O, E> {
         let mut tries = 0;
         loop {
             match what().await {
                 Ok(ok) => return Ok(ok),
                 Err(err) if tries == self.retries => return Err(err),
-                _ => {
+                Err(err) => {
                     tries += 1;
                     let duration = Duration::from_secs(tries);
+                    debug!("Error {reason} {err:?}");
                     warn!("Retrying after {duration:?}");
                     tokio::time::sleep(duration).await;
                 }
@@ -234,8 +236,11 @@ impl WasmClientWithRetry {
         image: &Reference,
         auth: &oci_client::secrets::RegistryAuth,
     ) -> anyhow::Result<(oci_client::manifest::OciImageManifest, WasmConfig, String)> {
-        self.retry(|| self.client.pull_manifest_and_config(image, auth))
-            .await
+        self.retry(
+            || self.client.pull_manifest_and_config(image, auth),
+            "calling pull_manifest_and_config",
+        )
+        .await
     }
 
     #[instrument(skip_all)]
@@ -244,7 +249,8 @@ impl WasmClientWithRetry {
         image: &Reference,
         auth: &oci_client::secrets::RegistryAuth,
     ) -> anyhow::Result<oci_client::client::ImageData> {
-        self.retry(|| self.client.pull(image, auth)).await
+        self.retry(|| self.client.pull(image, auth), "pulling the image")
+            .await
     }
 
     #[instrument(skip_all)]
@@ -260,14 +266,17 @@ impl WasmClientWithRetry {
         let config = config.to_config()?;
         let mut manifest = OciImageManifest::build(&layers, &config, annotations);
         manifest.media_type = Some(WASM_MANIFEST_MEDIA_TYPE.to_string());
-        self.retry(|| {
-            let config = config.clone();
-            let manifest = manifest.clone();
-            self.client
-                .as_ref()
-                .push(image, &layers, config, auth, Some(manifest))
-                .err_into()
-        })
+        self.retry(
+            || {
+                let config = config.clone();
+                let manifest = manifest.clone();
+                self.client
+                    .as_ref()
+                    .push(image, &layers, config, auth, Some(manifest))
+                    .err_into()
+            },
+            "pushing the image",
+        )
         .await
     }
 }
