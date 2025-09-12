@@ -1,7 +1,7 @@
 use anyhow::{Context, bail, ensure};
 use concepts::{ContentDigest, Digest};
 use futures_util::TryFutureExt;
-use oci_client::{Reference, manifest::OciImageManifest};
+use oci_client::{Reference, errors::OciDistributionError, manifest::OciImageManifest};
 use oci_wasm::{ToConfig, WASM_MANIFEST_MEDIA_TYPE, WasmClient, WasmConfig};
 use std::{
     future::Future,
@@ -32,7 +32,7 @@ async fn metadata_to_content_digest(
         .digest()
         .map(Digest::from_str)
         .transpose()
-        .context("image digest must be well formed")?;
+        .context("image digest specified in the image must be well-formed")?;
     if let Some(metadata_digest) = metadata_digest {
         let metadata_file = digest_to_metadata_file(metadata_dir, &metadata_digest);
         if metadata_file.is_file()
@@ -59,18 +59,19 @@ pub(crate) async fn pull_to_cache_dir(
     {
         content_digest
     } else {
-        info!("Fetching metadata for {image}");
+        // Otherwise download metadata and return the first layer's digest.
+        info!("Fetching metadata");
         let (_oci_config, wasm_config, metadata_digest) =
             client.pull_manifest_and_config(image, &auth).await?;
+        debug!("Fetched metadata digest {metadata_digest}");
         match image.digest() {
             None => warn!(
                 "Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}"
             ),
             Some(specified) => {
-                debug!("Fetched metadata digest {metadata_digest}");
                 if specified != metadata_digest {
                     unreachable!(
-                        "metadata digest mismatch. Specified: {image}\nActual: {metadata_digest}"
+                        "metadata digest specified in {image} must be respected by the oci client, got {metadata_digest}"
                     )
                 }
             }
@@ -97,7 +98,7 @@ pub(crate) async fn pull_to_cache_dir(
     ));
 
     if wasm_path.is_file() {
-        // Verify content digest
+        // Verify that the local file matches the expected `content_digest`, otherwise download it again.
         match calculate_sha256_file(&wasm_path).await {
             Ok(actual_digest) if actual_digest == content_digest => {
                 return Ok((content_digest, wasm_path));
@@ -113,26 +114,12 @@ pub(crate) async fn pull_to_cache_dir(
         }
     }
     info!("Pulling image to {wasm_path:?}");
-    let data = client
-        .pull(image, &auth)
+    client
+        .pull_with_retry(image, &auth, &wasm_path)
         .await
         .with_context(|| format!("Unable to pull image {image}"))?;
-    let data = data
-        .layers
-        .into_iter()
-        .next()
-        .expect("layer length asserted in WasmClient")
-        .data;
-    let actual_hash = calculate_sha256_mem(&data);
-    ensure!(
-        content_digest == actual_hash,
-        "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {content_digest}, got {actual_hash}"
-    );
-    // Write only after verifying the hash.
-    tokio::fs::write(&wasm_path, data)
-        .await
-        .with_context(|| format!("unable to write file {wasm_path:?}"))?;
-    Ok((actual_hash, wasm_path))
+
+    Ok((content_digest, wasm_path))
 }
 
 fn get_oci_auth(reference: &Reference) -> Result<oci_client::secrets::RegistryAuth, anyhow::Error> {
@@ -276,13 +263,65 @@ impl WasmClientWithRetry {
     }
 
     #[instrument(skip_all)]
+    async fn pull_with_retry(
+        &self,
+        image: &Reference,
+        auth: &oci_client::secrets::RegistryAuth,
+        wasm_path: &Path,
+    ) -> anyhow::Result<()> {
+        self.retry(|| self.pull(image, auth, wasm_path), "pulling the image")
+            .await
+    }
+
     async fn pull(
         &self,
         image: &Reference,
         auth: &oci_client::secrets::RegistryAuth,
-    ) -> anyhow::Result<oci_client::client::ImageData> {
-        self.retry(|| self.client.pull(image, auth), "pulling the image")
+        wasm_path: &Path,
+    ) -> anyhow::Result<()> {
+        debug!("Pulling image: {:?}", image);
+        let oci_client = self.client.as_ref();
+
+        // TODO: Do not call pull_manifest_and_config if the caller did it already.
+        let (manifest, _manifest_content_digest, _config_data) =
+            oci_client.pull_manifest_and_config(image, auth).await?;
+
+        // TODO: obtain Config and validate config.media_type == oci_wasm::WASM_MANIFEST_CONFIG_MEDIA_TYPE
+
+        // validate_layers
+        if manifest.layers.is_empty() {
+            return Err(OciDistributionError::PullNoLayersError.into());
+        }
+        if manifest.layers.len() != 1 {
+            anyhow::bail!("Wasm components must have exactly one layer");
+        }
+        let layer = manifest.layers.get(0).expect("just checked");
+        if layer.media_type != oci_wasm::WASM_LAYER_MEDIA_TYPE {
+            return Err(OciDistributionError::IncompatibleLayerMediaTypeError(
+                layer.media_type.clone(),
+            )
+            .into());
+        }
+        let layer_content_digest = ContentDigest::from_str(&layer.digest)
+            .context("layer content digest must be well-formed")?;
+
+        // TODO: Write to a file instead.
+        let mut out: Vec<u8> = Vec::new();
+        debug!("Pulling image layer");
+        oci_client.pull_blob(image, layer, &mut out).await?;
+
+        let actual_content_digest = calculate_sha256_mem(&out);
+
+        ensure!(
+            layer_content_digest == actual_content_digest,
+            "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {layer_content_digest}, got {actual_content_digest}"
+        );
+        // Crashing while writing is safe: File will be discarded on next startup during "Verify file content digest"
+        tokio::fs::write(&wasm_path, out)
             .await
+            .with_context(|| format!("unable to write file {wasm_path:?}"))?;
+
+        Ok(())
     }
 
     #[instrument(skip_all)]
