@@ -65,8 +65,9 @@ pub(crate) async fn pull_to_cache_dir(
     } else {
         // Otherwise download metadata and return the first layer's digest.
         info!("Fetching metadata");
-        let (layer_content_digest, layer, metadata_digest) =
-            client.pull_manifest_and_config(image, &auth).await?;
+        let (layer_content_digest, layer, metadata_digest) = client
+            .pull_manifest_and_config_with_retry(image, &auth)
+            .await?;
         debug!("Fetched metadata digest {metadata_digest}");
         match image.digest() {
             None => warn!(
@@ -249,7 +250,7 @@ impl WasmClientWithRetry {
     }
 
     #[instrument(skip_all)]
-    async fn pull_manifest_and_config(
+    async fn pull_manifest_and_config_with_retry(
         &self,
         image: &Reference,
         auth: &oci_client::secrets::RegistryAuth,
@@ -295,24 +296,7 @@ impl WasmClientWithRetry {
         wasm_path: &Path,
         pull_request: PullRequest,
     ) -> anyhow::Result<()> {
-        self.retry(
-            || self.pull(image, auth, wasm_path, &pull_request),
-            "pulling the image",
-        )
-        .await
-    }
-
-    async fn pull(
-        &self,
-        image: &Reference,
-        auth: &oci_client::secrets::RegistryAuth,
-        wasm_path: &Path,
-        pull_request: &PullRequest,
-    ) -> anyhow::Result<()> {
-        debug!("Pulling image: {:?}", image);
-        let oci_client = self.client.as_ref();
-
-        // TODO: retry separately.
+        let requested_content_digest = pull_request.content_digest();
         let maybe_uninitialized_layer;
         let layer = match &pull_request {
             PullRequest::GotMetadata {
@@ -320,8 +304,9 @@ impl WasmClientWithRetry {
                 layer_content_digest: _,
             } => layer,
             PullRequest::MatchedMappingFile { content_digest } => {
-                let (layer_content_digest, layer, _) =
-                    self.pull_manifest_and_config(image, auth).await?;
+                let (layer_content_digest, layer, _) = self
+                    .pull_manifest_and_config_with_retry(image, auth)
+                    .await?;
                 maybe_uninitialized_layer = layer;
                 ensure!(
                     layer_content_digest == *content_digest,
@@ -330,6 +315,23 @@ impl WasmClientWithRetry {
                 &maybe_uninitialized_layer
             }
         };
+        self.retry(
+            || self.pull(image, wasm_path, layer, requested_content_digest),
+            "pulling the image",
+        )
+        .await
+    }
+
+    async fn pull(
+        &self,
+        image: &Reference,
+        wasm_path: &Path,
+        layer: &OciDescriptor,
+        requested_content_digest: &ContentDigest,
+    ) -> anyhow::Result<()> {
+        debug!("Pulling image: {:?}", image);
+        let oci_client = self.client.as_ref();
+
         // TODO: Write to a file instead.
         let mut out: Vec<u8> = Vec::new();
         debug!("Pulling image layer");
@@ -337,7 +339,6 @@ impl WasmClientWithRetry {
 
         let actual_content_digest = calculate_sha256_mem(&out);
 
-        let requested_content_digest = pull_request.content_digest();
         ensure!(
             *requested_content_digest == actual_content_digest,
             "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {requested_content_digest}, got {actual_content_digest}"
