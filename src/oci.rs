@@ -15,7 +15,7 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, warn};
-use utils::wasm_tools::WasmComponent;
+use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
 
 const OCI_CLIENT_RETRIES: u64 = 10;
 
@@ -181,30 +181,6 @@ pub(crate) async fn push(wasm_path: PathBuf, reference: &Reference) -> Result<()
     Ok(())
 }
 
-#[must_use]
-async fn calculate_sha256_file(path: &Path) -> Result<ContentDigest, std::io::Error> {
-    use sha2::{Digest, Sha256};
-    use tokio::fs::File;
-    use tokio::io::AsyncReadExt;
-
-    let mut file = File::open(path).await?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 8192];
-
-    loop {
-        let n = file.read(&mut buffer).await?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buffer[..n]);
-    }
-
-    Ok(ContentDigest::new(
-        concepts::HashType::Sha256,
-        format!("{:x}", hasher.finalize()),
-    ))
-}
-
 struct WasmClientWithRetry {
     client: WasmClient,
     retries: u64,
@@ -329,7 +305,7 @@ impl WasmClientWithRetry {
             buffer.flush().await?;
             // No `sync_all` for better performance. Starting after crash here would make digest mismatch and redownload the file.
         }
-        let actual_content_digest = calculate_sha256_file(&wasm_path).await?;
+        let actual_content_digest = calculate_sha256_file(wasm_path).await?;
         ensure!(
             *requested_content_digest == actual_content_digest,
             "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {requested_content_digest}, got {actual_content_digest}"
