@@ -1,6 +1,6 @@
 fn main() {
     let obelisk_proto = "proto/obelisk.proto";
-    println!("cargo:rerun-if-changed={obelisk_proto:?}");
+    println!("cargo:rerun-if-changed={obelisk_proto}");
     tonic_prost_build::configure()
         .protoc_arg("--experimental_allow_proto3_optional") // not needed anymore with protoc  25.3
         .compile_well_known_types(true)
