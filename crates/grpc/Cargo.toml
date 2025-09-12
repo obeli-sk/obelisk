@@ -1,0 +1,47 @@
+[package]
+name = "obeli-sk-grpc"
+description = "Internal package of obeli-sk"
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+concepts.workspace = true
+
+anyhow.workspace = true
+futures-util.workspace = true
+http.workspace = true
+prost-wkt-types.workspace = true
+prost.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tonic = { workspace = true, default-features = true, features = [
+    "zstd",
+    "gzip",
+    "tls-native-roots",
+] }
+tonic-prost.workspace = true
+tracing.workspace = true
+
+# Optional deps:
+# otlp
+opentelemetry = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+
+[features]
+otlp = [
+    "dep:opentelemetry",
+    "dep:tracing-opentelemetry"
+]
+default = ["otlp"]
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+
+[lints]
+workspace = true

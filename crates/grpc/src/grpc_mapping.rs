@@ -1,4 +1,4 @@
-use crate::grpc_util::grpc_gen::{self, execution_event::history_event};
+use crate::grpc_gen::{self, execution_event::history_event};
 use concepts::{
     ClosingStrategy, ComponentId, ComponentType, ExecutionId, FinishedExecutionError,
     FinishedExecutionResult, FunctionFqn, SupportedFunctionReturnValue,
@@ -304,10 +304,7 @@ impl TryFrom<grpc_gen::list_executions_request::Pagination> for ExecutionListPag
     }
 }
 
-pub(crate) fn to_any<T: serde::Serialize>(
-    serializable: T,
-    uri: String,
-) -> Option<prost_wkt_types::Any> {
+pub fn to_any<T: serde::Serialize>(serializable: T, uri: String) -> Option<prost_wkt_types::Any> {
     serde_json::to_string(&serializable)
         .inspect_err(|ser_err| {
             error!(
@@ -376,7 +373,7 @@ impl From<FinishedExecutionResult> for grpc_gen::ResultDetail {
     }
 }
 
-pub(crate) fn from_execution_event_to_grpc(
+pub fn from_execution_event_to_grpc(
     event: ExecutionEvent,
     version: VersionType,
 ) -> grpc_gen::ExecutionEvent {
@@ -575,7 +572,7 @@ pub mod response {
 }
 
 mod backtrace {
-    use crate::grpc_util::grpc_gen;
+    use crate::grpc_gen;
 
     impl From<concepts::storage::FrameInfo> for grpc_gen::FrameInfo {
         fn from(frame: concepts::storage::FrameInfo) -> Self {

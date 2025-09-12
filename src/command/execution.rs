@@ -1,14 +1,14 @@
 use crate::ExecutionRepositoryClient;
-use crate::grpc_gen::stub_request;
-use crate::grpc_util::grpc_gen;
-use crate::grpc_util::grpc_gen::execution_status::BlockedByJoinSet;
-use crate::grpc_util::grpc_gen::execution_status::Finished;
 use anyhow::Context as _;
 use chrono::DateTime;
 use concepts::JOIN_SET_ID_INFIX;
 use concepts::JoinSetKind;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::{ExecutionId, FunctionFqn};
+use grpc::grpc_gen;
+use grpc::grpc_gen::execution_status::BlockedByJoinSet;
+use grpc::grpc_gen::execution_status::Finished;
+use grpc::grpc_gen::stub_request;
 use grpc_gen::execution_status::Status;
 use itertools::Either;
 use serde_json::json;

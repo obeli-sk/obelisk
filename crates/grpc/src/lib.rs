@@ -1,16 +1,16 @@
-pub(crate) mod grpc_gen;
-pub(crate) mod grpc_mapping;
+pub mod grpc_gen;
+pub mod grpc_mapping;
 
 use anyhow::{Context, anyhow};
 use futures_util::TryFutureExt;
 use http::{Uri, uri::Scheme};
 use tonic::transport::{Channel, ClientTlsConfig};
 
-pub(crate) type TonicResult<T> = Result<T, tonic::Status>;
+pub type TonicResult<T> = Result<T, tonic::Status>;
 
-pub(crate) type TonicRespResult<T> = TonicResult<tonic::Response<T>>;
+pub type TonicRespResult<T> = TonicResult<tonic::Response<T>>;
 
-pub(crate) async fn to_channel(url: String) -> Result<Channel, anyhow::Error> {
+pub async fn to_channel(url: String) -> Result<Channel, anyhow::Error> {
     let tls = ClientTlsConfig::new().with_native_roots();
     let url: Uri = url.parse().context("cannot parse uri")?;
     if url.scheme() == Some(&Scheme::HTTP) {
@@ -80,7 +80,6 @@ pub mod injector {
 // Source: https://github.com/hseeberger/hello-tracing-rs/blob/b411f8b192b7d585c42b5928ea635b2bd8bde29c/hello-tracing-common/src/otel/http.rs
 pub mod extractor {
     use opentelemetry::propagation::Extractor;
-
     use tracing::{Span, warn};
     use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 

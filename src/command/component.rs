@@ -1,9 +1,9 @@
 use crate::FunctionMetadataVerbosity;
 use crate::FunctionRepositoryClient;
-use crate::grpc_util::grpc_gen;
 use anyhow::Context;
 use concepts::ComponentType;
 use concepts::{FunctionFqn, FunctionMetadata};
+use grpc::grpc_gen;
 use std::path::PathBuf;
 use utils::wasm_tools::WasmComponent;
 

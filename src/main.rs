@@ -2,7 +2,6 @@ mod args;
 mod command;
 mod config;
 mod env_vars;
-mod grpc_util;
 mod init;
 mod oci;
 
@@ -14,7 +13,7 @@ use command::{
 };
 use config::config_holder::ConfigHolder;
 use directories::{BaseDirs, ProjectDirs};
-use grpc_util::{grpc_gen, injector::TracingInjector, to_channel};
+use grpc::{grpc_gen, injector::TracingInjector, to_channel};
 use std::path::PathBuf;
 use tonic::{codec::CompressionEncoding, transport::Channel};
 
