@@ -9,7 +9,7 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use tracing::{Instrument, debug, info, info_span, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 use utils::wasm_tools::WasmComponent;
 
 const OCI_CLIENT_RETRIES: u64 = 10;
@@ -27,12 +27,19 @@ async fn metadata_to_content_digest(
     image: &Reference,
     metadata_dir: &Path,
 ) -> Result<Option<ContentDigest>, anyhow::Error> {
-    let metadata_digest = image.digest().map(Digest::from_str).transpose()?;
+    // Recoverable errors, like reading inconsistent data from disk should be ignored. Image will be downloaded again.
+    let metadata_digest = image
+        .digest()
+        .map(Digest::from_str)
+        .transpose()
+        .context("image digest must be well formed")?;
     if let Some(metadata_digest) = metadata_digest {
         let metadata_file = digest_to_metadata_file(metadata_dir, &metadata_digest);
-        if metadata_file.is_file() {
-            let content = tokio::fs::read_to_string(&metadata_file).await?;
-            return Ok(Some(ContentDigest::from_str(&content)?));
+        if metadata_file.is_file()
+            && let Ok(content) = tokio::fs::read_to_string(&metadata_file).await
+            && let Ok(digest) = ContentDigest::from_str(&content)
+        {
+            return Ok(Some(digest));
         }
     }
     Ok(None)
@@ -94,9 +101,7 @@ pub(crate) async fn pull_to_cache_dir(
     }
     info!("Pulling image to {wasm_path:?}");
     let data = client
-        // FIXME: do not download to memory
         .pull(image, &auth)
-        .instrument(info_span!("pull"))
         .await
         .with_context(|| format!("Unable to pull image {image}"))?;
     let data = data
