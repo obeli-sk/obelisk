@@ -13,6 +13,7 @@ use std::{
     str::FromStr,
     time::Duration,
 };
+use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, warn};
 use utils::wasm_tools::WasmComponent;
 
@@ -181,17 +182,6 @@ pub(crate) async fn push(wasm_path: PathBuf, reference: &Reference) -> Result<()
 }
 
 #[must_use]
-fn calculate_sha256_mem(data: &[u8]) -> ContentDigest {
-    use sha2::Digest;
-    let mut hasher = sha2::Sha256::default();
-    hasher.update(data);
-    ContentDigest::new(
-        concepts::HashType::Sha256,
-        format!("{:x}", hasher.finalize()),
-    )
-}
-
-#[must_use]
 async fn calculate_sha256_file(path: &Path) -> Result<ContentDigest, std::io::Error> {
     use sha2::{Digest, Sha256};
     use tokio::fs::File;
@@ -331,23 +321,19 @@ impl WasmClientWithRetry {
     ) -> anyhow::Result<()> {
         debug!("Pulling image: {:?}", image);
         let oci_client = self.client.as_ref();
-
-        // TODO: Write to a file instead.
-        let mut out: Vec<u8> = Vec::new();
-        debug!("Pulling image layer");
-        oci_client.pull_blob(image, &layer, &mut out).await?;
-
-        let actual_content_digest = calculate_sha256_mem(&out);
-
+        {
+            // Crashing while writing is safe: File will be discarded on next startup during "Verify file content digest"
+            let file = tokio::fs::File::create(wasm_path).await?;
+            let mut buffer = tokio::io::BufWriter::new(file);
+            oci_client.pull_blob(image, &layer, &mut buffer).await?;
+            buffer.flush().await?;
+            // No `sync_all` for better performance. Starting after crash here would make digest mismatch and redownload the file.
+        }
+        let actual_content_digest = calculate_sha256_file(&wasm_path).await?;
         ensure!(
             *requested_content_digest == actual_content_digest,
             "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {requested_content_digest}, got {actual_content_digest}"
         );
-        // Crashing while writing is safe: File will be discarded on next startup during "Verify file content digest"
-        tokio::fs::write(&wasm_path, out)
-            .await
-            .with_context(|| format!("unable to write file {wasm_path:?}"))?;
-
         Ok(())
     }
 
