@@ -95,9 +95,22 @@ pub(crate) async fn pull_to_cache_dir(
         hash_type = content_digest.hash_type(),
         content_digest = content_digest.digest_base16(),
     ));
-    // Do not download if the file exists. Content hash must match as it was verified before writing, see below.
+
     if wasm_path.is_file() {
-        return Ok((content_digest, wasm_path));
+        // Verify content digest
+        match calculate_sha256_file(&wasm_path).await {
+            Ok(actual_digest) if actual_digest == content_digest => {
+                return Ok((content_digest, wasm_path));
+            }
+            Ok(wrong_digest) => {
+                warn!(
+                    "Wrong digest for {wasm_path:?}, expected: {content_digest}, actual: {wrong_digest}"
+                );
+            }
+            Err(err) => {
+                warn!("Cannot calculate digest for {wasm_path:?} - {err:?}");
+            }
+        }
     }
     info!("Pulling image to {wasm_path:?}");
     let data = client
@@ -189,6 +202,30 @@ fn calculate_sha256_mem(data: &[u8]) -> ContentDigest {
         concepts::HashType::Sha256,
         format!("{:x}", hasher.finalize()),
     )
+}
+
+#[must_use]
+async fn calculate_sha256_file(path: &Path) -> Result<ContentDigest, std::io::Error> {
+    use sha2::{Digest, Sha256};
+    use tokio::fs::File;
+    use tokio::io::AsyncReadExt;
+
+    let mut file = File::open(path).await?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        let n = file.read(&mut buffer).await?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+
+    Ok(ContentDigest::new(
+        concepts::HashType::Sha256,
+        format!("{:x}", hasher.finalize()),
+    ))
 }
 
 struct WasmClientWithRetry {
