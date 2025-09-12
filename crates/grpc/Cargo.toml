@@ -12,8 +12,6 @@ version.workspace = true
 [dependencies]
 concepts.workspace = true
 
-anyhow.workspace = true
-futures-util.workspace = true
 http.workspace = true
 prost-wkt-types.workspace = true
 prost.workspace = true

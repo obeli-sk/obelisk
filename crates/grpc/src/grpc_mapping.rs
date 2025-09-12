@@ -133,15 +133,6 @@ pub fn db_error_to_status(db_err: &DbError) -> tonic::Status {
     }
 }
 
-impl<T> TonicServerResultExt<T> for Result<T, anyhow::Error> {
-    fn to_status(self) -> Result<T, tonic::Status> {
-        self.map_err(|err| {
-            error!("{err:?}");
-            tonic::Status::internal(format!("{err}"))
-        })
-    }
-}
-
 impl TryFrom<grpc_gen::FunctionName> for FunctionFqn {
     type Error = tonic::Status;
 

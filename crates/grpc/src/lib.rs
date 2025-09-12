@@ -1,8 +1,6 @@
 pub mod grpc_gen;
 pub mod grpc_mapping;
 
-use anyhow::{Context, anyhow};
-use futures_util::TryFutureExt;
 use http::{Uri, uri::Scheme};
 use tonic::transport::{Channel, ClientTlsConfig};
 
@@ -10,21 +8,34 @@ pub type TonicResult<T> = Result<T, tonic::Status>;
 
 pub type TonicRespResult<T> = TonicResult<tonic::Response<T>>;
 
-pub async fn to_channel(url: String) -> Result<Channel, anyhow::Error> {
+#[derive(Debug, thiserror::Error)]
+pub enum ToChannelError {
+    #[error(transparent)]
+    InvalidUri(http::uri::InvalidUri),
+    #[error(transparent)]
+    Transport(tonic::transport::Error),
+    #[error("unknown schame {0}")]
+    UnknownScheme(String),
+}
+
+pub async fn to_channel(url: String) -> Result<Channel, ToChannelError> {
     let tls = ClientTlsConfig::new().with_native_roots();
-    let url: Uri = url.parse().context("cannot parse uri")?;
+    let url: Uri = url.parse().map_err(ToChannelError::InvalidUri)?;
     if url.scheme() == Some(&Scheme::HTTP) {
-        Channel::builder(url).connect().err_into().await
+        Channel::builder(url)
+            .connect()
+            .await
+            .map_err(ToChannelError::Transport)
     } else if url.scheme() == Some(&Scheme::HTTPS) {
         Channel::builder(url)
-            .tls_config(tls)?
+            .tls_config(tls)
+            .map_err(ToChannelError::Transport)?
             .connect()
-            .err_into()
             .await
+            .map_err(ToChannelError::Transport)
     } else {
-        Err(anyhow!("unknown scheme for {url}"))
+        Err(ToChannelError::UnknownScheme(format!("{:?}", url.scheme())))
     }
-    .context("gRPC connect error")
 }
 
 // Source: https://github.com/hseeberger/hello-tracing-rs/blob/b411f8b192b7d585c42b5928ea635b2bd8bde29c/hello-tracing-common/src/otel/grpc.rs
