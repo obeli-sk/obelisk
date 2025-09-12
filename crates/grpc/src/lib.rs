@@ -38,6 +38,7 @@ pub async fn to_channel(url: String) -> Result<Channel, ToChannelError> {
     }
 }
 
+#[cfg(feature = "otlp")]
 // Source: https://github.com/hseeberger/hello-tracing-rs/blob/b411f8b192b7d585c42b5928ea635b2bd8bde29c/hello-tracing-common/src/otel/grpc.rs
 pub mod injector {
     use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
@@ -89,6 +90,7 @@ pub mod injector {
 
 // TODO: replace with opentelemetry-http
 // Source: https://github.com/hseeberger/hello-tracing-rs/blob/b411f8b192b7d585c42b5928ea635b2bd8bde29c/hello-tracing-common/src/otel/http.rs
+#[cfg(feature = "otlp")]
 pub mod extractor {
     use opentelemetry::propagation::Extractor;
     use tracing::{Span, warn};
