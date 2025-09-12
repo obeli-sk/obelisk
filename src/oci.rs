@@ -1,7 +1,11 @@
 use anyhow::{Context, bail, ensure};
 use concepts::{ContentDigest, Digest};
 use futures_util::TryFutureExt;
-use oci_client::{Reference, errors::OciDistributionError, manifest::OciImageManifest};
+use oci_client::{
+    Reference,
+    errors::OciDistributionError,
+    manifest::{OciDescriptor, OciImageManifest},
+};
 use oci_wasm::{ToConfig, WASM_MANIFEST_MEDIA_TYPE, WasmClient, WasmConfig};
 use std::{
     future::Future,
@@ -61,7 +65,7 @@ pub(crate) async fn pull_to_cache_dir(
     } else {
         // Otherwise download metadata and return the first layer's digest.
         info!("Fetching metadata");
-        let (_oci_config, wasm_config, metadata_digest) =
+        let (layer_content_digest, _layer, metadata_digest) =
             client.pull_manifest_and_config(image, &auth).await?;
         debug!("Fetched metadata digest {metadata_digest}");
         match image.digest() {
@@ -76,20 +80,12 @@ pub(crate) async fn pull_to_cache_dir(
                 }
             }
         }
-        wasm_config
-            .component
-            .context("image must contain a wasi component")?;
-        let content_digest = ContentDigest::from_str(
-            wasm_config
-                .layer_digests
-                .first()
-                .expect("layer length asserted in WasmClient"),
-        )?;
+
         // Create new file in the metadata directory.
         let metadata_file =
             digest_to_metadata_file(metadata_dir, &Digest::from_str(&metadata_digest)?);
-        tokio::fs::write(&metadata_file, content_digest.to_string()).await?;
-        content_digest
+        tokio::fs::write(&metadata_file, layer_content_digest.to_string()).await?;
+        layer_content_digest
     };
     let wasm_path = wasm_cache_dir.join(format!(
         "{hash_type}_{content_digest}.wasm",
@@ -254,9 +250,35 @@ impl WasmClientWithRetry {
         &self,
         image: &Reference,
         auth: &oci_client::secrets::RegistryAuth,
-    ) -> anyhow::Result<(oci_client::manifest::OciImageManifest, WasmConfig, String)> {
+    ) -> anyhow::Result<(
+        ContentDigest,
+        OciDescriptor, /* layer */
+        String,        /* metadata_digest */
+    )> {
         self.retry(
-            || self.client.pull_manifest_and_config(image, auth),
+            || async {
+                let (mut manifest, wasm_config, metadata_digest) =
+                    self.client.pull_manifest_and_config(image, auth).await?;
+
+                let layer = manifest
+                    .layers
+                    .pop()
+                    .expect("oci-wasm checks that Wasm components must have exactly one layer");
+                if layer.media_type != oci_wasm::WASM_LAYER_MEDIA_TYPE {
+                    return Err(OciDistributionError::IncompatibleLayerMediaTypeError(
+                        layer.media_type.clone(),
+                    )
+                    .into());
+                }
+                let layer_content_digest = ContentDigest::from_str(&layer.digest)
+                    .context("layer content digest must be well-formed")?;
+
+                // Verify WASM Component
+                wasm_config
+                    .component
+                    .context("image must contain a wasi component")?;
+                Ok((layer_content_digest, layer, metadata_digest))
+            },
             "calling pull_manifest_and_config",
         )
         .await
@@ -283,32 +305,13 @@ impl WasmClientWithRetry {
         let oci_client = self.client.as_ref();
 
         // TODO: Do not call pull_manifest_and_config if the caller did it already.
-        let (manifest, _manifest_content_digest, _config_data) =
-            oci_client.pull_manifest_and_config(image, auth).await?;
-
-        // TODO: obtain Config and validate config.media_type == oci_wasm::WASM_MANIFEST_CONFIG_MEDIA_TYPE
-
-        // validate_layers
-        if manifest.layers.is_empty() {
-            return Err(OciDistributionError::PullNoLayersError.into());
-        }
-        if manifest.layers.len() != 1 {
-            anyhow::bail!("Wasm components must have exactly one layer");
-        }
-        let layer = manifest.layers.get(0).expect("just checked");
-        if layer.media_type != oci_wasm::WASM_LAYER_MEDIA_TYPE {
-            return Err(OciDistributionError::IncompatibleLayerMediaTypeError(
-                layer.media_type.clone(),
-            )
-            .into());
-        }
-        let layer_content_digest = ContentDigest::from_str(&layer.digest)
-            .context("layer content digest must be well-formed")?;
+        let (layer_content_digest, layer, _metadata_digest) =
+            self.pull_manifest_and_config(image, auth).await?;
 
         // TODO: Write to a file instead.
         let mut out: Vec<u8> = Vec::new();
         debug!("Pulling image layer");
-        oci_client.pull_blob(image, layer, &mut out).await?;
+        oci_client.pull_blob(image, &layer, &mut out).await?;
 
         let actual_content_digest = calculate_sha256_mem(&out);
 
