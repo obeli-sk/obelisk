@@ -376,3 +376,6 @@ strip = "debuginfo"
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/obelisk-{ target }.tar.gz"
 pkg-fmt = "tgz"
+
+[profile.dev]
+debug = "line-tables-only"
