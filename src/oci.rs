@@ -9,6 +9,7 @@ use oci_client::{
 use oci_wasm::{ToConfig, WASM_MANIFEST_MEDIA_TYPE, WasmClient, WasmConfig};
 use std::{
     future::Future,
+    io::ErrorKind,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
@@ -27,27 +28,31 @@ fn digest_to_metadata_file(metadata_dir: &Path, metadata_file: &Digest) -> PathB
     ))
 }
 
-#[instrument(skip_all)]
-async fn metadata_to_content_digest(
-    image: &Reference,
-    metadata_dir: &Path,
-) -> Result<Option<ContentDigest>, anyhow::Error> {
-    // Recoverable errors, like reading inconsistent data from disk should be ignored. Image will be downloaded again.
-    let metadata_digest = image
-        .digest()
-        .map(Digest::from_str)
-        .transpose()
-        .context("image digest specified in the image must be well-formed")?;
-    if let Some(metadata_digest) = metadata_digest {
-        let metadata_file = digest_to_metadata_file(metadata_dir, &metadata_digest);
-        if metadata_file.is_file()
-            && let Ok(content) = tokio::fs::read_to_string(&metadata_file).await
-            && let Ok(digest) = ContentDigest::from_str(&content)
-        {
-            return Ok(Some(digest));
+fn content_digest_to_wasm_file(wasm_cache_dir: &Path, content_digest: &ContentDigest) -> PathBuf {
+    wasm_cache_dir.join(format!(
+        "{hash_type}_{content_digest}.wasm",
+        hash_type = content_digest.hash_type(),
+        content_digest = content_digest.digest_base16(),
+    ))
+}
+
+async fn verify_wasm_file(wasm_path: &Path, content_digest: &ContentDigest) -> Result<(), ()> {
+    match calculate_sha256_file(&wasm_path).await {
+        Ok(actual_digest) if actual_digest == *content_digest => Ok(()),
+        Ok(wrong_digest) => {
+            warn!(
+                "Wrong digest for {wasm_path:?}, deleting the file. Expected: {content_digest}, actual: {wrong_digest}"
+            );
+            let _ = tokio::fs::remove_file(wasm_path).await;
+            Err(())
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => Err(()),
+        Err(err) => {
+            warn!("Cannot calculate digest for {wasm_path:?}, deleting the file - {err:?}");
+            let _ = tokio::fs::remove_file(wasm_path).await;
+            Err(())
         }
     }
-    Ok(None)
 }
 
 #[instrument(skip_all, fields(image = image.to_string()) err)]
@@ -58,14 +63,23 @@ pub(crate) async fn pull_to_cache_dir(
 ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
     let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
     let auth = get_oci_auth(image)?;
-    // If the `image` specifies the metadata digest, try to find the link in the `metadata_dir`.
-    let pull_request = if let Some(content_digest) =
-        metadata_to_content_digest(image, metadata_dir).await?
+    // Happy path: image's metadata digest -> mapping.txt -> content digest -> file -> verify hash
+    // Recoverable errors, like reading inconsistent data, will be ignored. Image will be downloaded again.
+    if let Some(metadata_digest) = image.digest()
+        && let Ok(metadata_digest) = Digest::from_str(metadata_digest)
+        && let metadata_file = digest_to_metadata_file(metadata_dir, &metadata_digest)
+        && let Ok(content) = tokio::fs::read_to_string(&metadata_file).await
+        && let Ok(content_digest) = ContentDigest::from_str(&content)
+        && let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, &content_digest)
+        && let Ok(()) = verify_wasm_file(&wasm_path, &content_digest).await
     {
-        PullRequest::MatchedMappingFile { content_digest }
-    } else {
-        // Otherwise download metadata and return the first layer's digest.
-        info!("Fetching metadata");
+        return Ok((content_digest, wasm_path));
+    }
+    // The mapping file will be recreated. We need to fetch metadata anyway for `layer`
+    // and use that as the source of truth.
+
+    info!("Fetching metadata");
+    let (layer, content_digest) = {
         let (layer_content_digest, layer, metadata_digest) = client
             .pull_manifest_and_config_with_retry(image, &auth)
             .await?;
@@ -85,38 +99,16 @@ pub(crate) async fn pull_to_cache_dir(
         let metadata_file =
             digest_to_metadata_file(metadata_dir, &Digest::from_str(&metadata_digest)?);
         tokio::fs::write(&metadata_file, layer_content_digest.to_string()).await?;
-        PullRequest::GotMetadata {
-            layer,
-            layer_content_digest,
-        }
+        (layer, layer_content_digest)
     };
-    let content_digest = pull_request.content_digest();
-    let wasm_path = wasm_cache_dir.join(format!(
-        "{hash_type}_{content_digest}.wasm",
-        hash_type = content_digest.hash_type(),
-        content_digest = content_digest.digest_base16(),
-    ));
-
-    if wasm_path.is_file() {
-        // Verify that the local file matches the expected `content_digest`, otherwise download it again.
-        match calculate_sha256_file(&wasm_path).await {
-            Ok(actual_digest) if actual_digest == *content_digest => {
-                return Ok((actual_digest, wasm_path));
-            }
-            Ok(wrong_digest) => {
-                warn!(
-                    "Wrong digest for {wasm_path:?}, expected: {content_digest}, actual: {wrong_digest}"
-                );
-            }
-            Err(err) => {
-                warn!("Cannot calculate digest for {wasm_path:?} - {err:?}");
-            }
-        }
+    let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, &content_digest);
+    if let Ok(()) = verify_wasm_file(&wasm_path, &content_digest).await {
+        return Ok((content_digest, wasm_path));
     }
     info!("Pulling image to {wasm_path:?}");
     let content_digest = content_digest.clone();
     client
-        .pull_with_retry(image, &auth, &wasm_path, pull_request)
+        .pull_with_retry(image, &wasm_path, &layer, &content_digest)
         .await
         .with_context(|| format!("Unable to pull image {image}"))?;
 
@@ -258,29 +250,10 @@ impl WasmClientWithRetry {
     async fn pull_with_retry(
         &self,
         image: &Reference,
-        auth: &oci_client::secrets::RegistryAuth,
         wasm_path: &Path,
-        pull_request: PullRequest,
+        layer: &OciDescriptor,
+        requested_content_digest: &ContentDigest,
     ) -> anyhow::Result<()> {
-        let requested_content_digest = pull_request.content_digest();
-        let maybe_uninitialized_layer;
-        let layer = match &pull_request {
-            PullRequest::GotMetadata {
-                layer,
-                layer_content_digest: _,
-            } => layer,
-            PullRequest::MatchedMappingFile { content_digest } => {
-                let (layer_content_digest, layer, _) = self
-                    .pull_manifest_and_config_with_retry(image, auth)
-                    .await?;
-                maybe_uninitialized_layer = layer;
-                ensure!(
-                    layer_content_digest == *content_digest,
-                    "oci client must have downloaded the requested image"
-                );
-                &maybe_uninitialized_layer
-            }
-        };
         self.retry(
             || self.pull(image, wasm_path, layer, requested_content_digest),
             "pulling the image",
@@ -338,26 +311,5 @@ impl WasmClientWithRetry {
             "pushing the image",
         )
         .await
-    }
-}
-
-enum PullRequest {
-    MatchedMappingFile {
-        content_digest: ContentDigest,
-    },
-    GotMetadata {
-        layer: OciDescriptor,
-        layer_content_digest: ContentDigest,
-    },
-}
-impl PullRequest {
-    fn content_digest(&self) -> &ContentDigest {
-        match self {
-            PullRequest::MatchedMappingFile { content_digest } => content_digest,
-            PullRequest::GotMetadata {
-                layer: _,
-                layer_content_digest,
-            } => layer_content_digest,
-        }
     }
 }
