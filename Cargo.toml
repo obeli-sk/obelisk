@@ -306,7 +306,7 @@ yew_icons = { version = "0.8.0", features = ["LucideBox", "LucideFileDiff"] }
 yew-router = "0.18.0"
 yewprint = "0.5.0"
 yewprint-css = "0.4.0"
-wstd = "0.5.4"
+wstd = "0.5.6"
 
 # wasmtime
 wasmtime = { version = "36.0.2", features = ["memory-protection-keys"] }
