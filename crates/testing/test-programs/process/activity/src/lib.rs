@@ -1,9 +1,8 @@
-use std::time::Duration;
-
 use anyhow::{Context as _, bail, ensure};
 use exports::testing::process::process::Guest;
 use futures_concurrency::future::Join as _;
 use obelisk::activity::process::{self as process_support};
+use std::time::Duration;
 use wstd::io::{AsyncInputStream, AsyncOutputStream, AsyncPollable, Cursor};
 use wstd::runtime::block_on;
 use wstd::wasip2::io::streams::InputStream;
