@@ -6,14 +6,14 @@ use futures_concurrency::future::Join as _;
 use obelisk::activity::process::{self as process_support};
 use wstd::io::{AsyncInputStream, AsyncOutputStream, AsyncPollable, Cursor};
 use wstd::runtime::block_on;
-use wstd::wasi::io::streams::InputStream;
+use wstd::wasip2::io::streams::InputStream;
 
 wit_bindgen::generate!({
      world: "any:any/any",
        with: {
-       "wasi:io/error@0.2.3": wstd::wasi::io::error,
-       "wasi:io/poll@0.2.3": wstd::wasi::io::poll,
-       "wasi:io/streams@0.2.3": wstd::wasi::io::streams,
+       "wasi:io/error@0.2.3": wstd::wasip2::io::error,
+       "wasi:io/poll@0.2.3": wstd::wasip2::io::poll,
+       "wasi:io/streams@0.2.3": wstd::wasip2::io::streams,
        "obelisk:activity/process@1.0.0": generate,
        "testing:process/process": generate,
    },
@@ -191,13 +191,13 @@ done
         proc.take_stdout()
             .expect("first `take_stdout` must succeed"),
     );
-    let current_stdout = AsyncOutputStream::new(wstd::wasi::cli::stdout::get_stdout());
+    let current_stdout = AsyncOutputStream::new(wstd::wasip2::cli::stdout::get_stdout());
 
     let child_stderr = AsyncInputStream::new(
         proc.take_stderr()
             .expect("first `take_stderr` must succeed"),
     );
-    let current_stderr = AsyncOutputStream::new(wstd::wasi::cli::stderr::get_stderr());
+    let current_stderr = AsyncOutputStream::new(wstd::wasip2::cli::stderr::get_stderr());
     println!("Waiting");
 
     let stdout_fut = wstd::io::copy(child_stdout, current_stdout);
