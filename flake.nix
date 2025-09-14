@@ -216,7 +216,7 @@
                 protobuf
                 release-plz
                 wasm-tools
-                wasmtime
+                wasmtime.out
               ];
           };
           devShells.web = pkgs.mkShell {
