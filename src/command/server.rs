@@ -1259,7 +1259,7 @@ impl ServerVerified {
             let consume_fuel = fuel.is_some();
             match config.wasm_global_config.allocator_config {
                 WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
-                    config.wasmtime_pooling_config.into(),
+                    config.wasm_global_config.wasmtime_pooling_config.into(),
                     codegen_cache_dir,
                     consume_fuel,
                     config.wasm_global_config.parallel_compilation,
@@ -1270,7 +1270,7 @@ impl ServerVerified {
                     config.wasm_global_config.parallel_compilation,
                 )?,
                 WasmtimeAllocatorConfig::Pooling => Engines::pooling(
-                    config.wasmtime_pooling_config.into(),
+                    config.wasm_global_config.wasmtime_pooling_config.into(),
                     codegen_cache_dir,
                     consume_fuel,
                     config.wasm_global_config.parallel_compilation,

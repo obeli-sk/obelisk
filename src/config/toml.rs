@@ -59,8 +59,6 @@ pub(crate) struct ConfigToml {
     pub(crate) activities_stub: Vec<ActivityStubComponentConfigToml>,
     #[serde(default, rename = "workflow")]
     pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
-    #[serde(default)]
-    pub(crate) wasmtime_pooling_config: WasmtimePoolingAllocatorConfig,
     #[cfg(feature = "otlp")]
     #[serde(default)]
     pub(crate) otlp: Option<otlp::OtlpConfig>,
@@ -151,6 +149,8 @@ pub(crate) struct WasmGlobalConfigToml {
     pub(crate) build_semaphore: ValueOrUnlimited<u64>,
     #[serde(default = "default_parallel_compilation")]
     pub(crate) parallel_compilation: bool,
+    #[serde(default)]
+    pub(crate) wasmtime_pooling_config: WasmtimePoolingAllocatorConfig,
 }
 impl Default for WasmGlobalConfigToml {
     fn default() -> Self {
@@ -164,6 +164,7 @@ impl Default for WasmGlobalConfigToml {
             fuel: ValueOrUnlimited::default(),
             build_semaphore: ValueOrUnlimited::default(),
             parallel_compilation: default_parallel_compilation(),
+            wasmtime_pooling_config: WasmtimePoolingAllocatorConfig::default(),
         }
     }
 }
