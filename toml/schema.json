@@ -21,9 +21,6 @@
     "api": {
       "$ref": "#/$defs/ApiConfig"
     },
-    "codegen_cache": {
-      "$ref": "#/$defs/CodegenCache"
-    },
     "http_server": {
       "type": "array",
       "items": {
@@ -51,9 +48,6 @@
     },
     "wasm": {
       "$ref": "#/$defs/WasmGlobalConfigToml"
-    },
-    "wasmtime_pooling_config": {
-      "$ref": "#/$defs/WasmtimePoolingAllocatorConfig"
     },
     "webhook_endpoint": {
       "type": "array",
@@ -701,6 +695,9 @@
           ],
           "default": null
         },
+        "codegen_cache": {
+          "$ref": "#/$defs/CodegenCache"
+        },
         "fuel": {
           "$ref": "#/$defs/ValueOrUnlimited"
         },
@@ -709,6 +706,13 @@
         },
         "global_webhook_instance_limiter": {
           "$ref": "#/$defs/InflightSemaphore"
+        },
+        "parallel_compilation": {
+          "type": "boolean",
+          "default": true
+        },
+        "wasmtime_pooling_config": {
+          "$ref": "#/$defs/WasmtimePoolingAllocatorConfig"
         }
       },
       "additionalProperties": false
