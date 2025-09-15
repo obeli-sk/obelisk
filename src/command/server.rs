@@ -1079,6 +1079,7 @@ async fn verify_internal(
         .get_wasm_cache_directory(&config_holder.path_prefixes)
         .await?;
     let codegen_cache = config
+        .wasm_global_config
         .codegen_cache
         .get_directory(&config_holder.path_prefixes)
         .await?;
@@ -2483,6 +2484,7 @@ mod tests {
             .get_wasm_cache_directory(&config_holder.path_prefixes)
             .await?;
         let codegen_cache = config
+            .wasm_global_config
             .codegen_cache
             .get_directory(&config_holder.path_prefixes)
             .await?;

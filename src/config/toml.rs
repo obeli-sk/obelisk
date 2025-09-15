@@ -52,8 +52,6 @@ pub(crate) struct ConfigToml {
     #[serde(default, rename = "activities")]
     pub(crate) activities_global_config: ActivitiesGlobalConfigToml,
     #[serde(default)]
-    pub(crate) codegen_cache: CodegenCache,
-    #[serde(default)]
     pub(crate) timers_watcher: TimersWatcher,
     #[serde(default, rename = "activity_wasm")]
     pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
@@ -136,6 +134,8 @@ pub(crate) struct WebUIConfig {
 #[serde(deny_unknown_fields)]
 pub(crate) struct WasmGlobalConfigToml {
     #[serde(default)]
+    pub(crate) codegen_cache: CodegenCache,
+    #[serde(default)]
     pub(crate) backtrace: WasmGlobalBacktrace,
     #[serde(default)]
     cache_directory: Option<String>,
@@ -155,6 +155,7 @@ pub(crate) struct WasmGlobalConfigToml {
 impl Default for WasmGlobalConfigToml {
     fn default() -> Self {
         WasmGlobalConfigToml {
+            codegen_cache: CodegenCache::default(),
             backtrace: WasmGlobalBacktrace::default(),
             cache_directory: Option::default(),
             allocator_config: WasmtimeAllocatorConfig::default(),

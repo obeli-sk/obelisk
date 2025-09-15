@@ -30,7 +30,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # cleanup.run_every.minutes = 1             # Run the cleanup every minute by default.
 # cleanup.older_than.minutes = 5            # Delete folders belonging to executions that finished 5 minutes earlier by default.
 
-# [codegen_cache]
+# [wasm.codegen_cache]
 ## Defaults:
 # enabled = true
 # directory = "${CACHE_DIR}/codegen" # Path to directory where AOT generated code is cached. Supports path prefixes.
