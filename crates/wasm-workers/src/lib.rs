@@ -9,7 +9,7 @@ pub mod engines;
 pub mod epoch_ticker;
 pub mod preopens_cleaner;
 pub mod std_output_stream;
-#[cfg(feature = "test")]
+#[cfg(any(test, feature = "test"))]
 pub mod testing_fn_registry;
 pub mod webhook;
 pub mod workflow;
