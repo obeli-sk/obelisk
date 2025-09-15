@@ -132,7 +132,7 @@ pub(crate) struct WebUIConfig {
     pub(crate) listening_addr: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WasmGlobalConfigToml {
     #[serde(default)]
@@ -149,6 +149,22 @@ pub(crate) struct WasmGlobalConfigToml {
     pub(crate) fuel: ValueOrUnlimited<u64>,
     #[serde(default)]
     pub(crate) build_semaphore: ValueOrUnlimited<u64>,
+    #[serde(default = "default_parallel_compilation")]
+    pub(crate) parallel_compilation: bool,
+}
+impl Default for WasmGlobalConfigToml {
+    fn default() -> Self {
+        WasmGlobalConfigToml {
+            backtrace: WasmGlobalBacktrace::default(),
+            cache_directory: Option::default(),
+            allocator_config: WasmtimeAllocatorConfig::default(),
+            global_executor_instance_limiter: InflightSemaphore::default(),
+            global_webhook_instance_limiter: InflightSemaphore::default(),
+            fuel: ValueOrUnlimited::default(),
+            build_semaphore: ValueOrUnlimited::default(),
+            parallel_compilation: default_parallel_compilation(),
+        }
+    }
 }
 
 impl WasmGlobalConfigToml {
@@ -1260,6 +1276,10 @@ fn resolve_env_vars(
             },
         })
         .collect::<Result<_, _>>()
+}
+
+const fn default_parallel_compilation() -> bool {
+    true
 }
 
 const fn default_global_backtrace_persist() -> bool {

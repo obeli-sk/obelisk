@@ -55,6 +55,7 @@ pub struct EngineConfig {
     pooling_opts: Option<PoolingOptions>,
     codegen_cache_dir: Option<PathBuf>,
     consume_fuel: bool,
+    parallel_compilation: bool,
 }
 
 impl EngineConfig {
@@ -107,6 +108,7 @@ impl EngineConfig {
             pooling_opts: None,
             codegen_cache_dir: Some(codegen_cache),
             consume_fuel: false,
+            parallel_compilation: true,
         }
     }
     #[cfg(test)]
@@ -115,6 +117,7 @@ impl EngineConfig {
             pooling_opts: Some(opts),
             codegen_cache_dir: None,
             consume_fuel: false,
+            parallel_compilation: true,
         }
     }
 }
@@ -142,6 +145,8 @@ impl Engines {
     ) -> Result<Arc<Engine>, EngineError> {
         wasmtime_config.wasm_component_model(true);
         wasmtime_config.async_support(true);
+
+        wasmtime_config.parallel_compilation(config.parallel_compilation);
 
         wasmtime_config.allocation_strategy(config.strategy());
         if let Some(codegen_cache_dir) = config.codegen_cache_dir {
@@ -196,11 +201,13 @@ impl Engines {
     pub fn on_demand(
         codegen_cache_dir: Option<PathBuf>,
         consume_fuel: bool,
+        parallel_compilation: bool,
     ) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: None,
             codegen_cache_dir,
             consume_fuel,
+            parallel_compilation,
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine_internal(engine_config.clone())?,
@@ -214,11 +221,13 @@ impl Engines {
         pooling_opts: PoolingOptions,
         codegen_cache_dir: Option<PathBuf>,
         consume_fuel: bool,
+        parallel_compilation: bool,
     ) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: Some(pooling_opts),
             codegen_cache_dir,
             consume_fuel,
+            parallel_compilation,
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine_internal(engine_config.clone())?,
@@ -231,11 +240,18 @@ impl Engines {
         pooling_opts: PoolingOptions,
         codegen_cache_dir: Option<PathBuf>,
         consume_fuel: bool,
+        parallel_compilation: bool,
     ) -> Result<Self, EngineError> {
-        Self::pooling(pooling_opts, codegen_cache_dir.clone(), consume_fuel).or_else(|err| {
+        Self::pooling(
+            pooling_opts,
+            codegen_cache_dir.clone(),
+            consume_fuel,
+            parallel_compilation,
+        )
+        .or_else(|err| {
             warn!("Falling back to on-demand allocator - {err}");
             debug!("{err:?}");
-            Self::on_demand(codegen_cache_dir, consume_fuel)
+            Self::on_demand(codegen_cache_dir, consume_fuel, parallel_compilation)
         })
     }
 }

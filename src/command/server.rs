@@ -1261,14 +1261,18 @@ impl ServerVerified {
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_dir,
                     consume_fuel,
+                    config.wasm_global_config.parallel_compilation,
                 )?,
-                WasmtimeAllocatorConfig::OnDemand => {
-                    Engines::on_demand(codegen_cache_dir, consume_fuel)?
-                }
+                WasmtimeAllocatorConfig::OnDemand => Engines::on_demand(
+                    codegen_cache_dir,
+                    consume_fuel,
+                    config.wasm_global_config.parallel_compilation,
+                )?,
                 WasmtimeAllocatorConfig::Pooling => Engines::pooling(
                     config.wasmtime_pooling_config.into(),
                     codegen_cache_dir,
                     consume_fuel,
+                    config.wasm_global_config.parallel_compilation,
                 )?,
             }
         };

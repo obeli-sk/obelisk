@@ -20,6 +20,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # global_webhook_instance_limiter = "unlimited"  # If set to an integer, limits the number of concurrent webhook requests.
 # fuel = "unlimited"                             # If set to an integer, WASM instances consume fuel, details: https://docs.wasmtime.dev/api/wasmtime/struct.Store.html#method.set_fuel
 # build_semaphore = "unlimited"                  # If set to an integer, limit the number of AOT compilations that can run in parallel
+# parallel_compilation = true                    # Enable (default) or disable parallel AOT compilation of each WASM component.
 
 ## Global Preopened Directories Configuration
 # [activities.directories]
@@ -32,7 +33,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # [codegen_cache]
 ## Defaults:
 # enabled = true
-# directory = "${CACHE_DIR}/codegen" # Path to directory where generated code is cached. Supports path prefixes.
+# directory = "${CACHE_DIR}/codegen" # Path to directory where AOT generated code is cached. Supports path prefixes.
 
 ## Timers Watcher Configuration
 # [timers_watcher]

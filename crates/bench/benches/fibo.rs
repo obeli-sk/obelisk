@@ -235,7 +235,7 @@ mod bench {
         .canonicalize()
         .unwrap();
         let codegen_cache = workspace_dir.join("test-codegen-cache");
-        let engines = Arc::new(Engines::on_demand(Some(codegen_cache), false).unwrap()); // TODO test with pooling engine as well.
+        let engines = Arc::new(Engines::on_demand(Some(codegen_cache), false, true).unwrap()); // TODO test with pooling engine as well.
 
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity_with_engine(
