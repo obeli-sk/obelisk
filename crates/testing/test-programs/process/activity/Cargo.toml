@@ -11,6 +11,7 @@ version.workspace = true
 [dependencies]
 anyhow.workspace = true
 futures-concurrency.workspace = true
+wasip2.workspace = true
 wit-bindgen.workspace = true
 wstd.workspace = true
 

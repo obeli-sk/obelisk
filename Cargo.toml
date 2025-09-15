@@ -321,7 +321,7 @@ wasmparser = "0.239.0"
 wit-component = "0.239.0"
 
 # testing components
-wasi = "0.14.5"
+wasip2 = "1.0.1"
 wit-bindgen = "0.46.0"
 
 # otlp

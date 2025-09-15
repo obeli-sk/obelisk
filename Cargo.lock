@@ -5076,6 +5076,7 @@ version = "0.24.1"
 dependencies = [
  "anyhow",
  "futures-concurrency",
+ "wasip2",
  "wit-bindgen 0.46.0",
  "wstd",
 ]
@@ -6026,11 +6027,11 @@ dependencies = [
 
 [[package]]
 name = "wasip2"
-version = "1.0.0+wasi-0.2.4"
+version = "1.0.1+wasi-0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03fa2761397e5bd52002cd7e73110c71af2109aca4e521a9f40473fe685b0a24"
+checksum = "0562428422c63773dad2c345a1882263bbf4d65cf3f42e90921f787ef5ad58e7"
 dependencies = [
- "wit-bindgen 0.45.1",
+ "wit-bindgen 0.46.0",
 ]
 
 [[package]]
@@ -7195,15 +7196,6 @@ checksum = "7e11ad55616555605a60a8b2d1d89e006c2076f46c465c892cc2c153b20d4b30"
 dependencies = [
  "wit-bindgen-rt",
  "wit-bindgen-rust-macro 0.34.0",
-]
-
-[[package]]
-name = "wit-bindgen"
-version = "0.45.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c573471f125075647d03df72e026074b7203790d41351cd6edc96f46bcccd36"
-dependencies = [
- "bitflags 2.9.4",
 ]
 
 [[package]]
