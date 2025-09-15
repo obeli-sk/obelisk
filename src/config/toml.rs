@@ -147,6 +147,8 @@ pub(crate) struct WasmGlobalConfigToml {
     pub(crate) global_webhook_instance_limiter: InflightSemaphore,
     #[serde(default)]
     pub(crate) fuel: ValueOrUnlimited<u64>,
+    #[serde(default)]
+    pub(crate) build_semaphore: ValueOrUnlimited<u64>,
 }
 
 impl WasmGlobalConfigToml {
@@ -1182,7 +1184,7 @@ pub(crate) mod webhook {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(untagged)]
 pub(crate) enum ValueOrUnlimited<T> {
     Unlimited(Unlimited),
@@ -1215,7 +1217,7 @@ impl Default for InflightSemaphore {
     }
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Unlimited {
     #[default]

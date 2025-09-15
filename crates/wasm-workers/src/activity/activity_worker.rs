@@ -56,7 +56,6 @@ pub struct ActivityWorker<C: ClockFn, S: Sleep> {
 }
 
 impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
-    #[tracing::instrument(skip_all, fields(%config.component_id), err)]
     pub fn new_with_config(
         runnable_component: RunnableComponent,
         config: ActivityConfig,

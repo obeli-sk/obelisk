@@ -79,7 +79,6 @@ const WASI_NAMESPACE: &str = "wasi";
 
 impl<C: ClockFn> WorkflowWorkerCompiled<C> {
     // If `config.stub_wasi` is set, this function must remove WASI exports and imports.
-    #[tracing::instrument(skip_all, fields(%config.component_id))]
     pub fn new_with_config(
         runnable_component: RunnableComponent,
         config: WorkflowConfig,

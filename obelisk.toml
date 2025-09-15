@@ -19,6 +19,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # global_executor_instance_limiter = "unlimited" # If set to an integer, limits the number of concurrent workflow and activity executions.
 # global_webhook_instance_limiter = "unlimited"  # If set to an integer, limits the number of concurrent webhook requests.
 # fuel = "unlimited"                             # If set to an integer, WASM instances consume fuel, details: https://docs.wasmtime.dev/api/wasmtime/struct.Store.html#method.set_fuel
+# build_semaphore = "unlimited"                  # If set to an integer, limit the number of AOT compilations that can run in parallel
 
 ## Global Preopened Directories Configuration
 # [activities.directories]

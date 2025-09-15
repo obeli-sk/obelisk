@@ -1240,6 +1240,7 @@ struct ServerVerified {
     engines: Engines,
     parent_preopen_dir: Option<Arc<Path>>,
     activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
+    build_semaphore: Option<u64>,
 }
 
 impl ServerVerified {
@@ -1315,6 +1316,7 @@ impl ServerVerified {
             .activities_global_config
             .get_directories()
             .and_then(ActivitiesDirectoriesGlobalConfigToml::get_cleanup);
+        let build_semaphore = config.wasm_global_config.build_semaphore.into();
         let mut config = ConfigVerified::fetch_and_verify_all(
             config.activities_wasm,
             config.activities_stub,
@@ -1354,6 +1356,7 @@ impl ServerVerified {
                 engines,
                 parent_preopen_dir,
                 activities_cleanup,
+                build_semaphore,
             },
             component_source_map,
         ))
@@ -1380,6 +1383,7 @@ impl ServerCompiledLinked {
             server_verified.config.webhooks_by_names,
             server_verified.config.global_backtrace_persist,
             server_verified.config.fuel,
+            server_verified.build_semaphore,
         )
         .await?;
         Ok(Self {
@@ -1481,8 +1485,8 @@ impl ServerInit {
             .map(|pre_spawn| pre_spawn.spawn(db_pool.clone()))
             .collect();
 
-        // Start TCP listeners
-        let http_servers_handles: Vec<AbortOnDropHandle> = start_webhooks(
+        // Start webhook HTTP servers
+        let http_servers_handles: Vec<AbortOnDropHandle> = start_http_servers(
             http_servers_to_webhooks,
             &server_compiled_linked.engines,
             db_pool.clone(),
@@ -1530,7 +1534,7 @@ impl ServerInit {
 
 type WebhookInstancesAndRoutes = (WebhookEndpointInstance<Now>, Vec<WebhookRouteVerified>);
 
-async fn start_webhooks(
+async fn start_http_servers(
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstancesAndRoutes>)>,
     engines: &Engines,
     db_pool: Arc<dyn DbPool>,
@@ -1671,7 +1675,7 @@ impl ConfigVerified {
         let activities_wasm = activities_wasm
             .into_iter()
             .map(|activity_wasm| {
-                tokio::spawn({
+                tokio::spawn(
                     activity_wasm
                         .fetch_and_verify(
                             wasm_cache_dir.clone(),
@@ -1682,8 +1686,8 @@ impl ConfigVerified {
                             global_executor_instance_limiter.clone(),
                             fuel,
                         )
-                        .in_current_span()
-                })
+                        .in_current_span(),
+                )
             })
             .collect::<Vec<_>>();
 
@@ -1801,6 +1805,7 @@ enum CompiledComponent {
 }
 
 #[instrument(skip_all)]
+#[expect(clippy::too_many_arguments)]
 async fn compile_and_verify(
     engines: &Engines,
     activities_wasm: Vec<ActivityWasmConfigVerified>,
@@ -1809,6 +1814,7 @@ async fn compile_and_verify(
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
+    build_semaphore: Option<u64>,
 ) -> Result<
     (
         LinkedComponents,
@@ -1817,13 +1823,19 @@ async fn compile_and_verify(
     ),
     anyhow::Error,
 > {
+    let build_semaphore = build_semaphore.map(|permits| {
+        semaphore::Semaphore::new(permits.try_into().expect("u64 must fit into usize"))
+    });
+    let parent_span = Span::current();
     let pre_spawns: Vec<tokio::task::JoinHandle<Result<_, anyhow::Error>>> = activities_wasm
         .into_iter()
         .map(|activity_wasm| {
             let engines = engines.clone();
-            let span =
-                info_span!("activity_wasm_compile", component_id = %activity_wasm.component_id());
+            let build_semaphore = build_semaphore.clone();
+            let parent_span = parent_span.clone();
             tokio::task::spawn_blocking(move || {
+                let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
+                let span = info_span!(parent: parent_span, "activity_wasm_compile", component_id = %activity_wasm.component_id());
                 span.in_scope(|| {
                     prespawn_activity(activity_wasm, &engines).map(|(worker, component_config)| {
                         CompiledComponent::ActivityOrWorkflow {
@@ -1835,7 +1847,8 @@ async fn compile_and_verify(
             })
         })
         .chain(activities_stub.into_iter().map(|activity_stub| {
-            let span = info_span!("activity_stub_init", component_id = %activity_stub.component_id);
+            // No build_semaphore as there is no WASM compilation.
+            let span = info_span!("activity_stub_init", component_id = %activity_stub.component_id); // automatically associated with parent
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     let wasm_component = WasmComponent::new(
@@ -1867,8 +1880,11 @@ async fn compile_and_verify(
         }))
         .chain(workflows.into_iter().map(|workflow| {
             let engines = engines.clone();
-            let span = info_span!("workflow_compile", component_id = %workflow.component_id());
+            let build_semaphore = build_semaphore.clone();
+            let parent_span = parent_span.clone();
             tokio::task::spawn_blocking(move || {
+                let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
+                let span = info_span!(parent: parent_span, "workflow_compile", component_id = %workflow.component_id());
                 span.in_scope(|| {
                     prespawn_workflow(workflow, &engines).map(|(worker, component_config)| {
                         CompiledComponent::ActivityOrWorkflow {
@@ -1884,8 +1900,11 @@ async fn compile_and_verify(
                 .into_iter()
                 .map(|(webhook_name, webhook)| {
                     let engines = engines.clone();
-                    let span = info_span!("webhook_compile", component_id = %webhook.component_id);
+                    let build_semaphore = build_semaphore.clone();
+                    let parent_span = parent_span.clone();
                     tokio::task::spawn_blocking(move || {
+                        let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
+                        let span = info_span!(parent: parent_span, "webhook_compile", component_id = %webhook.component_id);
                         span.in_scope(|| {
                             let component_id = webhook.component_id;
                             let config = WebhookEndpointConfig {
@@ -1966,7 +1985,45 @@ async fn compile_and_verify(
     }
 }
 
-#[instrument(skip_all, fields(
+mod semaphore {
+    use std::sync::{Arc, Condvar, Mutex};
+
+    pub(crate) struct Semaphore {
+        mutex: Mutex<usize>,
+        condvar: Condvar,
+    }
+    impl Semaphore {
+        pub(crate) fn new(permits: usize) -> Arc<Semaphore> {
+            Arc::new(Semaphore {
+                mutex: Mutex::new(permits),
+                condvar: Condvar::new(),
+            })
+        }
+        pub(crate) fn acquire(self: Arc<Semaphore>) -> Permit {
+            {
+                let mut guard = self.mutex.lock().unwrap();
+                while *guard == 0 {
+                    guard = self.condvar.wait(guard).unwrap();
+                }
+                *guard -= 1;
+            }
+            Permit(self)
+        }
+    }
+
+    pub(crate) struct Permit(Arc<Semaphore>);
+    impl Drop for Permit {
+        fn drop(&mut self) {
+            {
+                let mut guard = self.0.mutex.lock().unwrap();
+                *guard += 1;
+            }
+            self.0.condvar.notify_one();
+        }
+    }
+}
+
+#[instrument(level = "debug", skip_all, fields(
     executor_id = %activity.exec_config.executor_id,
     component_id = %activity.exec_config.component_id,
     wasm_path = ?activity.wasm_path,
@@ -2002,7 +2059,7 @@ fn prespawn_activity(
     ))
 }
 
-#[instrument(skip_all, fields(
+#[instrument(level = "debug", skip_all, fields(
     executor_id = %workflow.exec_config.executor_id,
     component_id = %workflow.exec_config.component_id,
     wasm_path = ?workflow.wasm_path,

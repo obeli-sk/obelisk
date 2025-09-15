@@ -691,6 +691,9 @@
         "backtrace": {
           "$ref": "#/$defs/WasmGlobalBacktrace"
         },
+        "build_semaphore": {
+          "$ref": "#/$defs/ValueOrUnlimited"
+        },
         "cache_directory": {
           "type": [
             "string",
