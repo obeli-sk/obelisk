@@ -438,6 +438,7 @@ struct SqlitePoolInner<S: Sleep> {
     response_subscribers: ResponseSubscribers,
     ffqn_to_pending_subscription: Arc<Mutex<hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>>>,
     sleep: S,
+    join_handle: Option<Arc<std::thread::JoinHandle<()>>>, // always Some, Optional for swapping in drop.
 }
 
 #[async_trait]
@@ -457,6 +458,27 @@ impl<S: Sleep + 'static> DbPool for SqlitePool<S> {
             self.0.sleep.sleep(Duration::from_millis(1)).await;
         }
         Ok(())
+    }
+}
+impl<S: Sleep> Drop for SqlitePool<S> {
+    fn drop(&mut self) {
+        let arc = self.0.join_handle.take().expect("join_handle was set");
+        if let Ok(join_handle) = Arc::try_unwrap(arc) {
+            // Last holder
+            if !join_handle.is_finished() {
+                if !self.0.shutdown_finished.load(Ordering::Acquire) {
+                    // Best effort to shut down the sqlite thread.
+                    let backtrace = std::backtrace::Backtrace::capture();
+                    warn!("SqlitePool was not closed properly - {backtrace}");
+                    self.0.shutdown_requested.store(true, Ordering::Release);
+                    let _ = self.0.command_tx.try_send(ThreadCommand::Shutdown);
+                    // Not joining the thread, drop might be called from async context.
+                    // We are shutting down the server anyway.
+                } else {
+                    // The thread set `shutdown_finished`, it does not matter if it is still alive.
+                }
+            }
+        }
     }
 }
 
@@ -676,7 +698,7 @@ impl<S: Sleep> SqlitePool<S> {
 
         let (command_tx, command_rx) = tokio::sync::mpsc::channel(config.queue_capacity);
         info!("Sqlite database location: {path:?}");
-        {
+        let join_handle = {
             // Initialize the `Connection`.
             let init_task = {
                 tokio::task::spawn_blocking(move || {
@@ -705,8 +727,8 @@ impl<S: Sleep> SqlitePool<S> {
                     config.queue_capacity,
                     config.low_prio_threshold,
                 );
-            });
-        }
+            })
+        };
         Ok(SqlitePool(SqlitePoolInner {
             shutdown_requested,
             shutdown_finished,
@@ -714,6 +736,7 @@ impl<S: Sleep> SqlitePool<S> {
             response_subscribers: Arc::default(),
             ffqn_to_pending_subscription: Arc::default(),
             sleep,
+            join_handle: Some(Arc::new(join_handle)),
         }))
     }
 
