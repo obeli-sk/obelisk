@@ -10,5 +10,7 @@ impl Guest for Component {
         unimplemented!("actual implementation is never used")
     }
 
-    fn noret() {}
+    fn noret() {
+        unimplemented!("actual implementation is never used")
+    }
 }
