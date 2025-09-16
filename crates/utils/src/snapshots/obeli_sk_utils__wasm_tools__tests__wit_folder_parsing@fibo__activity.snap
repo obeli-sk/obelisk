@@ -1,6 +1,5 @@
 ---
 source: crates/utils/src/wasm_tools.rs
-assertion_line: 995
 expression: snapshot
 ---
 testing:fibo-obelisk-ext
