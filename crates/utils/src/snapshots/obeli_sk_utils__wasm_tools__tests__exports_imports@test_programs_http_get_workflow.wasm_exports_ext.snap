@@ -83,7 +83,7 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, result<string, string>>, await-next-extension-error>"
     },
-    "extension": "AwaitNext",
+    "extension": "await_next",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-get": {
@@ -161,7 +161,7 @@ expression: exports
       },
       "wit_type": "result<result<string, string>, get-extension-error>"
     },
-    "extension": "Get",
+    "extension": "get",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-invoke": {
@@ -198,7 +198,7 @@ expression: exports
       },
       "wit_type": "result<result<string, string>, execution-failed>"
     },
-    "extension": "Invoke",
+    "extension": "invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-await-next": {
@@ -281,7 +281,7 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, result<string, string>>, await-next-extension-error>"
     },
-    "extension": "AwaitNext",
+    "extension": "await_next",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-get": {
@@ -359,7 +359,7 @@ expression: exports
       },
       "wit_type": "result<result<string, string>, get-extension-error>"
     },
-    "extension": "Get",
+    "extension": "get",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-invoke": {
@@ -396,7 +396,7 @@ expression: exports
       },
       "wit_type": "result<result<string, string>, execution-failed>"
     },
-    "extension": "Invoke",
+    "extension": "invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-submit": {
@@ -424,7 +424,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
+    "extension": "submit",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-await-next": {
@@ -497,7 +497,7 @@ expression: exports
       },
       "wit_type": "result<execution-id, await-next-extension-error>"
     },
-    "extension": "AwaitNext",
+    "extension": "await_next",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-get": {
@@ -570,7 +570,7 @@ expression: exports
       },
       "wit_type": "result<_, get-extension-error>"
     },
-    "extension": "Get",
+    "extension": "get",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-invoke": {
@@ -596,7 +596,7 @@ expression: exports
       },
       "wit_type": "result<_, execution-failed>"
     },
-    "extension": "Invoke",
+    "extension": "invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-submit": {
@@ -619,7 +619,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
+    "extension": "submit",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-submit": {
@@ -647,7 +647,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
+    "extension": "submit",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-await-next": {
@@ -730,7 +730,7 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, result<string, string>>, await-next-extension-error>"
     },
-    "extension": "AwaitNext",
+    "extension": "await_next",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-await-next": {
@@ -815,7 +815,7 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>"
     },
-    "extension": "AwaitNext",
+    "extension": "await_next",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-get": {
@@ -895,7 +895,7 @@ expression: exports
       },
       "wit_type": "result<result<list<string>, string>, get-extension-error>"
     },
-    "extension": "Get",
+    "extension": "get",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-invoke": {
@@ -936,7 +936,7 @@ expression: exports
       },
       "wit_type": "result<result<list<string>, string>, execution-failed>"
     },
-    "extension": "Invoke",
+    "extension": "invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": {
@@ -1021,7 +1021,7 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>"
     },
-    "extension": "AwaitNext",
+    "extension": "await_next",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-get": {
@@ -1101,7 +1101,7 @@ expression: exports
       },
       "wit_type": "result<result<list<string>, string>, get-extension-error>"
     },
-    "extension": "Get",
+    "extension": "get",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-invoke": {
@@ -1145,7 +1145,7 @@ expression: exports
       },
       "wit_type": "result<result<list<string>, string>, execution-failed>"
     },
-    "extension": "Invoke",
+    "extension": "invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": {
@@ -1178,7 +1178,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
+    "extension": "submit",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-submit": {
@@ -1208,7 +1208,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
+    "extension": "submit",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-get": {
@@ -1286,7 +1286,7 @@ expression: exports
       },
       "wit_type": "result<result<string, string>, get-extension-error>"
     },
-    "extension": "Get",
+    "extension": "get",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-invoke": {
@@ -1323,7 +1323,7 @@ expression: exports
       },
       "wit_type": "result<result<string, string>, execution-failed>"
     },
-    "extension": "Invoke",
+    "extension": "invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": {
@@ -1351,7 +1351,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
+    "extension": "submit",
     "submittable": false
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-resp-schedule": {
@@ -1398,7 +1398,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Schedule",
+    "extension": "schedule",
     "submittable": true
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-schedule": {
@@ -1445,7 +1445,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Schedule",
+    "extension": "schedule",
     "submittable": true
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-stargazers-schedule": {
@@ -1487,7 +1487,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Schedule",
+    "extension": "schedule",
     "submittable": true
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-schedule": {
@@ -1536,7 +1536,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Schedule",
+    "extension": "schedule",
     "submittable": true
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-stress-schedule": {
@@ -1588,7 +1588,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Schedule",
+    "extension": "schedule",
     "submittable": true
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-successful-schedule": {
@@ -1635,7 +1635,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Schedule",
+    "extension": "schedule",
     "submittable": true
   },
   "testing:http-workflow/workflow.get": {

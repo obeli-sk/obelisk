@@ -78,7 +78,7 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
-    "extension": "AwaitNext",
+    "extension": "await_next",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-get": {
@@ -151,7 +151,7 @@ expression: exports
       },
       "wit_type": "result<u64, get-extension-error>"
     },
-    "extension": "Get",
+    "extension": "get",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-invoke": {
@@ -183,7 +183,7 @@ expression: exports
       },
       "wit_type": "result<u64, execution-failed>"
     },
-    "extension": "Invoke",
+    "extension": "invoke",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-submit": {
@@ -211,7 +211,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
+    "extension": "submit",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-await-next": {
@@ -289,7 +289,7 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
-    "extension": "AwaitNext",
+    "extension": "await_next",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-get": {
@@ -362,7 +362,7 @@ expression: exports
       },
       "wit_type": "result<u64, get-extension-error>"
     },
-    "extension": "Get",
+    "extension": "get",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-invoke": {
@@ -404,7 +404,7 @@ expression: exports
       },
       "wit_type": "result<u64, execution-failed>"
     },
-    "extension": "Invoke",
+    "extension": "invoke",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-submit": {
@@ -442,7 +442,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
+    "extension": "submit",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": {
@@ -520,7 +520,7 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
-    "extension": "AwaitNext",
+    "extension": "await_next",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": {
@@ -598,7 +598,7 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
-    "extension": "AwaitNext",
+    "extension": "await_next",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-get": {
@@ -671,7 +671,7 @@ expression: exports
       },
       "wit_type": "result<u64, get-extension-error>"
     },
-    "extension": "Get",
+    "extension": "get",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-invoke": {
@@ -708,7 +708,7 @@ expression: exports
       },
       "wit_type": "result<u64, execution-failed>"
     },
-    "extension": "Invoke",
+    "extension": "invoke",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": {
@@ -741,7 +741,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
+    "extension": "submit",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-get": {
@@ -814,7 +814,7 @@ expression: exports
       },
       "wit_type": "result<u64, get-extension-error>"
     },
-    "extension": "Get",
+    "extension": "get",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-invoke": {
@@ -851,7 +851,7 @@ expression: exports
       },
       "wit_type": "result<u64, execution-failed>"
     },
-    "extension": "Invoke",
+    "extension": "invoke",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": {
@@ -884,7 +884,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
+    "extension": "submit",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next": {
@@ -962,7 +962,7 @@ expression: exports
       },
       "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
     },
-    "extension": "AwaitNext",
+    "extension": "await_next",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-get": {
@@ -1035,7 +1035,7 @@ expression: exports
       },
       "wit_type": "result<u64, get-extension-error>"
     },
-    "extension": "Get",
+    "extension": "get",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-invoke": {
@@ -1072,7 +1072,7 @@ expression: exports
       },
       "wit_type": "result<u64, execution-failed>"
     },
-    "extension": "Invoke",
+    "extension": "invoke",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": {
@@ -1105,7 +1105,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Submit",
+    "extension": "submit",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-schedule/workflow-nesting.fibo-nested-workflow-schedule": {
@@ -1152,7 +1152,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Schedule",
+    "extension": "schedule",
     "submittable": true
   },
   "testing:fibo-workflow-obelisk-schedule/workflow-nesting.fibo-start-fiboas-schedule": {
@@ -1209,7 +1209,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Schedule",
+    "extension": "schedule",
     "submittable": true
   },
   "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-concurrent-schedule": {
@@ -1261,7 +1261,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Schedule",
+    "extension": "schedule",
     "submittable": true
   },
   "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-schedule": {
@@ -1313,7 +1313,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Schedule",
+    "extension": "schedule",
     "submittable": true
   },
   "testing:fibo-workflow-obelisk-schedule/workflow.fibow-schedule": {
@@ -1365,7 +1365,7 @@ expression: exports
       },
       "wit_type": "execution-id"
     },
-    "extension": "Schedule",
+    "extension": "schedule",
     "submittable": true
   },
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": {

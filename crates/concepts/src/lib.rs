@@ -655,6 +655,7 @@ impl Default for Params {
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum FunctionExtension {
     Submit,
     AwaitNext,
