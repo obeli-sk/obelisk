@@ -18,7 +18,7 @@ impl Guest for Component {
         if resp.status_code >= 200 && resp.status_code <= 299 {
             Ok(String::from_utf8_lossy(&resp.body).into_owned())
         } else {
-            assert!((resp.status_code != 418), "418 causes trap");
+            assert!(resp.status_code != 418, "418 causes trap");
             Err(format!("wrong status code: {}", resp.status_code))
         }
     }

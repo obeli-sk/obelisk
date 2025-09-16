@@ -7,7 +7,7 @@ pub fn trace_id() -> Rc<str> {
     let mut rng = rand::rngs::SmallRng::from_entropy();
     Rc::from(
         (0..5)
-            .map(|_| (rand::Rng::gen_range(&mut rng, b'a'..=b'z') as char))
+            .map(|_| rand::Rng::gen_range(&mut rng, b'a'..=b'z') as char)
             .collect::<String>(),
     )
 }
