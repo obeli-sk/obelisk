@@ -73,7 +73,7 @@ pub fn set_up() {
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
 
-        std::panic::set_hook(Box::new(utils::tracing_panic_hook));
+        std::panic::set_hook(Box::new(utils::panic_hook::tracing_panic_hook));
 
         let fmt_layer = tracing_subscriber::fmt::layer().event_format(MessageFirstFormatter);
 

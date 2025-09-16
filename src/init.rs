@@ -3,6 +3,7 @@ use std::io::IsTerminal as _;
 use crate::config::toml::{ConfigToml, log::LoggingStyle};
 use tracing::warn;
 use tracing_subscriber::Layer;
+use utils::panic_hook::tracing_panic_hook;
 
 #[cfg(feature = "tokio-console")]
 fn tokio_console_layer<S>() -> Option<impl tracing_subscriber::Layer<S>>
@@ -157,7 +158,7 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
         .with(rolling_file_layer)
         .init();
 
-    std::panic::set_hook(Box::new(utils::tracing_panic_hook));
+    std::panic::set_hook(Box::new(tracing_panic_hook));
     Ok(guard)
 }
 
