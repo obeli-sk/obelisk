@@ -164,6 +164,43 @@ expression: exports
     "extension": "Get",
     "submittable": false
   },
+  "testing:http-workflow-obelisk-ext/workflow.get-invoke": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-invoke"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "result": {
+              "ok": "string",
+              "err": "string"
+            }
+          },
+          "err": {
+            "record": {
+              "execution-id": {
+                "record": {
+                  "id": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "wit_type": "result<result<string, string>, execution-failed>"
+    },
+    "extension": "Invoke",
+    "submittable": false
+  },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-await-next": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -323,6 +360,43 @@ expression: exports
       "wit_type": "result<result<string, string>, get-extension-error>"
     },
     "extension": "Get",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-resp-invoke": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-resp-invoke"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "result": {
+              "ok": "string",
+              "err": "string"
+            }
+          },
+          "err": {
+            "record": {
+              "execution-id": {
+                "record": {
+                  "id": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "wit_type": "result<result<string, string>, execution-failed>"
+    },
+    "extension": "Invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-submit": {
@@ -497,6 +571,32 @@ expression: exports
       "wit_type": "result<_, get-extension-error>"
     },
     "extension": "Get",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-stargazers-invoke": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-stargazers-invoke"
+    },
+    "parameter_types": [],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": null,
+          "err": {
+            "record": {
+              "execution-id": {
+                "record": {
+                  "id": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "wit_type": "result<_, execution-failed>"
+    },
+    "extension": "Invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-submit": {
@@ -798,6 +898,47 @@ expression: exports
     "extension": "Get",
     "submittable": false
   },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-invoke": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-concurrently-invoke"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "list": "string"
+        },
+        "name": "urls",
+        "wit_type": "list<string>"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "result": {
+              "ok": {
+                "list": "string"
+              },
+              "err": "string"
+            }
+          },
+          "err": {
+            "record": {
+              "execution-id": {
+                "record": {
+                  "id": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "wit_type": "result<result<list<string>, string>, execution-failed>"
+    },
+    "extension": "Invoke",
+    "submittable": false
+  },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -963,6 +1104,50 @@ expression: exports
     "extension": "Get",
     "submittable": false
   },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-invoke": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-concurrently-stress-invoke"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "concurrency",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "result": {
+              "ok": {
+                "list": "string"
+              },
+              "err": "string"
+            }
+          },
+          "err": {
+            "record": {
+              "execution-id": {
+                "record": {
+                  "id": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "wit_type": "result<result<list<string>, string>, execution-failed>"
+    },
+    "extension": "Invoke",
+    "submittable": false
+  },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -1102,6 +1287,43 @@ expression: exports
       "wit_type": "result<result<string, string>, get-extension-error>"
     },
     "extension": "Get",
+    "submittable": false
+  },
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-invoke": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
+      "function_name": "get-successful-invoke"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": {
+            "result": {
+              "ok": "string",
+              "err": "string"
+            }
+          },
+          "err": {
+            "record": {
+              "execution-id": {
+                "record": {
+                  "id": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "wit_type": "result<result<string, string>, execution-failed>"
+    },
+    "extension": "Invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": {

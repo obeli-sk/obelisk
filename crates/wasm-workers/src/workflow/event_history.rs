@@ -53,6 +53,7 @@ use tracing::info;
 use tracing::instrument;
 use tracing::{debug, error, trace};
 use val_json::wast_val::WastVal;
+use wasmtime::component::Val;
 
 #[derive(Debug)]
 pub(crate) enum ChildReturnValue {
@@ -2349,7 +2350,7 @@ pub(crate) struct OneOffChildExecutionRequest {
     ffqn: FunctionFqn,
     fn_component_id: ComponentId,
     fn_retry_config: ComponentRetryConfig,
-    join_set_id: JoinSetId, // should be created internally to make sure it is one off?
+    join_set_id: JoinSetId,
     child_execution_id: ExecutionIdDerived,
     #[debug(skip)]
     params: Params,
@@ -2388,8 +2389,56 @@ impl OneOffChildExecutionRequest {
             ChildReturnValue::None => Ok(None),
             ChildReturnValue::WastVal(wast_val) => Ok(Some(wast_val.as_val())),
             ChildReturnValue::JoinSetCreate(_) | ChildReturnValue::JoinNext(_) => {
-                unreachable!("must return WastVal or None")
+                unreachable!("applying OneOffChildExecutionRequest must return WastVal or None")
             }
+        }
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) async fn apply_invoke(
+        ffqn: FunctionFqn,
+        fn_component_id: ComponentId,
+        fn_retry_config: ComponentRetryConfig,
+        params: Params,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        event_history: &mut EventHistory,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<Val, WorkflowFunctionError> {
+        let join_set_id = event_history.next_join_set_one_off();
+        let child_execution_id = event_history.execution_id.next_level(&join_set_id);
+        let event = EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
+            ffqn,
+            fn_component_id,
+            fn_retry_config,
+            join_set_id,
+            child_execution_id,
+            params,
+            wasm_backtrace,
+        });
+
+        match event_history
+            .apply_inner(event, db_connection, version, called_at)
+            .await
+        {
+            Ok(ChildReturnValue::None) => Ok(Val::Result(Ok(None))),
+            Ok(ChildReturnValue::WastVal(wast_val)) => {
+                Ok(Val::Result(Ok(Some(Box::new(wast_val.as_val())))))
+            }
+            Ok(ChildReturnValue::JoinSetCreate(_) | ChildReturnValue::JoinNext(_)) => {
+                unreachable!("applying OneOffChildExecutionRequest must return WastVal or None")
+            }
+            Err(ApplyError::UnhandledChildExecutionError {
+                child_execution_id,
+                root_cause_id: _,
+            }) => {
+                // Translate to execution-failure
+                let execution_failed = types_execution::ExecutionFailed::from(&child_execution_id);
+                let execution_failed = Box::new(Val::from(execution_failed));
+                Ok(Val::Result(Err(Some(execution_failed))))
+            }
+            Err(apply_err) => Err(WorkflowFunctionError::from(apply_err)),
         }
     }
 }

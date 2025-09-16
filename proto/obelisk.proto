@@ -113,6 +113,7 @@ enum FunctionExtension {
     SCHEDULE = 2;
     STUB = 3;
     GET = 4;
+    INVOKE = 5;
 }
 
 message FunctionParameter {

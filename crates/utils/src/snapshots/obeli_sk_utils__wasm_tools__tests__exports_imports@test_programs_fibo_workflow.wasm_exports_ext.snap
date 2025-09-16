@@ -154,6 +154,38 @@ expression: exports
     "extension": "Get",
     "submittable": false
   },
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-invoke": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow-nesting",
+      "function_name": "fibo-nested-workflow-invoke"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": {
+            "record": {
+              "execution-id": {
+                "record": {
+                  "id": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "wit_type": "result<u64, execution-failed>"
+    },
+    "extension": "Invoke",
+    "submittable": false
+  },
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-submit": {
     "ffqn": {
       "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow-nesting",
@@ -331,6 +363,48 @@ expression: exports
       "wit_type": "result<u64, get-extension-error>"
     },
     "extension": "Get",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-invoke": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow-nesting",
+      "function_name": "fibo-start-fiboas-invoke"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "fiboas",
+        "wit_type": "u32"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations-per-fiboa",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": {
+            "record": {
+              "execution-id": {
+                "record": {
+                  "id": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "wit_type": "result<u64, execution-failed>"
+    },
+    "extension": "Invoke",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-submit": {
@@ -600,6 +674,43 @@ expression: exports
     "extension": "Get",
     "submittable": false
   },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-invoke": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fiboa-concurrent-invoke"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": {
+            "record": {
+              "execution-id": {
+                "record": {
+                  "id": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "wit_type": "result<u64, execution-failed>"
+    },
+    "extension": "Invoke",
+    "submittable": false
+  },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": {
     "ffqn": {
       "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
@@ -704,6 +815,43 @@ expression: exports
       "wit_type": "result<u64, get-extension-error>"
     },
     "extension": "Get",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-invoke": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fiboa-invoke"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": {
+            "record": {
+              "execution-id": {
+                "record": {
+                  "id": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "wit_type": "result<u64, execution-failed>"
+    },
+    "extension": "Invoke",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": {
@@ -888,6 +1036,43 @@ expression: exports
       "wit_type": "result<u64, get-extension-error>"
     },
     "extension": "Get",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fibow-invoke": {
+    "ffqn": {
+      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
+      "function_name": "fibow-invoke"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": {
+            "record": {
+              "execution-id": {
+                "record": {
+                  "id": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "wit_type": "result<u64, execution-failed>"
+    },
+    "extension": "Invoke",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": {

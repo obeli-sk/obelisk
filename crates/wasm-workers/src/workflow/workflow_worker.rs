@@ -222,11 +222,10 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                             Box::new(async move {
                                 let workflow_ctx = store_ctx.data_mut();
                                 let called_at = workflow_ctx.clock_fn.now();
-                                let val =
-                                workflow_ctx
-                                    .call_imported_fn(imported_fn_call, called_at, &ffqn)
-                                    .await
-                                    .map_err(wasmtime::Error::new)?;
+                                let val = workflow_ctx
+                                        .call_imported_fn(imported_fn_call, called_at, &ffqn)
+                                        .await
+                                        .map_err(wasmtime::Error::new)?;
 
                                 match (results.len(), val) {
                                     (0, None) => Ok(()),
@@ -683,6 +682,11 @@ pub(crate) mod tests {
         engines::{EngineConfig, Engines},
     };
     use assert_matches::assert_matches;
+    use concepts::prefixed_ulid::ExecutionIdDerived;
+    use concepts::storage::{
+        AppendRequest, DbConnection, ExecutionEventInner, JoinSetResponse, JoinSetResponseEvent,
+        JoinSetResponseEventOuter,
+    };
     use concepts::time::TokioSleep;
     use concepts::{
         ComponentType,
@@ -692,7 +696,7 @@ pub(crate) mod tests {
             Version, wait_for_pending_state_fn,
         },
     };
-    use concepts::{ExecutionId, Params};
+    use concepts::{ExecutionId, FinishedExecutionError, FinishedExecutionResult, Params};
     use db_tests::Database;
     use executor::executor::extract_exported_ffqns_noext_test;
     use executor::{
@@ -2077,5 +2081,145 @@ pub(crate) mod tests {
             db,
         )
         .await;
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn invoke_expect_execution_error(
+        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
+    ) {
+        const FFQN_WORKFLOW_STUB: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::INVOKE_EXPECT_EXECUTION_ERROR,
+        );
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool) = db.set_up().await;
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
+            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW),
+        ]);
+
+        let worker = compile_workflow_worker(
+            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+            db_pool.clone(),
+            sim_clock.clone(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+        );
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection();
+
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: FFQN_WORKFLOW_STUB,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: u32::MAX,
+                component_id: ComponentId::dummy_workflow(),
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+        let exec_task = ExecTask::new(
+            worker,
+            ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: TICK_SLEEP,
+                component_id: ComponentId::dummy_workflow(),
+                task_limiter: None,
+                executor_id: ExecutorId::generate(),
+            },
+            sim_clock.clone(),
+            db_pool.clone(),
+            Arc::new([FFQN_WORKFLOW_STUB]),
+        );
+
+        {
+            let task_count = exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap();
+            assert_eq!(1, task_count);
+        }
+
+        let pending_state = db_connection
+            .get_pending_state(&execution_id)
+            .await
+            .unwrap();
+        let join_set_id = assert_matches!(pending_state, PendingState::BlockedByJoinSet { join_set_id, lock_expires_at:_, closing: false } => join_set_id);
+        let stub_execution_id = execution_id.next_level(&join_set_id);
+        write_stub_response(
+            db_connection.as_ref(),
+            sim_clock.now(),
+            stub_execution_id,
+            Err(FinishedExecutionError::new_stubbed_error()),
+        )
+        .await;
+
+        // another tick + await should mark the execution finished.
+        assert_eq!(
+            1,
+            exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap()
+        );
+        let res = db_connection.get(&execution_id).await.unwrap();
+        assert_matches!(
+            res.into_finished_result().unwrap(),
+            Ok(SupportedFunctionReturnValue::None)
+        );
+        drop(exec_task);
+        db_pool.close().await.unwrap();
+    }
+
+    async fn write_stub_response(
+        db_connection: &dyn DbConnection,
+        created_at: DateTime<Utc>,
+        stub_execution_id: ExecutionIdDerived,
+        result: FinishedExecutionResult,
+    ) {
+        let (parent_id, join_set_id) = stub_execution_id.split_to_parts().unwrap();
+        let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
+        let finished_req = AppendRequest {
+            created_at,
+            event: ExecutionEventInner::Finished {
+                result: result.clone(),
+                http_client_traces: None,
+            },
+        };
+        db_connection
+            .append_batch_respond_to_parent(
+                stub_execution_id.clone(),
+                created_at,
+                vec![finished_req],
+                stub_finished_version.clone(),
+                parent_id,
+                JoinSetResponseEventOuter {
+                    created_at,
+                    event: JoinSetResponseEvent {
+                        join_set_id,
+                        event: JoinSetResponse::ChildExecutionFinished {
+                            child_execution_id: stub_execution_id,
+                            finished_version: stub_finished_version.clone(),
+                            result,
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
     }
 }

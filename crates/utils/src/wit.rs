@@ -214,6 +214,21 @@ fn add_ext_exports(
             stability: wit_parser::Stability::default(),
         })
     };
+    let type_id_execution_failed = {
+        // obelisk:types/execution.{execution-failed}
+        let actual_type_id = *execution_ifc
+            .types
+            .get("execution-failed")
+            .expect("`execution-failed` must exist");
+        // Create a reference to the type.
+        resolve.types.alloc(TypeDef {
+            name: None,
+            kind: TypeDefKind::Type(Type::Id(actual_type_id)),
+            owner: TypeOwner::Interface(execution_ifc_id),
+            docs: wit_parser::Docs::default(),
+            stability: wit_parser::Stability::default(),
+        })
+    };
     let type_id_stub_error = {
         // obelisk:types/execution.{stub-error}
         let actual_type_id = *execution_ifc
@@ -278,6 +293,7 @@ fn add_ext_exports(
 
             let mut ext_ifc = {
                 let mut types = IndexMap::new();
+                // Add type imports (use ...)
                 types.insert("execution-id".to_string(), type_id_execution_id);
                 types.insert("join-set-id".to_string(), type_id_join_set_id);
                 types.insert(
@@ -288,6 +304,7 @@ fn add_ext_exports(
                     "get-extension-error".to_string(),
                     type_id_get_extension_error,
                 );
+                types.insert("execution-failed".to_string(), type_id_execution_failed);
                 copy_original_types(
                     original_ifc_id,
                     original_ifc,
@@ -425,9 +442,7 @@ fn add_ext_exports(
                     ext_ifc.functions.insert(fn_name, fn_ext);
                 }
 
-                // -get(execution-id) -> result<original_return_type, get-extension-error>
-                // or
-                // -get(execution-id) -> result<_,  get-extension-error>
+                // -get(execution-id) -> result<originalreturn type or _, get-extension-error>
                 {
                     let fn_name = format!("{fn_name}-get");
                     let params = vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
@@ -451,8 +466,32 @@ fn add_ext_exports(
                     };
                     ext_ifc.functions.insert(fn_name, fn_ext);
                 }
+                // -invoke(original param) -> result<original return type or _, execution-failed>
+                {
+                    let fn_name = format!("{fn_name}-invoke");
+                    let params = original_fn.params.clone();
+                    let result = Some(Type::Id(resolve.types.alloc(TypeDef {
+                        name: None,
+                        kind: TypeDefKind::Result(wit_parser::Result_ {
+                            ok: original_fn.result, // return type or None
+                            err: Some(Type::Id(type_id_execution_failed)),
+                        }),
+                        owner: TypeOwner::None,
+                        docs: wit_parser::Docs::default(),
+                        stability: wit_parser::Stability::default(),
+                    })));
+                    let fn_ext = Function {
+                        name: fn_name.clone(),
+                        kind: FunctionKind::Freestanding,
+                        params,
+                        result,
+                        docs: wit_parser::Docs::default(),
+                        stability: wit_parser::Stability::default(),
+                    };
+                    ext_ifc.functions.insert(fn_name, fn_ext);
+                }
+                // -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
                 if let Some((_, schedule_ifc)) = &mut schedule_ifc {
-                    // -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
                     let fn_name = format!("{fn_name}{EXTENSION_FN_SUFFIX_SCHEDULE}");
                     let schedule_at_param_name =
                         generate_param_name("schedule-at", &original_fn.params);

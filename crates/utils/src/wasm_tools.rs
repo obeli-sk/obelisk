@@ -643,6 +643,44 @@ impl ExIm {
                 };
                 insert_ext(fn_get);
 
+                // -invoke(original params) -> result<original reslut or _, execution-failed>
+                let fn_invoke = FunctionMetadata {
+                    ffqn: FunctionFqn {
+                        ifc_fqn: obelisk_ext_ifc.clone(),
+                        function_name: FnName::from(format!(
+                            "{}-invoke",
+                            exported_fn_metadata.ffqn.function_name
+                        )),
+                    },
+                    parameter_types: {
+                        let params = exported_fn_metadata.parameter_types.0.clone();
+                        ParameterTypes(params)
+                    },
+                    return_type: {
+                        let (ok_wit, ok_type_wrapper) =
+                            if let Some(original_ret) = &exported_fn_metadata.return_type {
+                                (
+                                    &original_ret.wit_type,
+                                    Some(Box::new(original_ret.type_wrapper.clone())),
+                                )
+                            } else {
+                                (&StrVariant::Static("_"), None)
+                            };
+                        Some(ReturnType {
+                            type_wrapper: TypeWrapper::Result {
+                                ok: ok_type_wrapper,
+                                err: Some(Box::new(execution_failed_type_wrapper.clone())),
+                            },
+                            wit_type: StrVariant::from(format!(
+                                "result<{ok_wit}, execution-failed>"
+                            )),
+                        })
+                    },
+                    extension: Some(FunctionExtension::Invoke),
+                    submittable: false,
+                };
+                insert_ext(fn_invoke);
+
                 if component_type != ComponentType::ActivityStub {
                     assert!(
                         original_submittable,

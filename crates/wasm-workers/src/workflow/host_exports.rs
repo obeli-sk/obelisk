@@ -14,6 +14,7 @@ pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 pub(crate) const SUFFIX_FN_SCHEDULE: &str = "-schedule";
 pub(crate) const SUFFIX_FN_STUB: &str = "-stub";
 pub(crate) const SUFFIX_FN_GET: &str = "-get";
+pub(crate) const SUFFIX_FN_INVOKE: &str = "-invoke";
 
 // Generate `obelisk:workflow:workflow-support@2.0.0`
 pub(crate) mod v2_0_0 {

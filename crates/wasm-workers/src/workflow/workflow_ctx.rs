@@ -12,7 +12,7 @@ use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::workflow::event_history::JoinSetCreate;
-use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB};
+use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_STUB};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::{self, DbError, DbPool, HistoryEventScheduleAt, Version, WasmBacktrace};
@@ -20,8 +20,8 @@ use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
     ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FinishedExecutionError,
-    FunctionRegistry, IfcFqnName, InvalidNameError, ReturnType, SUFFIX_PKG_EXT,
-    SUFFIX_PKG_SCHEDULE, StrVariant, SupportedFunctionReturnValue,
+    FunctionMetadata, FunctionRegistry, IfcFqnName, InvalidNameError, ReturnType, StrVariant,
+    SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
@@ -147,6 +147,7 @@ pub(crate) enum ImportedFnCall<'a> {
     AwaitNext(AwaitNextFnCall),
     Stub(StubFnCall<'a>),
     Get(GetFnCall),
+    Invoke(InvokeFnCall<'a>),
 }
 
 #[derive(derive_more::Debug)]
@@ -198,13 +199,14 @@ pub(crate) struct ScheduleFnCall<'a> {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl ScheduleFnCall<'_> {
-    fn new<'a>(
+    fn new(
         target_ffqn: FunctionFqn,
         called_ffqn: FunctionFqn,
-        params: &'a [Val],
+        params: &[Val],
         wasm_backtrace: Option<storage::WasmBacktrace>,
-        fn_registry: &dyn FunctionRegistry,
-    ) -> Result<ScheduleFnCall<'a>, WorkflowFunctionError> {
+        target_component_id: ComponentId,
+        target_retry_config: ComponentRetryConfig,
+    ) -> Result<ScheduleFnCall<'_>, WorkflowFunctionError> {
         let Some((schedule_at, params)) = params.split_first() else {
             return Err(WorkflowFunctionError::ImportedFunctionCallError {
                 ffqn: called_ffqn,
@@ -235,9 +237,6 @@ impl ScheduleFnCall<'_> {
                 });
             }
         };
-        let (_fn_metadata, target_component_id, target_retry_config) = fn_registry
-            .get_by_exported_function(&target_ffqn)
-            .expect("function obtained from `fn_registry.all_exports()` must be found");
         Ok(ScheduleFnCall {
             target_ffqn,
             target_component_id,
@@ -253,7 +252,7 @@ impl ScheduleFnCall<'_> {
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
         called_ffqn: &FunctionFqn,
-    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+    ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let ScheduleFnCall {
             target_ffqn,
             target_component_id,
@@ -293,7 +292,6 @@ impl ScheduleFnCall<'_> {
             called_at,
         )
         .await
-        .map(Some)
     }
 }
 
@@ -315,7 +313,8 @@ impl SubmitExecutionFnCall<'_> {
         store_ctx: &mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
         params: &'a [Val],
         wasm_backtrace: Option<storage::WasmBacktrace>,
-        fn_registry: &dyn FunctionRegistry,
+        target_component_id: ComponentId,
+        target_retry_config: ComponentRetryConfig,
     ) -> Result<SubmitExecutionFnCall<'a>, WorkflowFunctionError> {
         let (join_set_id, params) =
             ImportedFnCall::extract_join_set_id(&called_ffqn, store_ctx, params).map_err(
@@ -325,10 +324,6 @@ impl SubmitExecutionFnCall<'_> {
                     detail: Some(detail),
                 },
             )?;
-        let (_fn_metadata, target_component_id, target_retry_config) = fn_registry
-            .get_by_exported_function(&target_ffqn)
-            .expect("function obtained from `fn_registry.all_exports()` must be found");
-
         Ok(SubmitExecutionFnCall {
             target_ffqn,
             target_component_id,
@@ -343,7 +338,7 @@ impl SubmitExecutionFnCall<'_> {
         self,
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
-    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+    ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let SubmitExecutionFnCall {
             target_ffqn,
             target_component_id,
@@ -369,7 +364,6 @@ impl SubmitExecutionFnCall<'_> {
             called_at,
         )
         .await
-        .map(Some)
     }
 }
 
@@ -420,7 +414,7 @@ impl AwaitNextFnCall {
         self,
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
-    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+    ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let AwaitNextFnCall {
             target_ffqn,
             join_set_id,
@@ -438,7 +432,6 @@ impl AwaitNextFnCall {
             called_at,
         )
         .await
-        .map(Some)
     }
 }
 
@@ -455,13 +448,13 @@ pub(crate) struct StubFnCall<'a> {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl StubFnCall<'_> {
-    fn new<'a>(
+    fn new(
         target_ffqn: FunctionFqn,
         called_ffqn: FunctionFqn,
-        params: &'a [Val],
+        params: &[Val],
         wasm_backtrace: Option<storage::WasmBacktrace>,
-        fn_registry: &dyn FunctionRegistry,
-    ) -> Result<StubFnCall<'a>, WorkflowFunctionError> {
+        target_fn_metadata: FunctionMetadata,
+    ) -> Result<StubFnCall<'_>, WorkflowFunctionError> {
         let Some((target_execution_id, [return_value])) = params.split_first() else {
             return Err(WorkflowFunctionError::ImportedFunctionCallError {
                 ffqn: called_ffqn,
@@ -501,9 +494,6 @@ impl StubFnCall<'_> {
                 });
             }
         };
-        let (target_fn_metadata, _target_component_id, _target_retry_config) = fn_registry
-            .get_by_exported_function(&target_ffqn)
-            .expect("function obtained from `fn_registry.all_exports()` must be found");
         Ok(StubFnCall {
             target_ffqn,
             target_execution_id,
@@ -520,7 +510,7 @@ impl StubFnCall<'_> {
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
         called_ffqn: &FunctionFqn,
-    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+    ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let StubFnCall {
             target_ffqn,
             target_execution_id,
@@ -573,7 +563,6 @@ impl StubFnCall<'_> {
             called_at,
         )
         .await
-        .map(Some)
     }
 }
 
@@ -625,6 +614,7 @@ impl GetFnCall {
         })
     }
 
+    // Never interrupts the execution
     fn call_imported_fn<C: ClockFn>(self, ctx: &mut WorkflowCtx<C>) -> wasmtime::component::Val {
         let GetFnCall {
             target_ffqn,
@@ -643,6 +633,43 @@ impl GetFnCall {
                 wasmtime::component::Val::from(get_extension_err),
             )))),
         }
+    }
+}
+
+#[derive(derive_more::Debug)]
+pub(crate) struct InvokeFnCall<'a> {
+    target_ffqn: FunctionFqn,
+    fn_component_id: ComponentId,
+    fn_retry_config: ComponentRetryConfig,
+    params: &'a [Val],
+    #[debug(skip)]
+    wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+impl InvokeFnCall<'_> {
+    async fn call_imported_fn<C: ClockFn>(
+        self,
+        ctx: &mut WorkflowCtx<C>,
+        called_at: DateTime<Utc>,
+    ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
+        let InvokeFnCall {
+            target_ffqn,
+            fn_component_id,
+            fn_retry_config,
+            params,
+            wasm_backtrace,
+        } = self;
+        OneOffChildExecutionRequest::apply_invoke(
+            target_ffqn,
+            fn_component_id,
+            fn_retry_config,
+            Params::from_wasmtime(Arc::from(params)),
+            wasm_backtrace,
+            &mut ctx.event_history,
+            ctx.db_pool.connection().as_ref(),
+            &mut ctx.version,
+            called_at,
+        )
+        .await
     }
 }
 
@@ -692,7 +719,7 @@ impl<'a> ImportedFnCall<'a> {
         } else {
             None
         };
-
+        // TODO: Instead of stripping the suffix here use registry and switch based on extension.
         if let Some(target_package_name) = called_ffqn.ifc_fqn.package_strip_obelisk_ext_suffix() {
             let target_ifc_fqn = IfcFqnName::from_parts(
                 called_ffqn.ifc_fqn.namespace(),
@@ -705,13 +732,18 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
+                let (target_fn_metadata, target_component_id, target_retry_config) = fn_registry
+                    .get_by_exported_function(&target_ffqn)
+                    .expect("function obtained from `fn_registry.all_exports()` must be found");
+                assert_eq!(None, target_fn_metadata.extension);
                 let submit = SubmitExecutionFnCall::new(
                     target_ffqn,
                     called_ffqn,
                     store_ctx,
                     params,
                     wasm_backtrace,
-                    fn_registry,
+                    target_component_id,
+                    target_retry_config,
                 )?;
                 Ok(ImportedFnCall::SubmitExecution(submit))
             } else if let Some(function_name) =
@@ -739,13 +771,29 @@ impl<'a> ImportedFnCall<'a> {
                 );
                 let get = GetFnCall::new(target_ffqn, called_ffqn, params)?;
                 Ok(ImportedFnCall::Get(get))
+            } else if let Some(function_name) =
+                called_ffqn.function_name.strip_suffix(SUFFIX_FN_INVOKE)
+            {
+                let target_ffqn = FunctionFqn::new_arc(
+                    Arc::from(target_ifc_fqn.to_string()),
+                    Arc::from(function_name),
+                );
+                let (target_fn_metadata, fn_component_id, fn_retry_config) = fn_registry
+                    .get_by_exported_function(&target_ffqn)
+                    .expect("function obtained from `fn_registry.all_exports()` must be found");
+                assert_eq!(None, target_fn_metadata.extension);
+                let invoke = InvokeFnCall {
+                    target_ffqn,
+                    fn_component_id,
+                    fn_retry_config,
+                    params,
+                    wasm_backtrace,
+                };
+                Ok(ImportedFnCall::Invoke(invoke))
             } else {
-                error!("Unrecognized `{SUFFIX_PKG_EXT}` interface function {called_ffqn}");
-                Err(WorkflowFunctionError::ImportedFunctionCallError {
-                    ffqn: called_ffqn,
-                    reason: StrVariant::Static("unrecognized `-obelisk-ext` interface function"),
-                    detail: None,
-                })
+                unreachable!(
+                    "all extensions were covered, no way fn_registry contains {called_ffqn}"
+                );
             }
         } else if let Some(target_package_name) =
             called_ffqn.ifc_fqn.package_strip_obelisk_schedule_suffix()
@@ -762,23 +810,23 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
+                let (target_fn_metadata, target_component_id, target_retry_config) = fn_registry
+                    .get_by_exported_function(&target_ffqn)
+                    .expect("function obtained from `fn_registry.all_exports()` must be found");
+                assert_eq!(None, target_fn_metadata.extension);
                 let schedule = ScheduleFnCall::new(
                     target_ffqn,
                     called_ffqn,
                     params,
                     wasm_backtrace,
-                    fn_registry,
+                    target_component_id,
+                    target_retry_config,
                 )?;
                 Ok(ImportedFnCall::Schedule(schedule))
             } else {
-                error!("Unrecognized `{SUFFIX_PKG_SCHEDULE}` interface function {called_ffqn}");
-                Err(WorkflowFunctionError::ImportedFunctionCallError {
-                    ffqn: called_ffqn,
-                    reason: StrVariant::Static(
-                        "unrecognized `-obelisk-schedule` interface function",
-                    ),
-                    detail: None,
-                })
+                unreachable!(
+                    "all extensions were covered, no way fn_registry contains {called_ffqn}"
+                );
             }
         } else if let Some(target_package_name) =
             called_ffqn.ifc_fqn.package_strip_obelisk_stub_suffix()
@@ -794,27 +842,28 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
+                let (target_fn_metadata, _target_component_id, _target_retry_config) = fn_registry
+                    .get_by_exported_function(&target_ffqn)
+                    .expect("function obtained from `fn_registry.all_exports()` must be found");
+                assert_eq!(None, target_fn_metadata.extension);
                 let stub = StubFnCall::new(
                     target_ffqn,
                     called_ffqn,
                     params,
                     wasm_backtrace,
-                    fn_registry,
+                    target_fn_metadata,
                 )?;
                 Ok(ImportedFnCall::Stub(stub))
             } else {
-                error!("Unrecognized `-obelisk-stub` interface function {called_ffqn}");
-                Err(WorkflowFunctionError::ImportedFunctionCallError {
-                    ffqn: called_ffqn,
-                    reason: StrVariant::Static("unrecognized `-obelisk-stub` interface function"),
-                    detail: None,
-                })
+                unreachable!(
+                    "all extensions were covered, no way fn_registry contains {called_ffqn}"
+                );
             }
         } else {
-            let (_fn_metadata, fn_component_id, fn_retry_config) = fn_registry
+            let (fn_metadata, fn_component_id, fn_retry_config) = fn_registry
                 .get_by_exported_function(&called_ffqn)
                 .expect("function obtained from `fn_registry.all_exports()` must be found");
-
+            assert_eq!(None, fn_metadata.extension);
             Ok(ImportedFnCall::Direct(DirectFnCall {
                 ffqn: called_ffqn,
                 params,
@@ -827,20 +876,23 @@ impl<'a> ImportedFnCall<'a> {
 
     fn ffqn(&self) -> &FunctionFqn {
         match self {
-            Self::Direct(DirectFnCall { ffqn, .. })
-            | Self::Schedule(ScheduleFnCall {
+            ImportedFnCall::Direct(DirectFnCall { ffqn, .. })
+            | ImportedFnCall::Schedule(ScheduleFnCall {
                 target_ffqn: ffqn, ..
             })
-            | Self::SubmitExecution(SubmitExecutionFnCall {
+            | ImportedFnCall::SubmitExecution(SubmitExecutionFnCall {
                 target_ffqn: ffqn, ..
             })
-            | Self::AwaitNext(AwaitNextFnCall {
+            | ImportedFnCall::AwaitNext(AwaitNextFnCall {
                 target_ffqn: ffqn, ..
             })
-            | Self::Stub(StubFnCall {
+            | ImportedFnCall::Stub(StubFnCall {
                 target_ffqn: ffqn, ..
             })
-            | Self::Get(GetFnCall {
+            | ImportedFnCall::Get(GetFnCall {
+                target_ffqn: ffqn, ..
+            })
+            | ImportedFnCall::Invoke(InvokeFnCall {
                 target_ffqn: ffqn, ..
             }) => ffqn,
         }
@@ -1220,19 +1272,24 @@ impl<C: ClockFn> WorkflowCtx<C> {
     ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
         match imported_fn_call {
             ImportedFnCall::Direct(direct) => direct.call_imported_fn(self, called_at).await,
-            ImportedFnCall::Schedule(schedule) => {
-                schedule
-                    .call_imported_fn(self, called_at, called_ffqn)
-                    .await
-            }
+            ImportedFnCall::Schedule(schedule) => schedule
+                .call_imported_fn(self, called_at, called_ffqn)
+                .await
+                .map(Some),
             ImportedFnCall::SubmitExecution(submit) => {
-                submit.call_imported_fn(self, called_at).await
+                submit.call_imported_fn(self, called_at).await.map(Some)
             }
             ImportedFnCall::AwaitNext(await_next) => {
-                await_next.call_imported_fn(self, called_at).await
+                await_next.call_imported_fn(self, called_at).await.map(Some)
             }
-            ImportedFnCall::Stub(stub) => stub.call_imported_fn(self, called_at, called_ffqn).await,
+            ImportedFnCall::Stub(stub) => stub
+                .call_imported_fn(self, called_at, called_ffqn)
+                .await
+                .map(Some),
             ImportedFnCall::Get(get) => Ok(Some(get.call_imported_fn(self))),
+            ImportedFnCall::Invoke(invoke) => {
+                invoke.call_imported_fn(self, called_at).await.map(Some)
+            }
         }
     }
 }

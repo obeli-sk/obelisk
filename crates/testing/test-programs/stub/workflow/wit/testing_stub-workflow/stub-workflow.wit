@@ -17,4 +17,6 @@ interface workflow {
     await-next-produces-all-processed-error: func();
 
     join-next-in-scope: func();
+
+    invoke-expect-execution-error: func();
 }

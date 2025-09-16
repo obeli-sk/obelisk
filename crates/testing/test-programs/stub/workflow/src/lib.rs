@@ -9,6 +9,7 @@ use obelisk::types::execution::{
     ResponseId, StubError,
 };
 use obelisk::workflow::workflow_support::new_join_set_named;
+use testing::stub_activity_obelisk_ext::activity::noret_invoke;
 use wit_bindgen::generate;
 generate!({ generate_all });
 struct Component;
@@ -79,6 +80,10 @@ impl Guest for Component {
         log::info("after scope closed");
         let join_set_c = new_join_set_named("c", ClosingStrategy::Complete).unwrap();
         add_exec(&join_set_c, vec!["c", "cc"]);
+    }
+
+    fn invoke_expect_execution_error() {
+        noret_invoke().unwrap_err();
     }
 }
 

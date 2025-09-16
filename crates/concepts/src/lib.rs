@@ -658,6 +658,7 @@ impl Default for Params {
 pub enum FunctionExtension {
     Submit,
     AwaitNext,
+    Invoke,
     Schedule,
     Stub,
     Get,
