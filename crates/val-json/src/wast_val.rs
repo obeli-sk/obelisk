@@ -23,7 +23,7 @@ pub enum WastVal {
     Char(char),
     String(String),
     List(Vec<WastVal>),
-    Record(IndexMap<String, WastVal>), // FIXME: Consider replacing IndexMap with ordermap - https://github.com/indexmap-rs/indexmap/issues/153#issuecomment-2189804150
+    Record(IndexMap<String, WastVal>), // TODO: Consider replacing IndexMap with ordermap - https://github.com/indexmap-rs/indexmap/issues/153#issuecomment-2189804150
     Tuple(Vec<WastVal>),
     Variant(String, Option<Box<WastVal>>),
     Enum(String),

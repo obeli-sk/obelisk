@@ -3,7 +3,7 @@ use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-// FIXME: Consider replacing IndexMap with ordermap - https://github.com/indexmap-rs/indexmap/issues/153#issuecomment-2189804150
+// TODO: Consider replacing IndexMap with ordermap - https://github.com/indexmap-rs/indexmap/issues/153#issuecomment-2189804150
 #[derive(Clone, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TypeWrapper {
@@ -22,8 +22,8 @@ pub enum TypeWrapper {
     String,
     Own,
     Borrow,
-    Record(IndexMap<Box<str>, TypeWrapper>), // FIXME: indexmap, ordering of keys matter!
-    Variant(IndexMap<Box<str>, Option<TypeWrapper>>), // FIXME: indexmap, ordering of keys matter!
+    Record(IndexMap<Box<str>, TypeWrapper>), // TODO: indexmap, ordering of keys matter!
+    Variant(IndexMap<Box<str>, Option<TypeWrapper>>), // TODO: indexmap, ordering of keys matter!
     List(Box<TypeWrapper>),
     Tuple(Box<[TypeWrapper]>),
     Enum(IndexSet<Box<str>>),
