@@ -3,6 +3,38 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.2](https://github.com/obeli-sk/obelisk/compare/v0.24.1...v0.24.2)
+
+### ⛰️ Features
+
+- *(oci)* Write the WASM directly to file - ([74ce3c6](https://github.com/obeli-sk/obelisk/commit/74ce3c67c00c2fc116192d1eec815db4ca284b7e))
+- Implement `-invoke` extension - ([c2db309](https://github.com/obeli-sk/obelisk/commit/c2db309d95c562aecb7163ad9a24cf00c6f83014))
+- Allow disabling parallel compilation - ([7aad70d](https://github.com/obeli-sk/obelisk/commit/7aad70d697116f035daa0d8a63590efa405c7f7c))
+- Add `build_semaphore` - ([64e41c2](https://github.com/obeli-sk/obelisk/commit/64e41c26d5ac5f526440892f093ab7d4114cd250))
+
+### 🐛 Bug Fixes
+
+- *(oci)* Pull the image again if content digest does not match - ([77b0041](https://github.com/obeli-sk/obelisk/commit/77b0041c1ec06ac54c5f177e815e9a8749cfc8ec))
+- Prioritize oci digest when tag is specified as well - ([9ddcc0a](https://github.com/obeli-sk/obelisk/commit/9ddcc0a3f7bbeb96b411e26aa1c06d76ec58b856))
+
+### 🚜 Refactor
+
+- *(oci)* Ignore corrupted mapping file - ([1832e4d](https://github.com/obeli-sk/obelisk/commit/1832e4d667223d3ac06fedf677e4c202cec081ab))
+- *(oci)* Move fetching metadata out of `pull` - ([7c8402b](https://github.com/obeli-sk/obelisk/commit/7c8402bbf9fe7fcb55c5f85d99e3ed4ab02af2ec))
+- *(oci)* Avoid fetching metadata twice - ([3276630](https://github.com/obeli-sk/obelisk/commit/3276630dbe0f9c02593afc76a64c8f26318a7173))
+- *(oci)* Pull on consistency errors in `metadata_to_content_digest` - ([d7783aa](https://github.com/obeli-sk/obelisk/commit/d7783aa625d72a39364a1f5feca3b7326e425b6e))
+- *(toml)* Move `wasmtime_pooling_config` under `wasm` - ([949fc10](https://github.com/obeli-sk/obelisk/commit/949fc10832bc8735a028d6daaa423916c33e2687))
+- *(toml)* Move `codegen_cache` under `wasm` - ([7e99d5f](https://github.com/obeli-sk/obelisk/commit/7e99d5fbff9ccbd5182a6f02a44159a08616c0db))
+- Avoid duplicating generated header in cycled WITs - ([e89f94a](https://github.com/obeli-sk/obelisk/commit/e89f94a6b4392155709190a544e504cfab21ada3))
+- Avoid printing the backtrace in panic hook twice - ([32d1bc0](https://github.com/obeli-sk/obelisk/commit/32d1bc04a761a1c0d2083a77d1566bd383a1fcd2))
+- Move all checks to `pull_manifest_and_config` - ([d0cc176](https://github.com/obeli-sk/obelisk/commit/d0cc1762972a82dc5f01ad1b29281de9ea28b61a))
+- Pull using `oci-client` instead of  `oci-wasm` - ([e846b74](https://github.com/obeli-sk/obelisk/commit/e846b746c28859ce93259915c6a29abdbe2d23f0))
+- Remove `anyhow` from `grpc` - ([f801b03](https://github.com/obeli-sk/obelisk/commit/f801b036b6d40733088321991c45aa2cdda34581))
+- Extract `grpc` crate - ([dc042e2](https://github.com/obeli-sk/obelisk/commit/dc042e21f5d5ff518277b53de2ccd83e1010f086))
+- Serialize `FunctionExtension` as `snake_case` - ([8c78ca8](https://github.com/obeli-sk/obelisk/commit/8c78ca8edc28ee61df72c2548370731c28234523))
+- Attempt to shut down sqlite thread in `SqlitePool::drop` - ([2ed7f4b](https://github.com/obeli-sk/obelisk/commit/2ed7f4b79e93d2d72d2d26f9dca604b187ae0718))
+
+
 ## [0.24.1](https://github.com/obeli-sk/obelisk/compare/v0.24.0...v0.24.1)
 This release improves `obelisk client` ergonomics.
 
