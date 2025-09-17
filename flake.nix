@@ -201,7 +201,6 @@
               [
                 (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                 cargo-binstall
-                cargo-codspeed
                 cargo-edit
                 cargo-expand
                 cargo-generate
