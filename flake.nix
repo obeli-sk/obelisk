@@ -229,19 +229,6 @@
                 wasm-bindgen-cli
               ];
           };
-          devShells.publish = pkgs.mkShell {
-            # Used to execute scripts/cargo-publish-workspace.sh
-            buildInputs = with pkgs;
-              [
-                # Use nightly because `cargo package --workspace` is not stable yet
-                #
-                (rust-bin.nightly."2025-08-20".default.override
-                  {
-                    extensions = [ "rust-src" "rustfmt" "clippy" ];
-                  })
-                protobuf
-              ];
-          };
 
           packages = rec {
             obeliskLibcNixDev = makeObelisk "dev" null ./rust-toolchain.toml;

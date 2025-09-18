@@ -49,7 +49,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
         run: |
-          nix develop '.#publish' --command ./scripts/cargo-publish-workspace.sh --locked ${{ github.event.inputs.extra-args }}
+          nix develop --command ./scripts/cargo-publish-workspace.sh --locked ${{ github.event.inputs.extra-args }}
 
       - name: Update `main` branch
         if: ${{ github.event.inputs.update-main }}
