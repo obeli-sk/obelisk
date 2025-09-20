@@ -184,8 +184,8 @@ bytes = "1.10"
 cargo_metadata = "0.22"
 cfg-if = "1.0.3"
 chrono = { version = "0.4.42", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.47", features = ["derive"] }
-config = { version = "0.15.15", default-features = false, features = [
+clap = { version = "4.5.48", features = ["derive"] }
+config = { version = "0.15.16", default-features = false, features = [
     "toml",
     "preserve_order",
     "async",
@@ -244,9 +244,9 @@ rusqlite = { version = "0.37.0", features = [
     "serde_json",
 ] }
 schemars = "1.0.4"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.143"
-serde_with = "3.14.0"
+serde = { version = "1.0.225", features = ["derive"] }
+serde_json = "1.0.145"
+serde_with = "3.14.1"
 sha2 = "0.10.9"
 strum = { version = "0.27.2", features = ["derive"] }
 syntect = { version = "5.2.0", default-features = false, features = [
@@ -271,7 +271,7 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.17"
-toml = { version = "0.9.5", features = ["preserve_order"] }
+toml = { version = "0.9.7", features = ["preserve_order"] }
 tonic = { version = "0.14.2", default-features = false }
 tonic-prost = "0.14.2"
 tonic-prost-build = "0.14.2"
@@ -292,7 +292,7 @@ wiremock = "0.6"
 gloo = "0.11.0"
 id-arena = "2.2.1"
 log = "0.4.28"
-semver = "1.0.26"
+semver = "1.0.27"
 tonic-web-wasm-client = "0.8.0"
 wasm-bindgen = "=0.2.100" # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml.
 wasm-bindgen-futures = "=0.4.50" # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/futures/Cargo.toml
