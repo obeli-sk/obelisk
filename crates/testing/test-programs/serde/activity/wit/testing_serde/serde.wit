@@ -1,0 +1,21 @@
+package testing:serde;
+
+interface serde {
+
+    record my-record {
+        a: bool,
+        image: string,
+        b: bool,
+        opt: option<bool>,
+    }
+
+    rec: func(my-record: my-record) -> my-record;
+
+    variant my-variant {
+        var1(option<bool>)
+    }
+
+    var: func(my-variant: my-variant) -> my-variant;
+
+}
+
