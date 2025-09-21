@@ -89,7 +89,7 @@ impl EngineConfig {
             if let Some(enable) = opts.memory_protection_keys
                 && enable
             {
-                cfg.memory_protection_keys(wasmtime::MpkEnabled::Enable);
+                cfg.memory_protection_keys(wasmtime::Enabled::Auto);
             }
             wasmtime::InstanceAllocationStrategy::Pooling(cfg)
         } else {
