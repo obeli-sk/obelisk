@@ -48,7 +48,12 @@ expression: imports
                   "id": "string"
                 }
               },
-              "u64"
+              {
+                "result": {
+                  "ok": "u64",
+                  "err": null
+                }
+              }
             ]
           },
           "err": {
@@ -99,7 +104,7 @@ expression: imports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
+      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
     },
     "extension": null,
     "submittable": false
@@ -154,7 +159,12 @@ expression: imports
                   "id": "string"
                 }
               },
-              "u64"
+              {
+                "result": {
+                  "ok": "u64",
+                  "err": null
+                }
+              }
             ]
           },
           "err": {
@@ -205,7 +215,7 @@ expression: imports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
+      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
     },
     "extension": null,
     "submittable": false
@@ -256,8 +266,13 @@ expression: imports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": false
@@ -285,8 +300,13 @@ expression: imports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": false
@@ -304,8 +324,13 @@ expression: imports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": false

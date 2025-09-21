@@ -30,7 +30,7 @@ fn handle(_req: Request) -> Result<Response, ErrorCode> {
     } else if n > 1 {
         // Call the execution directly.
         println!("direct call");
-        let fibo_res = workflow::fiboa(n, iterations);
+        let fibo_res = workflow::fiboa(n, iterations).unwrap();
         format!("direct call: {fibo_res}")
     } else {
         assert_eq!(iterations, 0); // For testing traps

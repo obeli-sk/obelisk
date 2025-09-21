@@ -16,8 +16,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": true
@@ -45,8 +50,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": true
@@ -69,8 +79,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": true
@@ -93,8 +108,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": true
@@ -117,8 +137,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": true

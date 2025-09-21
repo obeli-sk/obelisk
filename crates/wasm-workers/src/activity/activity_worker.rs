@@ -555,8 +555,16 @@ pub(crate) mod tests {
             .await
             .unwrap();
         // Check the result.
-        let fibo = assert_matches!(db_connection.wait_for_finished_result(&execution_id, None).await.unwrap(),
-            Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 })) => val);
+
+        let res = db_connection
+            .wait_for_finished_result(&execution_id, None)
+            .await
+            .unwrap();
+        let res = assert_matches!(res, Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(val)) => val);
+        let (fibo, ok_ty) = assert_matches!(res,
+            WastValWithType {value: WastVal::Result(Ok(Some(val))), r#type: TypeWrapper::Result { ok:Some(ok_ty), err:None } } => (val, ok_ty));
+        assert_matches!(*ok_ty, TypeWrapper::U64);
+        let fibo = assert_matches!(*fibo, WastVal::U64(val) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
         exec_task.close().await;

@@ -19,43 +19,44 @@ pub fn black_box<T>(dummy: T) -> T {
 }
 
 impl Guest for Component {
-    fn fibow(n: u8, iterations: u32) -> u64 {
+    fn fibow(n: u8, iterations: u32) -> Result<u64, ()> {
         let mut last = 0;
         for _ in 0..iterations {
             last = fibo(black_box(n));
         }
-        last
+        Ok(last)
     }
 
-    fn fiboa(n: u8, iterations: u32) -> u64 {
+    fn fiboa(n: u8, iterations: u32) -> Result<u64, ()> {
         let mut last = 0;
         for _ in 0..iterations {
-            last = fibo_activity(n);
+            last = fibo_activity(n).unwrap();
         }
-        last
+        Ok(last)
     }
 
-    fn fiboa_concurrent(n: u8, iterations: u32) -> u64 {
+    fn fiboa_concurrent(n: u8, iterations: u32) -> Result<u64, ()> {
         let join_set_id = new_join_set_generated(ClosingStrategy::Complete);
         for _ in 0..iterations {
             fibo_submit(&join_set_id, n);
         }
         let mut last = 0;
         for _ in 0..iterations {
-            last = fibo_await_next(&join_set_id).unwrap().1;
+            last = fibo_await_next(&join_set_id).unwrap().1.unwrap();
         }
-        last
+        Ok(last)
     }
 }
 
 impl GuestNesting for Component {
     // Start 2 child workflows each starting 2 child workflows...
-    fn fibo_nested_workflow(n: u8) -> u64 {
+    fn fibo_nested_workflow(n: u8) -> Result<u64, ()> {
         use testing::fibo_workflow::workflow_nesting::fibo_nested_workflow as imported_fibo_nested_workflow;
         if n <= 1 {
-            1
+            Ok(1)
         } else {
-            imported_fibo_nested_workflow(n - 1) + imported_fibo_nested_workflow(n - 2)
+            Ok(imported_fibo_nested_workflow(n - 1).unwrap()
+                + imported_fibo_nested_workflow(n - 2).unwrap())
         }
     }
 
@@ -64,7 +65,7 @@ impl GuestNesting for Component {
     // Having all children compete for write their result to a single parent, like
     // `fiboa_concurrent`, is significantly slower than having multiple parent executions
     // behind a single topmost parent.
-    fn fibo_start_fiboas(n: u8, fiboas: u32, iterations_per_fiboa: u32) -> u64 {
+    fn fibo_start_fiboas(n: u8, fiboas: u32, iterations_per_fiboa: u32) -> Result<u64, ()> {
         use testing::fibo_workflow_obelisk_ext::workflow::{
             fiboa_concurrent_await_next, fiboa_concurrent_submit,
         };
@@ -74,9 +75,12 @@ impl GuestNesting for Component {
         }
         let mut last = 0;
         for _ in 0..fiboas {
-            last = fiboa_concurrent_await_next(&join_set_id).unwrap().1;
+            last = fiboa_concurrent_await_next(&join_set_id)
+                .unwrap()
+                .1
+                .unwrap();
         }
-        last
+        Ok(last)
     }
 }
 

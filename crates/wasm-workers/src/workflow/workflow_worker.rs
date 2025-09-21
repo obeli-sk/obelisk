@@ -907,8 +907,12 @@ pub(crate) mod tests {
             .unwrap();
         let res =
             assert_matches!(res, SupportedFunctionReturnValue::InfallibleOrResultOk(val) => val);
-        let res = assert_matches!(res, WastValWithType{ value: WastVal::U64(actual), r#type: TypeWrapper::U64} => actual);
-        assert_eq!(FIBO_10_OUTPUT, res,);
+
+        let (fibo, ok_ty) = assert_matches!(res,
+            WastValWithType {value: WastVal::Result(Ok(Some(val))), r#type: TypeWrapper::Result { ok:Some(ok_ty), err:None } } => (val, ok_ty));
+        assert_matches!(*ok_ty, TypeWrapper::U64);
+        let fibo = assert_matches!(*fibo, WastVal::U64(val) => val);
+        assert_eq!(FIBO_10_OUTPUT, fibo);
         workflow_exec_task.close().await;
         activity_exec_task.close().await;
     }
@@ -1338,7 +1342,16 @@ pub(crate) mod tests {
                 .unwrap(),
             Ok(res) => res
         );
-        assert_eq!(SupportedFunctionReturnValue::None, res);
+        assert_matches!(
+            res,
+            SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
+                value: WastVal::Result(Ok(None)),
+                r#type: TypeWrapper::Result {
+                    ok: None,
+                    err: None
+                }
+            })
+        );
         drop(db_connection);
         activity_exec_task.close().await;
         workflow_exec_task.close().await;

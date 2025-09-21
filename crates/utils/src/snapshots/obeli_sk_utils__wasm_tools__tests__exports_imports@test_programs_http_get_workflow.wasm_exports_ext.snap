@@ -443,9 +443,19 @@ expression: exports
       "type_wrapper": {
         "result": {
           "ok": {
-            "record": {
-              "id": "string"
-            }
+            "tuple": [
+              {
+                "record": {
+                  "id": "string"
+                }
+              },
+              {
+                "result": {
+                  "ok": null,
+                  "err": null
+                }
+              }
+            ]
           },
           "err": {
             "variant": {
@@ -495,7 +505,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<execution-id, await-next-extension-error>"
+      "wit_type": "result<tuple<execution-id, result>, await-next-extension-error>"
     },
     "extension": "await_next",
     "submittable": false
@@ -519,7 +529,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": null,
+          "ok": {
+            "result": {
+              "ok": null,
+              "err": null
+            }
+          },
           "err": {
             "variant": {
               "execution-failed": {
@@ -568,7 +583,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<_, get-extension-error>"
+      "wit_type": "result<result, get-extension-error>"
     },
     "extension": "get",
     "submittable": false
@@ -582,7 +597,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": null,
+          "ok": {
+            "result": {
+              "ok": null,
+              "err": null
+            }
+          },
           "err": {
             "record": {
               "execution-id": {
@@ -594,7 +614,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<_, execution-failed>"
+      "wit_type": "result<result, execution-failed>"
     },
     "extension": "invoke",
     "submittable": false
@@ -1692,7 +1712,15 @@ expression: exports
       "function_name": "get-stargazers"
     },
     "parameter_types": [],
-    "return_type": null,
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": null,
+          "err": null
+        }
+      },
+      "wit_type": "result"
+    },
     "extension": null,
     "submittable": true
   },

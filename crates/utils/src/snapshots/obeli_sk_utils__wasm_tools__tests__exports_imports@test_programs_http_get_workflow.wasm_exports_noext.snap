@@ -57,7 +57,15 @@ expression: exports
       "function_name": "get-stargazers"
     },
     "parameter_types": [],
-    "return_type": null,
+    "return_type": {
+      "type_wrapper": {
+        "result": {
+          "ok": null,
+          "err": null
+        }
+      },
+      "wit_type": "result"
+    },
     "extension": null,
     "submittable": true
   },

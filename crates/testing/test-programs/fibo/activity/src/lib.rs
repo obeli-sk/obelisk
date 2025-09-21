@@ -6,8 +6,8 @@ struct Component;
 export!(Component);
 
 impl Guest for Component {
-    fn fibo(n: u8) -> u64 {
-        fibo(n)
+    fn fibo(n: u8) -> Result<u64, ()> {
+        Ok(fibo(n))
     }
 }
 

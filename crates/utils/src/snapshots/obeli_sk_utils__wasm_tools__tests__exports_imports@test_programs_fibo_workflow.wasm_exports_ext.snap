@@ -25,7 +25,12 @@ expression: exports
                   "id": "string"
                 }
               },
-              "u64"
+              {
+                "result": {
+                  "ok": "u64",
+                  "err": null
+                }
+              }
             ]
           },
           "err": {
@@ -76,7 +81,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
+      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
     },
     "extension": "await_next",
     "submittable": false
@@ -100,7 +105,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": "u64",
+          "ok": {
+            "result": {
+              "ok": "u64",
+              "err": null
+            }
+          },
           "err": {
             "variant": {
               "execution-failed": {
@@ -149,7 +159,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<u64, get-extension-error>"
+      "wit_type": "result<result<u64>, get-extension-error>"
     },
     "extension": "get",
     "submittable": false
@@ -169,7 +179,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": "u64",
+          "ok": {
+            "result": {
+              "ok": "u64",
+              "err": null
+            }
+          },
           "err": {
             "record": {
               "execution-id": {
@@ -181,7 +196,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<u64, execution-failed>"
+      "wit_type": "result<result<u64>, execution-failed>"
     },
     "extension": "invoke",
     "submittable": false
@@ -236,7 +251,12 @@ expression: exports
                   "id": "string"
                 }
               },
-              "u64"
+              {
+                "result": {
+                  "ok": "u64",
+                  "err": null
+                }
+              }
             ]
           },
           "err": {
@@ -287,7 +307,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
+      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
     },
     "extension": "await_next",
     "submittable": false
@@ -311,7 +331,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": "u64",
+          "ok": {
+            "result": {
+              "ok": "u64",
+              "err": null
+            }
+          },
           "err": {
             "variant": {
               "execution-failed": {
@@ -360,7 +385,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<u64, get-extension-error>"
+      "wit_type": "result<result<u64>, get-extension-error>"
     },
     "extension": "get",
     "submittable": false
@@ -390,7 +415,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": "u64",
+          "ok": {
+            "result": {
+              "ok": "u64",
+              "err": null
+            }
+          },
           "err": {
             "record": {
               "execution-id": {
@@ -402,7 +432,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<u64, execution-failed>"
+      "wit_type": "result<result<u64>, execution-failed>"
     },
     "extension": "invoke",
     "submittable": false
@@ -467,7 +497,12 @@ expression: exports
                   "id": "string"
                 }
               },
-              "u64"
+              {
+                "result": {
+                  "ok": "u64",
+                  "err": null
+                }
+              }
             ]
           },
           "err": {
@@ -518,7 +553,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
+      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
     },
     "extension": "await_next",
     "submittable": false
@@ -545,7 +580,12 @@ expression: exports
                   "id": "string"
                 }
               },
-              "u64"
+              {
+                "result": {
+                  "ok": "u64",
+                  "err": null
+                }
+              }
             ]
           },
           "err": {
@@ -596,7 +636,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
+      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
     },
     "extension": "await_next",
     "submittable": false
@@ -620,7 +660,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": "u64",
+          "ok": {
+            "result": {
+              "ok": "u64",
+              "err": null
+            }
+          },
           "err": {
             "variant": {
               "execution-failed": {
@@ -669,7 +714,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<u64, get-extension-error>"
+      "wit_type": "result<result<u64>, get-extension-error>"
     },
     "extension": "get",
     "submittable": false
@@ -694,7 +739,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": "u64",
+          "ok": {
+            "result": {
+              "ok": "u64",
+              "err": null
+            }
+          },
           "err": {
             "record": {
               "execution-id": {
@@ -706,7 +756,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<u64, execution-failed>"
+      "wit_type": "result<result<u64>, execution-failed>"
     },
     "extension": "invoke",
     "submittable": false
@@ -763,7 +813,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": "u64",
+          "ok": {
+            "result": {
+              "ok": "u64",
+              "err": null
+            }
+          },
           "err": {
             "variant": {
               "execution-failed": {
@@ -812,7 +867,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<u64, get-extension-error>"
+      "wit_type": "result<result<u64>, get-extension-error>"
     },
     "extension": "get",
     "submittable": false
@@ -837,7 +892,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": "u64",
+          "ok": {
+            "result": {
+              "ok": "u64",
+              "err": null
+            }
+          },
           "err": {
             "record": {
               "execution-id": {
@@ -849,7 +909,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<u64, execution-failed>"
+      "wit_type": "result<result<u64>, execution-failed>"
     },
     "extension": "invoke",
     "submittable": false
@@ -909,7 +969,12 @@ expression: exports
                   "id": "string"
                 }
               },
-              "u64"
+              {
+                "result": {
+                  "ok": "u64",
+                  "err": null
+                }
+              }
             ]
           },
           "err": {
@@ -960,7 +1025,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<tuple<execution-id, u64>, await-next-extension-error>"
+      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
     },
     "extension": "await_next",
     "submittable": false
@@ -984,7 +1049,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": "u64",
+          "ok": {
+            "result": {
+              "ok": "u64",
+              "err": null
+            }
+          },
           "err": {
             "variant": {
               "execution-failed": {
@@ -1033,7 +1103,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<u64, get-extension-error>"
+      "wit_type": "result<result<u64>, get-extension-error>"
     },
     "extension": "get",
     "submittable": false
@@ -1058,7 +1128,12 @@ expression: exports
     "return_type": {
       "type_wrapper": {
         "result": {
-          "ok": "u64",
+          "ok": {
+            "result": {
+              "ok": "u64",
+              "err": null
+            }
+          },
           "err": {
             "record": {
               "execution-id": {
@@ -1070,7 +1145,7 @@ expression: exports
           }
         }
       },
-      "wit_type": "result<u64, execution-failed>"
+      "wit_type": "result<result<u64>, execution-failed>"
     },
     "extension": "invoke",
     "submittable": false
@@ -1381,8 +1456,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": true
@@ -1410,8 +1490,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": true
@@ -1434,8 +1519,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": true
@@ -1458,8 +1548,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": true
@@ -1482,8 +1577,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": "u64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "result": {
+          "ok": "u64",
+          "err": null
+        }
+      },
+      "wit_type": "result<u64>"
     },
     "extension": null,
     "submittable": true

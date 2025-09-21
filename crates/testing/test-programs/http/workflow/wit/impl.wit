@@ -1,17 +1,8 @@
-package testing:http-workflow;
-
-interface workflow {
-    get: func(url: string) -> result<string, string>;
-    get-resp: func(url: string) -> result<string, string>;
-    get-stargazers: func();
-    get-successful: func(url: string) -> result<string, string>;
-    get-successful-concurrently: func(urls: list<string>) -> result<list<string>, string>;
-    get-successful-concurrently-stress: func(url: string, concurrency: u32) -> result<list<string>, string>;
-}
+package any:any;
 
 world any {
     import testing:http/http-get;
     import testing:http-obelisk-ext/http-get;
     import obelisk:workflow/workflow-support@2.0.0;
-    export workflow;
+    export testing:http-workflow/workflow;
 }
