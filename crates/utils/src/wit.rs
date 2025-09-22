@@ -789,7 +789,6 @@ mod tests {
     use wit_parser::{Resolve, UnresolvedPackageGroup};
 
     #[rstest]
-    #[test]
     #[case(
         test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
         ComponentType::Workflow
