@@ -296,9 +296,20 @@ impl<T> From<String> for Name<T> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct PkgFqn {
-    pub namespace: String,
+    pub namespace: String, // TODO: StrVariant
     pub package_name: String,
     pub version: Option<String>,
+}
+impl PkgFqn {
+    pub fn is_extension(&self) -> bool {
+        Self::is_package_name_ext(&self.package_name)
+    }
+
+    fn is_package_name_ext(package_name: &str) -> bool {
+        package_name.ends_with(SUFFIX_PKG_EXT)
+            || package_name.ends_with(SUFFIX_PKG_SCHEDULE)
+            || package_name.ends_with(SUFFIX_PKG_STUB)
+    }
 }
 impl Display for PkgFqn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -374,12 +385,9 @@ impl IfcFqnName {
     }
 
     #[must_use]
-    /// Returns true if this is an `-obelisk-*` extended function
-    /// (`-submit`, `-await-next`, `-schedule`, `-stub`).
+    /// Returns true if this is an `-obelisk-*` extension interface.
     pub fn is_extension(&self) -> bool {
-        self.package_name().ends_with(SUFFIX_PKG_EXT)
-            || self.package_name().ends_with(SUFFIX_PKG_SCHEDULE)
-            || self.package_name().ends_with(SUFFIX_PKG_STUB)
+        PkgFqn::is_package_name_ext(self.package_name())
     }
 
     #[must_use]
