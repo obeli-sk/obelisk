@@ -1971,7 +1971,7 @@ async fn compile_and_verify(
                     },
                 }
             }
-            let (component_registry_ro, supressed_errors) = component_registry.verify_imports();
+            let (component_registry_ro, supressed_errors) = component_registry.verify_registry();
             let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
             let workers_linked = workers_compiled.into_iter().map(|worker| worker.link(&fn_registry)).collect::<Result<Vec<_>,_>>()?;
             let webhooks_by_names = webhooks_compiled_by_names
@@ -2220,10 +2220,11 @@ impl ComponentConfigRegistry {
                 .iter()
                 .map(|f| &f.ffqn)
             {
-                if let Some((offending_id, _, _)) = self.inner.exported_ffqns_ext.get(exported_ffqn)
+                if let Some((conflicting_id, _, _)) =
+                    self.inner.exported_ffqns_ext.get(exported_ffqn)
                 {
                     bail!(
-                        "function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}",
+                        "function {exported_ffqn} is already exported by component {conflicting_id}, cannot insert {}",
                         component.component_id
                     );
                 }
@@ -2259,7 +2260,7 @@ impl ComponentConfigRegistry {
     /// This is a best effort to give function-level error messages.
     /// WASI imports and host functions are not validated at the moment, those errors
     /// are caught by wasmtime while pre-instantiation with a message containing the missing interface.
-    pub fn verify_imports(
+    pub fn verify_registry(
         self,
     ) -> (
         ComponentConfigRegistryRO,
