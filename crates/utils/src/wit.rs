@@ -806,8 +806,20 @@ mod tests {
         ComponentType::ActivityWasm
     )]
     #[case(
+        test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+        ComponentType::Workflow
+    )]
+    #[case(
         test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY,
         ComponentType::ActivityStub
+    )]
+    #[case(
+        test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+        ComponentType::Workflow
+    )]
+    #[case(
+        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+        ComponentType::Workflow
     )]
     #[case(
         test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,

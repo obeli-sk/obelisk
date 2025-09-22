@@ -1,0 +1,243 @@
+---
+source: crates/utils/src/wit.rs
+expression: wit
+---
+package root:component;
+
+world root {
+  import testing:http/http-get;
+  import obelisk:types/execution@2.0.0;
+  import testing:http-obelisk-ext/http-get;
+  import obelisk:workflow/workflow-support@2.0.0;
+
+  export testing:http-workflow/workflow;
+}
+package obelisk:types@2.0.0 {
+  interface time {
+    variant duration {
+      milliseconds(u64),
+      seconds(u64),
+      minutes(u32),
+      hours(u32),
+      days(u32),
+    }
+
+    /// A time and date in seconds plus nanoseconds.
+    /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
+    record datetime {
+      seconds: u64,
+      nanoseconds: u32,
+    }
+
+    variant schedule-at {
+      now,
+      at(datetime),
+      in(duration),
+    }
+  }
+  interface execution {
+    resource join-set-id {
+      id: func() -> string;
+    }
+
+    record execution-id {
+      id: string,
+    }
+
+    record delay-id {
+      id: string,
+    }
+
+    record execution-failed {
+      execution-id: execution-id,
+    }
+
+    record function {
+      /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+      interface-name: string,
+      function-name: string,
+    }
+
+    variant response-id {
+      execution-id(execution-id),
+      delay-id(delay-id),
+    }
+
+    record function-mismatch {
+      /// Workflow requested function
+      specified-function: function,
+      /// What was found actually during execution. None if delay was found as next unprocessed response.
+      actual-function: option<function>,
+      actual-id: response-id,
+    }
+
+    /// Error that is thrown by `-await-next` extension functions.
+    variant await-next-extension-error {
+      /// Execution response was awaited and marked as processed, but it finished with an error.
+      execution-failed(execution-failed),
+      /// All submitted requests and their responses of specified function and join set were already processed.
+      all-processed,
+      /// Execution response was awaited and marked as processed, but it belongs to a different function.
+      /// This can happen when join set contains responses of multiple functions or delay requests.
+      function-mismatch(function-mismatch),
+    }
+
+    /// Error that is thrown by `-get` extension functions.
+    variant get-extension-error {
+      /// Execution is found in processed responses, but it finished with an error.
+      execution-failed(execution-failed),
+      /// Execution is found in processed responses, but it belongs to a different function.
+      /// This can happen when join set contains responses of multiple functions.
+      function-mismatch(function-mismatch),
+      /// Processed responses do not contain the specified execution ID.
+      /// This can happen if the execution was not marked as processed (awaited), or
+      /// the execution ID does not belong to the specified join set.
+      not-found-in-processed-responses,
+    }
+
+    variant stub-error {
+      /// Conflict can happen when a second writer attempts to stub a value, while the
+      /// value is not equal to the already stubbed value.
+      conflict,
+    }
+  }
+}
+
+
+package obelisk:workflow@2.0.0 {
+  interface workflow-support {
+    use obelisk:types/execution@2.0.0.{join-set-id};
+
+    enum closing-strategy {
+      complete,
+    }
+
+    new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set-id;
+  }
+}
+
+
+package testing:http {
+  interface http-get {
+    record response {
+      body: list<u8>,
+      status-code: u16,
+    }
+
+    record stargazers {
+      logins: string,
+      cursor: string,
+    }
+
+    get: func(url: string) -> result<string, string>;
+
+    get-resp: func(url: string) -> result<response, string>;
+
+    get-stargazers: func() -> result<stargazers, string>;
+
+    get-successful: func(url: string) -> result<string, string>;
+  }
+}
+
+
+package testing:http-obelisk-ext {
+  interface http-get {
+    use obelisk:types/execution@2.0.0.{join-set-id, execution-id, await-next-extension-error};
+
+    get-successful-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
+
+    get-successful-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+  }
+}
+
+
+package testing:http-workflow {
+  interface workflow {
+    get: func(url: string) -> result<string, string>;
+
+    get-resp: func(url: string) -> result<string, string>;
+
+    get-stargazers: func() -> result;
+
+    get-successful: func(url: string) -> result<string, string>;
+
+    get-successful-concurrently: func(urls: list<string>) -> result<list<string>, string>;
+
+    get-successful-concurrently-stress: func(url: string, concurrency: u32) -> result<list<string>, string>;
+  }
+}
+
+
+package testing:http-workflow-obelisk-ext {
+  interface workflow {
+    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+
+    get-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
+
+    get-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+
+    get-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+
+    get-invoke: func(url: string) -> result<result<string, string>, execution-failed>;
+
+    get-resp-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
+
+    get-resp-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+
+    get-resp-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+
+    get-resp-invoke: func(url: string) -> result<result<string, string>, execution-failed>;
+
+    get-stargazers-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+
+    get-stargazers-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+
+    get-stargazers-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+
+    get-stargazers-invoke: func() -> result<result, execution-failed>;
+
+    get-successful-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
+
+    get-successful-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+
+    get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+
+    get-successful-invoke: func(url: string) -> result<result<string, string>, execution-failed>;
+
+    get-successful-concurrently-submit: func(join-set-id: borrow<join-set-id>, urls: list<string>) -> execution-id;
+
+    get-successful-concurrently-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>;
+
+    get-successful-concurrently-get: func(execution-id: execution-id) -> result<result<list<string>, string>, get-extension-error>;
+
+    get-successful-concurrently-invoke: func(urls: list<string>) -> result<result<list<string>, string>, execution-failed>;
+
+    get-successful-concurrently-stress-submit: func(join-set-id: borrow<join-set-id>, url: string, concurrency: u32) -> execution-id;
+
+    get-successful-concurrently-stress-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>;
+
+    get-successful-concurrently-stress-get: func(execution-id: execution-id) -> result<result<list<string>, string>, get-extension-error>;
+
+    get-successful-concurrently-stress-invoke: func(url: string, concurrency: u32) -> result<result<list<string>, string>, execution-failed>;
+  }
+}
+
+
+package testing:http-workflow-obelisk-schedule {
+  interface workflow {
+    use obelisk:types/execution@2.0.0.{execution-id};
+    use obelisk:types/time@2.0.0.{schedule-at};
+
+    get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+
+    get-resp-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+
+    get-stargazers-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+    get-successful-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+
+    get-successful-concurrently-schedule: func(schedule-at: schedule-at, urls: list<string>) -> execution-id;
+
+    get-successful-concurrently-stress-schedule: func(schedule-at: schedule-at, url: string, concurrency: u32) -> execution-id;
+  }
+}
