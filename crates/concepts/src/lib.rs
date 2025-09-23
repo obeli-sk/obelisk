@@ -659,16 +659,6 @@ impl SupportedFunctionReturnValue {
     }
 
     #[must_use]
-    pub fn len(&self) -> usize {
-        1
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        false
-    }
-
-    #[must_use]
     pub fn as_pending_state_finished_result(&self) -> PendingStateFinishedResultKind {
         if let SupportedFunctionReturnValue::FallibleResultErr(_) = self {
             PendingStateFinishedResultKind(Err(PendingStateFinishedError::FallibleError))
