@@ -1,0 +1,38 @@
+name: check-extensions
+
+on:
+  push:
+    branches:
+      - main
+      - latest
+  pull_request:
+
+# If new code is pushed to a PR branch, then cancel in progress workflows for that PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  check-build-verify-toml-schema:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      - uses: nixbuild/nix-quick-install-action@1f095fee853b33114486cfdeae62fa099cda35a9
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Populate the nix store
+        run: nix develop --command echo
+
+      - name: Run `obelisk generate config-schema`
+        run: |
+          nix develop --command scripts/regenerate-wit-extensions.sh
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Uncommitted changes after running 'regenerate-wit-extensions.sh'"
+            exit 1
+          fi
