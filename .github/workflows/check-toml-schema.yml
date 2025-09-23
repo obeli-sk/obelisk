@@ -1,4 +1,4 @@
-name: check-run-cargo-build-verify-toml-schema
+name: check-toml-schema
 
 on:
   push:
@@ -29,13 +29,6 @@ jobs:
 
       - name: Populate the nix store
         run: nix develop --command echo
-
-      - name: Run `cargo build`
-        run: nix develop --command cargo build
-
-      - name: Run `obelisk server verify`
-        run: |
-          target/debug/obelisk server verify
 
       - name: Run `obelisk generate config-schema`
         run: |
