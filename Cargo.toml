@@ -98,7 +98,7 @@ workspace = true
 resolver = "2"
 members = [
     "crates/bench",
-    "crates/component-builder",
+    "crates/testing/component-builder",
     "crates/concepts",
     "crates/db-mem",
     "crates/db-sqlite",
@@ -153,7 +153,7 @@ db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version
 db-tests = { path = "crates/testing/db-tests" }
 executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.24.2" }
 grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.24.2" }
-obelisk-component-builder = { path = "crates/component-builder", features = [
+obelisk-component-builder = { path = "crates/testing/component-builder", features = [
     "genrs",
 ] }
 test-programs-dir-activity-builder = { path = "crates/testing/test-programs/dir/activity/builder" }
