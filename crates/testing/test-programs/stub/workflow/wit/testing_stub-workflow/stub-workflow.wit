@@ -1,7 +1,7 @@
 package testing:stub-workflow;
 
 interface workflow {
-    use obelisk:types/execution@2.0.0.{execution-id, stub-error};
+    use obelisk:types/execution@2.0.0.{execution-id};
 
     submit-stub-await: func(arg: string) -> result<string>;
     submit-await: func(arg: string) -> result<string>;
@@ -12,7 +12,7 @@ interface workflow {
     submit-race-join-next-stub-error: func() -> result;
     submit-race-join-next-delay: func() -> result;
 
-    stub-subworkflow: func(execution-id: execution-id, retval: string) -> result<_, stub-error>;
+    stub-subworkflow: func(execution-id: execution-id, retval: string) -> result;
 
     await-next-produces-all-processed-error: func() -> result;
 

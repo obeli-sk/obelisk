@@ -6,11 +6,11 @@ struct Component;
 export!(Component);
 
 impl Guest for Component {
-    fn rec(my_record: MyRecord) -> MyRecord {
-        my_record
+    fn rec(my_record: MyRecord) -> Result<MyRecord, ()> {
+        Ok(my_record)
     }
 
-    fn var(my_variant: MyVariant) -> MyVariant {
-        my_variant
+    fn var(my_variant: MyVariant) -> Result<MyVariant, ()> {
+        Ok(my_variant)
     }
 }

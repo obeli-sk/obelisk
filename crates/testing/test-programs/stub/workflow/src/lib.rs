@@ -5,8 +5,7 @@ use crate::testing::stub_activity_obelisk_ext::activity as activity_ext;
 use crate::testing::stub_activity_obelisk_stub::activity as activity_stub;
 use obelisk::log::log;
 use obelisk::types::execution::{
-    AwaitNextExtensionError, ExecutionFailed, ExecutionId, GetExtensionError, JoinSetId,
-    ResponseId, StubError,
+    AwaitNextExtensionError, ExecutionFailed, ExecutionId, GetExtensionError, JoinSetId, ResponseId,
 };
 use obelisk::workflow::workflow_support::new_join_set_named;
 use testing::stub_activity_obelisk_ext::activity::noret_invoke;
@@ -48,8 +47,9 @@ impl Guest for Component {
         Ok(())
     }
 
-    fn stub_subworkflow(execution_id: ExecutionId, retval: String) -> Result<(), StubError> {
+    fn stub_subworkflow(execution_id: ExecutionId, retval: String) -> Result<(), ()> {
         activity_stub::foo_stub(&execution_id, Ok(Ok(&format!("stubbing {retval}"))))
+            .map_err(|_| ())
     }
 
     fn await_next_produces_all_processed_error() -> Result<(), ()> {

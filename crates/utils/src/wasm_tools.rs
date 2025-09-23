@@ -11,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use strum::IntoEnumIterator as _;
 use tracing::{debug, error, info, trace, warn};
 use val_json::type_wrapper::{TypeConversionError, TypeWrapper};
 use wit_component::{ComponentEncoder, WitPrinter};
@@ -315,6 +316,10 @@ pub enum DecodeError {
     },
     #[error("cannot rebuild resolve - {0}")]
     RebuildResolveError(anyhow::Error),
+    #[error("component is exporting obelisk extended package `{0}`")]
+    ExportingExt(String),
+    #[error("wrong extension import {0}")]
+    WrongExtImport(FunctionFqn),
 }
 
 #[derive(Debug, Clone)]
@@ -774,6 +779,14 @@ enum ProcessingKind {
     ExportsOfActivityStub,
     ExportsSubmittable,
 }
+impl ProcessingKind {
+    fn is_export(&self) -> bool {
+        matches!(
+            self,
+            ProcessingKind::ExportsSubmittable | ProcessingKind::ExportsOfActivityStub
+        )
+    }
+}
 
 fn populate_ifcs(
     resolve: &Resolve,
@@ -802,6 +815,15 @@ fn populate_ifcs(
         let Some(ifc_name) = ifc.name.as_deref() else {
             unreachable!("inline interfaces already filterd out");
         };
+        let pkg_fqn = PkgFqn {
+            namespace: package.namespace.clone(),
+            package_name: package.name.clone(),
+            version: package.version.as_ref().map(|v| v.to_string()),
+        };
+        let package_ext = pkg_fqn.split_ext().map(|(_, pkg_ext)| pkg_ext);
+        if processing_kind.is_export() && package_ext.is_some() {
+            return Err(DecodeError::ExportingExt(pkg_fqn.to_string()));
+        }
         let ifc_fqn = if let Some(version) = &package.version {
             format!(
                 "{namespace}:{name}/{ifc_name}@{version}",
@@ -836,16 +858,28 @@ fn populate_ifcs(
                 None
             };
 
-            if matches!(
-                processing_kind,
-                ProcessingKind::ExportsSubmittable | ProcessingKind::ExportsOfActivityStub
-            ) && return_type.is_none()
+            let imported_fn_extension = {
+                let guessed_fn_extension = FunctionExtension::iter()
+                    .find(|fn_ext| function_name.ends_with(fn_ext.suffix()));
+                match (package_ext, guessed_fn_extension) {
+                    (None, _) => None,
+                    (Some(pkg_ext), Some(fn_ext)) if fn_ext.belongs_to(pkg_ext) => Some(fn_ext),
+                    _ => return Err(DecodeError::WrongExtImport(ffqn)),
+                }
+            };
+
+            let return_type = ReturnTypeSupport::validate(return_type, imported_fn_extension);
+
+            // Warn if this is export and a function return type does not validate.
+            // Mute warnings for `incoming-handlers`, exported by webhooks.
+            if processing_kind.is_export()
+                && matches!(return_type, ReturnTypeSupport::Invalid)
                 && !ifc_fqn.starts_with("wasi:http/incoming-handler@")
             {
                 warn!("Ignoring export {ffqn} with unsupported return type");
             }
 
-            if let Some(return_type) = return_type {
+            if let ReturnTypeSupport::Valid(return_type) = return_type {
                 let ffqn =
                     FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
                 let parameter_types = ParameterTypes({
@@ -879,19 +913,63 @@ fn populate_ifcs(
                         ffqn,
                         parameter_types,
                         return_type,
-                        extension: None,
+                        extension: imported_fn_extension,
                         submittable,
                     },
                 );
             }
         }
-        vec.push(PackageIfcFns {
-            ifc_fqn: IfcFqnName::new_arc(ifc_fqn),
-            fns,
-            extension: false,
-        });
+        if !fns.is_empty() {
+            vec.push(PackageIfcFns {
+                ifc_fqn: IfcFqnName::new_arc(ifc_fqn),
+                fns,
+                extension: package_ext.is_some(),
+            });
+        }
     }
     Ok(vec)
+}
+
+enum ReturnTypeSupport {
+    Valid(ReturnType),
+    Invalid,
+}
+impl ReturnTypeSupport {
+    fn validate(
+        return_type: Option<ReturnType>,
+        imported_fn_extension: Option<FunctionExtension>,
+    ) -> ReturnTypeSupport {
+        let Some(return_type) = return_type else {
+            return ReturnTypeSupport::Invalid;
+        };
+        if imported_fn_extension.is_some() {
+            return ReturnTypeSupport::Valid(return_type);
+        }
+        if let TypeWrapper::Result { ok: _, err: None } = return_type.type_wrapper {
+            return ReturnTypeSupport::Valid(return_type);
+        }
+
+        if let TypeWrapper::Result {
+            ok: _,
+            err: Some(inner),
+        } = &return_type.type_wrapper
+        {
+            if let TypeWrapper::String = inner.as_ref() {
+                return ReturnTypeSupport::Valid(return_type);
+            }
+
+            if let TypeWrapper::Variant(variants) = inner.as_ref()
+                && let Some(Some(TypeWrapper::Record(fields))) = variants.get("execution-failed")
+                && fields.len() == 1
+                && let Some(TypeWrapper::Record(execution_id_fields)) = fields.get("execution-id")
+                && execution_id_fields.len() == 1
+                && let Some(TypeWrapper::String) = execution_id_fields.get("id")
+            {
+                return ReturnTypeSupport::Valid(return_type);
+            }
+        }
+        ReturnTypeSupport::Invalid
+    }
 }
 
 #[cfg(test)]

@@ -3,29 +3,6 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:workflow/workflow-support@2.0.0.new-join-set-generated": {
-    "ffqn": {
-      "ifc_fqn": "obelisk:workflow/workflow-support@2.0.0",
-      "function_name": "new-join-set-generated"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": {
-          "enum": [
-            "complete"
-          ]
-        },
-        "name": "closing-strategy",
-        "wit_type": "closing-strategy"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": "own",
-      "wit_type": "join-set-id"
-    },
-    "extension": null,
-    "submittable": false
-  },
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": {
     "ffqn": {
       "ifc_fqn": "testing:fibo-obelisk-ext/fibo",
@@ -97,7 +74,7 @@ expression: imports
       },
       "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
     },
-    "extension": null,
+    "extension": "await_next",
     "submittable": false
   },
   "testing:fibo-obelisk-ext/fibo.fibo-submit": {
@@ -125,7 +102,7 @@ expression: imports
       },
       "wit_type": "execution-id"
     },
-    "extension": null,
+    "extension": "submit",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": {
@@ -199,7 +176,7 @@ expression: imports
       },
       "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
     },
-    "extension": null,
+    "extension": "await_next",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": {
@@ -232,7 +209,7 @@ expression: imports
       },
       "wit_type": "execution-id"
     },
-    "extension": null,
+    "extension": "submit",
     "submittable": false
   },
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": {

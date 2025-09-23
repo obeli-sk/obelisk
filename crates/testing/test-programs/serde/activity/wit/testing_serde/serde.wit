@@ -9,13 +9,13 @@ interface serde {
         opt: option<bool>,
     }
 
-    rec: func(my-record: my-record) -> my-record;
+    rec: func(my-record: my-record) -> result<my-record>;
 
     variant my-variant {
         var1(option<bool>)
     }
 
-    var: func(my-variant: my-variant) -> my-variant;
+    var: func(my-variant: my-variant) -> result<my-variant>;
 
 }
 

@@ -3196,6 +3196,7 @@ dependencies = [
  "semver",
  "serde",
  "sha2",
+ "strum",
  "test-programs-fibo-activity-builder",
  "test-programs-fibo-webhook-builder",
  "test-programs-fibo-workflow-builder",

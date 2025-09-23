@@ -179,7 +179,7 @@ package testing:stub-activity {
 
 package testing:stub-workflow {
   interface workflow {
-    use obelisk:types/execution@2.0.0.{execution-id, stub-error};
+    use obelisk:types/execution@2.0.0.{execution-id};
 
     submit-stub-await: func(arg: string) -> result<string>;
 
@@ -193,7 +193,7 @@ package testing:stub-workflow {
 
     submit-race-join-next-delay: func() -> result;
 
-    stub-subworkflow: func(execution-id: execution-id, retval: string) -> result<_, stub-error>;
+    stub-subworkflow: func(execution-id: execution-id, retval: string) -> result;
 
     await-next-produces-all-processed-error: func() -> result;
 
@@ -206,7 +206,7 @@ package testing:stub-workflow {
 
 package testing:stub-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@2.0.0.{execution-id, stub-error, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
 
     submit-stub-await-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
 
@@ -258,11 +258,11 @@ package testing:stub-workflow-obelisk-ext {
 
     stub-subworkflow-submit: func(join-set-id: borrow<join-set-id>, execution-id: execution-id, retval: string) -> execution-id;
 
-    stub-subworkflow-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<_, stub-error>>, await-next-extension-error>;
+    stub-subworkflow-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    stub-subworkflow-get: func(execution-id: execution-id) -> result<result<_, stub-error>, get-extension-error>;
+    stub-subworkflow-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    stub-subworkflow-invoke: func(execution-id: execution-id, retval: string) -> result<result<_, stub-error>, execution-failed>;
+    stub-subworkflow-invoke: func(execution-id: execution-id, retval: string) -> result<result, execution-failed>;
 
     await-next-produces-all-processed-error-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
@@ -293,7 +293,7 @@ package testing:stub-workflow-obelisk-ext {
 
 package testing:stub-workflow-obelisk-schedule {
   interface workflow {
-    use obelisk:types/execution@2.0.0.{execution-id, stub-error};
+    use obelisk:types/execution@2.0.0.{execution-id};
     use obelisk:types/time@2.0.0.{schedule-at};
 
     submit-stub-await-schedule: func(schedule-at: schedule-at, arg: string) -> execution-id;

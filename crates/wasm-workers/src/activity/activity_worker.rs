@@ -583,6 +583,7 @@ pub(crate) mod tests {
             prefixed_ulid::RunId,
             storage::{ExecutionEventInner, Version},
         };
+        use insta::assert_debug_snapshot;
         use test_utils::{env_or_default, sim_clock::SimClock};
         use tracing::{debug, info, info_span};
 
@@ -1571,7 +1572,8 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_matches!(res, SupportedFunctionReturnValue::Ok(_));
+            let record = assert_matches!(res, SupportedFunctionReturnValue::Ok(record) => record);
+            assert_debug_snapshot!(record);
             drop(db_connection);
             exec_task.close().await;
             db_pool.close().await.unwrap();
@@ -1626,7 +1628,9 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_matches!(res, SupportedFunctionReturnValue::Ok(_));
+            let variant =
+                assert_matches!(res, SupportedFunctionReturnValue::Ok(variant) => variant);
+            assert_debug_snapshot!(variant);
             drop(db_connection);
             exec_task.close().await;
             db_pool.close().await.unwrap();

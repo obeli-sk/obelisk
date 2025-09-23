@@ -1,0 +1,31 @@
+---
+source: crates/wasm-workers/src/activity/activity_worker.rs
+expression: variant
+---
+WastValWithType {
+    type: Result {
+        ok: Variant(
+            {
+                "var1": Some(
+                    Option(
+                        Bool,
+                    ),
+                ),
+            },
+        ),
+    },
+    value: Result(
+        Ok(
+            Some(
+                Variant(
+                    "var1",
+                    Some(
+                        Option(
+                            None,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    ),
+}

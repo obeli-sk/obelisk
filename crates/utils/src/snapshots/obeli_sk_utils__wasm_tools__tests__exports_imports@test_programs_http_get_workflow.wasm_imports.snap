@@ -3,48 +3,6 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:types/execution@2.0.0.[method]join-set-id.id": {
-    "ffqn": {
-      "ifc_fqn": "obelisk:types/execution@2.0.0",
-      "function_name": "[method]join-set-id.id"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "borrow",
-        "name": "self",
-        "wit_type": "borrow<join-set-id>"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": "string",
-      "wit_type": "string"
-    },
-    "extension": null,
-    "submittable": false
-  },
-  "obelisk:workflow/workflow-support@2.0.0.new-join-set-generated": {
-    "ffqn": {
-      "ifc_fqn": "obelisk:workflow/workflow-support@2.0.0",
-      "function_name": "new-join-set-generated"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": {
-          "enum": [
-            "complete"
-          ]
-        },
-        "name": "closing-strategy",
-        "wit_type": "closing-strategy"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": "own",
-      "wit_type": "join-set-id"
-    },
-    "extension": null,
-    "submittable": false
-  },
   "testing:http-obelisk-ext/http-get.get-successful-await-next": {
     "ffqn": {
       "ifc_fqn": "testing:http-obelisk-ext/http-get",
@@ -116,7 +74,7 @@ expression: imports
       },
       "wit_type": "result<tuple<execution-id, result<string, string>>, await-next-extension-error>"
     },
-    "extension": null,
+    "extension": "await_next",
     "submittable": false
   },
   "testing:http-obelisk-ext/http-get.get-successful-submit": {
@@ -144,7 +102,7 @@ expression: imports
       },
       "wit_type": "execution-id"
     },
-    "extension": null,
+    "extension": "submit",
     "submittable": false
   },
   "testing:http/http-get.get": {

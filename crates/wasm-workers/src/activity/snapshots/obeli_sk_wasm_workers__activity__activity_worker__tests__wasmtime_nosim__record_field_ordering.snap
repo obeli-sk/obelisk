@@ -1,0 +1,40 @@
+---
+source: crates/wasm-workers/src/activity/activity_worker.rs
+expression: record
+---
+WastValWithType {
+    type: Result {
+        ok: Record(
+            {
+                "a": Bool,
+                "image": String,
+                "b": Bool,
+                "opt": Option(
+                    Bool,
+                ),
+            },
+        ),
+    },
+    value: Result(
+        Ok(
+            Some(
+                Record(
+                    {
+                        "a": Bool(
+                            false,
+                        ),
+                        "image": String(
+                            "foo",
+                        ),
+                        "b": Bool(
+                            false,
+                        ),
+                        "opt": Option(
+                            None,
+                        ),
+                    },
+                ),
+            ),
+        ),
+    ),
+}

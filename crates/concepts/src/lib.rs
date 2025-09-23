@@ -308,7 +308,7 @@ impl PackageExtension {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct PkgFqn {
-    pub namespace: String, // TODO: StrVariant
+    pub namespace: String, // TODO: StrVariant or reference
     pub package_name: String,
     pub version: Option<String>,
 }
@@ -688,7 +688,9 @@ pub const SUFFIX_FN_STUB: &str = "-stub";
 pub const SUFFIX_FN_GET: &str = "-get";
 pub const SUFFIX_FN_INVOKE: &str = "-invoke";
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, strum::EnumIter,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum FunctionExtension {
     Submit,
@@ -699,7 +701,7 @@ pub enum FunctionExtension {
     Invoke,
 }
 impl FunctionExtension {
-    fn suffix(&self) -> &'static str {
+    pub fn suffix(&self) -> &'static str {
         match self {
             FunctionExtension::Submit => SUFFIX_FN_SUBMIT,
             FunctionExtension::AwaitNext => SUFFIX_FN_AWAIT_NEXT,
@@ -707,6 +709,18 @@ impl FunctionExtension {
             FunctionExtension::Stub => SUFFIX_FN_STUB,
             FunctionExtension::Get => SUFFIX_FN_GET,
             FunctionExtension::Invoke => SUFFIX_FN_INVOKE,
+        }
+    }
+
+    pub fn belongs_to(&self, pkg_ext: PackageExtension) -> bool {
+        match (pkg_ext, self) {
+            (PackageExtension::ObeliskExt, FunctionExtension::Submit)
+            | (PackageExtension::ObeliskExt, FunctionExtension::AwaitNext)
+            | (PackageExtension::ObeliskExt, FunctionExtension::Get)
+            | (PackageExtension::ObeliskExt, FunctionExtension::Invoke)
+            | (PackageExtension::ObeliskSchedule, FunctionExtension::Schedule)
+            | (PackageExtension::ObeliskStub, FunctionExtension::Stub) => true,
+            _ => false,
         }
     }
 }
