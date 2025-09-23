@@ -20,6 +20,8 @@ world root {
   import wasi:filesystem/preopens@0.2.3;
 
   export testing:sleep/sleep;
+  export testing:sleep-obelisk-ext/sleep;
+  export testing:sleep-obelisk-schedule/sleep;
 }
 package obelisk:types@2.0.0 {
   interface time {
@@ -294,8 +296,8 @@ package testing:sleep {
 
 package testing:sleep-obelisk-ext {
   interface sleep {
+    use obelisk:types/time@2.0.0.{duration};
     use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
-    use testing:sleep/sleep.{duration};
 
     sleep-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 
@@ -318,9 +320,9 @@ package testing:sleep-obelisk-ext {
 
 package testing:sleep-obelisk-schedule {
   interface sleep {
+    use obelisk:types/time@2.0.0.{duration};
     use obelisk:types/execution@2.0.0.{execution-id};
     use obelisk:types/time@2.0.0.{schedule-at};
-    use testing:sleep/sleep.{duration};
 
     sleep-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 

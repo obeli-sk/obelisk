@@ -244,7 +244,7 @@ mod serde_strvariant {
 #[display("{value}")]
 #[serde(transparent)]
 pub struct Name<T> {
-    value: StrVariant,
+    pub value: StrVariant,
     #[serde(skip)]
     phantom_data: PhantomData<fn(T) -> T>,
 }
@@ -293,6 +293,23 @@ impl<T> From<String> for Name<T> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, strum::EnumIter, derive_more::Display)]
+#[display("{}", self.suffix())]
+pub enum PackageExtension {
+    ObeliskExt,
+    ObeliskSchedule,
+    ObeliskStub,
+}
+impl PackageExtension {
+    fn suffix(&self) -> &'static str {
+        match self {
+            PackageExtension::ObeliskExt => SUFFIX_PKG_EXT,
+            PackageExtension::ObeliskSchedule => SUFFIX_PKG_SCHEDULE,
+            PackageExtension::ObeliskStub => SUFFIX_PKG_STUB,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct PkgFqn {
@@ -303,6 +320,23 @@ pub struct PkgFqn {
 impl PkgFqn {
     pub fn is_extension(&self) -> bool {
         Self::is_package_name_ext(&self.package_name)
+    }
+
+    pub fn split_ext(&self) -> Option<(PkgFqn, PackageExtension)> {
+        use strum::IntoEnumIterator;
+        for package_ext in PackageExtension::iter() {
+            if let Some(package_name) = self.package_name.strip_suffix(package_ext.suffix()) {
+                return Some((
+                    PkgFqn {
+                        namespace: self.namespace.clone(),
+                        package_name: package_name.to_string(),
+                        version: self.version.clone(),
+                    },
+                    package_ext,
+                ));
+            }
+        }
+        None
     }
 
     fn is_package_name_ext(package_name: &str) -> bool {
@@ -662,15 +696,34 @@ impl Default for Params {
     }
 }
 
+pub const SUFFIX_FN_SUBMIT: &str = "-submit";
+pub const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
+pub const SUFFIX_FN_SCHEDULE: &str = "-schedule";
+pub const SUFFIX_FN_STUB: &str = "-stub";
+pub const SUFFIX_FN_GET: &str = "-get";
+pub const SUFFIX_FN_INVOKE: &str = "-invoke";
+
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FunctionExtension {
     Submit,
     AwaitNext,
-    Invoke,
     Schedule,
     Stub,
     Get,
+    Invoke,
+}
+impl FunctionExtension {
+    fn suffix(&self) -> &'static str {
+        match self {
+            FunctionExtension::Submit => SUFFIX_FN_SUBMIT,
+            FunctionExtension::AwaitNext => SUFFIX_FN_AWAIT_NEXT,
+            FunctionExtension::Schedule => SUFFIX_FN_SCHEDULE,
+            FunctionExtension::Stub => SUFFIX_FN_STUB,
+            FunctionExtension::Get => SUFFIX_FN_GET,
+            FunctionExtension::Invoke => SUFFIX_FN_INVOKE,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -681,6 +734,25 @@ pub struct FunctionMetadata {
     pub extension: Option<FunctionExtension>,
     /// Externally submittable: primary functions + `-schedule` extended, but no activity stubs
     pub submittable: bool,
+}
+impl FunctionMetadata {
+    pub fn split_extension(&self) -> Option<(&str, FunctionExtension)> {
+        self.extension.map(|extension| {
+            let prefix = self
+                .ffqn
+                .function_name
+                .value
+                .strip_suffix(extension.suffix())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "extension function {} must end with expected suffix {}",
+                        self.ffqn.function_name,
+                        extension.suffix()
+                    )
+                });
+            (prefix, extension)
+        })
+    }
 }
 impl Display for FunctionMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

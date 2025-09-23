@@ -11,6 +11,8 @@ world root {
   import obelisk:workflow/workflow-support@2.0.0;
 
   export testing:http-workflow/workflow;
+  export testing:http-workflow-obelisk-ext/workflow;
+  export testing:http-workflow-obelisk-schedule/workflow;
 }
 package obelisk:types@2.0.0 {
   interface time {

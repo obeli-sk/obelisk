@@ -48,6 +48,7 @@ use concepts::PackageIfcFns;
 use concepts::ParameterType;
 use concepts::Params;
 use concepts::ReturnType;
+use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
 use concepts::SupportedFunctionReturnValue;
 use concepts::storage::AppendRequest;
@@ -111,7 +112,6 @@ use tracing::info_span;
 use tracing::instrument;
 use tracing::warn;
 use tracing::{debug, info, trace};
-use utils::wasm_tools::EXTENSION_FN_SUFFIX_SCHEDULE;
 use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
 use val_json::wast_val_ser::deserialize_slice;
@@ -282,7 +282,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         .ffqn
                         .function_name
                         .to_string()
-                        .strip_suffix(EXTENSION_FN_SUFFIX_SCHEDULE)
+                        .strip_suffix(SUFFIX_FN_SCHEDULE)
                         .expect("checked that the function is FunctionExtension::Schedule")
                         .to_string(),
                 ),

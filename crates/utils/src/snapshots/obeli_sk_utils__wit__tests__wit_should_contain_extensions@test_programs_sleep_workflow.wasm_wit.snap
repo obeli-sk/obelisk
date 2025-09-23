@@ -14,6 +14,8 @@ world root {
   import testing:sleep-workflow-obelisk-schedule/workflow;
 
   export testing:sleep-workflow/workflow;
+  export testing:sleep-workflow-obelisk-ext/workflow;
+  export testing:sleep-workflow-obelisk-schedule/workflow;
 }
 package obelisk:types@2.0.0 {
   interface time {
@@ -179,7 +181,8 @@ package testing:sleep-workflow {
 
 package testing:sleep-workflow-obelisk-schedule {
   interface workflow {
-    use testing:sleep-workflow/workflow.{execution-id, schedule-at, duration};
+    use obelisk:types/time@2.0.0.{schedule-at, duration};
+    use obelisk:types/execution@2.0.0.{execution-id};
 
     sleep-host-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 
@@ -202,9 +205,8 @@ package testing:sleep-workflow-obelisk-schedule {
 
 package testing:sleep-workflow-obelisk-ext {
   interface workflow {
-    use testing:sleep-workflow/workflow.{execution-id};
-    use obelisk:types/execution@2.0.0.{join-set-id, await-next-extension-error, get-extension-error, execution-failed};
-    use testing:sleep-workflow/workflow.{schedule-at, duration};
+    use obelisk:types/time@2.0.0.{schedule-at, duration};
+    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
 
     sleep-host-activity-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 

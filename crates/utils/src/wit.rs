@@ -1,18 +1,15 @@
-use crate::wasm_tools::{EXTENSION_FN_SUFFIX_SCHEDULE, ExIm};
-use anyhow::Context;
-use concepts::{
-    ComponentType, FnName, IfcFqnName, PkgFqn, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB,
-};
+use crate::wasm_tools::{ExIm, ExOrIm};
+use concepts::{FnName, FunctionExtension, FunctionMetadata, IfcFqnName, PackageExtension, PkgFqn};
 use const_format::formatcp;
 use id_arena::Arena;
 use indexmap::IndexMap;
 use semver::{BuildMetadata, Prerelease, Version};
-use std::{ops::Deref, path::PathBuf};
+use std::path::PathBuf;
 use tracing::{error, warn};
 use wit_component::WitPrinter;
 use wit_parser::{
-    Function, FunctionKind, Handle, Interface, InterfaceId, PackageId, PackageName, Resolve, Type,
-    TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup,
+    Function, FunctionKind, Handle, Interface, InterfaceId, PackageId, PackageName, Resolve,
+    Stability, Type, TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup, WorldItem, WorldKey,
 };
 
 const OBELISK_TYPES_VERSION_MAJOR: u64 = 2;
@@ -28,82 +25,59 @@ const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!(concat!(
     "/wit/obelisk_types@2.0.0/types@2.0.0.wit"
 ));
 
-pub(crate) fn wit(
-    component_type: ComponentType,
-    resolve: &Resolve,
-    main_package: PackageId,
-    exim: &ExIm,
-) -> Result<String, anyhow::Error> {
-    let (resolve, main_package) = add_exports(component_type, resolve, main_package, exim)?;
+pub(crate) fn wit(resolve: &Resolve, main_package: PackageId) -> Result<String, anyhow::Error> {
     // print all packages, with the main package as root, others as nested.
     let ids = packages_except_main(&resolve, main_package, false);
     let mut printer = WitPrinter::default();
     printer.print(&resolve, main_package, &ids)?;
-    Ok(printer.output.to_string())
-}
-
-pub(crate) fn add_exports(
-    component_type: ComponentType,
-    resolve: &Resolve,
-    main_package: PackageId,
-    exim: &ExIm,
-) -> Result<(Resolve, PackageId), anyhow::Error> {
-    let ids = packages_except_main(resolve, main_package, true);
-    let mut printer = WitPrinter::default();
-    printer.print(resolve, main_package, &ids)?;
     let wit = printer.output.to_string();
-    add_ext_exports(&wit, exim, component_type)
+    Ok(wit)
 }
 
-pub(crate) fn packages_except_main(
-    resolve: &Resolve,
-    main_package: PackageId,
-    sorted: bool,
-) -> Vec<PackageId> {
-    let mut packages = resolve
-        .packages
-        .iter()
-        .map(|(id, _)| id)
-        // The main package would show as a nested package as well
-        .filter(|id| *id != main_package)
-        .collect::<Vec<_>>();
-    if sorted {
-        packages.sort();
-    }
-    packages
-}
-
-// Replace obelisk:types from the actual WASM file because it may not contain all types we are going to need in exported functions.
-#[expect(clippy::items_after_statements)]
-fn replace_obelisk_types(wit: &str) -> String {
-    // Replace last character of the first line from ; to {
-    let types_nesting = {
-        let mut types_nesting = OBELISK_TYPES_PACKAGE_NO_NESTING.replacen(';', "{", 1);
-        types_nesting.push('}');
-        types_nesting
-    };
-    const TYPES_NESTED_PACKAGE_FIRST_LINE: &str =
-        formatcp!("package {OBELISK_TYPES_PACKAGE_NAME} {{");
-    let wit = remove_nested_package(wit, TYPES_NESTED_PACKAGE_FIRST_LINE);
-    let wit = format!("{wit}\n{types_nesting}");
-    wit
-}
-
-fn add_ext_exports(
-    wit: &str,
+pub(crate) fn rebuild_resolve(
     exim: &ExIm,
-    component_type: ComponentType,
+    resolve: Resolve,
+    main_package: PackageId,
 ) -> Result<(Resolve, PackageId), anyhow::Error> {
-    let wit = replace_obelisk_types(wit);
-    let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit)?;
-    let mut resolve = Resolve::new();
-    let main_id = resolve.push_group(group)?;
-    if component_type == ComponentType::WebhookEndpoint {
-        // no extension exports for webhooks
-        return Ok((resolve, main_id));
-    }
-    let exported_pkg_to_ifc_to_details_map = get_exported_pkg_to_ifc_to_details_map_noext(exim);
+    let ids = packages_except_main(&resolve, main_package, true);
+    let mut printer = WitPrinter::default();
+    printer.print(&resolve, main_package, &ids)?;
+    let wit = printer.output.to_string();
 
+    let (mut resolve, main_pkg_id) = {
+        let wit = replace_obelisk_types(&wit);
+        let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit)?;
+        let mut resolve = Resolve::new();
+        let main_pkg_id = resolve.push_group(group)?;
+        (resolve, main_pkg_id)
+    };
+    let world_id = resolve
+        .select_world(&[main_pkg_id], None)
+        .expect("default world must be found");
+    let added_interfaces = add_extended_interfaces(&exim, &mut resolve)?;
+    resolve
+        .worlds
+        .get_mut(world_id)
+        .expect("id belongs to this resolve")
+        .exports
+        .extend(added_interfaces.into_iter().map(|ifc_id| {
+            (
+                WorldKey::Interface(ifc_id),
+                WorldItem::Interface {
+                    id: ifc_id,
+                    stability: Stability::Unknown,
+                },
+            )
+        }));
+
+    Ok((resolve, main_pkg_id))
+}
+
+fn add_extended_interfaces(
+    exim: &ExIm,
+    resolve: &mut Resolve,
+) -> Result<Vec<InterfaceId>, semver::Error> {
+    let mut added_interfaces = Vec::new();
     // Find necessary handles
     // Get obelisk:types
     let obelisk_types_package_name = PackageName {
@@ -145,8 +119,8 @@ fn add_ext_exports(
         &resolve.interfaces,
     )
     .expect(formatcp!("{OBELISK_TYPES_PACKAGE_NAME} must be found"));
+    // obelisk:types/execution@VERSION.{execution-id}
     let type_id_execution_id = {
-        // obelisk:types/execution@VERSION.{execution-id}
         let actual_type_id = *execution_ifc
             .types
             .get("execution-id")
@@ -160,8 +134,8 @@ fn add_ext_exports(
             stability: wit_parser::Stability::default(),
         })
     };
+    // obelisk:types/execution@VERSION.{join-set-id}
     let (type_id_join_set_id, type_id_join_set_id_borrow_handle) = {
-        // obelisk:types/execution@VERSION.{join-set-id}
         let actual_type_id = *execution_ifc
             .types
             .get("join-set-id")
@@ -184,8 +158,8 @@ fn add_ext_exports(
         });
         (type_id_join_set_id, type_id_join_set_id_borrow_handle)
     };
+    // obelisk:types/execution.{await-next-extension-error}
     let type_id_await_next_extension_error = {
-        // obelisk:types/execution.{await-next-extension-error}
         let actual_type_id = *execution_ifc
             .types
             .get("await-next-extension-error")
@@ -199,8 +173,8 @@ fn add_ext_exports(
             stability: wit_parser::Stability::default(),
         })
     };
+    // obelisk:types/execution.{get-extension-error}
     let type_id_get_extension_error = {
-        // obelisk:types/execution.{get-extension-error}
         let actual_type_id = *execution_ifc
             .types
             .get("get-extension-error")
@@ -214,8 +188,8 @@ fn add_ext_exports(
             stability: wit_parser::Stability::default(),
         })
     };
+    // obelisk:types/execution.{execution-failed}
     let type_id_execution_failed = {
-        // obelisk:types/execution.{execution-failed}
         let actual_type_id = *execution_ifc
             .types
             .get("execution-failed")
@@ -229,8 +203,8 @@ fn add_ext_exports(
             stability: wit_parser::Stability::default(),
         })
     };
+    // obelisk:types/execution.{stub-error}
     let type_id_stub_error = {
-        // obelisk:types/execution.{stub-error}
         let actual_type_id = *execution_ifc
             .types
             .get("stub-error")
@@ -245,8 +219,8 @@ fn add_ext_exports(
         })
     };
     let type_id_await_next_err_part = type_id_await_next_extension_error;
+    // obelisk:types/time.{schedule-at}
     let type_id_schedule_at = {
-        // obelisk:types/time.{schedule-at}
         let actual_type_id = *time_ifc
             .types
             .get("schedule-at")
@@ -261,291 +235,178 @@ fn add_ext_exports(
         })
     };
 
-    for (pkg_fqn, ifc_to_fns) in exported_pkg_to_ifc_to_details_map {
-        // Get or create extension packages.
-        // `-obelisk-ext`
-        let obelisk_ext_pkg_id = get_or_create_package(&pkg_fqn, SUFFIX_PKG_EXT, &mut resolve)?;
-        // `-obelisk-schedule`
-        let obelisk_schedule_pkg_id = if component_type != ComponentType::ActivityStub {
-            Some(get_or_create_package(
-                &pkg_fqn,
-                SUFFIX_PKG_SCHEDULE,
-                &mut resolve,
-            )?)
-        } else {
-            None
-        };
-        // `-obelisk-stub`
-        let obelisk_stub_pkg_id = if component_type == ComponentType::ActivityStub {
-            Some(get_or_create_package(
-                &pkg_fqn,
-                SUFFIX_PKG_STUB,
-                &mut resolve,
-            )?)
-        } else {
-            None
-        };
+    for (pkg_fqn, ifc_to_fns) in get_ext_pkg_to_ifc_to_details_map(exim, ExOrIm::Exports) {
+        let (orig_pkg_fqn, pkg_ext) = pkg_fqn
+            .split_ext()
+            .expect("`get_pkg_to_ifc_to_details_map` filtered by ext packages");
+        let pkg_id = get_or_create_package(pkg_fqn, resolve)?;
+        let (orig_pkg_id, _) = resolve
+            .packages
+            .iter()
+            .find(|(_, found_pkg)| {
+                from_wit_package_name_to_pkg_fqn(&found_pkg.name) == orig_pkg_fqn
+            })
+            .unwrap_or_else(|| {
+                panic!("original package must be not found in resolve: {orig_pkg_fqn}")
+            });
 
         for (ifc_fqn, fns) in ifc_to_fns {
-            let (original_ifc_id, original_ifc) =
-                find_interface(&ifc_fqn, &resolve, &resolve.interfaces)
-                    .with_context(|| format!("cannot find interface {ifc_fqn}"))?;
+            let orig_pkg = resolve.packages.get(orig_pkg_id).expect("id is fresh");
 
-            let mut ext_ifc = {
-                let mut types = IndexMap::new();
-                // Add type imports (use ...)
-                types.insert("execution-id".to_string(), type_id_execution_id);
-                types.insert("join-set-id".to_string(), type_id_join_set_id);
-                types.insert(
-                    "await-next-extension-error".to_string(),
-                    type_id_await_next_extension_error,
-                );
-                types.insert(
-                    "get-extension-error".to_string(),
-                    type_id_get_extension_error,
-                );
-                types.insert("execution-failed".to_string(), type_id_execution_failed);
-                copy_original_types(
-                    original_ifc_id,
-                    original_ifc,
-                    &mut types,
-                    &mut resolve.types,
-                );
-                Interface {
-                    name: Some(ifc_fqn.ifc_name().to_string()),
-                    types,
-                    functions: IndexMap::default(),
-                    docs: wit_parser::Docs::default(),
-                    stability: wit_parser::Stability::default(),
-                    package: Some(obelisk_ext_pkg_id),
-                }
-            };
-            let mut schedule_ifc = if let Some(obelisk_schedule_pkg_id) = obelisk_schedule_pkg_id {
-                let mut types = IndexMap::new();
-                types.insert("execution-id".to_string(), type_id_execution_id);
-                types.insert("schedule-at".to_string(), type_id_schedule_at);
-                copy_original_types(
-                    original_ifc_id,
-                    original_ifc,
-                    &mut types,
-                    &mut resolve.types,
-                );
-                let ifc = Interface {
-                    name: Some(ifc_fqn.ifc_name().to_string()),
-                    types,
-                    functions: IndexMap::default(),
-                    docs: wit_parser::Docs::default(),
-                    stability: wit_parser::Stability::default(),
-                    package: Some(obelisk_ext_pkg_id),
-                };
-                Some((obelisk_schedule_pkg_id, ifc))
-            } else {
-                None
-            };
-            let mut stub_ifc = if let Some(obelisk_stub_pkg_id) = obelisk_stub_pkg_id {
-                let mut types = IndexMap::new();
-                types.insert("execution-id".to_string(), type_id_execution_id);
-                types.insert("stub-error".to_string(), type_id_stub_error);
-                copy_original_types(
-                    original_ifc_id,
-                    original_ifc,
-                    &mut types,
-                    &mut resolve.types,
-                );
-                let ifc = Interface {
-                    name: Some(ifc_fqn.ifc_name().to_string()),
-                    types,
-                    functions: IndexMap::default(),
-                    docs: wit_parser::Docs::default(),
-                    stability: wit_parser::Stability::default(),
-                    package: Some(obelisk_stub_pkg_id),
-                };
-                Some((obelisk_stub_pkg_id, ifc))
-            } else {
-                None
-            };
-            for fn_name in fns {
-                let original_fn = original_ifc
-                    .functions
-                    .get(fn_name.deref())
-                    .with_context(|| format!("cannot find function {ifc_fqn}.{fn_name}"))?;
-                // -submit: func(join-set-id: borrow<join-set-id>, <params>) -> execution-id;
-                {
-                    let fn_name = format!("{fn_name}-submit");
-                    let mut params = vec![(
-                        generate_param_name("join-set-id", &original_fn.params),
-                        Type::Id(type_id_join_set_id_borrow_handle),
-                    )];
-                    params.extend_from_slice(&original_fn.params);
-                    let fn_ext = Function {
-                        name: fn_name.clone(),
-                        kind: FunctionKind::Freestanding,
-                        params,
-                        result: Some(Type::Id(type_id_execution_id)),
-                        docs: wit_parser::Docs::default(),
-                        stability: wit_parser::Stability::default(),
-                    };
-                    ext_ifc.functions.insert(fn_name, fn_ext);
-                }
-                // -await-next: func(join-set-id: borrow<join-set-id>) ->
-                //  result<tuple<execution-id, return-type>, await-next-extension-error>;
-                // or if the function does not return anything:
-                //  result<execution-id, await-next-extension-error>;
-                {
-                    let fn_name = format!("{fn_name}-await-next");
-                    let params = vec![(
-                        "join-set-id".to_string(),
-                        Type::Id(type_id_join_set_id_borrow_handle),
-                    )];
-                    let result = if let Some(actual_return_type_id) = &original_fn.result {
-                        let type_id_await_next_ok_part_tuple = resolve.types.alloc(TypeDef {
-                            name: None,
-                            kind: TypeDefKind::Tuple(wit_parser::Tuple {
-                                types: vec![Type::Id(type_id_execution_id), *actual_return_type_id],
-                            }),
-                            owner: TypeOwner::None,
-                            docs: wit_parser::Docs::default(),
-                            stability: wit_parser::Stability::default(),
-                        });
-                        let type_id_result = resolve.types.alloc(TypeDef {
-                            name: None,
-                            kind: TypeDefKind::Result(wit_parser::Result_ {
-                                ok: Some(Type::Id(type_id_await_next_ok_part_tuple)),
-                                err: Some(Type::Id(type_id_await_next_err_part)),
-                            }),
-                            owner: TypeOwner::None,
-                            docs: wit_parser::Docs::default(),
-                            stability: wit_parser::Stability::default(),
-                        });
-                        Some(Type::Id(type_id_result))
-                    } else {
-                        let type_id_result = resolve.types.alloc(TypeDef {
-                            name: None,
-                            kind: TypeDefKind::Result(wit_parser::Result_ {
-                                ok: Some(Type::Id(type_id_execution_id)),
-                                err: Some(Type::Id(type_id_await_next_err_part)),
-                            }),
-                            owner: TypeOwner::None,
-                            docs: wit_parser::Docs::default(),
-                            stability: wit_parser::Stability::default(),
-                        });
-                        Some(Type::Id(type_id_result))
-                    };
-                    let fn_ext = Function {
-                        name: fn_name.clone(),
-                        kind: FunctionKind::Freestanding,
-                        params,
-                        result,
-                        docs: wit_parser::Docs::default(),
-                        stability: wit_parser::Stability::default(),
-                    };
-                    ext_ifc.functions.insert(fn_name, fn_ext);
-                }
+            let orig_ifc_id = *orig_pkg
+                .interfaces
+                .get(ifc_fqn.ifc_name())
+                .unwrap_or_else(|| {
+                    panic!("interface must be found in original resolve: {ifc_fqn}")
+                });
+            let orig_ifc = resolve
+                .interfaces
+                .get(orig_ifc_id)
+                .expect("orig_ifc obtained from orig_resolve");
 
-                // -get(execution-id) -> result<originalreturn type or _, get-extension-error>
-                {
-                    let fn_name = format!("{fn_name}-get");
-                    let params = vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
-                    let result = Some(Type::Id(resolve.types.alloc(TypeDef {
-                        name: None,
-                        kind: TypeDefKind::Result(wit_parser::Result_ {
-                            ok: original_fn.result, // return type or None
-                            err: Some(Type::Id(type_id_get_extension_error)),
-                        }),
-                        owner: TypeOwner::None,
-                        docs: wit_parser::Docs::default(),
-                        stability: wit_parser::Stability::default(),
-                    })));
-                    let fn_ext = Function {
-                        name: fn_name.clone(),
-                        kind: FunctionKind::Freestanding,
-                        params,
-                        result,
-                        docs: wit_parser::Docs::default(),
-                        stability: wit_parser::Stability::default(),
-                    };
-                    ext_ifc.functions.insert(fn_name, fn_ext);
+            let mut types = copy_or_refer_original_types(orig_ifc_id, orig_ifc, &mut resolve.types);
+            match pkg_ext {
+                PackageExtension::ObeliskExt => {
+                    types.insert("execution-id".to_string(), type_id_execution_id);
+                    types.insert("join-set-id".to_string(), type_id_join_set_id);
+                    types.insert(
+                        "await-next-extension-error".to_string(),
+                        type_id_await_next_extension_error,
+                    );
+                    types.insert(
+                        "get-extension-error".to_string(),
+                        type_id_get_extension_error,
+                    );
+                    types.insert("execution-failed".to_string(), type_id_execution_failed);
                 }
-                // -invoke(original param) -> result<original return type or _, execution-failed>
-                {
-                    let fn_name = format!("{fn_name}-invoke");
-                    let params = original_fn.params.clone();
-                    let result = Some(Type::Id(resolve.types.alloc(TypeDef {
-                        name: None,
-                        kind: TypeDefKind::Result(wit_parser::Result_ {
-                            ok: original_fn.result, // return type or None
-                            err: Some(Type::Id(type_id_execution_failed)),
-                        }),
-                        owner: TypeOwner::None,
-                        docs: wit_parser::Docs::default(),
-                        stability: wit_parser::Stability::default(),
-                    })));
-                    let fn_ext = Function {
-                        name: fn_name.clone(),
-                        kind: FunctionKind::Freestanding,
-                        params,
-                        result,
-                        docs: wit_parser::Docs::default(),
-                        stability: wit_parser::Stability::default(),
-                    };
-                    ext_ifc.functions.insert(fn_name, fn_ext);
+                PackageExtension::ObeliskSchedule => {
+                    types.insert("execution-id".to_string(), type_id_execution_id);
+                    types.insert("schedule-at".to_string(), type_id_schedule_at);
                 }
-                // -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
-                if let Some((_, schedule_ifc)) = &mut schedule_ifc {
-                    let fn_name = format!("{fn_name}{EXTENSION_FN_SUFFIX_SCHEDULE}");
-                    let schedule_at_param_name =
-                        generate_param_name("schedule-at", &original_fn.params);
-                    let mut params = vec![(
-                        schedule_at_param_name.to_string(),
-                        Type::Id(type_id_schedule_at),
-                    )];
-                    params.extend_from_slice(&original_fn.params);
-                    let fn_ext = Function {
-                        name: fn_name.clone(),
-                        kind: FunctionKind::Freestanding,
-                        params,
-                        result: Some(Type::Id(type_id_execution_id)),
-                        docs: wit_parser::Docs::default(),
-                        stability: wit_parser::Stability::default(),
-                    };
-                    schedule_ifc.functions.insert(fn_name, fn_ext);
+                PackageExtension::ObeliskStub => {
+                    types.insert("execution-id".to_string(), type_id_execution_id);
+                    types.insert("stub-error".to_string(), type_id_stub_error);
                 }
-                // -stub: func(execution_id: execution-id, <retval>) -> result<_, stub-error>;
-                if let Some((_, stub_ifc)) = &mut stub_ifc {
-                    let fn_name = format!("{fn_name}-stub");
-                    let mut params =
-                        vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
-                    if let Some(actual_return_type_id) = &original_fn.result {
-                        let type_id_result_orig_none = Type::Id(resolve.types.alloc(TypeDef {
-                            name: None,
-                            kind: TypeDefKind::Result(wit_parser::Result_ {
-                                ok: Some(*actual_return_type_id),
-                                err: None,
-                            }),
-                            owner: TypeOwner::None,
-                            docs: wit_parser::Docs::default(),
-                            stability: wit_parser::Stability::default(),
-                        }));
-                        params.push(("execution-result".to_string(), type_id_result_orig_none));
-                    } else {
-                        let type_id_result_none_none = Type::Id(resolve.types.alloc(TypeDef {
-                            name: None,
-                            kind: TypeDefKind::Result(wit_parser::Result_ {
-                                ok: None,
-                                err: None,
-                            }),
-                            owner: TypeOwner::None,
-                            docs: wit_parser::Docs::default(),
-                            stability: wit_parser::Stability::default(),
-                        }));
-                        params.push(("execution-result".to_string(), type_id_result_none_none));
+            }
+
+            let mut ifc = Interface {
+                name: Some(ifc_fqn.ifc_name().to_string()),
+                types,
+                functions: IndexMap::default(),
+                docs: wit_parser::Docs::default(),
+                stability: Stability::default(),
+                package: Some(pkg_id),
+            };
+            for (fn_name, fn_meta) in fns {
+                let (prefix, fn_ext) = fn_meta.split_extension().expect("filtered by ext package");
+                let original_fn = orig_ifc.functions.get(prefix).unwrap_or_else(|| {
+                    panic!("original function {prefix} must be found based on {fn_meta:?}")
+                });
+                let (params, result) = match fn_ext {
+                    FunctionExtension::Submit => {
+                        // -submit: func(join-set-id: borrow<join-set-id>, <params>) -> execution-id;
+                        assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
+                        let mut params = vec![(
+                            generate_param_name("join-set-id", &original_fn.params),
+                            Type::Id(type_id_join_set_id_borrow_handle),
+                        )];
+                        params.extend_from_slice(&original_fn.params);
+
+                        (params, Some(Type::Id(type_id_execution_id)))
                     }
-
-                    let fn_stub = Function {
-                        name: fn_name.clone(),
-                        kind: FunctionKind::Freestanding,
-                        params,
-                        result: {
+                    FunctionExtension::AwaitNext => {
+                        // -await-next: func(join-set-id: borrow<join-set-id>) ->
+                        //  result<tuple<execution-id, return-type>, await-next-extension-error>;
+                        // or if the function does not return anything:
+                        //  result<execution-id, await-next-extension-error>;
+                        assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
+                        let params = vec![(
+                            "join-set-id".to_string(),
+                            Type::Id(type_id_join_set_id_borrow_handle),
+                        )];
+                        let result = if let Some(actual_return_type_id) = &original_fn.result {
+                            let type_id_await_next_ok_part_tuple = resolve.types.alloc(TypeDef {
+                                name: None,
+                                kind: TypeDefKind::Tuple(wit_parser::Tuple {
+                                    types: vec![
+                                        Type::Id(type_id_execution_id),
+                                        *actual_return_type_id,
+                                    ],
+                                }),
+                                owner: TypeOwner::None,
+                                docs: wit_parser::Docs::default(),
+                                stability: wit_parser::Stability::default(),
+                            });
+                            let type_id_result = resolve.types.alloc(TypeDef {
+                                name: None,
+                                kind: TypeDefKind::Result(wit_parser::Result_ {
+                                    ok: Some(Type::Id(type_id_await_next_ok_part_tuple)),
+                                    err: Some(Type::Id(type_id_await_next_err_part)),
+                                }),
+                                owner: TypeOwner::None,
+                                docs: wit_parser::Docs::default(),
+                                stability: wit_parser::Stability::default(),
+                            });
+                            Some(Type::Id(type_id_result))
+                        } else {
+                            let type_id_result = resolve.types.alloc(TypeDef {
+                                name: None,
+                                kind: TypeDefKind::Result(wit_parser::Result_ {
+                                    ok: Some(Type::Id(type_id_execution_id)),
+                                    err: Some(Type::Id(type_id_await_next_err_part)),
+                                }),
+                                owner: TypeOwner::None,
+                                docs: wit_parser::Docs::default(),
+                                stability: wit_parser::Stability::default(),
+                            });
+                            Some(Type::Id(type_id_result))
+                        };
+                        (params, result)
+                    }
+                    FunctionExtension::Schedule => {
+                        // -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
+                        assert_eq!(pkg_ext, PackageExtension::ObeliskSchedule);
+                        let schedule_at_param_name =
+                            generate_param_name("schedule-at", &original_fn.params);
+                        let mut params = vec![(
+                            schedule_at_param_name.to_string(),
+                            Type::Id(type_id_schedule_at),
+                        )];
+                        params.extend_from_slice(&original_fn.params);
+                        let result = Some(Type::Id(type_id_execution_id));
+                        (params, result)
+                    }
+                    FunctionExtension::Stub => {
+                        // -stub: func(execution_id: execution-id, <retval>) -> result<_, stub-error>;
+                        assert_eq!(pkg_ext, PackageExtension::ObeliskStub);
+                        let mut params =
+                            vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
+                        if let Some(actual_return_type_id) = &original_fn.result {
+                            let type_id_result_orig_none = Type::Id(resolve.types.alloc(TypeDef {
+                                name: None,
+                                kind: TypeDefKind::Result(wit_parser::Result_ {
+                                    ok: Some(*actual_return_type_id),
+                                    err: None,
+                                }),
+                                owner: TypeOwner::None,
+                                docs: wit_parser::Docs::default(),
+                                stability: wit_parser::Stability::default(),
+                            }));
+                            params.push(("execution-result".to_string(), type_id_result_orig_none));
+                        } else {
+                            let type_id_result_none_none = Type::Id(resolve.types.alloc(TypeDef {
+                                name: None,
+                                kind: TypeDefKind::Result(wit_parser::Result_ {
+                                    ok: None,
+                                    err: None,
+                                }),
+                                owner: TypeOwner::None,
+                                docs: wit_parser::Docs::default(),
+                                stability: wit_parser::Stability::default(),
+                            }));
+                            params.push(("execution-result".to_string(), type_id_result_none_none));
+                        }
+                        let result = {
                             // TODO: can be externalized?
                             let type_id_result = resolve.types.alloc(TypeDef {
                                 name: None,
@@ -558,47 +419,101 @@ fn add_ext_exports(
                                 stability: wit_parser::Stability::default(),
                             });
                             Some(Type::Id(type_id_result))
-                        },
-                        docs: wit_parser::Docs::default(),
-                        stability: wit_parser::Stability::default(),
-                    };
-                    stub_ifc.functions.insert(fn_name, fn_stub);
-                }
+                        };
+                        (params, result)
+                    }
+                    FunctionExtension::Get => {
+                        // -get(execution-id) -> result<originalreturn type or _, get-extension-error>
+                        assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
+                        let params =
+                            vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
+                        let result = Some(Type::Id(resolve.types.alloc(TypeDef {
+                            name: None,
+                            kind: TypeDefKind::Result(wit_parser::Result_ {
+                                ok: original_fn.result, // return type or None
+                                err: Some(Type::Id(type_id_get_extension_error)),
+                            }),
+                            owner: TypeOwner::None,
+                            docs: wit_parser::Docs::default(),
+                            stability: wit_parser::Stability::default(),
+                        })));
+                        (params, result)
+                    }
+                    FunctionExtension::Invoke => {
+                        // -invoke(original param) -> result<original return type or _, execution-failed>
+                        assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
+                        let params = original_fn.params.clone();
+                        let result = Some(Type::Id(resolve.types.alloc(TypeDef {
+                            name: None,
+                            kind: TypeDefKind::Result(wit_parser::Result_ {
+                                ok: original_fn.result, // return type or None
+                                err: Some(Type::Id(type_id_execution_failed)),
+                            }),
+                            owner: TypeOwner::None,
+                            docs: wit_parser::Docs::default(),
+                            stability: wit_parser::Stability::default(),
+                        })));
+                        (params, result)
+                    }
+                };
+                let wit_fun = Function {
+                    name: fn_name.to_string(),
+                    kind: FunctionKind::Freestanding,
+                    params,
+                    result,
+                    docs: wit_parser::Docs::default(),
+                    stability: Stability::default(),
+                };
+                ifc.functions.insert(fn_name.to_string(), wit_fun);
             }
-            // Add Interface-s to `resolve`.
-            {
-                // `-obelisk-ext`
-                let ext_ifc_id = resolve.interfaces.alloc(ext_ifc);
-                resolve
-                    .packages
-                    .get_mut(obelisk_ext_pkg_id)
-                    .expect("found or inserted already")
-                    .interfaces
-                    .insert(ifc_fqn.ifc_name().to_string(), ext_ifc_id);
-            }
-            if let Some((obelisk_schedule_pkg_id, schedule_ifc)) = schedule_ifc {
-                // `-obelisk-schedule`
-                let schedule_ifc_id = resolve.interfaces.alloc(schedule_ifc);
-                resolve
-                    .packages
-                    .get_mut(obelisk_schedule_pkg_id)
-                    .expect("found or inserted already")
-                    .interfaces
-                    .insert(ifc_fqn.ifc_name().to_string(), schedule_ifc_id);
-            }
-            if let Some((obelisk_stub_pkg_id, stub_ifc)) = stub_ifc {
-                // `-obelisk-stub`
-                let stub_ifc_id = resolve.interfaces.alloc(stub_ifc);
-                resolve
-                    .packages
-                    .get_mut(obelisk_stub_pkg_id)
-                    .expect("found or inserted already")
-                    .interfaces
-                    .insert(ifc_fqn.ifc_name().to_string(), stub_ifc_id);
-            }
+            // Add Interface to `resolve`.
+            let ifc_id = resolve.interfaces.alloc(ifc);
+            resolve
+                .packages
+                .get_mut(pkg_id)
+                .expect("found or inserted already")
+                .interfaces
+                .insert(ifc_fqn.ifc_name().to_string(), ifc_id);
+
+            // Add the interface
+            added_interfaces.push(ifc_id);
         }
     }
-    Ok((resolve, main_id))
+    Ok(added_interfaces)
+}
+
+pub(crate) fn packages_except_main(
+    resolve: &Resolve,
+    main_package: PackageId,
+    sorted: bool,
+) -> Vec<PackageId> {
+    let mut packages = resolve
+        .packages
+        .iter()
+        .map(|(id, _)| id)
+        // The main package would show as a nested package as well
+        .filter(|id| *id != main_package)
+        .collect::<Vec<_>>();
+    if sorted {
+        packages.sort();
+    }
+    packages
+}
+
+// Replace obelisk:types from the actual WASM file because it may not contain all types we are going to need in exported functions.
+#[expect(clippy::items_after_statements)]
+fn replace_obelisk_types(wit: &str) -> String {
+    // Replace last character of the first line from ; to {
+    let types_nesting = {
+        let mut types_nesting = OBELISK_TYPES_PACKAGE_NO_NESTING.replacen(';', "{", 1);
+        types_nesting.push('}');
+        types_nesting
+    };
+    const TYPES_NESTED_PACKAGE_FIRST_LINE: &str =
+        formatcp!("package {OBELISK_TYPES_PACKAGE_NAME} {{");
+    let wit = remove_nested_package(wit, TYPES_NESTED_PACKAGE_FIRST_LINE);
+    let wit = format!("{wit}\n{types_nesting}");
+    wit
 }
 
 fn generate_param_name(param_name: &str, params: &[(String, Type)]) -> String {
@@ -616,44 +531,49 @@ fn generate_param_name(param_name: &str, params: &[(String, Type)]) -> String {
     param_name.to_string()
 }
 
-fn copy_original_types(
-    original_ifc_id: id_arena::Id<Interface>,
-    original_ifc: &Interface,
-    types: &mut IndexMap<String, id_arena::Id<TypeDef>>,
+fn copy_or_refer_original_types(
+    orig_ifc_id: InterfaceId,
+    orig_ifc: &Interface,
     resolve_types: &mut Arena<TypeDef>,
-) {
-    for (original_type_name, original_type_id) in &original_ifc.types {
-        // Create a reference to the type.
-        let reference_type_def = resolve_types.alloc(TypeDef {
-            name: None,
-            kind: TypeDefKind::Type(Type::Id(*original_type_id)),
-            owner: TypeOwner::Interface(original_ifc_id),
-            docs: wit_parser::Docs::default(),
-            stability: wit_parser::Stability::default(),
-        });
-        types.insert(original_type_name.clone(), reference_type_def);
+) -> IndexMap<String, id_arena::Id<TypeDef>> {
+    let mut target_types = IndexMap::new();
+    // Copy all imports from original to ext interface. Declared types like records will be referenced instead.
+    for (name, orig_type_id) in &orig_ifc.types {
+        let type_def = resolve_types
+            .get(*orig_type_id)
+            .expect("type def must be found in resolve");
+
+        let allocated_type_id = match type_def.kind {
+            TypeDefKind::Type(_) => resolve_types.alloc(type_def.clone()),
+            _ => {
+                // Create a reference to the type.
+                resolve_types.alloc(TypeDef {
+                    name: None,
+                    kind: TypeDefKind::Type(Type::Id(*orig_type_id)),
+                    owner: TypeOwner::Interface(orig_ifc_id),
+                    docs: wit_parser::Docs::default(),
+                    stability: wit_parser::Stability::default(),
+                })
+            }
+        };
+        target_types.insert(name.clone(), allocated_type_id);
     }
+    target_types
 }
 
 fn get_or_create_package(
-    pkg_fqn: &PkgFqn,
-    suffix: &'static str,
+    pkg_fqn: PkgFqn,
     resolve: &mut Resolve,
 ) -> Result<PackageId, semver::Error> {
-    let new_pkg_fqn = PkgFqn {
-        namespace: pkg_fqn.namespace.clone(),
-        package_name: format!("{}{suffix}", pkg_fqn.package_name),
-        version: pkg_fqn.version.clone(),
-    };
     if let Some((pkg_id, _)) = resolve
         .packages
         .iter()
-        .find(|(_, found_pkg)| from_wit_package_name_to_pkg_fqn(&found_pkg.name) == new_pkg_fqn)
+        .find(|(_, found_pkg)| from_wit_package_name_to_pkg_fqn(&found_pkg.name) == pkg_fqn)
     {
         Ok(pkg_id)
     } else {
         let pkg = wit_parser::Package {
-            name: from_pkg_fqn_to_wit_package_name(new_pkg_fqn)?,
+            name: from_pkg_fqn_to_wit_package_name(pkg_fqn)?,
             docs: wit_parser::Docs::default(),
             interfaces: IndexMap::default(),
             worlds: IndexMap::default(),
@@ -665,25 +585,26 @@ fn get_or_create_package(
     }
 }
 
-fn get_exported_pkg_to_ifc_to_details_map_noext(
+fn get_ext_pkg_to_ifc_to_details_map(
     exim: &ExIm,
-) -> IndexMap<PkgFqn, IndexMap<IfcFqnName, Vec<FnName>>> {
+    exorim: ExOrIm,
+) -> IndexMap<PkgFqn, IndexMap<IfcFqnName, IndexMap<FnName, FunctionMetadata>>> {
     // Consistent iteration order so that the WIT output is deterministic.
     // Interfaces are sorted already.
-    let mut exported_pkg_to_ifc_to_details_map: IndexMap<
-        PkgFqn,
-        IndexMap<IfcFqnName, Vec<FnName>>,
-    > = IndexMap::new();
-    for pkg_ifc_fns in exim.get_exports_hierarchy_noext() {
-        let inner_map = exported_pkg_to_ifc_to_details_map
-            .entry(pkg_ifc_fns.ifc_fqn.pkg_fqn_name())
-            .or_default();
-        inner_map.insert(
-            pkg_ifc_fns.ifc_fqn.clone(),
-            pkg_ifc_fns.fns.keys().cloned().collect(),
-        );
+    let mut pkg_to_ifc_to_details_map: IndexMap<PkgFqn, IndexMap<IfcFqnName, IndexMap<FnName, _>>> =
+        IndexMap::new();
+    for pkg_ifc_fns in match exorim {
+        ExOrIm::Exports => &exim.exports_hierarchy_ext,
+        ExOrIm::Imports => &exim.imports_hierarchy,
+    } {
+        if pkg_ifc_fns.ifc_fqn.pkg_fqn_name().is_extension() {
+            let inner_map = pkg_to_ifc_to_details_map
+                .entry(pkg_ifc_fns.ifc_fqn.pkg_fqn_name())
+                .or_default();
+            inner_map.insert(pkg_ifc_fns.ifc_fqn.clone(), pkg_ifc_fns.fns.clone());
+        }
     }
-    exported_pkg_to_ifc_to_details_map
+    pkg_to_ifc_to_details_map
 }
 
 fn find_interface<'a>(

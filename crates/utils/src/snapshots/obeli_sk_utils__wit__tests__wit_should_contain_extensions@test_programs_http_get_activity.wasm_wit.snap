@@ -22,6 +22,8 @@ world root {
   import wasi:random/random@0.2.3;
 
   export testing:http/http-get;
+  export testing:http-obelisk-ext/http-get;
+  export testing:http-obelisk-schedule/http-get;
 }
 package obelisk:types@2.0.0 {
   interface time {
@@ -453,8 +455,8 @@ package testing:http {
 
 package testing:http-obelisk-ext {
   interface http-get {
-    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
     use testing:http/http-get.{response, stargazers};
+    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
 
     get-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
@@ -493,9 +495,9 @@ package testing:http-obelisk-ext {
 
 package testing:http-obelisk-schedule {
   interface http-get {
+    use testing:http/http-get.{response, stargazers};
     use obelisk:types/execution@2.0.0.{execution-id};
     use obelisk:types/time@2.0.0.{schedule-at};
-    use testing:http/http-get.{response, stargazers};
 
     get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 

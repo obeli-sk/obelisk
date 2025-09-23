@@ -17,6 +17,8 @@ world root {
   import wasi:filesystem/preopens@0.2.3;
 
   export testing:stub-activity/activity;
+  export testing:stub-activity-obelisk-ext/activity;
+  export testing:stub-activity-obelisk-stub/activity;
 }
 package obelisk:types@2.0.0 {
   interface time {

@@ -2,8 +2,9 @@ use crate::{sha256sum::calculate_sha256_file, wit::from_wit_package_name_to_pkg_
 use anyhow::Context;
 use concepts::{
     ComponentType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
-    PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType, SUFFIX_PKG_EXT,
-    SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
+    PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType, SUFFIX_FN_AWAIT_NEXT,
+    SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT,
+    SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -14,17 +15,13 @@ use std::{
 use tracing::{debug, error, info, trace};
 use val_json::type_wrapper::{TypeConversionError, TypeWrapper};
 use wit_component::{ComponentEncoder, WitPrinter};
-use wit_parser::{PackageId, Resolve, World, WorldItem, WorldKey, decoding::DecodedWasm};
-
-pub const EXTENSION_FN_SUFFIX_SCHEDULE: &str = "-schedule";
+use wit_parser::{InterfaceId, PackageId, Resolve, World, WorldKey, decoding::DecodedWasm};
 
 #[derive(derive_more::Debug)]
 pub struct WasmComponent {
     pub exim: ExIm,
-    #[debug(skip)]
-    resolve_hoder: ResolveHolder,
-    component_type: ComponentType,
-    main_package: PackageId,
+    resolve: Resolve,
+    main_pkg_id: PackageId,
 }
 
 impl WasmComponent {
@@ -110,13 +107,16 @@ impl WasmComponent {
         component_type: ComponentType,
     ) -> Result<Self, DecodeError> {
         let wasm_path = wasm_path.as_ref();
-        let (wit_parsed, decoded) = Self::decode_using_wit_parser(wasm_path, component_type)?;
-        let exim = ExIm::decode(wit_parsed, component_type)?;
+        let (exim_lite, resolve, main_pkg_id) =
+            Self::decode_using_wit_parser(wasm_path, component_type)?;
+
+        let exim = ExIm::decode(exim_lite, component_type)?;
+        let (resolve, main_pkg_id) = crate::wit::rebuild_resolve(&exim, resolve, main_pkg_id)
+            .map_err(DecodeError::RebuildResolveError)?;
         Ok(Self {
             exim,
-            main_package: decoded.package(),
-            resolve_hoder: ResolveHolder::DecodedWasm(decoded),
-            component_type,
+            resolve,
+            main_pkg_id,
         })
     }
 
@@ -125,21 +125,23 @@ impl WasmComponent {
         component_type: ComponentType,
     ) -> Result<Self, DecodeError> {
         let mut resolve = Resolve::default();
-        let (main_package, _) = resolve
+        let (main_pkg_id, _) = resolve
             .push_dir(path)
             .map_err(|source| DecodeError::WitDirectoryParsingError { source })?;
         let world_id = resolve
-            .select_world(&[main_package], None)
+            .select_world(&[main_pkg_id], None)
             .map_err(|source| DecodeError::WorldSelectionError { source })?;
         let world = resolve.worlds.get(world_id).expect("world must exist");
-        let wit_parsed =
-            Self::create_wit_parsed(&resolve, world, has_submittable_exports(component_type))?;
-        let exim = ExIm::decode(wit_parsed, component_type)?;
+        let exim_lite =
+            Self::create_exim_lite(&resolve, world, has_submittable_exports(component_type))?;
+
+        let exim = ExIm::decode(exim_lite, component_type)?;
+        let (resolve, main_pkg_id) = crate::wit::rebuild_resolve(&exim, resolve, main_pkg_id)
+            .map_err(DecodeError::RebuildResolveError)?;
         Ok(Self {
             exim,
-            resolve_hoder: ResolveHolder::Own(resolve),
-            main_package,
-            component_type,
+            resolve,
+            main_pkg_id,
         })
     }
 
@@ -158,23 +160,12 @@ impl WasmComponent {
     }
 
     pub fn wit(&self) -> Result<String, anyhow::Error> {
-        crate::wit::wit(
-            self.component_type,
-            self.resolve_hoder.resolve(),
-            self.main_package,
-            &self.exim,
-        )
+        crate::wit::wit(&self.resolve, self.main_pkg_id)
     }
 
     pub fn exported_extension_wits(
         &self,
     ) -> Result<hashbrown::HashMap<PkgFqn, String>, anyhow::Error> {
-        let (resolve, _main_package) = crate::wit::add_exports(
-            self.component_type,
-            self.resolve_hoder.resolve(),
-            self.main_package,
-            &self.exim,
-        )?;
         let mut pkgs_to_wits = hashbrown::HashMap::new();
 
         let exported_ext_packages: hashbrown::HashSet<_> = self
@@ -190,7 +181,8 @@ impl WasmComponent {
             })
             .collect();
 
-        for (package_id, package) in resolve
+        for (package_id, package) in self
+            .resolve
             .packages
             .iter()
             .filter(|(_, package)| exported_ext_packages.contains(&package.name.to_string()))
@@ -198,7 +190,7 @@ impl WasmComponent {
             let pkg_fqn = from_wit_package_name_to_pkg_fqn(&package.name);
 
             let mut printer = wit_component::WitPrinter::default();
-            printer.print(&resolve, package_id, &[]).unwrap();
+            printer.print(&self.resolve, package_id, &[]).unwrap();
             let wit = printer.output.to_string();
 
             pkgs_to_wits.insert(pkg_fqn, wit);
@@ -209,14 +201,14 @@ impl WasmComponent {
     fn decode_using_wit_parser(
         wasm_path: &Path,
         component_type: ComponentType,
-    ) -> Result<(WitParsed, DecodedWasm), DecodeError> {
+    ) -> Result<(ExImLite, Resolve, PackageId), DecodeError> {
         Self::decode_using_wit_parser_inner(wasm_path, has_submittable_exports(component_type))
     }
 
     fn decode_using_wit_parser_inner(
         wasm_path: &Path,
         submittable_exports: bool, // whether exported functions + `-schedule` extensions should be submittable
-    ) -> Result<(WitParsed, DecodedWasm), DecodeError> {
+    ) -> Result<(ExImLite, Resolve, PackageId), DecodeError> {
         trace!("Decoding using wit_parser");
 
         let wasm_file = std::fs::File::open(wasm_path)
@@ -230,58 +222,62 @@ impl WasmComponent {
             error!("Cannot read {wasm_path:?} using wit_parser - {err:?}");
             DecodeError::CannotReadComponent { source: err }
         })?;
-
-        let (resolve, world_id) = match &decoded {
-            DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
-            DecodedWasm::WitPackage(..) => {
-                error!("Input file must not be a WIT package");
-                return Err(DecodeError::CannotReadComponentWithReason {
-                    reason: "must not be a WIT package".to_string(),
-                });
-            }
+        let main_package = decoded.package();
+        let DecodedWasm::Component(resolve, world_id) = decoded else {
+            error!("Input file must be a WASM Component");
+            return Err(DecodeError::CannotReadComponentWithReason {
+                reason: "must be a WASM Component".to_string(),
+            });
         };
-
-        let world = resolve.worlds.get(*world_id).expect("world must exist");
-        let wit_parsed = Self::create_wit_parsed(resolve, world, submittable_exports)?;
+        let world = resolve.worlds.get(world_id).expect("world must exist");
+        let exim_lite = Self::create_exim_lite(&resolve, world, submittable_exports)?;
         debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
-        trace!(
-            "Exports: {exports:?}, imports: {imports:?}",
-            exports = wit_parsed.exports,
-            imports = wit_parsed.imports
-        );
-        Ok((wit_parsed, decoded))
+        trace!("{exim_lite:?}");
+        Ok((exim_lite, resolve, main_package))
     }
 
-    fn create_wit_parsed(
+    fn create_exim_lite(
         resolve: &Resolve,
         world: &World,
         submittable_exports: bool,
-    ) -> Result<WitParsed, DecodeError> {
+    ) -> Result<ExImLite, DecodeError> {
         let exports = populate_ifcs(
             resolve,
-            world.exports.iter(),
+            world_interfaces(world, ExOrIm::Exports),
             if submittable_exports {
                 ProcessingKind::ExportsSubmittable
             } else {
                 ProcessingKind::ExportsOfActivityStub
             },
         )?;
-        let imports = populate_ifcs(resolve, world.imports.iter(), ProcessingKind::Imports)?;
-        Ok(WitParsed { imports, exports })
+        let imports = populate_ifcs(
+            resolve,
+            world_interfaces(world, ExOrIm::Imports),
+            ProcessingKind::Imports,
+        )?;
+        Ok(ExImLite { imports, exports })
     }
 }
 
-enum ResolveHolder {
-    DecodedWasm(DecodedWasm),
-    Own(Resolve),
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum ExOrIm {
+    Exports,
+    Imports,
 }
-impl ResolveHolder {
-    fn resolve(&self) -> &Resolve {
-        match self {
-            ResolveHolder::DecodedWasm(decoded) => decoded.resolve(),
-            ResolveHolder::Own(resolve) => resolve,
-        }
+
+fn world_interfaces(world: &World, exorim: ExOrIm) -> impl Iterator<Item = InterfaceId> {
+    match exorim {
+        ExOrIm::Exports => &world.exports,
+        ExOrIm::Imports => &world.imports,
     }
+    .keys()
+    .filter_map(|world_key| {
+        if let WorldKey::Interface(ifc_id) = world_key {
+            Some(*ifc_id)
+        } else {
+            None
+        }
+    })
 }
 
 fn has_submittable_exports(component_type: ComponentType) -> bool {
@@ -306,10 +302,6 @@ pub enum DecodeError {
     },
     #[error("parameter cardinality mismatch in {0}")]
     ParameterCardinalityMismatch(FunctionFqn),
-    #[error("empty package")]
-    EmptyPackage,
-    #[error("empty interface")]
-    EmptyInterface,
     #[error("invalid package `{0}`, {SUFFIX_PKG_EXT} is reserved")]
     ReservedPackageSuffix(String),
     #[error("cannot parse the WIT directory")]
@@ -322,14 +314,17 @@ pub enum DecodeError {
         #[source]
         source: anyhow::Error,
     },
+    #[error("cannot rebuild resolve - {0}")]
+    RebuildResolveError(anyhow::Error),
 }
 
 #[derive(Debug, Clone)]
 pub struct ExIm {
-    exports_hierarchy_ext: Vec<PackageIfcFns>,
+    pub(crate) exports_hierarchy_ext: Vec<PackageIfcFns>,
     exports_flat_noext: Vec<FunctionMetadata>,
     exports_flat_ext: Vec<FunctionMetadata>,
     pub imports_flat: Vec<FunctionMetadata>,
+    pub(crate) imports_hierarchy: Vec<PackageIfcFns>,
 }
 
 impl ExIm {
@@ -347,14 +342,8 @@ impl ExIm {
         &self.exports_hierarchy_ext
     }
 
-    pub fn get_exports_hierarchy_noext(&self) -> impl Iterator<Item = &PackageIfcFns> {
-        self.exports_hierarchy_ext
-            .iter()
-            .filter(|pif| !pif.extension)
-    }
-
-    fn decode(wit_parsed: WitParsed, component_type: ComponentType) -> Result<ExIm, DecodeError> {
-        let mut exports_hierarchy_ext = wit_parsed.exports;
+    fn decode(exim_lite: ExImLite, component_type: ComponentType) -> Result<ExIm, DecodeError> {
+        let mut exports_hierarchy_ext = exim_lite.exports;
         // Verify that there is no -obelisk-ext export
         for PackageIfcFns {
             ifc_fqn,
@@ -376,13 +365,14 @@ impl ExIm {
         let exports_flat_noext = Self::flatten(&exports_hierarchy_ext);
         Self::enrich_exports_with_extensions(&mut exports_hierarchy_ext, component_type);
         let exports_flat_ext = Self::flatten(&exports_hierarchy_ext);
-        let imports_hierarchy = wit_parsed.imports;
+        let imports_hierarchy = exim_lite.imports;
         let imports_flat = Self::flatten(&imports_hierarchy);
         Ok(Self {
             exports_hierarchy_ext,
             exports_flat_noext,
             exports_flat_ext,
             imports_flat,
+            imports_hierarchy,
         })
     }
 
@@ -545,7 +535,7 @@ impl ExIm {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),
                         function_name: FnName::from(format!(
-                            "{}-submit",
+                            "{}{SUFFIX_FN_SUBMIT}",
                             exported_fn_metadata.ffqn.function_name
                         )),
                     },
@@ -567,7 +557,7 @@ impl ExIm {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),
                         function_name: FnName::from(format!(
-                            "{}-await-next",
+                            "{}{SUFFIX_FN_AWAIT_NEXT}",
                             exported_fn_metadata.ffqn.function_name
                         )),
                     },
@@ -613,7 +603,7 @@ impl ExIm {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),
                         function_name: FnName::from(format!(
-                            "{}-get",
+                            "{}{SUFFIX_FN_GET}",
                             exported_fn_metadata.ffqn.function_name
                         )),
                     },
@@ -648,7 +638,7 @@ impl ExIm {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),
                         function_name: FnName::from(format!(
-                            "{}-invoke",
+                            "{}{SUFFIX_FN_INVOKE}",
                             exported_fn_metadata.ffqn.function_name
                         )),
                     },
@@ -691,7 +681,7 @@ impl ExIm {
                         ffqn: FunctionFqn {
                             ifc_fqn: obelisk_schedule_ifc.clone(),
                             function_name: FnName::from(format!(
-                                "{}{EXTENSION_FN_SUFFIX_SCHEDULE}",
+                                "{}{SUFFIX_FN_SCHEDULE}",
                                 exported_fn_metadata.ffqn.function_name
                             )),
                         },
@@ -715,7 +705,7 @@ impl ExIm {
                         ffqn: FunctionFqn {
                             ifc_fqn: obelisk_stub_ifc.clone(),
                             function_name: FnName::from(format!(
-                                "{}-stub",
+                                "{}{SUFFIX_FN_STUB}",
                                 exported_fn_metadata.ffqn.function_name
                             )),
                         },
@@ -760,25 +750,31 @@ impl ExIm {
             stubs.push((obelisk_stub_ifc, stub_fns));
         }
         for (ifc_fqn, fns) in extensions {
-            exports_hierarchy.push(PackageIfcFns {
-                ifc_fqn,
-                fns,
-                extension: true,
-            });
+            if !fns.is_empty() {
+                exports_hierarchy.push(PackageIfcFns {
+                    ifc_fqn,
+                    fns,
+                    extension: true,
+                });
+            }
         }
         for (ifc_fqn, fns) in schedules {
-            exports_hierarchy.push(PackageIfcFns {
-                ifc_fqn,
-                fns,
-                extension: true,
-            });
+            if !fns.is_empty() {
+                exports_hierarchy.push(PackageIfcFns {
+                    ifc_fqn,
+                    fns,
+                    extension: true,
+                });
+            }
         }
         for (ifc_fqn, fns) in stubs {
-            exports_hierarchy.push(PackageIfcFns {
-                ifc_fqn,
-                fns,
-                extension: true,
-            });
+            if !fns.is_empty() {
+                exports_hierarchy.push(PackageIfcFns {
+                    ifc_fqn,
+                    fns,
+                    extension: true,
+                });
+            }
         }
     }
 
@@ -790,126 +786,118 @@ impl ExIm {
     }
 }
 
-struct WitParsed {
+#[derive(Debug)]
+struct ExImLite {
     imports: Vec<PackageIfcFns>,
     exports: Vec<PackageIfcFns>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum ProcessingKind {
     Imports,
     ExportsOfActivityStub,
     ExportsSubmittable,
 }
-impl ProcessingKind {
-    fn is_submittable_export(&self) -> bool {
-        matches!(self, ProcessingKind::ExportsSubmittable)
-    }
-}
 
 fn populate_ifcs<'a>(
     resolve: &'a Resolve,
-    iter: impl Iterator<Item = (&'a WorldKey, &'a WorldItem)>,
+    ifc_ids: impl Iterator<Item = InterfaceId>,
     processing_kind: ProcessingKind,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
     let mut vec = Vec::new();
-    let submittable = processing_kind.is_submittable_export();
-    for (_, item) in iter {
-        if let wit_parser::WorldItem::Interface {
-            id: ifc_id,
-            stability: _,
-        } = item
-        {
-            let ifc = resolve
+    let submittable = processing_kind == ProcessingKind::ExportsSubmittable;
+    for ifc in ifc_ids
+        .map(|ifc_id| {
+            resolve
                 .interfaces
-                .get(*ifc_id)
-                .expect("`iter` must be derived from `resolve`");
-            let Some(package) = ifc
-                .package
-                .and_then(|pkg| resolve.packages.get(pkg))
-                .map(|p| &p.name)
-            else {
-                return Err(DecodeError::EmptyPackage);
-            };
-            let Some(ifc_name) = ifc.name.as_deref() else {
-                return Err(DecodeError::EmptyInterface);
-            };
-            let ifc_fqn = if let Some(version) = &package.version {
-                format!(
-                    "{namespace}:{name}/{ifc_name}@{version}",
-                    namespace = package.namespace,
-                    name = package.name
-                )
-            } else {
-                format!("{package}/{ifc_name}")
-            };
-            let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
-            let mut fns = IndexMap::new();
-            for (function_name, function) in &ifc.functions {
-                let ffqn =
-                    FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
-                let parameter_types = ParameterTypes({
-                    let mut params = Vec::new();
-                    for (param_name, param_ty) in &function.params {
-                        let mut printer = WitPrinter::default();
-                        let item = ParameterType {
-                            type_wrapper: match TypeWrapper::from_wit_parser_type(resolve, param_ty)
-                            {
-                                Ok(ok) => ok,
-                                Err(err) => {
-                                    return Err(DecodeError::TypeNotSupported { err, ffqn });
-                                }
-                            },
-                            name: StrVariant::from(param_name.to_string()),
-                            wit_type: printer
-                                .print_type_name(resolve, param_ty)
-                                .ok()
-                                .map_or(StrVariant::Static("unknown"), |()| {
-                                    StrVariant::from(printer.output.to_string())
-                                }),
-                        };
-                        params.push(item);
-                    }
-                    params
-                });
-                let return_type = if let Some(return_type) = function.result {
+                .get(ifc_id)
+                .expect("`iter` must be derived from `resolve`")
+        })
+        // skip inline interfaces
+        .filter(|ifc| ifc.name.is_some())
+    {
+        let Some(package) = ifc
+            .package
+            .and_then(|pkg| resolve.packages.get(pkg))
+            .map(|p| &p.name)
+        else {
+            unreachable!("interface's package cannot be empty");
+        };
+        let Some(ifc_name) = ifc.name.as_deref() else {
+            unreachable!("inline interfaces already filterd out");
+        };
+        let ifc_fqn = if let Some(version) = &package.version {
+            format!(
+                "{namespace}:{name}/{ifc_name}@{version}",
+                namespace = package.namespace,
+                name = package.name
+            )
+        } else {
+            format!("{package}/{ifc_name}")
+        };
+        let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
+        let mut fns = IndexMap::new();
+        for (function_name, function) in &ifc.functions {
+            let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
+            let parameter_types = ParameterTypes({
+                let mut params = Vec::new();
+                for (param_name, param_ty) in &function.params {
                     let mut printer = WitPrinter::default();
-                    let wit_type = printer
-                        .print_type_name(resolve, &return_type)
-                        .ok()
-                        .map_or(StrVariant::Static("unknown"), |()| {
-                            StrVariant::from(printer.output.to_string())
-                        });
-                    Some(ReturnType {
-                        type_wrapper: match TypeWrapper::from_wit_parser_type(resolve, &return_type)
-                        {
+                    let item = ParameterType {
+                        type_wrapper: match TypeWrapper::from_wit_parser_type(resolve, param_ty) {
                             Ok(ok) => ok,
                             Err(err) => {
                                 return Err(DecodeError::TypeNotSupported { err, ffqn });
                             }
                         },
-                        wit_type,
-                    })
-                } else {
-                    None
-                };
-                fns.insert(
-                    ffqn.function_name.clone(),
-                    FunctionMetadata {
-                        ffqn,
-                        parameter_types,
-                        return_type,
-                        extension: None,
-                        submittable,
-                    },
-                );
-            }
-            vec.push(PackageIfcFns {
-                ifc_fqn: IfcFqnName::new_arc(ifc_fqn),
-                fns,
-                extension: false,
+                        name: StrVariant::from(param_name.to_string()),
+                        wit_type: printer
+                            .print_type_name(resolve, param_ty)
+                            .ok()
+                            .map_or(StrVariant::Static("unknown"), |()| {
+                                StrVariant::from(printer.output.to_string())
+                            }),
+                    };
+                    params.push(item);
+                }
+                params
             });
+            let return_type = if let Some(return_type) = function.result {
+                let mut printer = WitPrinter::default();
+                let wit_type = printer
+                    .print_type_name(resolve, &return_type)
+                    .ok()
+                    .map_or(StrVariant::Static("unknown"), |()| {
+                        StrVariant::from(printer.output.to_string())
+                    });
+                Some(ReturnType {
+                    type_wrapper: match TypeWrapper::from_wit_parser_type(resolve, &return_type) {
+                        Ok(ok) => ok,
+                        Err(err) => {
+                            return Err(DecodeError::TypeNotSupported { err, ffqn });
+                        }
+                    },
+                    wit_type,
+                })
+            } else {
+                None
+            };
+            fns.insert(
+                ffqn.function_name.clone(),
+                FunctionMetadata {
+                    ffqn,
+                    parameter_types,
+                    return_type,
+                    extension: None,
+                    submittable,
+                },
+            );
         }
+        vec.push(PackageIfcFns {
+            ifc_fqn: IfcFqnName::new_arc(ifc_fqn),
+            fns,
+            extension: false,
+        });
     }
     Ok(vec)
 }
@@ -917,7 +905,7 @@ fn populate_ifcs<'a>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::populate_ifcs;
-    use crate::wasm_tools::{ProcessingKind, WasmComponent};
+    use crate::wasm_tools::{ExOrIm, ProcessingKind, WasmComponent, world_interfaces};
     use concepts::ComponentType;
     use rstest::rstest;
     use std::path::PathBuf;
@@ -981,10 +969,11 @@ pub(crate) mod tests {
             panic!();
         };
         let world = resolve.worlds.get(world_id).expect("world must exist");
+
         if exports {
             let exports = populate_ifcs(
                 &resolve,
-                world.exports.iter(),
+                world_interfaces(world, ExOrIm::Exports),
                 ProcessingKind::ExportsSubmittable,
             )
             .unwrap()
@@ -994,12 +983,16 @@ pub(crate) mod tests {
             .collect::<hashbrown::HashMap<_, _>>();
             insta::with_settings!({sort_maps => true,  snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
         } else {
-            let imports = populate_ifcs(&resolve, world.imports.iter(), ProcessingKind::Imports)
-                .unwrap()
-                .into_iter()
-                .flat_map(|ifc| ifc.fns)
-                .map(|(_fn_name, fn_metadata)| (fn_metadata.ffqn.to_string(), fn_metadata))
-                .collect::<hashbrown::HashMap<_, _>>();
+            let imports = populate_ifcs(
+                &resolve,
+                world_interfaces(world, ExOrIm::Imports),
+                ProcessingKind::Imports,
+            )
+            .unwrap()
+            .into_iter()
+            .flat_map(|ifc| ifc.fns)
+            .map(|(_fn_name, fn_metadata)| (fn_metadata.ffqn.to_string(), fn_metadata))
+            .collect::<hashbrown::HashMap<_, _>>();
             insta::with_settings!({ sort_maps => true,  snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
         }
     }
