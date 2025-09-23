@@ -5,7 +5,6 @@ use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
 use concepts::PermanentFailureKind;
 use concepts::TrapKind;
-use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::HistoryEvent;
 use concepts::storage::Version;
@@ -99,12 +98,6 @@ pub enum WorkerError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum FatalError {
-    /// Used by workflow worker when directly called child execution fails.
-    #[error("child finished with an execution error: {child_execution_id}")]
-    UnhandledChildExecutionError {
-        child_execution_id: ExecutionIdDerived,
-        root_cause_id: ExecutionIdDerived,
-    },
     // Used by workflow worker
     #[error("nondeterminism detected")]
     NondeterminismDetected { detail: String },
@@ -139,13 +132,6 @@ impl From<FatalError> for FinishedExecutionError {
     fn from(value: FatalError) -> Self {
         let reason_full = value.to_string();
         match value {
-            FatalError::UnhandledChildExecutionError {
-                child_execution_id,
-                root_cause_id,
-            } => FinishedExecutionError::UnhandledChildExecutionError {
-                child_execution_id,
-                root_cause_id,
-            },
             FatalError::NondeterminismDetected { detail } => {
                 FinishedExecutionError::PermanentFailure {
                     reason_inner: reason_full.clone(),

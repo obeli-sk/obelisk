@@ -723,7 +723,6 @@ pub mod simple_worker {
 mod tests {
     use self::simple_worker::SimpleWorker;
     use super::*;
-    use crate::worker::FatalError;
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
@@ -1197,33 +1196,6 @@ mod tests {
         let expected_child_err = FinishedExecutionError::PermanentTimeout;
         child_execution_permanently_failed_should_notify_parent(
             WorkerResult::DbUpdatedByWorkerOrWatcher,
-            expected_child_err,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn child_execution_permanently_failed_should_notify_parent_unhandled_child() {
-        let parent_id = ExecutionId::from_parts(1, 1);
-        let join_set_id_outer =
-            JoinSetId::new(JoinSetKind::OneOff, StrVariant::Static("outer")).unwrap();
-        let root_cause_id = parent_id.next_level(&join_set_id_outer);
-        let join_set_id_inner =
-            JoinSetId::new(JoinSetKind::OneOff, StrVariant::Static("inner")).unwrap();
-        let child_execution_id = root_cause_id.next_level(&join_set_id_inner);
-        let worker_error = WorkerError::FatalError(
-            FatalError::UnhandledChildExecutionError {
-                child_execution_id: child_execution_id.clone(),
-                root_cause_id: root_cause_id.clone(),
-            },
-            Version::new(2),
-        );
-        let expected_child_err = FinishedExecutionError::UnhandledChildExecutionError {
-            child_execution_id,
-            root_cause_id,
-        };
-        child_execution_permanently_failed_should_notify_parent(
-            WorkerResult::Err(worker_error),
             expected_child_err,
         )
         .await;

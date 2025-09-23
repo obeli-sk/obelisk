@@ -176,7 +176,7 @@ mod bench {
                 clock_fn.clone(),
             )
             .unwrap()
-            .link(fn_registry)
+            .link(fn_registry.clone())
             .unwrap()
             .into_worker(db_pool.clone()),
         );

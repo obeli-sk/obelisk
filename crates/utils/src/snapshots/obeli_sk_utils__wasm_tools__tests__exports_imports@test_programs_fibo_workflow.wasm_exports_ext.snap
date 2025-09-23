@@ -36,15 +36,6 @@ expression: exports
           "err": {
             "variant": {
               "all-processed": null,
-              "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
               "function-mismatch": {
                 "record": {
                   "actual-function": {
@@ -262,15 +253,6 @@ expression: exports
           "err": {
             "variant": {
               "all-processed": null,
-              "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
               "function-mismatch": {
                 "record": {
                   "actual-function": {
@@ -508,15 +490,6 @@ expression: exports
           "err": {
             "variant": {
               "all-processed": null,
-              "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
               "function-mismatch": {
                 "record": {
                   "actual-function": {
@@ -591,15 +564,6 @@ expression: exports
           "err": {
             "variant": {
               "all-processed": null,
-              "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
               "function-mismatch": {
                 "record": {
                   "actual-function": {
@@ -980,15 +944,6 @@ expression: exports
           "err": {
             "variant": {
               "all-processed": null,
-              "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
               "function-mismatch": {
                 "record": {
                   "actual-function": {

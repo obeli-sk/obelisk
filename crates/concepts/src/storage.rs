@@ -1104,7 +1104,6 @@ impl From<&FinishedExecutionResult> for PendingStateFinishedResultKind {
 #[strum(serialize_all = "snake_case")]
 pub enum PendingStateFinishedError {
     Timeout,
-    UnhandledChildExecutionError,
     ExecutionFailure,
     FallibleError,
 }

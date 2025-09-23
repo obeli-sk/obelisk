@@ -62,6 +62,7 @@ pub struct WorkflowWorkerLinked<C: ClockFn> {
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     instance_pre: InstancePre<WorkflowCtx<C>>,
     exported_functions_noext: Vec<FunctionMetadata>,
+    fn_registry: Arc<dyn FunctionRegistry>,
 }
 
 #[derive(Clone)]
@@ -73,6 +74,7 @@ pub struct WorkflowWorker<C: ClockFn> {
     clock_fn: C,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     instance_pre: InstancePre<WorkflowCtx<C>>,
+    fn_registry: Arc<dyn FunctionRegistry>,
 }
 
 const WASI_NAMESPACE: &str = "wasi";
@@ -173,7 +175,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
     #[instrument(skip_all, fields(component_id = %self.config.component_id))]
     pub fn link(
         self,
-        fn_registry: &Arc<dyn FunctionRegistry>,
+        fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Result<WorkflowWorkerLinked<C>, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
 
@@ -280,6 +282,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             instance_pre,
             exported_functions_noext: self.exported_functions_noext,
+            fn_registry,
         })
     }
 
@@ -306,6 +309,7 @@ impl<C: ClockFn> WorkflowWorkerLinked<C> {
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             instance_pre: self.instance_pre,
             exported_functions_noext: self.exported_functions_noext,
+            fn_registry: self.fn_registry,
         }
     }
 }
@@ -365,6 +369,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             ctx.worker_span,
             self.config.backtrace_persist,
             deadline_duration,
+            self.fn_registry.clone(),
         );
 
         let mut store = Store::new(&self.engine, workflow_ctx);
@@ -780,7 +785,7 @@ pub(crate) mod tests {
                 clock_fn.clone(),
             )
             .unwrap()
-            .link(fn_registry)
+            .link(fn_registry.clone())
             .unwrap()
             .into_worker(db_pool.clone()),
         );
@@ -960,7 +965,7 @@ pub(crate) mod tests {
                 clock_fn,
             )
             .unwrap()
-            .link(fn_registry)
+            .link(fn_registry.clone())
             .unwrap()
             .into_worker(db_pool),
         )

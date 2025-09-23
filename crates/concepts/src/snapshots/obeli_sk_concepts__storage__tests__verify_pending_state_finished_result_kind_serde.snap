@@ -4,7 +4,6 @@ expression: ser
 ---
 [
   "timeout",
-  "unhandled_child_execution_error",
   "execution_failure",
   "fallible_error",
   "ok"

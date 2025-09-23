@@ -447,7 +447,6 @@ impl ExIm {
 
         // await-next-extension-error
         let await_next_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("execution-failed") => Some(execution_failed_type_wrapper.clone()),
             Box::from("all-processed") => None,
             Box::from("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
         });

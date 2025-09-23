@@ -223,9 +223,6 @@ impl From<PendingStateFinishedResultKind> for grpc_gen::ResultKind {
             PendingStateFinishedResultKind(Err(PendingStateFinishedError::FallibleError)) => {
                 grpc_gen::ResultKind::FallibleError
             }
-            PendingStateFinishedResultKind(Err(
-                PendingStateFinishedError::UnhandledChildExecutionError,
-            )) => grpc_gen::ResultKind::UnhandledChildExecutionError,
         }
     }
 }
@@ -343,15 +340,6 @@ impl From<FinishedExecutionResult> for grpc_gen::ResultDetail {
                 grpc_gen::result_detail::ExecutionFailure {
                     reason: reason_full,
                     detail,
-                },
-            ),
-            Err(FinishedExecutionError::UnhandledChildExecutionError {
-                child_execution_id,
-                root_cause_id,
-            }) => grpc_gen::result_detail::Value::UnhandledChildExecutionError(
-                grpc_gen::result_detail::UnhandledChildExecutionError {
-                    child_execution_id: Some(ExecutionId::Derived(child_execution_id).into()),
-                    root_cause_id: Some(ExecutionId::Derived(root_cause_id).into()),
                 },
             ),
         };

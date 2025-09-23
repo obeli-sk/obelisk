@@ -108,14 +108,7 @@ impl HistoryJoinNextEventProps {
                     .result_detail
                     .as_ref()
                     .expect("`child_execution_id` of `ChildExecutionFinished` must be sent");
-                attach_result_detail(
-                    &mut tree,
-                    &child_node,
-                    result_detail,
-                    None,
-                    self.link,
-                    false,
-                );
+                attach_result_detail(&mut tree, &child_node, result_detail, None, false);
 
                 let finished_at = DateTime::from(*finished_at);
                 tree.insert(

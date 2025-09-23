@@ -15,11 +15,10 @@ use concepts::ClosingStrategy;
 use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
 use concepts::ExecutionMetadata;
-use concepts::FinishedExecutionError;
 use concepts::FinishedExecutionResult;
+use concepts::FunctionRegistry;
 use concepts::JoinSetId;
 use concepts::JoinSetKind;
-use concepts::PermanentFailureKind;
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage;
@@ -45,6 +44,7 @@ use itertools::Either;
 use itertools::Itertools;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoStaticStr;
 use tracing::Level;
@@ -52,6 +52,7 @@ use tracing::Span;
 use tracing::info;
 use tracing::instrument;
 use tracing::{debug, error, trace};
+use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::WastVal;
 use wasmtime::component::Val;
 
@@ -63,10 +64,43 @@ pub(crate) enum ChildReturnValue {
     OneOffDelay { scheduled_at: DateTime<Utc> },
 }
 
-impl ChildReturnValue {
-    fn from_wast_val(result: WastVal) -> Self {
-        Self::WastVal(result)
+fn from_execution_error(
+    ret_type: &TypeWrapper,
+    child_execution_id: &ExecutionIdDerived,
+) -> WastVal {
+    match ret_type {
+        TypeWrapper::Result { ok: _, err: None } => return WastVal::Result(Err(None)),
+        TypeWrapper::Result {
+            ok: _,
+            err: Some(inner),
+        } => match inner.as_ref() {
+            TypeWrapper::String => {
+                return WastVal::Result(Err(Some(Box::new(WastVal::String(
+                    "execution-failed".to_string(),
+                )))));
+            }
+            TypeWrapper::Variant(variants) => {
+                if let Some(Some(TypeWrapper::Record(fields))) = variants.get("execution-failed")
+                    && fields.len() == 1
+                    && let Some(TypeWrapper::Record(execution_id_fields)) =
+                        fields.get("execution-id")
+                    && execution_id_fields.len() == 1
+                    && let Some(TypeWrapper::String) = execution_id_fields.get("id")
+                {
+                    return WastVal::Result(Err(Some(Box::new(WastVal::Variant(
+                        "execution-failed".to_string(),
+                        Some(Box::new(WastVal::Record(indexmap! {
+                        "execution-id".to_string() => execution_id_derived_into_wast_val(
+                                child_execution_id,
+                            )}))),
+                    )))));
+                }
+            }
+            _ => {}
+        },
+        _ => {}
     }
+    unreachable!("unexpected return type {ret_type:?} must have not been allowed in ExImLite")
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -80,12 +114,6 @@ pub(crate) enum ApplyError {
     // fatal errors:
     #[error("nondeterminism detected: `{0}`")]
     NondeterminismDetected(String),
-    // Fatal unless when closing a join set
-    #[error("unhandled child execution error")]
-    UnhandledChildExecutionError {
-        child_execution_id: ExecutionIdDerived,
-        root_cause_id: ExecutionIdDerived,
-    },
     // retriable errors:
     #[error("interrupt, db updated")]
     InterruptDbUpdated,
@@ -131,6 +159,7 @@ pub(crate) struct EventHistory {
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     worker_span: Span,
     deadline_tracker: SleepFactory,
+    fn_registry: Arc<dyn FunctionRegistry>,
 }
 
 #[expect(clippy::large_enum_variant)]
@@ -163,7 +192,8 @@ impl EventHistory {
         deadline: DateTime<Utc>,
         worker_span: Span,
         deadline_duration: Duration,
-    ) -> Self {
+        fn_registry: Arc<dyn FunctionRegistry>,
+    ) -> EventHistory {
         let non_blocking_event_batch_size = match join_next_blocking_strategy {
             JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching,
@@ -218,6 +248,7 @@ impl EventHistory {
             },
             worker_span,
             deadline_tracker: SleepFactory::new(deadline_duration),
+            fn_registry,
         }
     }
 
@@ -601,10 +632,22 @@ impl EventHistory {
                             .index_child_exe_to_ffqn
                             .get(child_execution_id)
                             .expect("if finished the index must have it");
+
+                        let ret_type = if result.is_err() {
+                            // perf tweak: Only obtain return type if needed for wastval conversion
+                            Some(self.fn_registry.get_by_exported_function(response_ffqn)
+                                .expect("even if components changed, workflow replayed, calling the child ffqn, thus it must be in fn_registry")
+                                .0
+                                .return_type.type_wrapper)
+                        } else {
+                            None
+                        };
+
                         JoinSetResponseEnriched::ChildExecutionFinished(ChildExecutionFinished {
                             child_execution_id,
                             result,
                             response_ffqn,
+                            ret_type,
                         })
                     }
                     JoinSetResponse::DelayFinished { delay_id } => {
@@ -786,35 +829,23 @@ impl EventHistory {
                             child_execution_id,
                             result,
                             response_ffqn,
+                            ret_type,
                         },
                     )) if requested_ffqn == response_ffqn => {
                         trace!(%join_set_id, "Matched JoinNext & ChildExecutionFinished");
                         match kind {
                             JoinNextChildKind::DirectCall => match result {
                                 Ok(result) => Ok(FindMatchingResponse::Found(
-                                    ChildReturnValue::from_wast_val(result.clone().into_value()),
+                                    ChildReturnValue::WastVal(result.clone().into_value()),
                                 )),
-                                // Copy root cause of UnhandledChildExecutionError
-                                Err(FinishedExecutionError::UnhandledChildExecutionError {
-                                    child_execution_id: _,
-                                    root_cause_id,
-                                }) => {
-                                    error!(%child_execution_id,
-                                            "Child execution finished with UnhandledChildExecutionError");
-                                    Err(ApplyError::UnhandledChildExecutionError {
-                                        child_execution_id: child_execution_id.clone(),
-                                        root_cause_id: root_cause_id.clone(), // Copy the original root cause
-                                    })
-                                }
-                                // All other FinishedExecutionErrors are unhandled with current child being the root cause
-                                Err(other) => {
-                                    error!(%child_execution_id,
-                                            "Child execution finished with {other:?}");
-                                    Err(ApplyError::UnhandledChildExecutionError {
-                                        child_execution_id: child_execution_id.clone(),
-                                        // The child is the root cause
-                                        root_cause_id: child_execution_id.clone(),
-                                    })
+                                // `FinishedExecutionError`s are mapped to Err
+                                Err(_execution_err) => {
+                                    // Transform FinishedExecutionError to WastVal
+                                    let ret_type = ret_type
+                                        .expect("must be present on FinishedExecutionError");
+                                    Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                                        from_execution_error(&ret_type, child_execution_id),
+                                    )))
                                 }
                             },
                             JoinNextChildKind::AwaitNext => {
@@ -835,44 +866,13 @@ impl EventHistory {
                                             ))))),
                                         )))
                                     }
-                                    // Transform timeout and activity trap to await-next-extension-error::execution-failed
-                                    Err(
-                                        FinishedExecutionError::PermanentTimeout
-                                        | FinishedExecutionError::PermanentFailure {
-                                            kind: PermanentFailureKind::ActivityTrap,
-                                            ..
-                                        },
-                                    ) => {
-                                        let execution_failed =
-                                            ExecutionErrorVariant::ExecutionFailed {
-                                                child_execution_id,
-                                            }
-                                            .as_wast_val();
+                                    Err(_execution_err) => {
+                                        // Transform FinishedExecutionError to WastVal
+                                        let ret_type = ret_type
+                                            .expect("must be present on FinishedExecutionError");
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                                            WastVal::Result(Err(Some(Box::new(execution_failed)))),
+                                            from_execution_error(&ret_type, child_execution_id),
                                         )))
-                                    }
-                                    // Copy root cause of UnhandledChildExecutionError
-                                    Err(FinishedExecutionError::UnhandledChildExecutionError {
-                                        child_execution_id: _,
-                                        root_cause_id,
-                                    }) => {
-                                        error!(%child_execution_id,
-                                                "Child execution finished with PermanentTimeout");
-                                        Err(ApplyError::UnhandledChildExecutionError {
-                                            child_execution_id: child_execution_id.clone(),
-                                            root_cause_id: root_cause_id.clone(), // Copy the original root cause
-                                        })
-                                    }
-                                    // All other FinishedExecutionErrors are unhandled with current child being the root cause
-                                    Err(other) => {
-                                        error!(%child_execution_id,
-                                                "Child execution finished with {other:?}");
-                                        Err(ApplyError::UnhandledChildExecutionError {
-                                            child_execution_id: child_execution_id.clone(),
-                                            // The child is the root cause
-                                            root_cause_id: child_execution_id.clone(),
-                                        })
                                     }
                                 }
                             }
@@ -883,6 +883,7 @@ impl EventHistory {
                             child_execution_id,
                             result: _,
                             response_ffqn,
+                            ret_type: _,
                         },
                     )) => {
                         // mismatch between ffqns
@@ -961,6 +962,7 @@ impl EventHistory {
                             child_execution_id,
                             result: _,
                             response_ffqn: _,
+                            ret_type: _,
                         },
                     )) => {
                         trace!(%join_set_id, %child_execution_id, "DeterministicKey::JoinNext: Matched ChildExecutionFinished");
@@ -1947,9 +1949,6 @@ impl EventHistory {
 // TODO: Replace with generated AwaitNextExtensionError
 #[derive(Clone)]
 enum ExecutionErrorVariant<'a> {
-    ExecutionFailed {
-        child_execution_id: &'a ExecutionIdDerived,
-    },
     FunctionMismatch {
         specified_function: &'a FunctionFqn,
         actual_function: Option<&'a FunctionFqn>,
@@ -1960,14 +1959,6 @@ enum ExecutionErrorVariant<'a> {
 impl ExecutionErrorVariant<'_> {
     fn as_wast_val(&self) -> WastVal {
         match self {
-            ExecutionErrorVariant::ExecutionFailed { child_execution_id } => WastVal::Variant(
-                "execution-failed".to_string(),
-                Some(Box::new(WastVal::Record(indexmap! {
-                    "execution-id".to_string() => execution_id_derived_into_wast_val(
-                            child_execution_id,
-                        )
-                }))),
-            ),
             ExecutionErrorVariant::FunctionMismatch {
                 specified_function: specified,
                 actual_function: actual,
@@ -2011,6 +2002,7 @@ struct ChildExecutionFinished<'a> {
     child_execution_id: &'a ExecutionIdDerived,
     result: &'a FinishedExecutionResult,
     response_ffqn: &'a FunctionFqn,
+    ret_type: Option<TypeWrapper>, // only present on FinishedExecutionError
 }
 
 #[derive(Debug)]
@@ -2439,15 +2431,6 @@ impl OneOffChildExecutionRequest {
             ) => {
                 unreachable!("applying OneOffChildExecutionRequest must return WastVal or None")
             }
-            Err(ApplyError::UnhandledChildExecutionError {
-                child_execution_id,
-                root_cause_id: _,
-            }) => {
-                // Translate to execution-failure
-                let execution_failed = types_execution::ExecutionFailed::from(&child_execution_id);
-                let execution_failed = Box::new(Val::from(execution_failed));
-                Ok(Val::Result(Err(Some(execution_failed))))
-            }
             Err(apply_err) => Err(WorkflowFunctionError::from(apply_err)),
         }
     }
@@ -2807,6 +2790,7 @@ mod tests {
     use super::super::host_exports::execution_id_into_wast_val;
     use super::super::workflow_worker::JoinNextBlockingStrategy;
     use super::SubmitChildExecution;
+    use crate::testing_fn_registry::TestingFnRegistry;
     use crate::workflow::event_history::{
         ApplyError, ChildReturnValue, JoinNextRequestingFfqn, JoinSetCreate, Schedule, Stub,
     };
@@ -2818,13 +2802,14 @@ mod tests {
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::time::ClockFn;
     use concepts::{
-        ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, Params,
-        SUPPORTED_RETURN_VALUE_OK_EMPTY, SupportedFunctionReturnValue,
+        ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn,
+        FunctionRegistry, Params, SUPPORTED_RETURN_VALUE_OK_EMPTY, SupportedFunctionReturnValue,
     };
     use concepts::{JoinSetId, StrVariant};
     use db_tests::Database;
     use indexmap::indexmap;
     use rstest::rstest;
+    use std::sync::Arc;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::{info, info_span};
@@ -2848,12 +2833,15 @@ mod tests {
         // Create an execution.
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
 
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
+
         let (event_history, version) = load_event_history(
             db_connection.as_ref(),
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1),              // execution deadline
             JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
+            fn_registry.clone(),
         )
         .await;
 
@@ -2899,6 +2887,7 @@ mod tests {
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
             second_run_strategy,
+            fn_registry,
         )
         .await;
         apply_create_join_set_start_async_await_next(
@@ -2934,13 +2923,14 @@ mod tests {
         let db_connection = db_pool.connection();
         // Create an execution.
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
-
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
         let (mut event_history, mut version) = load_event_history(
             db_connection.as_ref(),
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
             join_next_blocking_strategy,
+            fn_registry.clone(),
         )
         .await;
 
@@ -2984,6 +2974,7 @@ mod tests {
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
             join_next_blocking_strategy,
+            fn_registry,
         )
         .await;
 
@@ -3058,13 +3049,14 @@ mod tests {
 
         // Create an execution.
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
-
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
         let (mut event_history, mut version) = load_event_history(
             db_connection.as_ref(),
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1),              // execution deadline
             JoinNextBlockingStrategy::Interrupt, // First blocking strategy is always Interrupt
+            fn_registry.clone(),
         )
         .await;
 
@@ -3139,6 +3131,7 @@ mod tests {
             sim_clock.now(),
             Duration::ZERO, // deadline
             JoinNextBlockingStrategy::Interrupt,
+            fn_registry,
         )
         .await;
 
@@ -3210,13 +3203,14 @@ mod tests {
 
         // Create an execution.
         let execution_id = create_execution(db_connection, &sim_clock).await;
-
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
         let (mut event_history, mut version) = load_event_history(
             db_connection,
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1),              // execution deadline
             JoinNextBlockingStrategy::Interrupt, // does not matter, there are no blocking events
+            fn_registry,
         )
         .await;
 
@@ -3270,7 +3264,7 @@ mod tests {
         let join_set_id =
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         let child_execution_id = execution_id.next_level(&join_set_id);
-
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
         for run_id in 0..1 {
             info!("Run {run_id}");
             let (mut event_history, mut version) = load_event_history(
@@ -3281,6 +3275,7 @@ mod tests {
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
+                fn_registry.clone(),
             )
             .await;
 
@@ -3348,7 +3343,7 @@ mod tests {
         let join_set_id =
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         let child_execution_id = execution_id.next_level(&join_set_id);
-
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
         for run_id in 0..1 {
             info!("Run {run_id}");
             let (mut event_history, mut version) = load_event_history(
@@ -3359,6 +3354,7 @@ mod tests {
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
+                fn_registry.clone(),
             )
             .await;
             apply_create_join_set_start_async(
@@ -3445,6 +3441,7 @@ mod tests {
         now: DateTime<Utc>,
         deadline_duration: Duration,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
+        fn_registry: Arc<dyn FunctionRegistry>,
     ) -> (EventHistory, Version) {
         let exec_log = db_connection.get(&execution_id).await.unwrap();
         let execution_deadline = now + deadline_duration;
@@ -3461,6 +3458,7 @@ mod tests {
             execution_deadline,
             info_span!("worker-test"),
             deadline_duration,
+            fn_registry,
         );
         (event_history, exec_log.next_version)
     }

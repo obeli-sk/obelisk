@@ -87,7 +87,7 @@ pub fn event_to_detail(
                 .clone();
             html! {<>
                 <HttpTraceEvent http_client_traces={inner_event.http_client_traces.clone()} />
-                <FinishedEvent {result_detail} version={event.version} {link} {is_selected} />
+                <FinishedEvent {result_detail} version={event.version} {is_selected} />
                 </>
             }
         }

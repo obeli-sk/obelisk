@@ -80,8 +80,6 @@ package obelisk:types@2.0.0 {
 
     /// Error that is thrown by `-await-next` extension functions.
     variant await-next-extension-error {
-      /// Execution response was awaited and marked as processed, but it finished with an error.
-      execution-failed(execution-failed),
       /// All submitted requests and their responses of specified function and join set were already processed.
       all-processed,
       /// Execution response was awaited and marked as processed, but it belongs to a different function.

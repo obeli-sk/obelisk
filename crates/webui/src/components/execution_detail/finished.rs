@@ -1,7 +1,6 @@
 use crate::{
     components::{
         execution_detail::tree_component::TreeComponent,
-        execution_header::ExecutionLink,
         json_tree::{JsonValue, insert_json_into_tree},
     },
     grpc::{grpc_client, version::VersionType},
@@ -16,7 +15,6 @@ use yewprint::{
 pub struct FinishedEventProps {
     pub result_detail: grpc_client::ResultDetail,
     pub version: Option<VersionType>,
-    pub link: ExecutionLink,
     pub is_selected: bool,
 }
 
@@ -33,7 +31,6 @@ pub fn attach_result_detail(
     root_id: &NodeId,
     result_detail: &grpc_client::ResultDetail,
     version: Option<VersionType>,
-    link: ExecutionLink,
     is_selected: bool,
 ) {
     match &result_detail
@@ -88,60 +85,6 @@ pub fn attach_result_detail(
             )
             .unwrap();
         }
-        grpc_client::result_detail::Value::UnhandledChildExecutionError(
-            grpc_client::result_detail::UnhandledChildExecutionError {
-                child_execution_id,
-                root_cause_id,
-            },
-        ) => {
-            let child_execution_id = child_execution_id
-                .as_ref()
-                .expect("`child_execution_id` is sent in `UnhandledChildExecutionError` message");
-            let root_cause_id = root_cause_id
-                .as_ref()
-                .expect("`root_cause_id` is sent in `UnhandledChildExecutionError` mesage");
-            let error_node = tree
-                .insert(
-                    Node::new(NodeData {
-                        icon: Icon::Error,
-                        label: with_version(version, "Unhandled child execution error"),
-                        has_caret: true,
-                        is_selected,
-                        ..Default::default()
-                    }),
-                    InsertBehavior::UnderNode(root_id),
-                )
-                .unwrap();
-            tree.insert(
-                Node::new(NodeData {
-                    icon: Icon::Error,
-                    label: html! {
-                        <>
-                            {"Child Execution: "}
-
-                            { link.link(child_execution_id.clone(), &child_execution_id.id) }
-                        </>
-                    },
-                    ..Default::default()
-                }),
-                InsertBehavior::UnderNode(&error_node),
-            )
-            .unwrap();
-            tree.insert(
-                Node::new(NodeData {
-                    icon: Icon::Error,
-                    label: html! {
-                        <>
-                            {"Root cause: "}
-                            { link.link(root_cause_id.clone(), &root_cause_id.id) }
-                        </>
-                    },
-                    ..Default::default()
-                }),
-                InsertBehavior::UnderNode(&error_node),
-            )
-            .unwrap();
-        }
         grpc_client::result_detail::Value::ExecutionFailure(failure) => {
             let error_node = tree
                 .insert(
@@ -191,7 +134,6 @@ impl FinishedEventProps {
             &root_id,
             &self.result_detail,
             self.version,
-            self.link,
             self.is_selected,
         );
         TreeData::from(tree)

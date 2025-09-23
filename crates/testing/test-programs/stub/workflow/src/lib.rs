@@ -88,7 +88,7 @@ impl Guest for Component {
     }
 
     fn invoke_expect_execution_error() -> Result<(), ()> {
-        noret_invoke().unwrap_err();
+        noret_invoke().unwrap().unwrap_err();
         Ok(())
     }
 }

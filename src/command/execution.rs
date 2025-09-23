@@ -158,9 +158,6 @@ enum ExecutionError {
     Timeout,
     #[error("execution failure")]
     ExecutionFailure,
-    #[error("unhandled child execution error")]
-    #[expect(clippy::enum_variant_names)]
-    UnhandledChildExecutionError,
 }
 
 fn print_finished_status(finished_status: grpc_gen::FinishedStatus) -> Result<(), ExecutionError> {
@@ -220,19 +217,6 @@ fn print_finished_status(finished_status: grpc_gen::FinishedStatus) -> Result<()
         )) => (
             format!("Execution failure: {reason}"),
             Err(ExecutionError::ExecutionFailure),
-        ),
-        Some(grpc_gen::result_detail::Value::UnhandledChildExecutionError(
-            grpc_gen::result_detail::UnhandledChildExecutionError {
-                child_execution_id,
-                root_cause_id,
-            },
-        )) => (
-            format!(
-                "Unhandled child execution error, child_execution_id: {child_execution_id}, root_cause_id: {root_cause_id}",
-                child_execution_id = child_execution_id.unwrap().id,
-                root_cause_id = root_cause_id.unwrap().id
-            ),
-            Err(ExecutionError::UnhandledChildExecutionError),
         ),
         other => unreachable!("unexpected variant {other:?}"),
     };
@@ -295,16 +279,6 @@ fn print_finished_status_json(
         )) => (
             json!({"execution_failure": {"reason": reason, "detail": detail}}),
             Err(ExecutionError::ExecutionFailure),
-        ),
-        Some(grpc_gen::result_detail::Value::UnhandledChildExecutionError(
-            grpc_gen::result_detail::UnhandledChildExecutionError {
-                child_execution_id,
-                root_cause_id,
-            },
-        )) => (
-            json!({"unhandled_child_execution_error": {"child_execution_id": child_execution_id,
-                "root_cause_id": root_cause_id}}),
-            Err(ExecutionError::UnhandledChildExecutionError),
         ),
         other => unreachable!("unexpected variant {other:?}"),
     };

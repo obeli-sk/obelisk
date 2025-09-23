@@ -45,11 +45,6 @@ pub(crate) enum WorkflowFunctionError {
     // fatal errors:
     #[error("non deterministic execution: {0}")]
     NondeterminismDetected(String),
-    #[error("child execution finished with an execution error: {child_execution_id}")]
-    UnhandledChildExecutionError {
-        child_execution_id: ExecutionIdDerived,
-        root_cause_id: ExecutionIdDerived,
-    },
     #[error("error calling imported function {ffqn} - {reason}")]
     ImportedFunctionCallError {
         ffqn: FunctionFqn,
@@ -83,16 +78,6 @@ impl WorkflowFunctionError {
                     version,
                 )
             }
-            WorkflowFunctionError::UnhandledChildExecutionError {
-                child_execution_id,
-                root_cause_id,
-            } => WorkerPartialResult::FatalError(
-                FatalError::UnhandledChildExecutionError {
-                    child_execution_id,
-                    root_cause_id,
-                },
-                version,
-            ),
             WorkflowFunctionError::ImportedFunctionCallError {
                 ffqn,
                 reason,
@@ -110,18 +95,13 @@ impl WorkflowFunctionError {
 }
 
 impl From<ApplyError> for WorkflowFunctionError {
-    fn from(value: ApplyError) -> Self {
+    fn from(value: ApplyError) -> WorkflowFunctionError {
         match value {
-            ApplyError::NondeterminismDetected(reason) => Self::NondeterminismDetected(reason),
-            ApplyError::UnhandledChildExecutionError {
-                child_execution_id,
-                root_cause_id,
-            } => Self::UnhandledChildExecutionError {
-                child_execution_id,
-                root_cause_id,
-            },
-            ApplyError::InterruptDbUpdated => Self::InterruptDbUpdated,
-            ApplyError::DbError(db_error) => Self::DbError(db_error),
+            ApplyError::NondeterminismDetected(reason) => {
+                WorkflowFunctionError::NondeterminismDetected(reason)
+            }
+            ApplyError::InterruptDbUpdated => WorkflowFunctionError::InterruptDbUpdated,
+            ApplyError::DbError(db_error) => WorkflowFunctionError::DbError(db_error),
         }
     }
 }
@@ -931,6 +911,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         worker_span: Span,
         backtrace_persist: bool,
         deadline_duration: Duration,
+        fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -948,6 +929,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 deadline,
                 worker_span.clone(),
                 deadline_duration,
+                fn_registry,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -1724,6 +1706,7 @@ pub(crate) mod tests {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             info!("Starting");
             let seed = ctx.execution_id.random_seed();
+
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id.clone(),
                 ComponentId::dummy_activity(),
@@ -1740,6 +1723,7 @@ pub(crate) mod tests {
                 (ctx.execution_deadline - self.clock_fn.now())
                     .to_std()
                     .unwrap(),
+                self.fn_registry.clone(),
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");

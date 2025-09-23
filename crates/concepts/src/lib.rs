@@ -9,7 +9,7 @@ pub use indexmap;
 use indexmap::IndexMap;
 use opentelemetry::propagation::{Extractor, Injector};
 pub use prefixed_ulid::ExecutionId;
-use prefixed_ulid::{ExecutionIdDerived, ExecutionIdParseError};
+use prefixed_ulid::ExecutionIdParseError;
 use serde_json::Value;
 use std::{
     borrow::Borrow,
@@ -47,12 +47,6 @@ pub enum FinishedExecutionError {
     // Activity only, because workflows will be retried forever
     #[error("permanent timeout")]
     PermanentTimeout,
-    // Workflow only
-    #[error("unhandled child execution error {child_execution_id}")]
-    UnhandledChildExecutionError {
-        child_execution_id: ExecutionIdDerived,
-        root_cause_id: ExecutionIdDerived,
-    },
     #[error("permanent failure: {reason_full}")]
     PermanentFailure {
         // Exists just for extracting reason of an activity trap, to avoid "activity trap: " prefix.
@@ -68,9 +62,6 @@ impl FinishedExecutionError {
     pub fn as_pending_state_finished_error(&self) -> PendingStateFinishedError {
         match self {
             FinishedExecutionError::PermanentTimeout => PendingStateFinishedError::Timeout,
-            FinishedExecutionError::UnhandledChildExecutionError { .. } => {
-                PendingStateFinishedError::UnhandledChildExecutionError
-            }
             FinishedExecutionError::PermanentFailure { .. } => {
                 PendingStateFinishedError::ExecutionFailure
             }

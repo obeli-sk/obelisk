@@ -199,7 +199,7 @@ enum ResultKind {
     FALLIBLE_ERROR = 1;
     TIMEOUT = 2;
     EXECUTION_FAILURE = 3;
-    UNHANDLED_CHILD_EXECUTION_ERROR = 4;
+    reserved 4;
 }
 
 message ExecutionStatus {
@@ -255,17 +255,11 @@ message ResultDetail {
         optional string detail = 2;
         // TODO Add PermanentFailureKind
     }
-    // FinishedExecutionError::UnhandledChildExecutionError
-    message UnhandledChildExecutionError {
-        ExecutionId child_execution_id = 1;
-        ExecutionId root_cause_id = 2;
-    }
     oneof value {
         Ok ok = 1;
         FallibleError fallible_error = 2;
         Timeout timeout = 3;
         ExecutionFailure execution_failure = 4;
-        UnhandledChildExecutionError unhandled_child_execution_error = 5;
     }
 }
 

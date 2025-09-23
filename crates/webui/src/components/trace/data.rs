@@ -69,8 +69,6 @@ pub enum BusyIntervalStatus {
     ExecutionErrorTemporary,
     #[display("Permanent error")]
     ExecutionErrorPermanent,
-    #[display("Child error")]
-    ExecutionErrorUnhandledChild,
     #[display("Locked")]
     ExecutionLocked,
     #[display("Finished")]
@@ -168,9 +166,6 @@ mod grpc {
                 result_detail::Value::ExecutionFailure(_) => {
                     BusyIntervalStatus::ExecutionErrorPermanent
                 }
-                result_detail::Value::UnhandledChildExecutionError(_) => {
-                    BusyIntervalStatus::ExecutionErrorUnhandledChild
-                }
             }
         }
     }
@@ -189,9 +184,6 @@ mod css {
                 BusyIntervalStatus::ExecutionTimeoutPermanent => "busy-execution-timeout-permanent",
                 BusyIntervalStatus::ExecutionErrorTemporary => "busy-execution-error-temporary",
                 BusyIntervalStatus::ExecutionErrorPermanent => "busy-execution-error-permanent",
-                BusyIntervalStatus::ExecutionErrorUnhandledChild => {
-                    "busy-execution-error-unhandled-child"
-                }
                 BusyIntervalStatus::ExecutionLocked => "busy-execution-locked",
                 BusyIntervalStatus::ExecutionFinished => "busy-execution-finished",
                 BusyIntervalStatus::ExecutionReturnedErrorVariant => {

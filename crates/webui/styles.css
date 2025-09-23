@@ -411,8 +411,7 @@ ul li span {
     background-color: #FFEB3B;
 }
 
-.busy-execution-error-permanent,
-.busy-execution-error-unhandled-child {
+.busy-execution-error-permanent {
     background-color: #F44336;
 }
 

@@ -2155,7 +2155,7 @@ impl WorkerCompiled {
             worker: match self.worker {
                 Either::Left(activity) => Either::Left(activity),
                 Either::Right(workflow_compiled) => {
-                    Either::Right(workflow_compiled.link(fn_registry)?)
+                    Either::Right(workflow_compiled.link(fn_registry.clone())?)
                 }
             },
             exec_config: self.exec_config,

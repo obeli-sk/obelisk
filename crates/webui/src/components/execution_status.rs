@@ -1,5 +1,5 @@
 use crate::{
-    components::{execution_detail::finished::FinishedEvent, execution_header::ExecutionLink},
+    components::execution_detail::finished::FinishedEvent,
     grpc::grpc_client::{
         self, ExecutionStatus as GExecutionStatus, ExecutionSummary, FinishedStatus, ResultKind,
         execution_status::{Finished, Locked, PendingAt},
@@ -157,7 +157,7 @@ pub fn execution_status(
                 .to_std()
                 .expect("must be non-negative");
             html! {<>
-                <FinishedEvent result_detail={result_detail.clone()} version={None} link={ExecutionLink::Trace} is_selected={false}/>
+                <FinishedEvent result_detail={result_detail.clone()} version={None} is_selected={false}/>
                 <p>{format!("Execution completed in {since_scheduled:?}.")}</p>
             </>}
         }
@@ -191,9 +191,6 @@ fn status_to_string(status: &grpc_client::execution_status::Status) -> Html {
                 }
                 ResultKind::ExecutionFailure => {
                     html! {"Execution failure"}
-                }
-                ResultKind::UnhandledChildExecutionError => {
-                    html! {"Unhandled child execution error"}
                 }
             }
         }
