@@ -1256,7 +1256,7 @@ mod tests {
             "finished_version": 2,
             "result": {
                 "Ok": {
-                    "InfallibleOrResultOk": {
+                    "Ok": {
                         "type": {
                             "result": {
                                 "ok": {
@@ -1278,7 +1278,7 @@ mod tests {
             JoinSetResponse::ChildExecutionFinished {
                 child_execution_id,
                 finished_version,
-                result: FinishedExecutionResult::Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(wast_val_with_type))
+                result: FinishedExecutionResult::Ok(SupportedFunctionReturnValue::Ok(wast_val_with_type))
             } => (child_execution_id, finished_version, wast_val_with_type)
         );
         assert_eq!(

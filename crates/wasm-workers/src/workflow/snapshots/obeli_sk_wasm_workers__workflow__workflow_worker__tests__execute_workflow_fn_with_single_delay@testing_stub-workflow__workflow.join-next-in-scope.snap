@@ -78,7 +78,7 @@ expression: execution_log
             "target_execution_id": "E_00000000000000000000000000.n:a_1",
             "result": {
               "Ok": {
-                "InfallibleOrResultOk": {
+                "Ok": {
                   "type": {
                     "result": {
                       "ok": "string",
@@ -124,7 +124,7 @@ expression: execution_log
             "target_execution_id": "E_00000000000000000000000000.n:a_2",
             "result": {
               "Ok": {
-                "InfallibleOrResultOk": {
+                "Ok": {
                   "type": {
                     "result": {
                       "ok": "string",
@@ -183,7 +183,7 @@ expression: execution_log
             "target_execution_id": "E_00000000000000000000000000.n:b_1",
             "result": {
               "Ok": {
-                "InfallibleOrResultOk": {
+                "Ok": {
                   "type": {
                     "result": {
                       "ok": "string",
@@ -229,7 +229,7 @@ expression: execution_log
             "target_execution_id": "E_00000000000000000000000000.n:b_2",
             "result": {
               "Ok": {
-                "InfallibleOrResultOk": {
+                "Ok": {
                   "type": {
                     "result": {
                       "ok": "string",
@@ -288,7 +288,7 @@ expression: execution_log
             "target_execution_id": "E_00000000000000000000000000.n:f_1",
             "result": {
               "Ok": {
-                "InfallibleOrResultOk": {
+                "Ok": {
                   "type": {
                     "result": {
                       "ok": "string",
@@ -334,7 +334,7 @@ expression: execution_log
             "target_execution_id": "E_00000000000000000000000000.n:f_2",
             "result": {
               "Ok": {
-                "InfallibleOrResultOk": {
+                "Ok": {
                   "type": {
                     "result": {
                       "ok": "string",
@@ -501,7 +501,7 @@ expression: execution_log
             "target_execution_id": "E_00000000000000000000000000.n:c_1",
             "result": {
               "Ok": {
-                "InfallibleOrResultOk": {
+                "Ok": {
                   "type": {
                     "result": {
                       "ok": "string",
@@ -547,7 +547,7 @@ expression: execution_log
             "target_execution_id": "E_00000000000000000000000000.n:c_2",
             "result": {
               "Ok": {
-                "InfallibleOrResultOk": {
+                "Ok": {
                   "type": {
                     "result": {
                       "ok": "string",
@@ -682,7 +682,7 @@ expression: execution_log
         "Finished": {
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": null,
@@ -712,7 +712,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": "string",
@@ -738,7 +738,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": "string",
@@ -764,7 +764,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": "string",
@@ -790,7 +790,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": "string",
@@ -816,7 +816,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": "string",
@@ -842,7 +842,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": "string",
@@ -868,7 +868,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": "string",
@@ -894,7 +894,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": "string",

@@ -311,6 +311,6 @@ mod bench {
             .await
             .unwrap()
             .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::InfallibleOrResultOk(_));
+        assert_matches!(res, SupportedFunctionReturnValue::Ok(_));
     }
 }

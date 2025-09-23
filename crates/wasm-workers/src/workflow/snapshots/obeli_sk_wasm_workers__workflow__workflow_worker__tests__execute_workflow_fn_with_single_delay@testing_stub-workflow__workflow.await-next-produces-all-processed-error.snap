@@ -75,7 +75,7 @@ expression: execution_log
         "Finished": {
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": null,

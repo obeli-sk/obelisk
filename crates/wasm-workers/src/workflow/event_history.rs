@@ -820,8 +820,8 @@ impl EventHistory {
                             JoinNextChildKind::AwaitNext => {
                                 match result {
                                     Ok(
-                                        SupportedFunctionReturnValue::InfallibleOrResultOk(v)
-                                        | SupportedFunctionReturnValue::FallibleResultErr(v),
+                                        SupportedFunctionReturnValue::Ok(v)
+                                        | SupportedFunctionReturnValue::Err(v),
                                     ) => {
                                         // result<(execution-id, inner>, await-next-extension-error>
                                         Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
@@ -2924,7 +2924,7 @@ mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         const CHILD_RESP: SupportedFunctionReturnValue =
-            SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
+            SupportedFunctionReturnValue::Ok(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(1),
             });
@@ -3029,12 +3029,12 @@ mod tests {
         #[values(true, false)] submits_and_awaits_in_correct_order: bool,
     ) {
         const KID_A_RET: SupportedFunctionReturnValue =
-            SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
+            SupportedFunctionReturnValue::Ok(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(1),
             });
         const KID_B_RET: SupportedFunctionReturnValue =
-            SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
+            SupportedFunctionReturnValue::Ok(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(2),
             });

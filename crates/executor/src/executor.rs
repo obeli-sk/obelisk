@@ -821,15 +821,13 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(
-                        WastValWithType {
-                            r#type: TypeWrapper::Result {
-                                ok: None,
-                                err: None,
-                            },
-                            value: WastVal::Result(Ok(None)),
-                        }
-                    )),
+                    result: Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
+                        r#type: TypeWrapper::Result {
+                            ok: None,
+                            err: None,
+                        },
+                        value: WastVal::Result(Ok(None)),
+                    })),
                     http_client_traces: None
                 },
                 created_at: _,
@@ -889,15 +887,13 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(
-                        WastValWithType {
-                            r#type: TypeWrapper::Result {
-                                ok: None,
-                                err: None,
-                            },
-                            value: WastVal::Result(Ok(None)),
-                        }
-                    )),
+                    result: Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
+                        r#type: TypeWrapper::Result {
+                            ok: None,
+                            err: None,
+                        },
+                        value: WastVal::Result(Ok(None)),
+                    })),
                     http_client_traces: None
                 },
                 created_at: _,
@@ -1095,7 +1091,7 @@ mod tests {
             execution_log.events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
+                    result: Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
                         r#type: TypeWrapper::Result {
                             ok: None,
                             err: None,

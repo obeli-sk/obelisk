@@ -2562,7 +2562,7 @@ pub(crate) mod tests {
         let child_res = child_log.into_finished_result().unwrap();
         assert_matches!(
             child_res,
-            Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(
+            Ok(SupportedFunctionReturnValue::Ok(
                 WastValWithType {
                     r#type: TypeWrapper::Result {
                         ok: None,

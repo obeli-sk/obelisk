@@ -128,7 +128,7 @@ expression: execution_log
             "target_execution_id": "E_00000000000000000000000000.g:1_1",
             "result": {
               "Ok": {
-                "InfallibleOrResultOk": {
+                "Ok": {
                   "type": {
                     "result": {
                       "ok": "string",
@@ -182,7 +182,7 @@ expression: execution_log
         "Finished": {
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": null,
@@ -222,7 +222,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "Ok": {
-              "InfallibleOrResultOk": {
+              "Ok": {
                 "type": {
                   "result": {
                     "ok": "string",

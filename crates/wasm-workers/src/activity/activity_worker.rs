@@ -317,7 +317,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
 
                 if retry_on_err {
                     // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (TemporaryError)
-                    if let SupportedFunctionReturnValue::FallibleResultErr(result_err) = &result {
+                    if let SupportedFunctionReturnValue::Err(result_err) = &result {
                         if ctx.can_be_retried {
                             let detail = serde_json::to_string(result_err).expect(
                                 "SupportedFunctionReturnValue should be serializable to JSON",
@@ -560,7 +560,7 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        let res = assert_matches!(res, Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(val)) => val);
+        let res = assert_matches!(res, Ok(SupportedFunctionReturnValue::Ok(val)) => val);
         let (fibo, ok_ty) = assert_matches!(res,
             WastValWithType {value: WastVal::Result(Ok(Some(val))), r#type: TypeWrapper::Result { ok:Some(ok_ty), err:None } } => (val, ok_ty));
         assert_matches!(*ok_ty, TypeWrapper::U64);
@@ -1351,7 +1351,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_matches!(res, SupportedFunctionReturnValue::InfallibleOrResultOk(_));
+            assert_matches!(res, SupportedFunctionReturnValue::Ok(_));
             drop(db_connection);
             exec_task.close().await;
             db_pool.close().await.unwrap();
@@ -1419,7 +1419,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_matches!(res, SupportedFunctionReturnValue::InfallibleOrResultOk(_));
+            assert_matches!(res, SupportedFunctionReturnValue::Ok(_));
             drop(db_connection);
             exec_task.close().await;
             db_pool.close().await.unwrap();
@@ -1499,7 +1499,7 @@ pub(crate) mod tests {
                 .unwrap()
                 .unwrap();
             let sleep_pid = assert_matches!(res,
-                SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {value: WastVal::Result(Ok(Some(val))),
+                SupportedFunctionReturnValue::Ok(WastValWithType {value: WastVal::Result(Ok(Some(val))),
                     r#type: _}) => val);
             let sleep_pid = assert_matches!(*sleep_pid, WastVal::U32(val) => val);
             debug!("Sleep pid: {sleep_pid}");
@@ -1571,7 +1571,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_matches!(res, SupportedFunctionReturnValue::InfallibleOrResultOk(_));
+            assert_matches!(res, SupportedFunctionReturnValue::Ok(_));
             drop(db_connection);
             exec_task.close().await;
             db_pool.close().await.unwrap();
@@ -1626,7 +1626,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_matches!(res, SupportedFunctionReturnValue::InfallibleOrResultOk(_));
+            assert_matches!(res, SupportedFunctionReturnValue::Ok(_));
             drop(db_connection);
             exec_task.close().await;
             db_pool.close().await.unwrap();

@@ -198,7 +198,7 @@ async fn persist_finished_event(
     let wast_val_with_type: WastValWithType = serde_json::from_str(WVWT_RECORD_UNSORTED).unwrap();
     let inner = ExecutionEventInner::Finished {
         result: FinishedExecutionResult::Ok(
-            concepts::SupportedFunctionReturnValue::InfallibleOrResultOk(wast_val_with_type),
+            concepts::SupportedFunctionReturnValue::Ok(wast_val_with_type),
         ),
         http_client_traces: None,
     };
