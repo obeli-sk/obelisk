@@ -1,6 +1,7 @@
 bench
 db-mem
 db-tests
+obelisk-component-builder
 test-programs-dir-activity
 test-programs-dir-activity-builder
 test-programs-fibo-activity
