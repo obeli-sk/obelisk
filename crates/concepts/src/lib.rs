@@ -701,6 +701,7 @@ pub enum FunctionExtension {
     Invoke,
 }
 impl FunctionExtension {
+    #[must_use]
     pub fn suffix(&self) -> &'static str {
         match self {
             FunctionExtension::Submit => SUFFIX_FN_SUBMIT,
@@ -712,16 +713,21 @@ impl FunctionExtension {
         }
     }
 
+    #[must_use]
     pub fn belongs_to(&self, pkg_ext: PackageExtension) -> bool {
-        match (pkg_ext, self) {
-            (PackageExtension::ObeliskExt, FunctionExtension::Submit)
-            | (PackageExtension::ObeliskExt, FunctionExtension::AwaitNext)
-            | (PackageExtension::ObeliskExt, FunctionExtension::Get)
-            | (PackageExtension::ObeliskExt, FunctionExtension::Invoke)
-            | (PackageExtension::ObeliskSchedule, FunctionExtension::Schedule)
-            | (PackageExtension::ObeliskStub, FunctionExtension::Stub) => true,
-            _ => false,
-        }
+        matches!(
+            (pkg_ext, self),
+            (
+                PackageExtension::ObeliskExt,
+                FunctionExtension::Submit
+                    | FunctionExtension::AwaitNext
+                    | FunctionExtension::Get
+                    | FunctionExtension::Invoke
+            ) | (
+                PackageExtension::ObeliskSchedule,
+                FunctionExtension::Schedule
+            ) | (PackageExtension::ObeliskStub, FunctionExtension::Stub)
+        )
     }
 }
 

@@ -818,7 +818,10 @@ fn populate_ifcs(
         let pkg_fqn = PkgFqn {
             namespace: package.namespace.clone(),
             package_name: package.name.clone(),
-            version: package.version.as_ref().map(|v| v.to_string()),
+            version: package
+                .version
+                .as_ref()
+                .map(std::string::ToString::to_string),
         };
         let package_ext = pkg_fqn.split_ext().map(|(_, pkg_ext)| pkg_ext);
         if processing_kind.is_export() && package_ext.is_some() {
