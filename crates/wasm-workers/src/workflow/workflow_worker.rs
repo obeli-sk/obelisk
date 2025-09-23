@@ -909,8 +909,7 @@ pub(crate) mod tests {
             .await
             .unwrap()
             .unwrap();
-        let res =
-            assert_matches!(res, SupportedFunctionReturnValue::Ok(val) => val);
+        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(val) => val);
 
         let (fibo, ok_ty) = assert_matches!(res,
             WastValWithType {value: WastVal::Result(Ok(Some(val))), r#type: TypeWrapper::Result { ok:Some(ok_ty), err:None } } => (val, ok_ty));
@@ -1638,15 +1637,13 @@ pub(crate) mod tests {
         let res = db_pool.connection().get(&execution_id).await.unwrap();
         assert_matches!(
             res.into_finished_result().unwrap(),
-            Ok(SupportedFunctionReturnValue::Ok(
-                WastValWithType {
-                    r#type: TypeWrapper::Result {
-                        ok: None,
-                        err: None,
-                    },
-                    value: WastVal::Result(Ok(None)),
-                }
-            ))
+            Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
+                r#type: TypeWrapper::Result {
+                    ok: None,
+                    err: None,
+                },
+                value: WastVal::Result(Ok(None)),
+            }))
         );
         sim_clock.move_time_forward(SLEEP_DURATION);
         // New execution should be pending.
@@ -2045,15 +2042,13 @@ pub(crate) mod tests {
         insta::with_settings!({snapshot_suffix => ffqn.to_string().replace(':', "_")}, {insta::assert_json_snapshot!(execution_log)});
         assert_matches!(
             execution_log.into_finished_result(),
-            Some(Ok(SupportedFunctionReturnValue::Ok(
-                WastValWithType {
-                    r#type: TypeWrapper::Result {
-                        ok: None,
-                        err: None,
-                    },
-                    value: WastVal::Result(Ok(None)),
-                }
-            )))
+            Some(Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
+                r#type: TypeWrapper::Result {
+                    ok: None,
+                    err: None,
+                },
+                value: WastVal::Result(Ok(None)),
+            })))
         );
 
         drop(exec_task);
@@ -2217,15 +2212,13 @@ pub(crate) mod tests {
         let res = db_connection.get(&execution_id).await.unwrap();
         assert_matches!(
             res.into_finished_result().unwrap(),
-            Ok(SupportedFunctionReturnValue::Ok(
-                WastValWithType {
-                    r#type: TypeWrapper::Result {
-                        ok: None,
-                        err: None,
-                    },
-                    value: WastVal::Result(Ok(None)),
-                }
-            ))
+            Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
+                r#type: TypeWrapper::Result {
+                    ok: None,
+                    err: None,
+                },
+                value: WastVal::Result(Ok(None)),
+            }))
         );
         drop(exec_task);
         db_pool.close().await.unwrap();

@@ -2562,15 +2562,13 @@ pub(crate) mod tests {
         let child_res = child_log.into_finished_result().unwrap();
         assert_matches!(
             child_res,
-            Ok(SupportedFunctionReturnValue::Ok(
-                WastValWithType {
-                    r#type: TypeWrapper::Result {
-                        ok: None,
-                        err: None,
-                    },
-                    value: WastVal::Result(Ok(None)),
-                }
-            ))
+            Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
+                r#type: TypeWrapper::Result {
+                    ok: None,
+                    err: None,
+                },
+                value: WastVal::Result(Ok(None)),
+            }))
         );
     }
 
