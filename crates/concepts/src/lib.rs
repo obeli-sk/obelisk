@@ -318,10 +318,12 @@ pub struct PkgFqn {
     pub version: Option<String>,
 }
 impl PkgFqn {
+    #[must_use]
     pub fn is_extension(&self) -> bool {
         Self::is_package_name_ext(&self.package_name)
     }
 
+    #[must_use]
     pub fn split_ext(&self) -> Option<(PkgFqn, PackageExtension)> {
         use strum::IntoEnumIterator;
         for package_ext in PackageExtension::iter() {
@@ -736,6 +738,7 @@ pub struct FunctionMetadata {
     pub submittable: bool,
 }
 impl FunctionMetadata {
+    #[must_use]
     pub fn split_extension(&self) -> Option<(&str, FunctionExtension)> {
         self.extension.map(|extension| {
             let prefix = self

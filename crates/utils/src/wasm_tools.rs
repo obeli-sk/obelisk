@@ -799,8 +799,8 @@ enum ProcessingKind {
     ExportsSubmittable,
 }
 
-fn populate_ifcs<'a>(
-    resolve: &'a Resolve,
+fn populate_ifcs(
+    resolve: &Resolve,
     ifc_ids: impl Iterator<Item = InterfaceId>,
     processing_kind: ProcessingKind,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {

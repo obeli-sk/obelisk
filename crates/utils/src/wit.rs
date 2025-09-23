@@ -27,13 +27,17 @@ const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!(concat!(
 
 pub(crate) fn wit(resolve: &Resolve, main_package: PackageId) -> Result<String, anyhow::Error> {
     // print all packages, with the main package as root, others as nested.
-    let ids = packages_except_main(&resolve, main_package, false);
+    let ids = packages_except_main(resolve, main_package, false);
     let mut printer = WitPrinter::default();
-    printer.print(&resolve, main_package, &ids)?;
+    printer.print(resolve, main_package, &ids)?;
     let wit = printer.output.to_string();
     Ok(wit)
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "original resolve is consumed; the enriched resolve is returned"
+)]
 pub(crate) fn rebuild_resolve(
     exim: &ExIm,
     resolve: Resolve,
@@ -54,7 +58,7 @@ pub(crate) fn rebuild_resolve(
     let world_id = resolve
         .select_world(&[main_pkg_id], None)
         .expect("default world must be found");
-    let added_interfaces = add_extended_interfaces(&exim, &mut resolve)?;
+    let added_interfaces = add_extended_interfaces(exim, &mut resolve)?;
     resolve
         .worlds
         .get_mut(world_id)
@@ -115,7 +119,7 @@ fn add_extended_interfaces(
 
     let (execution_ifc_id, execution_ifc) = find_interface(
         &IfcFqnName::from_parts("obelisk", "types", "execution", Some(OBELISK_TYPES_VERSION)),
-        &resolve,
+        resolve,
         &resolve.interfaces,
     )
     .expect(formatcp!("{OBELISK_TYPES_PACKAGE_NAME} must be found"));
