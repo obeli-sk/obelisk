@@ -32,7 +32,7 @@ jobs:
 
       - name: Run `obelisk generate config-schema`
         run: |
-          scripts/update-toml-schema.sh
+          nix develop --command scripts/update-toml-schema.sh
           if [ -n "$(git status --porcelain)" ]; then
             echo "::error::Uncommitted changes after running 'obelisk generate config-schema toml/schema.json'"
             exit 1
