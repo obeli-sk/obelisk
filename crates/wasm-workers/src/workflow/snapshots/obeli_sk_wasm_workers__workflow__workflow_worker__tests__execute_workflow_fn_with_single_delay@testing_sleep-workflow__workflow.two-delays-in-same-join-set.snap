@@ -131,7 +131,19 @@ expression: execution_log
       "event": {
         "Finished": {
           "result": {
-            "Ok": "None"
+            "Ok": {
+              "InfallibleOrResultOk": {
+                "type": {
+                  "result": {
+                    "ok": null,
+                    "err": null
+                  }
+                },
+                "value": {
+                  "ok": null
+                }
+              }
+            }
           },
           "http_client_traces": null
         }

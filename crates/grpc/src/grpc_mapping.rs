@@ -313,11 +313,6 @@ pub fn to_any<T: serde::Serialize>(serializable: T, uri: String) -> Option<prost
 impl From<FinishedExecutionResult> for grpc_gen::ResultDetail {
     fn from(finished_result: FinishedExecutionResult) -> Self {
         let value = match finished_result {
-            Ok(SupportedFunctionReturnValue::None) => {
-                grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
-                    return_value: None,
-                })
-            }
             Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(val_with_type)) => {
                 grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
                     return_value: to_any(

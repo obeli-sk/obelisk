@@ -8,7 +8,7 @@ use concepts::storage::{
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
-use concepts::{ClosingStrategy, JoinSetId};
+use concepts::{ClosingStrategy, JoinSetId, SUPPORTED_RETURN_VALUE_OK_EMPTY};
 use concepts::{ComponentId, Params, StrVariant};
 use concepts::{ExecutionId, prefixed_ulid::ExecutorId};
 use concepts::{FinishedExecutionResult, storage::HistoryEvent};
@@ -465,7 +465,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         debug!(now = %created_at, "Finish execution");
         let req = AppendRequest {
             event: ExecutionEventInner::Finished {
-                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionReturnValue::None),
+                result: FinishedExecutionResult::Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                 http_client_traces: None,
             },
             created_at,
@@ -480,7 +480,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         debug!(now = %created_at, "Append after finish should fail");
         let req = AppendRequest {
             event: ExecutionEventInner::Finished {
-                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionReturnValue::None),
+                result: FinishedExecutionResult::Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                 http_client_traces: None,
             },
             created_at,
@@ -768,7 +768,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                 vec![AppendRequest {
                     created_at: sim_clock.now(),
                     event: ExecutionEventInner::Finished {
-                        result: Ok(concepts::SupportedFunctionReturnValue::None),
+                        result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                         http_client_traces: None,
                     },
                 }],
@@ -781,7 +781,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                         event: JoinSetResponse::ChildExecutionFinished {
                             child_execution_id: child_id.clone(),
                             finished_version: child_version, // will remain at 1.
-                            result: Ok(concepts::SupportedFunctionReturnValue::None),
+                            result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                         },
                     },
                 },
@@ -817,7 +817,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
         let child_resp = vec![AppendRequest {
             created_at: sim_clock.now(),
             event: ExecutionEventInner::Finished {
-                result: Ok(concepts::SupportedFunctionReturnValue::None),
+                result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                 http_client_traces: None,
             },
         }];
@@ -836,7 +836,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                         event: JoinSetResponse::ChildExecutionFinished {
                             child_execution_id: child_id.clone(),
                             finished_version: child_version,
-                            result: Ok(concepts::SupportedFunctionReturnValue::None),
+                            result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                         },
                     },
                 },
@@ -879,7 +879,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                 event: JoinSetResponse::ChildExecutionFinished {
                     child_execution_id: child_a,
                     finished_version: Version(1),
-                    result: Ok(concepts::SupportedFunctionReturnValue::None),
+                    result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                 },
             }
         }
@@ -893,7 +893,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                 event: JoinSetResponse::ChildExecutionFinished {
                     child_execution_id: child_b,
                     finished_version: Version(1),
-                    result: Ok(concepts::SupportedFunctionReturnValue::None),
+                    result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                 },
             }
         }

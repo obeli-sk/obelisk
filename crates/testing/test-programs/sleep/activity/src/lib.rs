@@ -8,14 +8,16 @@ struct Component;
 export!(Component);
 
 impl Guest for Component {
-    fn sleep(duration: DurationEnum) {
+    fn sleep(duration: DurationEnum) -> Result<(), ()> {
         std::thread::sleep(Duration::from(duration));
+        Ok(())
     }
 
-    fn sleep_loop(duration: DurationEnum, iterations: u32) {
+    fn sleep_loop(duration: DurationEnum, iterations: u32) -> Result<(), ()> {
         for _ in 0..iterations {
-            Self::sleep(duration);
+            Self::sleep(duration).unwrap();
         }
+        Ok(())
     }
 }
 

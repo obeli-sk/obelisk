@@ -576,7 +576,9 @@ pub(crate) mod tests {
         use crate::engines::PoolingOptions;
         use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
         use concepts::time::Now;
-        use concepts::{FinishedExecutionError, PermanentFailureKind};
+        use concepts::{
+            FinishedExecutionError, PermanentFailureKind, SUPPORTED_RETURN_VALUE_OK_EMPTY,
+        };
         use concepts::{
             prefixed_ulid::RunId,
             storage::{ExecutionEventInner, Version},
@@ -662,7 +664,7 @@ pub(crate) mod tests {
 
         #[rstest::rstest]
         #[case(10, 100, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
-        #[case(10, 10, Ok(SupportedFunctionReturnValue::None))] // 0.1s -> Ok
+        #[case(10, 10, Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY))] // 0.1s -> Ok
         #[case(1500, 1, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
         #[tokio::test]
         async fn flaky_sleep_should_produce_temporary_timeout(
@@ -957,7 +959,7 @@ pub(crate) mod tests {
             assert_eq!(BODY, val.deref());
             // check types
             let (ok, err) =
-                assert_matches!(res.val_type(), Some(TypeWrapper::Result{ok, err}) => (ok, err));
+                assert_matches!(res.val_type(), TypeWrapper::Result{ok, err} => (ok, err));
             assert_eq!(Some(Box::new(TypeWrapper::String)), *ok);
             assert_eq!(Some(Box::new(TypeWrapper::String)), *err);
             assert_eq!(1, http_client_traces.len());
@@ -1287,7 +1289,7 @@ pub(crate) mod tests {
             }
             // check types
             let (ok, err) =
-                assert_matches!(res.val_type(), Some(TypeWrapper::Result{ok, err}) => (ok, err));
+                assert_matches!(res.val_type(), TypeWrapper::Result{ok, err} => (ok, err));
             assert_eq!(Some(Box::new(TypeWrapper::String)), *ok);
             assert_eq!(Some(Box::new(TypeWrapper::String)), *err);
             drop(db_connection);

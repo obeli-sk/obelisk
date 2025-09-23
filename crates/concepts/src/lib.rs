@@ -38,6 +38,10 @@ pub const SUFFIX_PKG_STUB: &str = "-obelisk-stub";
 
 pub type FinishedExecutionResult = Result<SupportedFunctionReturnValue, FinishedExecutionError>;
 
+#[cfg(any(test, feature = "test"))]
+const FINISHED_EXECUTION_RESULT_DUMMY: FinishedExecutionResult =
+    Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY);
+
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FinishedExecutionError {
     // Activity only, because workflows will be retried forever
@@ -552,20 +556,29 @@ impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
 
 #[derive(Clone, derive_more::Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SupportedFunctionReturnValue {
-    None,
     // Top level type is result<_,_> with Err variant
     FallibleResultErr(#[debug(skip)] WastValWithType),
     // All other top level types
     InfallibleOrResultOk(#[debug(skip)] WastValWithType),
 }
+pub const SUPPORTED_RETURN_VALUE_OK_EMPTY: SupportedFunctionReturnValue =
+    SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
+        r#type: TypeWrapper::Result {
+            ok: None,
+            err: None,
+        },
+        value: WastVal::Result(Ok(None)),
+    });
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResultParsingError {
-    #[error("result cannot be parsed, multi-value results are not supported")]
+    #[error("return value must not be empty")]
+    NoValue,
+    #[error("return value cannot be parsed, multi-value results are not supported")]
     MultiValue,
-    #[error("result cannot be parsed, {0}")]
+    #[error("return value cannot be parsed, {0}")]
     TypeConversionError(#[from] val_json::type_wrapper::TypeConversionError),
-    #[error("result cannot be parsed, {0}")]
+    #[error("return value cannot be parsed, {0}")]
     ValueConversionError(#[from] val_json::wast_val::WastValConversionError),
 }
 
@@ -576,7 +589,7 @@ impl SupportedFunctionReturnValue {
         mut iter: I,
     ) -> Result<Self, ResultParsingError> {
         if iter.len() == 0 {
-            Ok(Self::None)
+            Err(ResultParsingError::NoValue)
         } else if iter.len() == 1 {
             let (val, r#type) = iter.next().unwrap();
             let r#type = TypeWrapper::try_from(r#type)?;
@@ -622,43 +635,37 @@ impl SupportedFunctionReturnValue {
 
     #[cfg(feature = "test")]
     #[must_use]
-    pub fn val_type(&self) -> Option<&TypeWrapper> {
+    pub fn val_type(&self) -> &TypeWrapper {
         match self {
-            SupportedFunctionReturnValue::None => None,
             SupportedFunctionReturnValue::FallibleResultErr(v)
-            | SupportedFunctionReturnValue::InfallibleOrResultOk(v) => Some(&v.r#type),
+            | SupportedFunctionReturnValue::InfallibleOrResultOk(v) => &v.r#type,
         }
     }
 
     #[must_use]
-    pub fn value(&self) -> Option<&WastVal> {
+    pub fn value(&self) -> &WastVal {
         match self {
-            SupportedFunctionReturnValue::None => None,
             SupportedFunctionReturnValue::FallibleResultErr(v)
-            | SupportedFunctionReturnValue::InfallibleOrResultOk(v) => Some(&v.value),
+            | SupportedFunctionReturnValue::InfallibleOrResultOk(v) => &v.value,
         }
     }
 
     #[must_use]
-    pub fn into_value(self) -> Option<WastVal> {
+    pub fn into_value(self) -> WastVal {
         match self {
-            SupportedFunctionReturnValue::None => None,
             SupportedFunctionReturnValue::FallibleResultErr(v)
-            | SupportedFunctionReturnValue::InfallibleOrResultOk(v) => Some(v.value),
+            | SupportedFunctionReturnValue::InfallibleOrResultOk(v) => v.value,
         }
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
-        match self {
-            SupportedFunctionReturnValue::None => 0,
-            _ => 1,
-        }
+        1
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        matches!(self, Self::None)
+        false
     }
 
     #[must_use]
@@ -732,7 +739,7 @@ impl FunctionExtension {
 pub struct FunctionMetadata {
     pub ffqn: FunctionFqn,
     pub parameter_types: ParameterTypes,
-    pub return_type: Option<ReturnType>,
+    pub return_type: ReturnType,
     pub extension: Option<FunctionExtension>,
     /// Externally submittable: primary functions + `-schedule` extended, but no activity stubs
     pub submittable: bool,
@@ -761,14 +768,11 @@ impl Display for FunctionMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{ffqn}: func{params}",
+            "{ffqn}: func{params} -> {return_type}",
             ffqn = self.ffqn,
-            params = self.parameter_types
-        )?;
-        if let Some(return_type) = &self.return_type {
-            write!(f, " -> {return_type}")?;
-        }
-        Ok(())
+            params = self.parameter_types,
+            return_type = self.return_type,
+        )
     }
 }
 
@@ -1820,6 +1824,7 @@ pub enum HashType {
     serde_with::DeserializeFromStr,
 )]
 pub struct ContentDigest(pub Digest);
+#[cfg(any(test, feature = "test"))]
 pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest {
     hash_type: HashType::Sha256,
     hash_base16: StrVariant::empty(),
@@ -1909,6 +1914,15 @@ pub struct ReturnType {
     pub type_wrapper: TypeWrapper,
     pub wit_type: StrVariant,
 }
+
+#[cfg(any(test, feature = "test"))]
+pub const RETURN_TYPE_DUMMY: ReturnType = ReturnType {
+    type_wrapper: TypeWrapper::Result {
+        ok: None,
+        err: None,
+    },
+    wit_type: StrVariant::Static("result"),
+};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, derive_more::Display)]
 #[derive_where::derive_where(PartialEq)]

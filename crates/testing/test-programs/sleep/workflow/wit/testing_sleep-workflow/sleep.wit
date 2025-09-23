@@ -4,14 +4,14 @@ interface workflow {
     use obelisk:types/time@2.0.0.{duration, schedule-at};
     use obelisk:types/execution@2.0.0.{execution-id};
 
-    sleep-host-activity: func(duration: duration);
-    sleep-schedule-at: func(schedule-at: schedule-at);
-    sleep-activity: func(duration: duration);
-    sleep-activity-submit: func(duration: duration) -> execution-id;
-    reschedule: func(duration: duration, iterations: u8);
-    sleep-random: func(min-millis: u64, max-millis-inclusive: u64);
+    sleep-host-activity: func(duration: duration) -> result;
+    sleep-schedule-at: func(schedule-at: schedule-at) -> result;
+    sleep-activity: func(duration: duration) -> result;
+    sleep-activity-submit: func(duration: duration) -> result<execution-id>;
+    reschedule: func(duration: duration, iterations: u8) -> result;
+    sleep-random: func(min-millis: u64, max-millis-inclusive: u64) -> result;
 
-    two-delays-in-same-join-set: func();
-    join-next-produces-all-processed-error: func();
+    two-delays-in-same-join-set: func() -> result;
+    join-next-produces-all-processed-error: func() -> result;
 
 }

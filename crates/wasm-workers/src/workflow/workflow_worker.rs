@@ -223,26 +223,30 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                                 let workflow_ctx = store_ctx.data_mut();
                                 let called_at = workflow_ctx.clock_fn.now();
                                 let val = workflow_ctx
-                                        .call_imported_fn(imported_fn_call, called_at, &ffqn)
-                                        .await
-                                        .map_err(wasmtime::Error::new)?;
+                                    .call_imported_fn(imported_fn_call, called_at, &ffqn)
+                                    .await
+                                    .map_err(wasmtime::Error::new)?;
 
-                                match (results.len(), val) {
-                                    (0, None) => Ok(()),
-                                    (1, Some(val)) => {
-                                        results[0] = val;
-                                        Ok(())
-                                    }
-                                    (expected, got) => {
-                                        error!(
-                                            "Unexpected result length or type, runtime expects {expected}, got: {got:?}",
-                                        );
-                                        Err(wasmtime::Error::new(WorkflowFunctionError::ImportedFunctionCallError {
+                                if results.len() == 1 {
+                                    results[0] = val;
+                                    Ok(())
+                                } else {
+                                    error!(
+                                        "Function expects incorrect result length {}",
+                                        results.len()
+                                    );
+                                    Err(wasmtime::Error::new(
+                                        WorkflowFunctionError::ImportedFunctionCallError {
                                             ffqn,
-                                            reason: StrVariant::Static("unexpected result length"),
-                                            detail: Some(format!("expected {expected}, got: {got:?}")),
-                                        }))
-                                    }
+                                            reason: StrVariant::Static(
+                                                "function expects incorrect result length",
+                                            ),
+                                            detail: Some(format!(
+                                                "function expects incorrect result length {}",
+                                                results.len()
+                                            )),
+                                        },
+                                    ))
                                 }
                             })
                         }
@@ -1444,7 +1448,7 @@ pub(crate) mod tests {
                 .unwrap(),
             Ok(res) => res
         );
-        let val = assert_matches!(res.value(), Some(wast_val) => wast_val);
+        let val = res.value();
         let val = assert_matches!(val, WastVal::Result(Ok(Some(val))) => val).deref();
         let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
@@ -1543,7 +1547,7 @@ pub(crate) mod tests {
                 .unwrap(),
             Ok(res) => res
         );
-        let val = assert_matches!(res.value(), Some(wast_val) => wast_val);
+        let val = res.value();
         let val = assert_matches!(val, WastVal::Result(Ok(Some(val))) => val).deref();
         let val = assert_matches!(val, WastVal::List(vec) => vec);
         assert_eq!(concurrency as usize, val.len());
@@ -1634,7 +1638,15 @@ pub(crate) mod tests {
         let res = db_pool.connection().get(&execution_id).await.unwrap();
         assert_matches!(
             res.into_finished_result().unwrap(),
-            Ok(SupportedFunctionReturnValue::None)
+            Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(
+                WastValWithType {
+                    r#type: TypeWrapper::Result {
+                        ok: None,
+                        err: None,
+                    },
+                    value: WastVal::Result(Ok(None)),
+                }
+            ))
         );
         sim_clock.move_time_forward(SLEEP_DURATION);
         // New execution should be pending.
@@ -1735,7 +1747,7 @@ pub(crate) mod tests {
                 .unwrap(),
             Ok(res) => res
         );
-        let val = assert_matches!(res.value(), Some(wast_val) => wast_val);
+        let val = res.value();
         let val = assert_matches!(val, WastVal::Result(Err(Some(val))) => val).deref();
         let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!("invalid format", val);
@@ -1764,7 +1776,7 @@ pub(crate) mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
-    async fn stub(
+    async fn stubbing_should_work(
         #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
     ) {
         const FFQN_WORKFLOW_STUB: FunctionFqn = FunctionFqn::new_static_tuple(
@@ -1859,7 +1871,12 @@ pub(crate) mod tests {
                 WastValWithType { value, .. }
             )) => value
         );
-        assert_eq!(WastVal::String(format!("stubbing {INPUT_PARAM}")), value);
+        assert_eq!(
+            WastVal::Result(Ok(Some(Box::new(WastVal::String(format!(
+                "stubbing {INPUT_PARAM}"
+            )))))),
+            value
+        );
 
         drop(exec_task);
         db_pool.close().await.unwrap();
@@ -2028,7 +2045,15 @@ pub(crate) mod tests {
         insta::with_settings!({snapshot_suffix => ffqn.to_string().replace(':', "_")}, {insta::assert_json_snapshot!(execution_log)});
         assert_matches!(
             execution_log.into_finished_result(),
-            Some(Ok(SupportedFunctionReturnValue::None))
+            Some(Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(
+                WastValWithType {
+                    r#type: TypeWrapper::Result {
+                        ok: None,
+                        err: None,
+                    },
+                    value: WastVal::Result(Ok(None)),
+                }
+            )))
         );
 
         drop(exec_task);
@@ -2192,7 +2217,15 @@ pub(crate) mod tests {
         let res = db_connection.get(&execution_id).await.unwrap();
         assert_matches!(
             res.into_finished_result().unwrap(),
-            Ok(SupportedFunctionReturnValue::None)
+            Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(
+                WastValWithType {
+                    r#type: TypeWrapper::Result {
+                        ok: None,
+                        err: None,
+                    },
+                    value: WastVal::Result(Ok(None)),
+                }
+            ))
         );
         drop(exec_task);
         db_pool.close().await.unwrap();

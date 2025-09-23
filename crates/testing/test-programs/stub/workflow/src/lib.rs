@@ -16,10 +16,10 @@ struct Component;
 export!(Component);
 
 impl Guest for Component {
-    fn submit_stub_await(arg: String) -> String {
+    fn submit_stub_await(arg: String) -> Result<String, ()> {
         let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
         let execution_id = activity_ext::foo_submit(&join_set, &arg);
-        activity_stub::foo_stub(&execution_id, Ok(&format!("stubbing {arg}")))
+        activity_stub::foo_stub(&execution_id, Ok(Ok(&format!("stubbing {arg}"))))
             .expect("stubbed activity must accept returned value once");
         let (actual_execution_id, ret_val) =
             activity_ext::foo_await_next(&join_set).expect("stubbed execution result above");
@@ -27,43 +27,47 @@ impl Guest for Component {
         ret_val
     }
 
-    fn submit_await(arg: String) -> String {
+    fn submit_await(arg: String) -> Result<String, ()> {
         activity::foo(&arg)
     }
 
-    fn noret_submit_await() {
-        activity::noret();
+    fn noret_submit_await() -> Result<(), ()> {
+        activity::noret()
     }
 
-    fn submit_race_join_next_stub() {
+    fn submit_race_join_next_stub() -> Result<(), ()> {
         submit_race_join_next(RaceConfig::Stub);
+        Ok(())
     }
-    fn submit_race_join_next_stub_error() {
+    fn submit_race_join_next_stub_error() -> Result<(), ()> {
         submit_race_join_next(RaceConfig::StubError);
+        Ok(())
     }
-    fn submit_race_join_next_delay() {
+    fn submit_race_join_next_delay() -> Result<(), ()> {
         submit_race_join_next(RaceConfig::Delay);
+        Ok(())
     }
 
     fn stub_subworkflow(execution_id: ExecutionId, retval: String) -> Result<(), StubError> {
-        activity_stub::foo_stub(&execution_id, Ok(&format!("stubbing {retval}")))
+        activity_stub::foo_stub(&execution_id, Ok(Ok(&format!("stubbing {retval}"))))
     }
 
-    fn await_next_produces_all_processed_error() {
+    fn await_next_produces_all_processed_error() -> Result<(), ()> {
         let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
         let AwaitNextExtensionError::AllProcessed =
             activity_ext::foo_await_next(&join_set).unwrap_err()
         else {
             unreachable!()
         };
+        Ok(())
     }
 
     // Used for testing Join Set Closing
-    fn join_next_in_scope() {
+    fn join_next_in_scope() -> Result<(), ()> {
         fn add_exec(join_set: &JoinSetId, names: Vec<&'static str>) {
             for name in names {
                 let execution_id = activity_ext::foo_submit(join_set, name);
-                activity_stub::foo_stub(&execution_id, Ok(name))
+                activity_stub::foo_stub(&execution_id, Ok(Ok(name)))
                     .expect("stubbed activity must accept returned value once");
             }
         }
@@ -80,10 +84,12 @@ impl Guest for Component {
         log::info("after scope closed");
         let join_set_c = new_join_set_named("c", ClosingStrategy::Complete).unwrap();
         add_exec(&join_set_c, vec!["c", "cc"]);
+        Ok(())
     }
 
-    fn invoke_expect_execution_error() {
+    fn invoke_expect_execution_error() -> Result<(), ()> {
         noret_invoke().unwrap_err();
+        Ok(())
     }
 }
 
@@ -104,7 +110,7 @@ fn submit_race_join_next(config: RaceConfig) {
     );
     match config {
         RaceConfig::Stub => {
-            activity_stub::foo_stub(&execution_id, Ok(OK_STUB_RESP))
+            activity_stub::foo_stub(&execution_id, Ok(Ok(OK_STUB_RESP)))
                 .expect("stubbed activity must accept returned value once");
         }
         RaceConfig::StubError => {
@@ -123,7 +129,7 @@ fn submit_race_join_next(config: RaceConfig) {
             match activity_ext::foo_get(&execution_id) {
                 Ok(ok) => {
                     assert_eq!(RaceConfig::Stub, config);
-                    assert_eq!(OK_STUB_RESP, ok);
+                    assert_eq!(Ok(OK_STUB_RESP), ok.as_deref());
                 }
                 Err(GetExtensionError::ExecutionFailed(ExecutionFailed {
                     execution_id: err_id,
@@ -143,7 +149,7 @@ fn submit_race_join_next(config: RaceConfig) {
             assert_eq!(RaceConfig::Delay, config);
             assert_eq!(delay_id.id, reported_id.id);
             // Cannot cancel waiting for the execution when closing join set, just mock it:
-            activity_stub::foo_stub(&execution_id, Ok(OK_STUB_RESP))
+            activity_stub::foo_stub(&execution_id, Ok(Ok(OK_STUB_RESP)))
                 .expect("stubbed activity must accept returned value once");
         }
     }

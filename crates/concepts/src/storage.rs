@@ -198,7 +198,7 @@ pub enum JoinSetResponse {
         child_execution_id: ExecutionIdDerived,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = Version(2)))]
         finished_version: Version,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(crate::SupportedFunctionReturnValue::None)))]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::FINISHED_EXECUTION_RESULT_DUMMY))]
         result: FinishedExecutionResult,
     },
 }
@@ -315,7 +315,7 @@ pub enum ExecutionEventInner {
     // also when
     #[display("Finished")]
     Finished {
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(crate::SupportedFunctionReturnValue::None)))]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::FINISHED_EXECUTION_RESULT_DUMMY))]
         result: FinishedExecutionResult,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
         http_client_traces: Option<Vec<HttpClientTrace>>,
@@ -437,7 +437,7 @@ pub enum HistoryEvent {
     #[display("Stub({target_execution_id})")]
     Stub {
         target_execution_id: ExecutionIdDerived,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(crate::SupportedFunctionReturnValue::None)))]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::FINISHED_EXECUTION_RESULT_DUMMY))]
         result: FinishedExecutionResult, // Only stored for nondeterminism checks. TODO: Consider using a hashed value.
         persist_result: Result<(), ()>, // Is the Row (target_execution_id,Version:1) what is expected?
     },

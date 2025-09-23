@@ -240,9 +240,9 @@ message FinishedStatus {
 // Mirrors FinishedExecutionResult with extracted Ok/FallibleError
 message ResultDetail {
     message Ok {
-        optional google.protobuf.Any return_value = 1;
+        google.protobuf.Any return_value = 1;
     }
-    message FallibleError {
+    message FallibleError { // TODO: rename to Err
         // The top level JSON attribute "err" must be present.
         google.protobuf.Any return_value = 1;
     }

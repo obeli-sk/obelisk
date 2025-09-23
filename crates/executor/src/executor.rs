@@ -644,7 +644,7 @@ pub mod simple_worker {
     use crate::worker::{Worker, WorkerContext, WorkerResult};
     use async_trait::async_trait;
     use concepts::{
-        FunctionFqn, FunctionMetadata, ParameterTypes,
+        FunctionFqn, FunctionMetadata, ParameterTypes, RETURN_TYPE_DUMMY,
         storage::{HistoryEvent, Version},
     };
     use indexmap::IndexMap;
@@ -678,7 +678,7 @@ pub mod simple_worker {
                 exported: [FunctionMetadata {
                     ffqn: ffqn.clone(),
                     parameter_types: ParameterTypes::default(),
-                    return_type: None,
+                    return_type: RETURN_TYPE_DUMMY,
                     extension: None,
                     submittable: true,
                 }],
@@ -694,7 +694,7 @@ pub mod simple_worker {
                 exported: [FunctionMetadata {
                     ffqn: FFQN_SOME,
                     parameter_types: ParameterTypes::default(),
-                    return_type: None,
+                    return_type: RETURN_TYPE_DUMMY,
                     extension: None,
                     submittable: true,
                 }],
@@ -731,8 +731,8 @@ mod tests {
     use concepts::storage::{ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState};
     use concepts::time::Now;
     use concepts::{
-        ClosingStrategy, FunctionMetadata, JoinSetKind, ParameterTypes, Params, StrVariant,
-        SupportedFunctionReturnValue, TrapKind,
+        ClosingStrategy, FunctionMetadata, JoinSetKind, ParameterTypes, Params, RETURN_TYPE_DUMMY,
+        SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant, SupportedFunctionReturnValue, TrapKind,
     };
     use db_tests::Database;
     use indexmap::IndexMap;
@@ -740,6 +740,8 @@ mod tests {
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::set_up;
     use test_utils::sim_clock::{ConstClock, SimClock};
+    use val_json::type_wrapper::TypeWrapper;
+    use val_json::wast_val::{WastVal, WastValWithType};
 
     pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
 
@@ -808,7 +810,7 @@ mod tests {
             pool,
             exec_config,
             Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-                SupportedFunctionReturnValue::None,
+                SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 Version::new(2),
                 None,
             ))),
@@ -819,7 +821,15 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionReturnValue::None),
+                    result: Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(
+                        WastValWithType {
+                            r#type: TypeWrapper::Result {
+                                ok: None,
+                                err: None,
+                            },
+                            value: WastVal::Result(Ok(None)),
+                        }
+                    )),
                     http_client_traces: None
                 },
                 created_at: _,
@@ -844,7 +854,7 @@ mod tests {
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-            SupportedFunctionReturnValue::None,
+            SUPPORTED_RETURN_VALUE_OK_EMPTY,
             Version::new(2),
             None,
         )));
@@ -879,7 +889,15 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionReturnValue::None),
+                    result: Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(
+                        WastValWithType {
+                            r#type: TypeWrapper::Result {
+                                ok: None,
+                                err: None,
+                            },
+                            value: WastVal::Result(Ok(None)),
+                        }
+                    )),
                     http_client_traces: None
                 },
                 created_at: _,
@@ -1030,7 +1048,7 @@ mod tests {
                 Version::new(4),
                 (
                     vec![],
-                    WorkerResult::Ok(SupportedFunctionReturnValue::None, Version::new(4), None),
+                    WorkerResult::Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY, Version::new(4), None),
                 ),
             )])),
         )));
@@ -1077,7 +1095,13 @@ mod tests {
             execution_log.events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionReturnValue::None),
+                    result: Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
+                        r#type: TypeWrapper::Result {
+                            ok: None,
+                            err: None,
+                        },
+                        value: WastVal::Result(Ok(None)),
+                    })),
                     http_client_traces: None
                 },
                 created_at: finished_at,
@@ -1435,11 +1459,11 @@ mod tests {
 
         let worker = Arc::new(SleepyWorker {
             duration: lock_expiry + Duration::from_millis(1), // sleep more than allowed by the lock expiry
-            result: SupportedFunctionReturnValue::None,
+            result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
             exported: [FunctionMetadata {
                 ffqn: FFQN_SOME,
                 parameter_types: ParameterTypes::default(),
-                return_type: None,
+                return_type: RETURN_TYPE_DUMMY,
                 extension: None,
                 submittable: true,
             }],

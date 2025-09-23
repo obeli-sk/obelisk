@@ -164,7 +164,7 @@ impl DirectFnCall<'_> {
         self,
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
-    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+    ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let DirectFnCall {
             ffqn,
             fn_component_id,
@@ -439,7 +439,7 @@ impl AwaitNextFnCall {
 pub(crate) struct StubFnCall<'a> {
     target_ffqn: FunctionFqn,
     target_execution_id: ExecutionIdDerived,
-    target_fn_metadata_return_type: Option<ReturnType>,
+    target_fn_metadata_return_type: ReturnType,
     parent_id: ExecutionId,
     join_set_id: JoinSetId,
     #[debug(skip)]
@@ -528,16 +528,15 @@ impl StubFnCall<'_> {
             }
         })?;
         // Add TypeWrapper
-        let result = match (return_value_or_err, target_fn_metadata_return_type) {
-            (WastVal::Result(Err(None)), _) => Err(FinishedExecutionError::new_stubbed_error()),
-            (WastVal::Result(Ok(Some(return_value))), Some(return_type)) => {
+        let result = match return_value_or_err {
+            WastVal::Result(Err(None)) => Err(FinishedExecutionError::new_stubbed_error()),
+            WastVal::Result(Ok(Some(return_value))) => {
                 // TODO: type check
                 Ok(SupportedFunctionReturnValue::from(WastValWithType {
-                    r#type: return_type.type_wrapper,
+                    r#type: target_fn_metadata_return_type.type_wrapper,
                     value: *return_value,
                 }))
             }
-            (WastVal::Result(Ok(None)), None) => Ok(SupportedFunctionReturnValue::None),
             other => {
                 error!("Unexpected stub return value {other:?}");
                 return Err(WorkflowFunctionError::ImportedFunctionCallError {
@@ -626,9 +625,7 @@ impl GetFnCall {
             .get_processed_response(&child_execution_id, &target_ffqn)
         {
             // Return Ok(None) or Ok(retval)
-            Ok(option) => wasmtime::component::Val::Result(Ok(
-                option.map(|wast_val| Box::new(wast_val.as_val()))
-            )),
+            Ok(wast_val) => wasmtime::component::Val::Result(Ok(Some(Box::new(wast_val.as_val())))),
             Err(get_extension_err) => wasmtime::component::Val::Result(Err(Some(Box::new(
                 wasmtime::component::Val::from(get_extension_err),
             )))),
@@ -650,7 +647,7 @@ impl InvokeFnCall<'_> {
         self,
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
-    ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
+    ) -> Result<Val, WorkflowFunctionError> {
         let InvokeFnCall {
             target_ffqn,
             fn_component_id,
@@ -973,7 +970,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         &mut self,
         schedule_at: HistoryEventScheduleAt,
         wasm_backtrace: Option<storage::WasmBacktrace>,
-    ) -> Result<(), WorkflowFunctionError> {
+    ) -> Result<DateTime<Utc>, WorkflowFunctionError> {
         let expires_at_if_new = schedule_at
             .as_date_time(self.clock_fn.now())
             .map_err(|err| {
@@ -1101,8 +1098,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.random_u64(min, max_exclusive, wasm_backtrace).await;
-                        Ok((result?,))
+                        let random_u64 =
+                            host.random_u64(min, max_exclusive, wasm_backtrace).await?;
+                        Ok((random_u64,))
                     })
                 },
             )
@@ -1119,10 +1117,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host
+                        let random_u64 = host
                             .random_u64_inclusive(min, max_inclusive, wasm_backtrace)
-                            .await;
-                        Ok((result?,))
+                            .await?;
+                        Ok((random_u64,))
                     })
                 },
             )
@@ -1139,10 +1137,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host
+                        let random_string = host
                             .random_string(min_length, max_length_exclusive, wasm_backtrace)
-                            .await;
-                        Ok((result?,))
+                            .await?;
+                        Ok((random_string,))
                     })
                 },
             )
@@ -1160,8 +1158,8 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     Box::new(async move {
                         let (host, wasm_backtrace) = Self::get_host_maybe_capture_backtrace(&mut caller);
                         let join_set_id = host.resource_to_join_set_id(&join_set_id)?.clone();
-                        let result = host.submit_delay(join_set_id, schedule_at, wasm_backtrace).await;
-                        Ok((result?,))
+                        let delay_id = host.submit_delay(join_set_id, schedule_at, wasm_backtrace).await?;
+                        Ok((delay_id,))
                     })
                 },
             )
@@ -1179,7 +1177,8 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        host.sleep(schedule_at, wasm_backtrace).await
+                        let expires_at = host.sleep(schedule_at, wasm_backtrace).await?;
+                        Ok((expires_at,))
                     })
                 },
             )
@@ -1196,8 +1195,8 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.new_join_set_named(name, wasm_backtrace).await;
-                        Ok((result?,))
+                        let resource_js = host.new_join_set_named(name, wasm_backtrace).await?;
+                        Ok((resource_js,))
                     })
                 },
             )
@@ -1214,8 +1213,8 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let result = host.new_join_set_generated(wasm_backtrace).await;
-                        Ok((result?,))
+                        let resource_js = host.new_join_set_generated(wasm_backtrace).await?;
+                        Ok((resource_js,))
                     })
                 },
             )
@@ -1269,27 +1268,23 @@ impl<C: ClockFn> WorkflowCtx<C> {
         imported_fn_call: ImportedFnCall<'_>,
         called_at: DateTime<Utc>,
         called_ffqn: &FunctionFqn,
-    ) -> Result<Option<wasmtime::component::Val>, WorkflowFunctionError> {
+    ) -> Result<Val, WorkflowFunctionError> {
         match imported_fn_call {
             ImportedFnCall::Direct(direct) => direct.call_imported_fn(self, called_at).await,
-            ImportedFnCall::Schedule(schedule) => schedule
-                .call_imported_fn(self, called_at, called_ffqn)
-                .await
-                .map(Some),
+            ImportedFnCall::Schedule(schedule) => {
+                schedule
+                    .call_imported_fn(self, called_at, called_ffqn)
+                    .await
+            }
             ImportedFnCall::SubmitExecution(submit) => {
-                submit.call_imported_fn(self, called_at).await.map(Some)
+                submit.call_imported_fn(self, called_at).await
             }
             ImportedFnCall::AwaitNext(await_next) => {
-                await_next.call_imported_fn(self, called_at).await.map(Some)
+                await_next.call_imported_fn(self, called_at).await
             }
-            ImportedFnCall::Stub(stub) => stub
-                .call_imported_fn(self, called_at, called_ffqn)
-                .await
-                .map(Some),
-            ImportedFnCall::Get(get) => Ok(Some(get.call_imported_fn(self))),
-            ImportedFnCall::Invoke(invoke) => {
-                invoke.call_imported_fn(self, called_at).await.map(Some)
-            }
+            ImportedFnCall::Stub(stub) => stub.call_imported_fn(self, called_at, called_ffqn).await,
+            ImportedFnCall::Get(get) => Ok(get.call_imported_fn(self)),
+            ImportedFnCall::Invoke(invoke) => invoke.call_imported_fn(self, called_at).await,
         }
     }
 }
@@ -1468,8 +1463,9 @@ mod workflow_support {
             &mut self,
             schedule_at: HistoryEventScheduleAt,
             wasm_backtrace: Option<storage::WasmBacktrace>,
-        ) -> wasmtime::Result<()> {
-            Ok(self.persist_sleep(schedule_at, wasm_backtrace).await?)
+        ) -> wasmtime::Result<host_exports::v2_0_0::obelisk::types::time::Datetime> {
+            let expires_at = self.persist_sleep(schedule_at, wasm_backtrace).await?;
+            Ok(host_exports::v2_0_0::obelisk::types::time::Datetime::try_from(expires_at)?)
         }
 
         pub(crate) async fn new_join_set_named(
@@ -1606,7 +1602,7 @@ pub(crate) mod tests {
     use concepts::time::{ClockFn, Now};
     use concepts::{
         ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, JoinSetId, JoinSetKind,
-        SUFFIX_PKG_EXT,
+        RETURN_TYPE_DUMMY, SUFFIX_PKG_EXT, SUPPORTED_RETURN_VALUE_OK_EMPTY,
     };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
@@ -1622,6 +1618,8 @@ pub(crate) mod tests {
     use test_utils::get_seed;
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info, info_span};
+    use val_json::type_wrapper::TypeWrapper;
+    use val_json::wast_val::{WastVal, WastValWithType};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const FFQN_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
@@ -1708,7 +1706,7 @@ pub(crate) mod tests {
                 exports: [FunctionMetadata {
                     ffqn: ffqn.clone(),
                     parameter_types: ParameterTypes::default(),
-                    return_type: None,
+                    return_type: RETURN_TYPE_DUMMY,
                     extension: None,
                     submittable: true,
                 }],
@@ -1745,140 +1743,138 @@ pub(crate) mod tests {
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");
-                let res =
-                    match step {
-                        WorkflowStep::Sleep { millis } => {
-                            workflow_ctx
-                                .persist_sleep(
-                                    HistoryEventScheduleAt::In(Duration::from_millis(u64::from(
-                                        *millis,
-                                    ))),
-                                    None,
-                                )
-                                .await
-                        }
-                        WorkflowStep::Call { ffqn } => {
-                            let (_fn_metadata, fn_component_id, fn_retry_config) =
+                let res = match step {
+                    WorkflowStep::Sleep { millis } => workflow_ctx
+                        .persist_sleep(
+                            HistoryEventScheduleAt::In(Duration::from_millis(u64::from(*millis))),
+                            None,
+                        )
+                        .await
+                        .map(|_| ()),
+                    WorkflowStep::Call { ffqn } => {
+                        let (_fn_metadata, fn_component_id, fn_retry_config) =
                             self.fn_registry.get_by_exported_function(ffqn).expect(
                                 "function obtained from `fn_registry.all_exports()` must be found",
                             );
-                            workflow_ctx
-                                .call_imported_fn(
-                                    ImportedFnCall::Direct(DirectFnCall {
-                                        ffqn: ffqn.clone(),
-                                        fn_component_id,
-                                        fn_retry_config,
-                                        params: &[],
-                                        wasm_backtrace: None,
-                                    }),
-                                    self.clock_fn.now(),
-                                    ffqn,
-                                )
-                                .await
-                                .map(|_| ())
-                        }
+                        workflow_ctx
+                            .call_imported_fn(
+                                ImportedFnCall::Direct(DirectFnCall {
+                                    ffqn: ffqn.clone(),
+                                    fn_component_id,
+                                    fn_retry_config,
+                                    params: &[],
+                                    wasm_backtrace: None,
+                                }),
+                                self.clock_fn.now(),
+                                ffqn,
+                            )
+                            .await
+                            .map(|_| ())
+                    }
 
-                        WorkflowStep::JoinSetCreateNamed { join_set_id } => {
-                            assert_eq!(JoinSetKind::Named, join_set_id.kind);
-                            workflow_ctx
-                                .new_join_set_named(join_set_id.name.to_string(), None)
-                                .await
-                                .unwrap()
-                                .unwrap();
-                            Ok(())
-                        }
+                    WorkflowStep::JoinSetCreateNamed { join_set_id } => {
+                        assert_eq!(JoinSetKind::Named, join_set_id.kind);
+                        workflow_ctx
+                            .new_join_set_named(join_set_id.name.to_string(), None)
+                            .await
+                            .unwrap()
+                            .unwrap();
+                        Ok(())
+                    }
 
-                        WorkflowStep::SubmitExecution { target_ffqn } => {
-                            // Create new join set
+                    WorkflowStep::SubmitExecution { target_ffqn } => {
+                        // Create new join set
+                        let join_set_resource =
+                            workflow_ctx.new_join_set_generated(None).await.unwrap();
+                        let join_set_id = workflow_ctx
+                            .resource_table
+                            .get(&join_set_resource)
+                            .unwrap()
+                            .clone();
+                        let target_ifc = target_ffqn.ifc_fqn.clone();
+                        let submit_ffqn = FunctionFqn {
+                            ifc_fqn: IfcFqnName::from_parts(
+                                target_ifc.namespace(),
+                                &format!("{}{SUFFIX_PKG_EXT}", target_ifc.package_name()),
+                                target_ifc.ifc_name(),
+                                target_ifc.version(),
+                            ),
+                            function_name: concepts::FnName::from(format!(
+                                "{}{}",
+                                target_ffqn.function_name, SUFFIX_FN_SUBMIT
+                            )),
+                        };
+                        let (_fn_metadata, target_component_id, target_retry_config) = self
+                            .fn_registry
+                            .get_by_exported_function(target_ffqn)
+                            .expect(
+                                "function obtained from `fn_registry.all_exports()` must be found",
+                            );
+                        workflow_ctx
+                            .call_imported_fn(
+                                ImportedFnCall::SubmitExecution(SubmitExecutionFnCall {
+                                    target_ffqn: target_ffqn.clone(),
+                                    target_component_id,
+                                    target_retry_config,
+                                    join_set_id,
+                                    target_params: &[],
+                                    wasm_backtrace: None,
+                                }),
+                                self.clock_fn.now(),
+                                &submit_ffqn,
+                            )
+                            .await
+                            .map(|_| ())
+                    }
+                    WorkflowStep::SubmitDelay {
+                        millis,
+                        join_set_id,
+                    } => {
+                        // Create new join set
+                        let join_set_id = if let Some(join_set_id) = join_set_id {
+                            join_set_id.clone()
+                        } else {
                             let join_set_resource =
                                 workflow_ctx.new_join_set_generated(None).await.unwrap();
-                            let join_set_id = workflow_ctx
+                            workflow_ctx
                                 .resource_table
                                 .get(&join_set_resource)
                                 .unwrap()
-                                .clone();
-                            let target_ifc = target_ffqn.ifc_fqn.clone();
-                            let submit_ffqn = FunctionFqn {
-                                ifc_fqn: IfcFqnName::from_parts(
-                                    target_ifc.namespace(),
-                                    &format!("{}{SUFFIX_PKG_EXT}", target_ifc.package_name()),
-                                    target_ifc.ifc_name(),
-                                    target_ifc.version(),
-                                ),
-                                function_name: concepts::FnName::from(format!(
-                                    "{}{}",
-                                    target_ffqn.function_name, SUFFIX_FN_SUBMIT
-                                )),
-                            };
-                            let (_fn_metadata, target_component_id, target_retry_config) =
-                            self.fn_registry.get_by_exported_function(target_ffqn).expect(
-                                "function obtained from `fn_registry.all_exports()` must be found",
-                            );
-                            workflow_ctx
-                                .call_imported_fn(
-                                    ImportedFnCall::SubmitExecution(SubmitExecutionFnCall {
-                                        target_ffqn: target_ffqn.clone(),
-                                        target_component_id,
-                                        target_retry_config,
-                                        join_set_id,
-                                        target_params: &[],
-                                        wasm_backtrace: None,
-                                    }),
-                                    self.clock_fn.now(),
-                                    &submit_ffqn,
-                                )
-                                .await
-                                .map(|_| ())
-                        }
-                        WorkflowStep::SubmitDelay {
-                            millis,
-                            join_set_id,
-                        } => {
-                            // Create new join set
-                            let join_set_id = if let Some(join_set_id) = join_set_id {
-                                join_set_id.clone()
-                            } else {
-                                let join_set_resource =
-                                    workflow_ctx.new_join_set_generated(None).await.unwrap();
-                                workflow_ctx
-                                    .resource_table
-                                    .get(&join_set_resource)
-                                    .unwrap()
-                                    .clone()
-                            };
-                            workflow_ctx
-                                .submit_delay(
-                                    join_set_id,
-                                    HistoryEventScheduleAt::In(Duration::from_millis(u64::from(
-                                        *millis,
-                                    ))),
-                                    None,
-                                )
-                                .await
-                                .map(|_| ())
-                        }
-                        WorkflowStep::RandomU64 { min, max_inclusive } => {
-                            let value = workflow_ctx
-                                .random_u64_inclusive(*min, *max_inclusive, None)
-                                .await
-                                .unwrap();
-                            assert!(value > *min);
-                            assert!(value <= *max_inclusive);
-                            Ok(())
-                        }
-                        WorkflowStep::RandomString {
-                            min_length,
-                            max_length_exclusive,
-                        } => {
-                            let value = workflow_ctx
-                                .random_string(*min_length, *max_length_exclusive, None)
-                                .await
-                                .unwrap();
-                            assert!(value.len() > *min_length as usize);
-                            assert!(value.len() < usize::from(*max_length_exclusive));
-                            Ok(())
-                        }
-                    };
+                                .clone()
+                        };
+                        workflow_ctx
+                            .submit_delay(
+                                join_set_id,
+                                HistoryEventScheduleAt::In(Duration::from_millis(u64::from(
+                                    *millis,
+                                ))),
+                                None,
+                            )
+                            .await
+                            .map(|_| ())
+                    }
+                    WorkflowStep::RandomU64 { min, max_inclusive } => {
+                        let value = workflow_ctx
+                            .random_u64_inclusive(*min, *max_inclusive, None)
+                            .await
+                            .unwrap();
+                        assert!(value > *min);
+                        assert!(value <= *max_inclusive);
+                        Ok(())
+                    }
+                    WorkflowStep::RandomString {
+                        min_length,
+                        max_length_exclusive,
+                    } => {
+                        let value = workflow_ctx
+                            .random_string(*min_length, *max_length_exclusive, None)
+                            .await
+                            .unwrap();
+                        assert!(value.len() > *min_length as usize);
+                        assert!(value.len() < usize::from(*max_length_exclusive));
+                        Ok(())
+                    }
+                };
                 if let Err(err) = res {
                     info!("Sending {err:?}");
                     return err.into_worker_partial_result(workflow_ctx.version).into();
@@ -1888,11 +1884,7 @@ pub(crate) mod tests {
             let res = match workflow_ctx.close_forgotten_join_sets().await {
                 Ok(()) => {
                     info!("Finishing");
-                    WorkerResult::Ok(
-                        SupportedFunctionReturnValue::None,
-                        workflow_ctx.version,
-                        None,
-                    )
+                    WorkerResult::Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY, workflow_ctx.version, None)
                 }
                 Err(JoinSetCloseError::InterruptDbUpdated) => {
                     info!("Interrupting");
@@ -2539,7 +2531,7 @@ pub(crate) mod tests {
                 vec![AppendRequest {
                     created_at: sim_clock.now(),
                     event: concepts::storage::ExecutionEventInner::Finished {
-                        result: Ok(SupportedFunctionReturnValue::None),
+                        result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                         http_client_traces: None,
                     },
                 }],
@@ -2552,7 +2544,7 @@ pub(crate) mod tests {
                         event: JoinSetResponse::ChildExecutionFinished {
                             child_execution_id: child_execution_id.clone(),
                             finished_version: child_log.next_version.clone(),
-                            result: Ok(SupportedFunctionReturnValue::None),
+                            result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                         },
                     },
                 },
@@ -2568,7 +2560,18 @@ pub(crate) mod tests {
             &child_log.events
         );
         let child_res = child_log.into_finished_result().unwrap();
-        assert_matches!(child_res, Ok(SupportedFunctionReturnValue::None));
+        assert_matches!(
+            child_res,
+            Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(
+                WastValWithType {
+                    r#type: TypeWrapper::Result {
+                        ok: None,
+                        err: None,
+                    },
+                    value: WastVal::Result(Ok(None)),
+                }
+            ))
+        );
     }
 
     fn skip_locked<'a>(

@@ -1,6 +1,6 @@
 use concepts::{
     ComponentId, ComponentRetryConfig, FnName, FunctionFqn, FunctionMetadata, FunctionRegistry,
-    IfcFqnName, PackageIfcFns, ParameterTypes,
+    IfcFqnName, PackageIfcFns, ParameterTypes, RETURN_TYPE_DUMMY,
 };
 use indexmap::IndexMap;
 use std::{sync::Arc, time::Duration};
@@ -80,7 +80,7 @@ pub fn fn_registry_dummy(ffqns: &[FunctionFqn]) -> Arc<dyn FunctionRegistry> {
         let fn_metadata = FunctionMetadata {
             ffqn: ffqn.clone(),
             parameter_types: ParameterTypes::default(),
-            return_type: None,
+            return_type: RETURN_TYPE_DUMMY,
             extension: None,
             submittable: true,
         };

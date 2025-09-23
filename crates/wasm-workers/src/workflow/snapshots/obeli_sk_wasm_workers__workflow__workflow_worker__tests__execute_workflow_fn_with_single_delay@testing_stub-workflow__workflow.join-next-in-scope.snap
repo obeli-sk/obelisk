@@ -79,8 +79,15 @@ expression: execution_log
             "result": {
               "Ok": {
                 "InfallibleOrResultOk": {
-                  "type": "string",
-                  "value": "a"
+                  "type": {
+                    "result": {
+                      "ok": "string",
+                      "err": null
+                    }
+                  },
+                  "value": {
+                    "ok": "a"
+                  }
                 }
               }
             },
@@ -118,8 +125,15 @@ expression: execution_log
             "result": {
               "Ok": {
                 "InfallibleOrResultOk": {
-                  "type": "string",
-                  "value": "aa"
+                  "type": {
+                    "result": {
+                      "ok": "string",
+                      "err": null
+                    }
+                  },
+                  "value": {
+                    "ok": "aa"
+                  }
                 }
               }
             },
@@ -170,8 +184,15 @@ expression: execution_log
             "result": {
               "Ok": {
                 "InfallibleOrResultOk": {
-                  "type": "string",
-                  "value": "b"
+                  "type": {
+                    "result": {
+                      "ok": "string",
+                      "err": null
+                    }
+                  },
+                  "value": {
+                    "ok": "b"
+                  }
                 }
               }
             },
@@ -209,8 +230,15 @@ expression: execution_log
             "result": {
               "Ok": {
                 "InfallibleOrResultOk": {
-                  "type": "string",
-                  "value": "bb"
+                  "type": {
+                    "result": {
+                      "ok": "string",
+                      "err": null
+                    }
+                  },
+                  "value": {
+                    "ok": "bb"
+                  }
                 }
               }
             },
@@ -261,8 +289,15 @@ expression: execution_log
             "result": {
               "Ok": {
                 "InfallibleOrResultOk": {
-                  "type": "string",
-                  "value": "f"
+                  "type": {
+                    "result": {
+                      "ok": "string",
+                      "err": null
+                    }
+                  },
+                  "value": {
+                    "ok": "f"
+                  }
                 }
               }
             },
@@ -300,8 +335,15 @@ expression: execution_log
             "result": {
               "Ok": {
                 "InfallibleOrResultOk": {
-                  "type": "string",
-                  "value": "ff"
+                  "type": {
+                    "result": {
+                      "ok": "string",
+                      "err": null
+                    }
+                  },
+                  "value": {
+                    "ok": "ff"
+                  }
                 }
               }
             },
@@ -460,8 +502,15 @@ expression: execution_log
             "result": {
               "Ok": {
                 "InfallibleOrResultOk": {
-                  "type": "string",
-                  "value": "c"
+                  "type": {
+                    "result": {
+                      "ok": "string",
+                      "err": null
+                    }
+                  },
+                  "value": {
+                    "ok": "c"
+                  }
                 }
               }
             },
@@ -499,8 +548,15 @@ expression: execution_log
             "result": {
               "Ok": {
                 "InfallibleOrResultOk": {
-                  "type": "string",
-                  "value": "cc"
+                  "type": {
+                    "result": {
+                      "ok": "string",
+                      "err": null
+                    }
+                  },
+                  "value": {
+                    "ok": "cc"
+                  }
                 }
               }
             },
@@ -625,7 +681,19 @@ expression: execution_log
       "event": {
         "Finished": {
           "result": {
-            "Ok": "None"
+            "Ok": {
+              "InfallibleOrResultOk": {
+                "type": {
+                  "result": {
+                    "ok": null,
+                    "err": null
+                  }
+                },
+                "value": {
+                  "ok": null
+                }
+              }
+            }
           },
           "http_client_traces": null
         }
@@ -645,8 +713,15 @@ expression: execution_log
           "result": {
             "Ok": {
               "InfallibleOrResultOk": {
-                "type": "string",
-                "value": "a"
+                "type": {
+                  "result": {
+                    "ok": "string",
+                    "err": null
+                  }
+                },
+                "value": {
+                  "ok": "a"
+                }
               }
             }
           }
@@ -664,8 +739,15 @@ expression: execution_log
           "result": {
             "Ok": {
               "InfallibleOrResultOk": {
-                "type": "string",
-                "value": "aa"
+                "type": {
+                  "result": {
+                    "ok": "string",
+                    "err": null
+                  }
+                },
+                "value": {
+                  "ok": "aa"
+                }
               }
             }
           }
@@ -683,8 +765,15 @@ expression: execution_log
           "result": {
             "Ok": {
               "InfallibleOrResultOk": {
-                "type": "string",
-                "value": "b"
+                "type": {
+                  "result": {
+                    "ok": "string",
+                    "err": null
+                  }
+                },
+                "value": {
+                  "ok": "b"
+                }
               }
             }
           }
@@ -702,8 +791,15 @@ expression: execution_log
           "result": {
             "Ok": {
               "InfallibleOrResultOk": {
-                "type": "string",
-                "value": "bb"
+                "type": {
+                  "result": {
+                    "ok": "string",
+                    "err": null
+                  }
+                },
+                "value": {
+                  "ok": "bb"
+                }
               }
             }
           }
@@ -721,8 +817,15 @@ expression: execution_log
           "result": {
             "Ok": {
               "InfallibleOrResultOk": {
-                "type": "string",
-                "value": "f"
+                "type": {
+                  "result": {
+                    "ok": "string",
+                    "err": null
+                  }
+                },
+                "value": {
+                  "ok": "f"
+                }
               }
             }
           }
@@ -740,8 +843,15 @@ expression: execution_log
           "result": {
             "Ok": {
               "InfallibleOrResultOk": {
-                "type": "string",
-                "value": "ff"
+                "type": {
+                  "result": {
+                    "ok": "string",
+                    "err": null
+                  }
+                },
+                "value": {
+                  "ok": "ff"
+                }
               }
             }
           }
@@ -759,8 +869,15 @@ expression: execution_log
           "result": {
             "Ok": {
               "InfallibleOrResultOk": {
-                "type": "string",
-                "value": "c"
+                "type": {
+                  "result": {
+                    "ok": "string",
+                    "err": null
+                  }
+                },
+                "value": {
+                  "ok": "c"
+                }
               }
             }
           }
@@ -778,8 +895,15 @@ expression: execution_log
           "result": {
             "Ok": {
               "InfallibleOrResultOk": {
-                "type": "string",
-                "value": "cc"
+                "type": {
+                  "result": {
+                    "ok": "string",
+                    "err": null
+                  }
+                },
+                "value": {
+                  "ok": "cc"
+                }
               }
             }
           }

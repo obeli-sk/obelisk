@@ -2,7 +2,8 @@
 package testing:sleep-workflow-obelisk-schedule;
 
 interface workflow {
-  use testing:sleep-workflow/workflow.{execution-id, schedule-at, duration};
+  use obelisk:types/time@2.0.0.{duration, schedule-at};
+  use obelisk:types/execution@2.0.0.{execution-id};
 
   sleep-host-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 

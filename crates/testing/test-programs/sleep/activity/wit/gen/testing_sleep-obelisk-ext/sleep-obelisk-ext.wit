@@ -2,23 +2,23 @@
 package testing:sleep-obelisk-ext;
 
 interface sleep {
+  use obelisk:types/time@2.0.0.{duration};
   use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
-  use testing:sleep/sleep.{duration};
 
   sleep-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 
-  sleep-await-next: func(join-set-id: borrow<join-set-id>) -> result<execution-id, await-next-extension-error>;
+  sleep-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-  sleep-get: func(execution-id: execution-id) -> result<_, get-extension-error>;
+  sleep-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-  sleep-invoke: func(duration: duration) -> result<_, execution-failed>;
+  sleep-invoke: func(duration: duration) -> result<result, execution-failed>;
 
   sleep-loop-submit: func(join-set-id: borrow<join-set-id>, duration: duration, iterations: u32) -> execution-id;
 
-  sleep-loop-await-next: func(join-set-id: borrow<join-set-id>) -> result<execution-id, await-next-extension-error>;
+  sleep-loop-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-  sleep-loop-get: func(execution-id: execution-id) -> result<_, get-extension-error>;
+  sleep-loop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-  sleep-loop-invoke: func(duration: duration, iterations: u32) -> result<_, execution-failed>;
+  sleep-loop-invoke: func(duration: duration, iterations: u32) -> result<result, execution-failed>;
 }
 

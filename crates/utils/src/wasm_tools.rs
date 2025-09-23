@@ -8,11 +8,10 @@ use concepts::{
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
-    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 use val_json::type_wrapper::{TypeConversionError, TypeWrapper};
 use wit_component::{ComponentEncoder, WitPrinter};
 use wit_parser::{InterfaceId, PackageId, Resolve, World, WorldKey, decoding::DecodedWasm};
@@ -390,10 +389,10 @@ impl ExIm {
             TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
         let join_set_id_type_wrapper = TypeWrapper::Borrow;
 
-        let return_type_execution_id = Some(ReturnType {
+        let return_type_execution_id = ReturnType {
             type_wrapper: execution_id_type_wrapper.clone(),
             wit_type: concepts::StrVariant::Static("execution-id"),
-        });
+        };
         let param_type_execution_id = ParameterType {
             type_wrapper: execution_id_type_wrapper.clone(),
             name: StrVariant::Static("execution-id"),
@@ -563,23 +562,16 @@ impl ExIm {
                     },
                     parameter_types: ParameterTypes(vec![param_type_join_set.clone()]),
                     return_type: {
-                        let (ok_part, ok_type_wrapper) =
-                            if let Some(original_ret) = &exported_fn_metadata.return_type {
-                                (
-                                    Cow::Owned(format!("tuple<execution-id, {original_ret}>")),
-                                    // (execution-id, original_ret)
-                                    TypeWrapper::Tuple(Box::new([
-                                        execution_id_type_wrapper.clone(),
-                                        original_ret.type_wrapper.clone(),
-                                    ])),
-                                )
-                            } else {
-                                (
-                                    Cow::Borrowed("execution-id"),
-                                    execution_id_type_wrapper.clone(),
-                                )
-                            };
-                        Some(ReturnType {
+                        let ok_part = format!(
+                            "tuple<execution-id, {original_ret}>",
+                            original_ret = exported_fn_metadata.return_type
+                        );
+                        // (execution-id, original_ret)
+                        let ok_type_wrapper = TypeWrapper::Tuple(Box::new([
+                            execution_id_type_wrapper.clone(),
+                            exported_fn_metadata.return_type.type_wrapper.clone(),
+                        ]));
+                        ReturnType {
                             type_wrapper: TypeWrapper::Result {
                                 ok: Some(Box::new(ok_type_wrapper)),
                                 err: Some(Box::new(
@@ -589,7 +581,7 @@ impl ExIm {
                             wit_type: StrVariant::from(format!(
                                 "result<{ok_part}, await-next-extension-error>"
                             )),
-                        })
+                        }
                     },
                     extension: Some(FunctionExtension::AwaitNext),
                     submittable: false,
@@ -597,8 +589,6 @@ impl ExIm {
                 insert_ext(fn_await_next);
 
                 // -get(execution-id) -> result<original_return_type, get-extension-error>
-                // or
-                // -get(execution-id) -> result<_,  get-extension-error>
                 let fn_get = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),
@@ -609,16 +599,11 @@ impl ExIm {
                     },
                     parameter_types: ParameterTypes(vec![param_type_execution_id.clone()]),
                     return_type: {
-                        let (ok_wit, ok_type_wrapper) =
-                            if let Some(original_ret) = &exported_fn_metadata.return_type {
-                                (
-                                    &original_ret.wit_type,
-                                    Some(Box::new(original_ret.type_wrapper.clone())),
-                                )
-                            } else {
-                                (&StrVariant::Static("_"), None)
-                            };
-                        Some(ReturnType {
+                        let ok_wit = &exported_fn_metadata.return_type.wit_type;
+                        let ok_type_wrapper = Some(Box::new(
+                            exported_fn_metadata.return_type.type_wrapper.clone(),
+                        ));
+                        ReturnType {
                             type_wrapper: TypeWrapper::Result {
                                 ok: ok_type_wrapper,
                                 err: Some(Box::new(get_extension_error_type_wrapper.clone())),
@@ -626,7 +611,7 @@ impl ExIm {
                             wit_type: StrVariant::from(format!(
                                 "result<{ok_wit}, get-extension-error>"
                             )),
-                        })
+                        }
                     },
                     extension: Some(FunctionExtension::Get),
                     submittable: false,
@@ -647,16 +632,11 @@ impl ExIm {
                         ParameterTypes(params)
                     },
                     return_type: {
-                        let (ok_wit, ok_type_wrapper) =
-                            if let Some(original_ret) = &exported_fn_metadata.return_type {
-                                (
-                                    &original_ret.wit_type,
-                                    Some(Box::new(original_ret.type_wrapper.clone())),
-                                )
-                            } else {
-                                (&StrVariant::Static("_"), None)
-                            };
-                        Some(ReturnType {
+                        let ok_wit = &exported_fn_metadata.return_type.wit_type;
+                        let ok_type_wrapper = Some(Box::new(
+                            exported_fn_metadata.return_type.type_wrapper.clone(),
+                        ));
+                        ReturnType {
                             type_wrapper: TypeWrapper::Result {
                                 ok: ok_type_wrapper,
                                 err: Some(Box::new(execution_failed_type_wrapper.clone())),
@@ -664,7 +644,7 @@ impl ExIm {
                             wit_type: StrVariant::from(format!(
                                 "result<{ok_wit}, execution-failed>"
                             )),
-                        })
+                        }
                     },
                     extension: Some(FunctionExtension::Invoke),
                     submittable: false,
@@ -711,34 +691,31 @@ impl ExIm {
                         },
                         parameter_types: {
                             let mut params = vec![param_type_execution_id.clone()];
-                            if let Some(original_ret) = &exported_fn_metadata.return_type {
-                                params.push(ParameterType {
-                                    type_wrapper: TypeWrapper::Result {
-                                        ok: Some(Box::new(original_ret.type_wrapper.clone())),
-                                        err: None,
-                                    },
-                                    name: StrVariant::Static("execution-result"),
-                                    wit_type: format!("result<{}>", original_ret.wit_type).into(),
-                                });
-                            } else {
-                                params.push(ParameterType {
-                                    type_wrapper: TypeWrapper::Result {
-                                        ok: None,
-                                        err: None,
-                                    },
-                                    name: StrVariant::Static("execution-result"),
-                                    wit_type: "result".into(),
-                                });
-                            }
+
+                            params.push(ParameterType {
+                                type_wrapper: TypeWrapper::Result {
+                                    ok: Some(Box::new(
+                                        exported_fn_metadata.return_type.type_wrapper.clone(),
+                                    )),
+                                    err: None,
+                                },
+                                name: StrVariant::Static("execution-result"),
+                                wit_type: format!(
+                                    "result<{}>",
+                                    exported_fn_metadata.return_type.wit_type
+                                )
+                                .into(),
+                            });
+
                             ParameterTypes(params)
                         },
-                        return_type: Some(ReturnType {
+                        return_type: ReturnType {
                             type_wrapper: TypeWrapper::Result {
                                 ok: None,
                                 err: Some(Box::new(stub_error_type_wrapper.clone())),
                             },
                             wit_type: StrVariant::Static("result<_, stub-error>"),
-                        }),
+                        },
                         extension: Some(FunctionExtension::Stub),
                         submittable: false,
                     };
@@ -839,29 +816,6 @@ fn populate_ifcs(
         let mut fns = IndexMap::new();
         for (function_name, function) in &ifc.functions {
             let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
-            let parameter_types = ParameterTypes({
-                let mut params = Vec::new();
-                for (param_name, param_ty) in &function.params {
-                    let mut printer = WitPrinter::default();
-                    let item = ParameterType {
-                        type_wrapper: match TypeWrapper::from_wit_parser_type(resolve, param_ty) {
-                            Ok(ok) => ok,
-                            Err(err) => {
-                                return Err(DecodeError::TypeNotSupported { err, ffqn });
-                            }
-                        },
-                        name: StrVariant::from(param_name.to_string()),
-                        wit_type: printer
-                            .print_type_name(resolve, param_ty)
-                            .ok()
-                            .map_or(StrVariant::Static("unknown"), |()| {
-                                StrVariant::from(printer.output.to_string())
-                            }),
-                    };
-                    params.push(item);
-                }
-                params
-            });
             let return_type = if let Some(return_type) = function.result {
                 let mut printer = WitPrinter::default();
                 let wit_type = printer
@@ -882,16 +836,55 @@ fn populate_ifcs(
             } else {
                 None
             };
-            fns.insert(
-                ffqn.function_name.clone(),
-                FunctionMetadata {
-                    ffqn,
-                    parameter_types,
-                    return_type,
-                    extension: None,
-                    submittable,
-                },
-            );
+
+            if matches!(
+                processing_kind,
+                ProcessingKind::ExportsSubmittable | ProcessingKind::ExportsOfActivityStub
+            ) && return_type.is_none()
+                && !ifc_fqn.starts_with("wasi:http/incoming-handler@")
+            {
+                warn!("Ignoring export {ffqn} with unsupported return type");
+            }
+
+            if let Some(return_type) = return_type {
+                let ffqn =
+                    FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
+                let parameter_types = ParameterTypes({
+                    let mut params = Vec::new();
+                    for (param_name, param_ty) in &function.params {
+                        let mut printer = WitPrinter::default();
+                        let item = ParameterType {
+                            type_wrapper: match TypeWrapper::from_wit_parser_type(resolve, param_ty)
+                            {
+                                Ok(ok) => ok,
+                                Err(err) => {
+                                    return Err(DecodeError::TypeNotSupported { err, ffqn });
+                                }
+                            },
+                            name: StrVariant::from(param_name.to_string()),
+                            wit_type: printer
+                                .print_type_name(resolve, param_ty)
+                                .ok()
+                                .map_or(StrVariant::Static("unknown"), |()| {
+                                    StrVariant::from(printer.output.to_string())
+                                }),
+                        };
+                        params.push(item);
+                    }
+                    params
+                });
+
+                fns.insert(
+                    ffqn.function_name.clone(),
+                    FunctionMetadata {
+                        ffqn,
+                        parameter_types,
+                        return_type,
+                        extension: None,
+                        submittable,
+                    },
+                );
+            }
         }
         vec.push(PackageIfcFns {
             ifc_fqn: IfcFqnName::new_arc(ifc_fqn),

@@ -1,7 +1,7 @@
 package obelisk:workflow@2.0.0;
 
 interface workflow-support {
-    use obelisk:types/time@2.0.0.{schedule-at};
+    use obelisk:types/time@2.0.0.{schedule-at, datetime};
     use obelisk:types/execution@2.0.0.{join-set-id, delay-id, execution-id, response-id};
 
     /// The closing strategy of a join set. Join sets are closed when execution finishes.
@@ -29,8 +29,8 @@ interface workflow-support {
     /// The string consists only of alphanumeric characters (lowercase and uppercase letters, digits).
     random-string: func(min-length: u16, max-length-exclusive: u16) -> string;
 
-    /// Block execution for given time.
-    sleep: func(schedule-at: schedule-at);
+    /// Block execution for given time, return `schedule-at` resolved to time when the execution is scheduled.
+    sleep: func(schedule-at: schedule-at) -> datetime;
 
     /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
     submit-delay: func(join-set-id: borrow<join-set-id>, timeout: schedule-at) -> delay-id;

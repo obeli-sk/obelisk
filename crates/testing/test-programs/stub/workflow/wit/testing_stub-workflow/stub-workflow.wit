@@ -3,20 +3,20 @@ package testing:stub-workflow;
 interface workflow {
     use obelisk:types/execution@2.0.0.{execution-id, stub-error};
 
-    submit-stub-await: func(arg: string) -> string;
-    submit-await: func(arg: string) -> string;
+    submit-stub-await: func(arg: string) -> result<string>;
+    submit-await: func(arg: string) -> result<string>;
 
-    noret-submit-await: func();
+    noret-submit-await: func() -> result;
 
-    submit-race-join-next-stub: func();
-    submit-race-join-next-stub-error: func();
-    submit-race-join-next-delay: func();
+    submit-race-join-next-stub: func() -> result;
+    submit-race-join-next-stub-error: func() -> result;
+    submit-race-join-next-delay: func() -> result;
 
     stub-subworkflow: func(execution-id: execution-id, retval: string) -> result<_, stub-error>;
 
-    await-next-produces-all-processed-error: func();
+    await-next-produces-all-processed-error: func() -> result;
 
-    join-next-in-scope: func();
+    join-next-in-scope: func() -> result;
 
-    invoke-expect-execution-error: func();
+    invoke-expect-execution-error: func() -> result;
 }

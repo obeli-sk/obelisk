@@ -6,11 +6,11 @@ struct Component;
 export!(Component);
 
 impl Guest for Component {
-    fn foo(_arg: String) -> String {
+    fn foo(_arg: String) -> Result<String, ()> {
         unimplemented!("actual implementation is never used")
     }
 
-    fn noret() {
+    fn noret() -> Result<(), ()> {
         unimplemented!("actual implementation is never used")
     }
 }

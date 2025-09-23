@@ -73,6 +73,17 @@ pub(crate) mod v2_0_0 {
             DateTime::<Utc>::from(systemtime)
         }
     }
+    impl TryFrom<DateTime<Utc>> for Datetime {
+        type Error = chrono::OutOfRangeError;
+        fn try_from(value: DateTime<Utc>) -> Result<Self, Self::Error> {
+            let epoch = DateTime::<Utc>::from(UNIX_EPOCH);
+            let duration = value.signed_duration_since(epoch).to_std()?;
+            Ok(Datetime {
+                seconds: duration.as_secs(),
+                nanoseconds: duration.subsec_nanos(),
+            })
+        }
+    }
 
     impl From<ScheduleAt_2_0_0> for HistoryEventScheduleAt {
         fn from(value: ScheduleAt_2_0_0) -> Self {

@@ -229,11 +229,10 @@ fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType
                 .filter(| (_, FunctionMetadata { submittable,.. }) | *submittable )
                 .map(|(function_name, FunctionMetadata{parameter_types, return_type, ..})| {
                     format!(
-                        "/// {fn}: func{parameter_types}{arrow_ret_type};\npub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\");\n",
+                        "/// {fn}: func{parameter_types} -> {return_type};\npub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\");\n",
                         name_upper = to_snake_case(function_name).to_uppercase(),
                         ifc = export.ifc_fqn,
                         fn = function_name,
-                        arrow_ret_type = if let Some(ret_type) = return_type { format!(" -> {ret_type}") } else { String::new() }
                     )
                 })
                 .collect();
@@ -243,7 +242,11 @@ fn generate_code(wasm_path: &Path, pkg_name: &str, component_type: ComponentType
 
     ser_map(&outer_map, &mut generated_code);
     generated_code += "}\n";
-    std::fs::write(get_out_dir().join("gen.rs"), generated_code).unwrap();
+
+    let gen_rs = get_out_dir().join("gen.rs");
+    println!("cargo:warning=Generated {gen_rs:?}");
+
+    std::fs::write(gen_rs, generated_code).unwrap();
 }
 
 fn add_dependency(file: &Utf8Path) {

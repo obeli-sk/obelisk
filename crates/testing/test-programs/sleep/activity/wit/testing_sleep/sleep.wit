@@ -3,6 +3,6 @@ package testing:sleep;
 interface sleep {
     use obelisk:types/time@2.0.0.{duration};
 
-    sleep: func(duration: duration);
-    sleep-loop: func(duration: duration, iterations: u32);
+    sleep: func(duration: duration) -> result;
+    sleep-loop: func(duration: duration, iterations: u32) -> result;
 }

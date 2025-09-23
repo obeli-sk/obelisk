@@ -6,18 +6,18 @@ interface activity {
 
   foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
 
-  foo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, string>, await-next-extension-error>;
+  foo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string>>, await-next-extension-error>;
 
-  foo-get: func(execution-id: execution-id) -> result<string, get-extension-error>;
+  foo-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
-  foo-invoke: func(arg: string) -> result<string, execution-failed>;
+  foo-invoke: func(arg: string) -> result<result<string>, execution-failed>;
 
   noret-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
-  noret-await-next: func(join-set-id: borrow<join-set-id>) -> result<execution-id, await-next-extension-error>;
+  noret-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-  noret-get: func(execution-id: execution-id) -> result<_, get-extension-error>;
+  noret-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-  noret-invoke: func() -> result<_, execution-failed>;
+  noret-invoke: func() -> result<result, execution-failed>;
 }
 

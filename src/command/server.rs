@@ -410,15 +410,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             }
             (
                 stub_request::FinishedResult::ReturnValue(stub_request::ReturnValue {
-                    return_value: None,
-                }),
-                None,
-            ) => Ok(SupportedFunctionReturnValue::None),
-            (
-                stub_request::FinishedResult::ReturnValue(stub_request::ReturnValue {
                     return_value: Some(return_value),
                 }),
-                Some(ReturnType { type_wrapper, .. }),
+                ReturnType { type_wrapper, .. },
             ) => {
                 // Type check `return_value`
                 match deserialize_slice(&return_value.value, type_wrapper) {
@@ -989,16 +983,11 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
                     }),
                 })
                 .collect(),
-            return_type: return_type.map(
-                |ReturnType {
-                     type_wrapper,
-                     wit_type,
-                 }| grpc_gen::WitType {
-                    wit_type: wit_type.to_string(),
-                    type_wrapper: serde_json::to_string(&type_wrapper)
-                        .expect("`TypeWrapper` must be serializable"),
-                },
-            ),
+            return_type: Some(grpc_gen::WitType {
+                wit_type: return_type.wit_type.to_string(),
+                type_wrapper: serde_json::to_string(&return_type.type_wrapper)
+                    .expect("`TypeWrapper` must be serializable"),
+            }),
             function_name: Some(ffqn.into()),
             extension: extension.map(|it| {
                 match it {

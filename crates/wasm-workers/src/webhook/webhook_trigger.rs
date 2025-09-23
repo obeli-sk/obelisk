@@ -3,6 +3,7 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
 use crate::{RunnableComponent, WasmFileError};
+use concepts::JoinSetId;
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, ClientError, CreateRequest, DbError, DbPool, ExecutionEventInner,
@@ -12,9 +13,9 @@ use concepts::time::ClockFn;
 use concepts::{
     ClosingStrategy, ComponentId, ComponentType, ExecutionId, ExecutionMetadata,
     FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName,
-    JoinSetKind, Params, PermanentFailureKind, SUFFIX_PKG_SCHEDULE, StrVariant, TrapKind,
+    JoinSetKind, Params, PermanentFailureKind, SUFFIX_PKG_SCHEDULE,
+    SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant, TrapKind,
 };
-use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -603,15 +604,15 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 }
                 Err(ClientError::Timeout) => unreachable!("timeout was not set"),
             };
-            if results.len() != res.len() {
-                error!("Unexpected results length");
+            if results.len() != 1 {
+                error!("Unexpected results length: {}", results.len());
                 return Err(WebhookEndpointFunctionError::UncategorizedError(
                     "Unexpected results length",
                 ));
             }
-            for (idx, item) in res.value().into_iter().enumerate() {
-                results[idx] = item.as_val();
-            }
+
+            results[0] = res.value().as_val();
+
             trace!(?params, ?results, "call_imported_fn finish");
             (db_connection, version_min_including, version_max_excluding)
         };
@@ -733,7 +734,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
         }
 
         let result = match &original_result {
-            Ok(()) => Ok(SupportedFunctionReturnValue::None),
+            Ok(()) => Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
             Err(err) => {
                 let err = if let Some(trap) = err
                     .source()
