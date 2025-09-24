@@ -31,8 +31,8 @@ use tokio::sync::OwnedSemaphorePermit;
 use tracing::{
     Instrument, Level, Span, debug, debug_span, error, info, info_span, instrument, trace,
 };
-use types_v2_0_0::obelisk::types::execution::Host as ExecutionHost;
-use types_v2_0_0::obelisk::types::execution::HostJoinSetId;
+use types_v3_0_0::obelisk::types::execution::Host as ExecutionHost;
+use types_v3_0_0::obelisk::types::execution::HostJoinSetId;
 use utils::wasm_tools::ExIm;
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
@@ -48,13 +48,13 @@ use wasmtime_wasi_io::IoView;
 const HTTP_HANDLER_FFQN: FunctionFqn =
     FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
 
-pub(crate) mod types_v2_0_0 {
+pub(crate) mod types_v3_0_0 {
     wasmtime::component::bindgen!({
         path: "host-wit-webhook/",
         inline: "package any:any;
                 world bindings {
-                    import obelisk:types/time@2.0.0;
-                    import obelisk:types/execution@2.0.0;
+                    import obelisk:types/time@3.0.0;
+                    import obelisk:types/execution@3.0.0;
                 }",
         world: "any:any/bindings",
         exports: {
@@ -634,14 +634,14 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
     }
 
     fn add_to_linker(linker: &mut Linker<WebhookEndpointCtx<C>>) -> Result<(), WasmFileError> {
-        // link obelisk:log@1.0.0
+        // link obelisk:log
         log_activities::obelisk::log::log::add_to_linker::<_, WebhookEndpointCtx<C>>(linker, |x| x)
             .map_err(|err| WasmFileError::LinkingError {
                 context: StrVariant::Static("linking log activities"),
                 err: err.into(),
             })?;
-        // link obelisk:types@2.0.0
-        types_v2_0_0::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<C>>(
+        // link obelisk:types
+        types_v3_0_0::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<C>>(
             linker,
             |x| x,
         )

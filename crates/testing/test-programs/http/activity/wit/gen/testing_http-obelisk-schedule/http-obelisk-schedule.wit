@@ -3,8 +3,8 @@ package testing:http-obelisk-schedule;
 
 interface http-get {
   use testing:http/http-get.{response, stargazers};
-  use obelisk:types/execution@2.0.0.{execution-id};
-  use obelisk:types/time@2.0.0.{schedule-at};
+  use obelisk:types/execution@3.0.0.{execution-id};
+  use obelisk:types/time@3.0.0.{schedule-at};
 
   get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 

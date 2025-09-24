@@ -6,15 +6,15 @@ package root:component;
 
 world root {
   import testing:http/http-get;
-  import obelisk:types/execution@2.0.0;
+  import obelisk:types/execution@3.0.0;
   import testing:http-obelisk-ext/http-get;
-  import obelisk:workflow/workflow-support@2.0.0;
+  import obelisk:workflow/workflow-support@3.0.0;
 
   export testing:http-workflow/workflow;
   export testing:http-workflow-obelisk-ext/workflow;
   export testing:http-workflow-obelisk-schedule/workflow;
 }
-package obelisk:types@2.0.0 {
+package obelisk:types@3.0.0 {
   interface time {
     variant duration {
       milliseconds(u64),
@@ -104,9 +104,9 @@ package obelisk:types@2.0.0 {
 }
 
 
-package obelisk:workflow@2.0.0 {
+package obelisk:workflow@3.0.0 {
   interface workflow-support {
-    use obelisk:types/execution@2.0.0.{join-set-id};
+    use obelisk:types/execution@3.0.0.{join-set-id};
 
     enum closing-strategy {
       complete,
@@ -142,7 +142,7 @@ package testing:http {
 
 package testing:http-obelisk-ext {
   interface http-get {
-    use obelisk:types/execution@2.0.0.{join-set-id, execution-id, await-next-extension-error};
+    use obelisk:types/execution@3.0.0.{join-set-id, execution-id, await-next-extension-error};
 
     get-successful-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
@@ -170,7 +170,7 @@ package testing:http-workflow {
 
 package testing:http-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
 
     get-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
@@ -225,8 +225,8 @@ package testing:http-workflow-obelisk-ext {
 
 package testing:http-workflow-obelisk-schedule {
   interface workflow {
-    use obelisk:types/execution@2.0.0.{execution-id};
-    use obelisk:types/time@2.0.0.{schedule-at};
+    use obelisk:types/execution@3.0.0.{execution-id};
+    use obelisk:types/time@3.0.0.{schedule-at};
 
     get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 

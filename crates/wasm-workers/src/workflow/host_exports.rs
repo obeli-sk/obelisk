@@ -16,8 +16,8 @@ pub(crate) use concepts::SUFFIX_FN_SCHEDULE;
 pub(crate) use concepts::SUFFIX_FN_STUB;
 pub(crate) use concepts::SUFFIX_FN_SUBMIT;
 
-// Generate `obelisk:workflow:workflow-support@2.0.0`
-pub(crate) mod v2_0_0 {
+// Generate `obelisk:workflow:workflow-support
+pub(crate) mod v3_0_0 {
     use chrono::DateTime;
     use chrono::Utc;
     use concepts::FunctionFqn;
@@ -26,9 +26,9 @@ pub(crate) mod v2_0_0 {
     use concepts::storage::HistoryEventScheduleAt;
     use obelisk::types::execution as types_execution;
     use obelisk::types::time::Datetime;
-    pub(crate) use obelisk::types::time::Duration as DurationEnum_2_0_0;
-    pub(crate) use obelisk::types::time::ScheduleAt as ScheduleAt_2_0_0;
-    pub(crate) use obelisk::workflow::workflow_support::ClosingStrategy as ClosingStrategy_2_0_0;
+    pub(crate) use obelisk::types::time::Duration as DurationEnum_3_0_0;
+    pub(crate) use obelisk::types::time::ScheduleAt as ScheduleAt_3_0_0;
+    pub(crate) use obelisk::workflow::workflow_support::ClosingStrategy as ClosingStrategy_3_0_0;
     use std::time::Duration;
     use std::time::UNIX_EPOCH;
 
@@ -36,7 +36,7 @@ pub(crate) mod v2_0_0 {
         path: "host-wit-workflow/",
         inline: "package any:any;
         world bindings {
-            import obelisk:workflow/workflow-support@2.0.0;
+            import obelisk:workflow/workflow-support@3.0.0;
             }",
         world: "any:any/bindings",
         with: {
@@ -47,14 +47,14 @@ pub(crate) mod v2_0_0 {
         }
     });
 
-    impl From<DurationEnum_2_0_0> for Duration {
-        fn from(value: DurationEnum_2_0_0) -> Self {
+    impl From<DurationEnum_3_0_0> for Duration {
+        fn from(value: DurationEnum_3_0_0) -> Self {
             match value {
-                DurationEnum_2_0_0::Milliseconds(millis) => Duration::from_millis(millis),
-                DurationEnum_2_0_0::Seconds(secs) => Duration::from_secs(secs),
-                DurationEnum_2_0_0::Minutes(mins) => Duration::from_secs(u64::from(mins * 60)),
-                DurationEnum_2_0_0::Hours(hours) => Duration::from_secs(u64::from(hours * 60 * 60)),
-                DurationEnum_2_0_0::Days(days) => {
+                DurationEnum_3_0_0::Milliseconds(millis) => Duration::from_millis(millis),
+                DurationEnum_3_0_0::Seconds(secs) => Duration::from_secs(secs),
+                DurationEnum_3_0_0::Minutes(mins) => Duration::from_secs(u64::from(mins * 60)),
+                DurationEnum_3_0_0::Hours(hours) => Duration::from_secs(u64::from(hours * 60 * 60)),
+                DurationEnum_3_0_0::Days(days) => {
                     Duration::from_secs(u64::from(days * 24 * 60 * 60))
                 }
             }
@@ -85,12 +85,12 @@ pub(crate) mod v2_0_0 {
         }
     }
 
-    impl From<ScheduleAt_2_0_0> for HistoryEventScheduleAt {
-        fn from(value: ScheduleAt_2_0_0) -> Self {
+    impl From<ScheduleAt_3_0_0> for HistoryEventScheduleAt {
+        fn from(value: ScheduleAt_3_0_0) -> Self {
             match value {
-                ScheduleAt_2_0_0::Now => Self::Now,
-                ScheduleAt_2_0_0::At(datetime) => Self::At(DateTime::from(datetime)),
-                ScheduleAt_2_0_0::In(duration) => Self::In(Duration::from(duration)),
+                ScheduleAt_3_0_0::Now => Self::Now,
+                ScheduleAt_3_0_0::At(datetime) => Self::At(DateTime::from(datetime)),
+                ScheduleAt_3_0_0::In(duration) => Self::In(Duration::from(duration)),
             }
         }
     }
@@ -262,7 +262,7 @@ pub fn history_event_schedule_at_from_wast_val(
             let nanoseconds = date_time.get("nanoseconds");
             match (date_time.len(), seconds, nanoseconds) {
                 (2, Some(WastVal::U64(seconds)), Some(WastVal::U32(nanoseconds))) => {
-                    let date_time = v2_0_0::obelisk::types::time::Datetime {
+                    let date_time = v3_0_0::obelisk::types::time::Datetime {
                         seconds: *seconds,
                         nanoseconds: *nanoseconds,
                     };

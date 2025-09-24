@@ -139,40 +139,40 @@ listening_addr = "127.0.0.1:9090"
 
 [[activity_wasm]]
 name = "test_programs_fibo_activity"
-location.oci = "docker.io/getobelisk/test_programs_fibo_activity:2025-09-23@sha256:008fa964147e7907b8edb83850f362c9b013da98921035300c20db871c61c741"
+location.oci = "docker.io/getobelisk/test_programs_fibo_activity:2025-09-24@sha256:50f8ac8ebb8ee80b78ad641e7e960b0ce68073441924236fb5188c6889f992dc"
 max_retries = 0
 
 [[workflow]]
 name = "test_programs_fibo_workflow"
-location.oci = "docker.io/getobelisk/test_programs_fibo_workflow:2025-09-23@sha256:79c5bfda2adb45d3f87e156b3025c3645c13b125eb563a149c866ddffab1da4e"
+location.oci = "docker.io/getobelisk/test_programs_fibo_workflow:2025-09-24@sha256:d0a238e1342ca42bf4d593ae6dcf347bdb9e7c44d4b6ddaa52b0cdce7115f61d"
 exec.lock_expiry.seconds = 2
 backtrace.sources = { "/home/runner/work/obelisk/obelisk/crates/testing/test-programs/fibo/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
 
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
-location.oci = "docker.io/getobelisk/test_programs_fibo_webhook:2025-09-23@sha256:f36c38621b5ada88681b70c9447eda29ddeb66aecec40d18c62da78b37fce202"
+location.oci = "docker.io/getobelisk/test_programs_fibo_webhook:2025-09-24@sha256:aea2905aac0dd97f19fb82bcecac47edcee111811e43e04558bfd98442fc5913"
 http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 
 [[activity_wasm]]
 name = "test_programs_http_get_activity"
-location.oci = "docker.io/getobelisk/test_programs_http_get_activity:2025-09-23@sha256:4223af02aa2ce57dab906a714619c41a64f3fa5395c5ce9b7497fe44f514ba05"
+location.oci = "docker.io/getobelisk/test_programs_http_get_activity:2025-09-24@sha256:a73a1f20ba1b1fa6bf07b8b74ef8ea019f976c0e284c8d4692d499ef81b715fe"
 forward_stdout = "stderr"
 forward_stderr = "stderr"
 
 [[workflow]]
 name = "test_programs_http_get_workflow"
-location.oci = "docker.io/getobelisk/test_programs_http_get_workflow:2025-09-23@sha256:80c602ac0bbf846da083f28bd504a87ec96c82dc621f4578e1f17e3ba5627cdb"
+location.oci = "docker.io/getobelisk/test_programs_http_get_workflow:2025-09-24@sha256:74b309d73e91fc95a3a15ca7e8c1823558b6ba8ff641ea02a076a524800475e0"
 backtrace.sources = { "/home/runner/work/obelisk/obelisk/crates/testing/test-programs/http/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
 
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
-location.oci = "docker.io/getobelisk/test_programs_sleep_activity:2025-09-23@sha256:1906d01ca6b3beeb793a3f54435655d4eb91b04eae626ba869edf1c67d01a0a0"
+location.oci = "docker.io/getobelisk/test_programs_sleep_activity:2025-09-24@sha256:fcce5932093d62d4a05b77f87b6a53f37b9d35740313000d54269bda39283969"
 exec.lock_expiry.seconds = 10
 
 [[workflow]]
 name = "test_programs_sleep_workflow"
-location.oci = "docker.io/getobelisk/test_programs_sleep_workflow:2025-09-23@sha256:5d4adff4e61928e7a991bb50cfa424db36a1a680d1e309555b630dd76bef41fe"
+location.oci = "docker.io/getobelisk/test_programs_sleep_workflow:2025-09-24@sha256:83052e9f800ff0cc50baa8d7ee9874361a7f2f51b3ebce36f05fc4a4dfaf2e80"
 backtrace.sources = { "/home/runner/work/obelisk/obelisk/crates/testing/test-programs/sleep/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
 
 ### Send spans via gRPC to an OTLP collector.

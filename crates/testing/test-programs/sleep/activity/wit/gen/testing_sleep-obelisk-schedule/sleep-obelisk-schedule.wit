@@ -2,9 +2,9 @@
 package testing:sleep-obelisk-schedule;
 
 interface sleep {
-  use obelisk:types/time@2.0.0.{duration};
-  use obelisk:types/execution@2.0.0.{execution-id};
-  use obelisk:types/time@2.0.0.{schedule-at};
+  use obelisk:types/time@3.0.0.{duration};
+  use obelisk:types/execution@3.0.0.{execution-id};
+  use obelisk:types/time@3.0.0.{schedule-at};
 
   sleep-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 

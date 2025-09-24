@@ -2,8 +2,8 @@
 package testing:sleep-workflow-obelisk-ext;
 
 interface workflow {
-  use obelisk:types/time@2.0.0.{duration, schedule-at};
-  use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+  use obelisk:types/time@3.0.0.{duration, schedule-at};
+  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
 
   sleep-host-activity-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 

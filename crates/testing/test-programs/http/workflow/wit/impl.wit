@@ -3,6 +3,6 @@ package any:any;
 world any {
     import testing:http/http-get;
     import testing:http-obelisk-ext/http-get;
-    import obelisk:workflow/workflow-support@2.0.0;
+    import obelisk:workflow/workflow-support@3.0.0;
     export testing:http-workflow/workflow;
 }

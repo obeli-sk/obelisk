@@ -20,7 +20,7 @@ world root {
   export testing:stub-activity-obelisk-ext/activity;
   export testing:stub-activity-obelisk-stub/activity;
 }
-package obelisk:types@2.0.0 {
+package obelisk:types@3.0.0 {
   interface time {
     variant duration {
       milliseconds(u64),
@@ -266,7 +266,7 @@ package testing:stub-activity {
 
 package testing:stub-activity-obelisk-ext {
   interface activity {
-    use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
 
     foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
 
@@ -289,7 +289,7 @@ package testing:stub-activity-obelisk-ext {
 
 package testing:stub-activity-obelisk-stub {
   interface activity {
-    use obelisk:types/execution@2.0.0.{execution-id, stub-error};
+    use obelisk:types/execution@3.0.0.{execution-id, stub-error};
 
     foo-stub: func(execution-id: execution-id, execution-result: result<result<string>>) -> result<_, stub-error>;
 

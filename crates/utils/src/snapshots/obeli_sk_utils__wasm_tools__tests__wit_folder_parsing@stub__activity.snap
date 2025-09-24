@@ -6,7 +6,7 @@ testing:stub-activity-obelisk-ext
 package testing:stub-activity-obelisk-ext;
 
 interface activity {
-  use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
 
   foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
 
@@ -31,7 +31,7 @@ testing:stub-activity-obelisk-stub
 package testing:stub-activity-obelisk-stub;
 
 interface activity {
-  use obelisk:types/execution@2.0.0.{execution-id, stub-error};
+  use obelisk:types/execution@3.0.0.{execution-id, stub-error};
 
   foo-stub: func(execution-id: execution-id, execution-result: result<result<string>>) -> result<_, stub-error>;
 

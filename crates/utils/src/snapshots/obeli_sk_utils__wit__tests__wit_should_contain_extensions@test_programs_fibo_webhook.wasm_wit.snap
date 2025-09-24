@@ -7,8 +7,8 @@ package root:component;
 world root {
   import obelisk:log/log@1.0.0;
   import testing:fibo-workflow/workflow;
-  import obelisk:types/execution@2.0.0;
-  import obelisk:types/time@2.0.0;
+  import obelisk:types/execution@3.0.0;
+  import obelisk:types/time@3.0.0;
   import testing:fibo-workflow-obelisk-schedule/workflow;
   import wasi:io/poll@0.2.3;
   import wasi:io/error@0.2.3;
@@ -33,7 +33,7 @@ package obelisk:log@1.0.0 {
 }
 
 
-package obelisk:types@2.0.0 {
+package obelisk:types@3.0.0 {
   interface time {
     variant duration {
       milliseconds(u64),
@@ -132,8 +132,8 @@ package testing:fibo-workflow {
 
 package testing:fibo-workflow-obelisk-schedule {
   interface workflow {
-    use obelisk:types/time@2.0.0.{schedule-at};
-    use obelisk:types/execution@2.0.0.{execution-id};
+    use obelisk:types/time@3.0.0.{schedule-at};
+    use obelisk:types/execution@3.0.0.{execution-id};
 
     fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
   }

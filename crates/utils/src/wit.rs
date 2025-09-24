@@ -12,7 +12,7 @@ use wit_parser::{
     Stability, Type, TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup, WorldItem, WorldKey,
 };
 
-const OBELISK_TYPES_VERSION_MAJOR: u64 = 2;
+const OBELISK_TYPES_VERSION_MAJOR: u64 = 3;
 const OBELISK_TYPES_VERSION_MINOR: u64 = 0;
 const OBELISK_TYPES_VERSION_PATCH: u64 = 0;
 const OBELISK_TYPES_VERSION: &str = formatcp!(
@@ -22,7 +22,7 @@ const OBELISK_TYPES_PACKAGE_NAME: &str = formatcp!("obelisk:types@{OBELISK_TYPES
 
 const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@2.0.0/types@2.0.0.wit"
+    "/wit/obelisk_types@3.0.0/types@3.0.0.wit"
 ));
 
 pub(crate) fn wit(resolve: &Resolve, main_package: PackageId) -> Result<String, anyhow::Error> {

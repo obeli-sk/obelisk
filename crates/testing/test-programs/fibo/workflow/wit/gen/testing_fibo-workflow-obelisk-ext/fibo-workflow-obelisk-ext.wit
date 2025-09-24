@@ -2,7 +2,7 @@
 package testing:fibo-workflow-obelisk-ext;
 
 interface workflow {
-  use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
 
   fibow-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
 
@@ -30,7 +30,7 @@ interface workflow {
 }
 
 interface workflow-nesting {
-  use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
 
   fibo-nested-workflow-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
 

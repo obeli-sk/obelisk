@@ -2,8 +2,8 @@
 package testing:sleep-obelisk-ext;
 
 interface sleep {
-  use obelisk:types/time@2.0.0.{duration};
-  use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+  use obelisk:types/time@3.0.0.{duration};
+  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
 
   sleep-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 

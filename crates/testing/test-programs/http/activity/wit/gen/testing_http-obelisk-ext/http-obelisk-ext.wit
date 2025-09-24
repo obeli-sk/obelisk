@@ -3,7 +3,7 @@ package testing:http-obelisk-ext;
 
 interface http-get {
   use testing:http/http-get.{response, stargazers};
-  use obelisk:types/execution@2.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
 
   get-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
