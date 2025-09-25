@@ -25,7 +25,7 @@ jobs:
         id: branch-name
         run: echo "branch_name=bump-flake-lock-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
 
-      - uses: nixbuild/nix-quick-install-action@1f095fee853b33114486cfdeae62fa099cda35a9
+      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
