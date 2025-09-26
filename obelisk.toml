@@ -97,7 +97,6 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 
 # convert_core_module = true # Transparently convert Core WASM modules to WASM Components during startup.
 
-# forward_unhandled_child_errors_in_completing_join_set_close = true # Forward unhandled child errors to the parent workflow when closing completing join sets.
 ## Map from frame symbol file names to corresponding file paths on local filesystem. Supports path path prefixes on both sides.
 # backtrace.sources = {"frame symbol file path" = "path to the source file"}
 
