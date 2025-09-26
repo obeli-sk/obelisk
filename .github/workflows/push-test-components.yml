@@ -34,11 +34,6 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      - name: Download obelisk # TODO: Consider using nix run github:obeli-sk/obelisk
-        run: |
-          nix develop --command cargo binstall obelisk --install-path . -y
-          echo $(pwd) >> $GITHUB_PATH
-
       - name: Log in to Docker Hub
         run: |
           echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
@@ -58,12 +53,29 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Generate Unique Branch Name
+        id: branch-name
+        run: echo "branch_name=bump-test-components-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+
       - name: Push obelisk-oci.toml
         run: |
+          git checkout -b ${{ steps.branch-name.outputs.branch_name }}
           git add obelisk.toml
-          git commit -m "chore: Bump components to $TAG"
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
-          git push origin main
+          git commit -m "chore: Bump test components to $TAG"
+          git push origin ${{ steps.branch-name.outputs.branch_name }}
+          OWNER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
+          REPO=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          curl -v --fail -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.github.com/repos/$OWNER/$REPO/pulls \
+            -d '{
+              "title": "chore: Bump test components",
+              "head": "'${{ steps.branch-name.outputs.branch_name }}'",
+              "base": "main",
+              "body": ""
+            }'
+
         env:
           TAG: ${{ github.event.inputs.tag }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
