@@ -52,10 +52,6 @@ package obelisk:types@3.0.0 {
       id: string,
     }
 
-    record execution-failed {
-      execution-id: execution-id,
-    }
-
     record function {
       /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
       interface-name: string,
@@ -86,8 +82,6 @@ package obelisk:types@3.0.0 {
 
     /// Error that is thrown by `-get` extension functions.
     variant get-extension-error {
-      /// Execution is found in processed responses, but it finished with an error.
-      execution-failed(execution-failed),
       /// Execution is found in processed responses, but it belongs to a different function.
       /// This can happen when join set contains responses of multiple functions.
       function-mismatch(function-mismatch),
@@ -203,7 +197,7 @@ package testing:sleep-workflow {
 package testing:sleep-workflow-obelisk-ext {
   interface workflow {
     use obelisk:types/time@3.0.0.{duration, schedule-at};
-    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
 
     sleep-host-activity-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 
@@ -211,7 +205,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-host-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-host-activity-invoke: func(duration: duration) -> result<result, execution-failed>;
+    sleep-host-activity-invoke: func(duration: duration) -> result;
 
     sleep-schedule-at-submit: func(join-set-id: borrow<join-set-id>, schedule-at: schedule-at) -> execution-id;
 
@@ -219,7 +213,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-schedule-at-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-schedule-at-invoke: func(schedule-at: schedule-at) -> result<result, execution-failed>;
+    sleep-schedule-at-invoke: func(schedule-at: schedule-at) -> result;
 
     sleep-activity-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 
@@ -227,7 +221,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-activity-invoke: func(duration: duration) -> result<result, execution-failed>;
+    sleep-activity-invoke: func(duration: duration) -> result;
 
     sleep-activity-submit-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 
@@ -235,7 +229,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-activity-submit-get: func(execution-id: execution-id) -> result<result<execution-id>, get-extension-error>;
 
-    sleep-activity-submit-invoke: func(duration: duration) -> result<result<execution-id>, execution-failed>;
+    sleep-activity-submit-invoke: func(duration: duration) -> result<execution-id>;
 
     reschedule-submit: func(join-set-id: borrow<join-set-id>, duration: duration, iterations: u8) -> execution-id;
 
@@ -243,7 +237,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     reschedule-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    reschedule-invoke: func(duration: duration, iterations: u8) -> result<result, execution-failed>;
+    reschedule-invoke: func(duration: duration, iterations: u8) -> result;
 
     sleep-random-submit: func(join-set-id: borrow<join-set-id>, min-millis: u64, max-millis-inclusive: u64) -> execution-id;
 
@@ -251,7 +245,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-random-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-random-invoke: func(min-millis: u64, max-millis-inclusive: u64) -> result<result, execution-failed>;
+    sleep-random-invoke: func(min-millis: u64, max-millis-inclusive: u64) -> result;
 
     two-delays-in-same-join-set-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
@@ -259,7 +253,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     two-delays-in-same-join-set-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    two-delays-in-same-join-set-invoke: func() -> result<result, execution-failed>;
+    two-delays-in-same-join-set-invoke: func() -> result;
 
     join-next-produces-all-processed-error-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
@@ -267,6 +261,6 @@ package testing:sleep-workflow-obelisk-ext {
 
     join-next-produces-all-processed-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    join-next-produces-all-processed-error-invoke: func() -> result<result, execution-failed>;
+    join-next-produces-all-processed-error-invoke: func() -> result;
   }
 }

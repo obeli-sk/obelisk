@@ -705,7 +705,7 @@ pub(crate) mod tests {
             Version, wait_for_pending_state_fn,
         },
     };
-    use concepts::{ExecutionId, FinishedExecutionError, FinishedExecutionResult, Params};
+    use concepts::{ExecutionId, Params, SupportedFunctionReturnValue};
     use db_tests::Database;
     use executor::executor::extract_exported_ffqns_noext_test;
     use executor::{
@@ -912,14 +912,11 @@ pub(crate) mod tests {
         let res = db_connection
             .wait_for_finished_result(&execution_id, None)
             .await
-            .unwrap()
             .unwrap();
-        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(val) => val);
+        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val);
 
-        let (fibo, ok_ty) = assert_matches!(res,
-            WastValWithType {value: WastVal::Result(Ok(Some(val))), r#type: TypeWrapper::Result { ok:Some(ok_ty), err:None } } => (val, ok_ty));
-        assert_matches!(*ok_ty, TypeWrapper::U64);
-        let fibo = assert_matches!(*fibo, WastVal::U64(val) => val);
+        let fibo = assert_matches!(res,
+            WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 } => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         workflow_exec_task.close().await;
         activity_exec_task.close().await;
@@ -1343,23 +1340,11 @@ pub(crate) mod tests {
             .await
             .unwrap();
         // Check the result.
-        let res = assert_matches!(
-            db_connection
-                .wait_for_finished_result(&execution_id, None)
-                .await
-                .unwrap(),
-            Ok(res) => res
-        );
-        assert_matches!(
-            res,
-            SupportedFunctionReturnValue::Ok(WastValWithType {
-                value: WastVal::Result(Ok(None)),
-                r#type: TypeWrapper::Result {
-                    ok: None,
-                    err: None
-                }
-            })
-        );
+        let res = db_connection
+            .wait_for_finished_result(&execution_id, None)
+            .await
+            .unwrap();
+        assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
         drop(db_connection);
         activity_exec_task.close().await;
         workflow_exec_task.close().await;
@@ -1445,15 +1430,12 @@ pub(crate) mod tests {
             .await
             .unwrap();
         // Check the result.
-        let res = assert_matches!(
-            db_connection
-                .wait_for_finished_result(&execution_id, None)
-                .await
-                .unwrap(),
-            Ok(res) => res
-        );
-        let val = res.value();
-        let val = assert_matches!(val, WastVal::Result(Ok(Some(val))) => val).deref();
+        let res = db_connection
+            .wait_for_finished_result(&execution_id, None)
+            .await
+            .unwrap();
+        let val =
+            assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val.value);
         let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
         drop(db_connection);
@@ -1544,15 +1526,12 @@ pub(crate) mod tests {
             .await
             .unwrap();
         // Check the result.
-        let res = assert_matches!(
-            db_connection
-                .wait_for_finished_result(&execution_id, None)
-                .await
-                .unwrap(),
-            Ok(res) => res
-        );
-        let val = res.value();
-        let val = assert_matches!(val, WastVal::Result(Ok(Some(val))) => val).deref();
+        let res = db_connection
+            .wait_for_finished_result(&execution_id, None)
+            .await
+            .unwrap();
+        let val =
+            assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val.value);
         let val = assert_matches!(val, WastVal::List(vec) => vec);
         assert_eq!(concurrency as usize, val.len());
         for val in val {
@@ -1642,13 +1621,7 @@ pub(crate) mod tests {
         let res = db_pool.connection().get(&execution_id).await.unwrap();
         assert_matches!(
             res.into_finished_result().unwrap(),
-            Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
-                r#type: TypeWrapper::Result {
-                    ok: None,
-                    err: None,
-                },
-                value: WastVal::Result(Ok(None)),
-            }))
+            SupportedFunctionReturnValue::Ok { ok: None }
         );
         sim_clock.move_time_forward(SLEEP_DURATION);
         // New execution should be pending.
@@ -1689,7 +1662,6 @@ pub(crate) mod tests {
         use concepts::storage::{
             PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
         };
-        use std::ops::Deref;
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
@@ -1742,15 +1714,12 @@ pub(crate) mod tests {
             .await
             .unwrap();
         // Check the result.
-        let res: SupportedFunctionReturnValue = assert_matches!(
-            db_connection
-                .wait_for_finished_result(&execution_id, None)
-                .await
-                .unwrap(),
-            Ok(res) => res
-        );
-        let val = res.value();
-        let val = assert_matches!(val, WastVal::Result(Err(Some(val))) => val).deref();
+        let res: SupportedFunctionReturnValue = db_connection
+            .wait_for_finished_result(&execution_id, None)
+            .await
+            .unwrap();
+        let val =
+            assert_matches!(res, SupportedFunctionReturnValue::Err{err: Some(val)} => val.value);
         let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!("invalid format", val);
 
@@ -1869,16 +1838,11 @@ pub(crate) mod tests {
         let res = db_connection.get(&execution_id).await.unwrap();
         let value = assert_matches!(
             res.into_finished_result().unwrap(),
-            Ok(SupportedFunctionReturnValue::Ok(
-                WastValWithType { value, .. }
-            )) => value
+            SupportedFunctionReturnValue::Ok{
+                ok: Some(WastValWithType { value, .. })
+             } => value
         );
-        assert_eq!(
-            WastVal::Result(Ok(Some(Box::new(WastVal::String(format!(
-                "stubbing {INPUT_PARAM}"
-            )))))),
-            value
-        );
+        assert_eq!(WastVal::String(format!("stubbing {INPUT_PARAM}")), value);
 
         drop(exec_task);
         db_pool.close().await.unwrap();
@@ -2047,13 +2011,7 @@ pub(crate) mod tests {
         insta::with_settings!({snapshot_suffix => ffqn.to_string().replace(':', "_")}, {insta::assert_json_snapshot!(execution_log)});
         assert_matches!(
             execution_log.into_finished_result(),
-            Some(Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
-                r#type: TypeWrapper::Result {
-                    ok: None,
-                    err: None,
-                },
-                value: WastVal::Result(Ok(None)),
-            })))
+            Some(SupportedFunctionReturnValue::Ok { ok: None })
         );
 
         drop(exec_task);
@@ -2199,7 +2157,7 @@ pub(crate) mod tests {
             db_connection.as_ref(),
             sim_clock.now(),
             stub_execution_id,
-            Err(FinishedExecutionError::new_stubbed_error()),
+            SupportedFunctionReturnValue::Err { err: None },
         )
         .await;
 
@@ -2217,13 +2175,7 @@ pub(crate) mod tests {
         let res = db_connection.get(&execution_id).await.unwrap();
         assert_matches!(
             res.into_finished_result().unwrap(),
-            Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
-                r#type: TypeWrapper::Result {
-                    ok: None,
-                    err: None,
-                },
-                value: WastVal::Result(Ok(None)),
-            }))
+            SupportedFunctionReturnValue::Ok { ok: None }
         );
         drop(exec_task);
         db_pool.close().await.unwrap();
@@ -2233,7 +2185,7 @@ pub(crate) mod tests {
         db_connection: &dyn DbConnection,
         created_at: DateTime<Utc>,
         stub_execution_id: ExecutionIdDerived,
-        result: FinishedExecutionResult,
+        result: SupportedFunctionReturnValue,
     ) {
         let (parent_id, join_set_id) = stub_execution_id.split_to_parts().unwrap();
         let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.

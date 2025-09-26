@@ -24,7 +24,6 @@ use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookComponentVerified;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
-use crate::grpc_gen::stub_request;
 use crate::init;
 use crate::init::Guard;
 use anyhow::Context;
@@ -37,7 +36,6 @@ use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
 use concepts::ContentDigest;
 use concepts::ExecutionId;
-use concepts::FinishedExecutionResult;
 use concepts::FnName;
 use concepts::FunctionExtension;
 use concepts::FunctionFqn;
@@ -47,7 +45,6 @@ use concepts::IfcFqnName;
 use concepts::PackageIfcFns;
 use concepts::ParameterType;
 use concepts::Params;
-use concepts::ReturnType;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
 use concepts::SupportedFunctionReturnValue;
@@ -400,35 +397,20 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 "argument `ffqn` must be the target, not the extension".to_string(),
             ));
         }
-        let finished_result = request
-            .finished_result
-            .argument_must_exist("finished_result")?;
-
-        let result = match (finished_result, fn_metadata.return_type.clone()) {
-            (stub_request::FinishedResult::ExecutionError(_), _) => {
-                Err(concepts::FinishedExecutionError::new_stubbed_error())
-            }
-            (
-                stub_request::FinishedResult::ReturnValue(stub_request::ReturnValue {
-                    return_value: Some(return_value),
-                }),
-                ReturnType { type_wrapper, .. },
-            ) => {
-                // Type check `return_value`
-                match deserialize_slice(&return_value.value, type_wrapper) {
-                    Ok(return_value) => Ok(SupportedFunctionReturnValue::from(return_value)),
-                    Err(err) => {
-                        return Err(tonic::Status::invalid_argument(format!(
-                            "cannot deserialize return value according to its type - {err}"
-                        )));
-                    }
+        let return_value = request.return_value.argument_must_exist("return_value")?;
+        // Type check `return_value`
+        let return_value = {
+            let type_wrapper = fn_metadata.return_type.type_wrapper();
+            let return_value = match deserialize_slice(&return_value.value, type_wrapper) {
+                Ok(wast_val_with_type) => wast_val_with_type,
+                Err(err) => {
+                    return Err(tonic::Status::invalid_argument(format!(
+                        "cannot deserialize return value according to its type - {err}"
+                    )));
                 }
-            }
-            (_return_value, _ty) => {
-                return Err(tonic::Status::invalid_argument(
-                    "mismatch between return value and its type",
-                ));
-            }
+            };
+            SupportedFunctionReturnValue::from_wast_val_with_type(return_value)
+                .expect("checked that ffqn is no-ext, return type must be Compatible")
         };
 
         let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
@@ -437,7 +419,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             let finished_req = AppendRequest {
                 created_at,
                 event: ExecutionEventInner::Finished {
-                    result: result.clone(),
+                    result: return_value.clone(),
                     http_client_traces: None,
                 },
             };
@@ -455,7 +437,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                             event: JoinSetResponse::ChildExecutionFinished {
                                 child_execution_id: execution_id.clone(),
                                 finished_version: stub_finished_version.clone(),
-                                result: result.clone(),
+                                result: return_value.clone(),
                             },
                         },
                     },
@@ -474,7 +456,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 ExecutionEventInner::Finished {
                     result: found_result,
                     ..
-                } if result == found_result => {
+                } if return_value == found_result => {
                     // Same value has already be written, RPC is successful.
                 }
                 ExecutionEventInner::Finished { .. } => {
@@ -899,7 +881,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 }
 
 fn to_finished_status(
-    finished_result: FinishedExecutionResult,
+    finished_result: SupportedFunctionReturnValue,
     create_request: &CreateRequest,
     finished_at: DateTime<Utc>,
 ) -> grpc_gen::FinishedStatus {
@@ -984,8 +966,8 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
                 })
                 .collect(),
             return_type: Some(grpc_gen::WitType {
-                wit_type: return_type.wit_type.to_string(),
-                type_wrapper: serde_json::to_string(&return_type.type_wrapper)
+                wit_type: return_type.wit_type().to_string(),
+                type_wrapper: serde_json::to_string(&return_type.type_wrapper())
                     .expect("`TypeWrapper` must be serializable"),
             }),
             function_name: Some(ffqn.into()),

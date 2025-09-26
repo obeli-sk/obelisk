@@ -2,11 +2,11 @@ use crate::ClosingStrategy;
 use crate::ComponentId;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
-use crate::FinishedExecutionResult;
 use crate::FunctionFqn;
 use crate::JoinSetId;
 use crate::Params;
 use crate::StrVariant;
+use crate::SupportedFunctionReturnValue;
 use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
@@ -101,7 +101,7 @@ impl ExecutionLog {
     }
 
     #[must_use]
-    pub fn into_finished_result(mut self) -> Option<FinishedExecutionResult> {
+    pub fn into_finished_result(mut self) -> Option<SupportedFunctionReturnValue> {
         if let ExecutionEvent {
             event: ExecutionEventInner::Finished { result, .. },
             ..
@@ -198,8 +198,8 @@ pub enum JoinSetResponse {
         child_execution_id: ExecutionIdDerived,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = Version(2)))]
         finished_version: Version,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::FINISHED_EXECUTION_RESULT_DUMMY))]
-        result: FinishedExecutionResult,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::SUPPORTED_RETURN_VALUE_OK_EMPTY))]
+        result: SupportedFunctionReturnValue,
     },
 }
 
@@ -315,8 +315,8 @@ pub enum ExecutionEventInner {
     // also when
     #[display("Finished")]
     Finished {
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::FINISHED_EXECUTION_RESULT_DUMMY))]
-        result: FinishedExecutionResult,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::SUPPORTED_RETURN_VALUE_OK_EMPTY))]
+        result: SupportedFunctionReturnValue,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
@@ -437,9 +437,9 @@ pub enum HistoryEvent {
     #[display("Stub({target_execution_id})")]
     Stub {
         target_execution_id: ExecutionIdDerived,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::FINISHED_EXECUTION_RESULT_DUMMY))]
-        result: FinishedExecutionResult, // Only stored for nondeterminism checks. TODO: Consider using a hashed value.
-        persist_result: Result<(), ()>, // Is the Row (target_execution_id,Version:1) what is expected?
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::SUPPORTED_RETURN_VALUE_OK_EMPTY))]
+        result: SupportedFunctionReturnValue, // Only stored for nondeterminism checks. TODO: Consider using a hashed value.
+        persist_result: Result<(), ()>, // Does the row (target_execution_id,Version:1) match the proposed `result`?
     },
 }
 
@@ -749,7 +749,7 @@ pub trait DbConnection: Send + Sync {
         &self,
         execution_id: &ExecutionId,
         finished: PendingStateFinished,
-    ) -> Result<Option<FinishedExecutionResult>, DbError> {
+    ) -> Result<Option<SupportedFunctionReturnValue>, DbError> {
         let last_event = self
             .get_execution_event(execution_id, &Version::new(finished.version))
             .await?;
@@ -782,7 +782,7 @@ pub trait DbConnection: Send + Sync {
         &self,
         execution_id: &ExecutionId,
         timeout: Option<Duration>,
-    ) -> Result<FinishedExecutionResult, ClientError>;
+    ) -> Result<SupportedFunctionReturnValue, ClientError>;
 
     /// Best effort for blocking while there are no pending executions.
     /// Return immediately if there are pending notifications at `pending_at_or_sooner`.
@@ -1088,14 +1088,9 @@ impl Display for PendingStateFinishedResultKind {
     }
 }
 
-impl From<&FinishedExecutionResult> for PendingStateFinishedResultKind {
-    fn from(result: &FinishedExecutionResult) -> Self {
-        match result {
-            Ok(supported_fn_return_value) => {
-                supported_fn_return_value.as_pending_state_finished_result()
-            }
-            Err(err) => PendingStateFinishedResultKind(Err(err.as_pending_state_finished_error())),
-        }
+impl From<&SupportedFunctionReturnValue> for PendingStateFinishedResultKind {
+    fn from(result: &SupportedFunctionReturnValue) -> Self {
+        result.as_pending_state_finished_result()
     }
 }
 
@@ -1196,21 +1191,15 @@ pub mod http_client_trace {
 #[cfg(test)]
 mod tests {
     use super::HistoryEventScheduleAt;
-    use super::JoinSetResponse;
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
     use super::PendingStateFinishedResultKind;
-    use crate::ExecutionId;
-    use crate::FinishedExecutionResult;
     use crate::SupportedFunctionReturnValue;
-    use crate::storage::Version;
-    use assert_matches::assert_matches;
     use chrono::DateTime;
     use chrono::Datelike;
     use chrono::Utc;
+    use insta::assert_snapshot;
     use rstest::rstest;
-    use serde_json::json;
-    use std::str::FromStr;
     use std::time::Duration;
     use strum::VariantArray as _;
     use val_json::type_wrapper::TypeWrapper;
@@ -1249,51 +1238,21 @@ mod tests {
 
     #[test]
     fn join_set_deser_with_result_ok_option_none_should_work() {
-        let json = json!({
-            "type": "ChildExecutionFinished",
-            "child_execution_id": "E_01JGKY3WWV7Z24NP9BJF90JZHB.g:gg_1",
-            "finished_version": 2,
-            "result": {
-                "Ok": {
-                    "Ok": {
-                        "type": {
-                            "result": {
-                                "ok": {
-                                    "option": "string"
-                                },
-                                "err": "string"
-                            }
-                        },
-                        "value": {
-                            "ok": null
-                        }
-                    }
-                }
-            }
-        });
-        let actual: JoinSetResponse = serde_json::from_value(json).unwrap();
-        let (child_execution_id, finished_version, wast_val_with_type) = assert_matches!(
-            actual,
-            JoinSetResponse::ChildExecutionFinished {
-                child_execution_id,
-                finished_version,
-                result: FinishedExecutionResult::Ok(SupportedFunctionReturnValue::Ok(wast_val_with_type))
-            } => (child_execution_id, finished_version, wast_val_with_type)
-        );
-        assert_eq!(
-            ExecutionId::from_str("E_01JGKY3WWV7Z24NP9BJF90JZHB.g:gg_1").unwrap(),
-            ExecutionId::Derived(child_execution_id)
-        );
-        assert_eq!(Version(2), finished_version);
-
-        let expected = WastValWithType {
-            r#type: TypeWrapper::Result {
-                ok: Some(Box::new(TypeWrapper::Option(Box::new(TypeWrapper::String)))),
-                err: Some(Box::new(TypeWrapper::String)),
-            },
-            value: WastVal::Result(Ok(Some(Box::new(WastVal::Option(None))))),
+        let expected = SupportedFunctionReturnValue::Ok {
+            ok: Some(WastValWithType {
+                r#type: TypeWrapper::Result {
+                    ok: Some(Box::new(TypeWrapper::Option(Box::new(TypeWrapper::String)))),
+                    err: Some(Box::new(TypeWrapper::String)),
+                },
+                value: WastVal::Result(Ok(Some(Box::new(WastVal::Option(None))))),
+            }),
         };
-        assert_eq!(expected, wast_val_with_type);
+        let json = serde_json::to_string(&expected).unwrap();
+        assert_snapshot!(json);
+
+        let actual: SupportedFunctionReturnValue = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(expected, actual);
     }
 
     #[test]

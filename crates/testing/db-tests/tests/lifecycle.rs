@@ -1,5 +1,6 @@
 use assert_matches::assert_matches;
 use concepts::prefixed_ulid::{DelayId, RunId};
+use concepts::storage::HistoryEvent;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
     JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, PendingState, PersistKind,
@@ -11,7 +12,6 @@ use concepts::time::Now;
 use concepts::{ClosingStrategy, JoinSetId, SUPPORTED_RETURN_VALUE_OK_EMPTY};
 use concepts::{ComponentId, Params, StrVariant};
 use concepts::{ExecutionId, prefixed_ulid::ExecutorId};
-use concepts::{FinishedExecutionResult, storage::HistoryEvent};
 use db_tests::Database;
 use db_tests::SOME_FFQN;
 use std::sync::Arc;
@@ -465,7 +465,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         debug!(now = %created_at, "Finish execution");
         let req = AppendRequest {
             event: ExecutionEventInner::Finished {
-                result: FinishedExecutionResult::Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
             },
             created_at,
@@ -480,7 +480,7 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         debug!(now = %created_at, "Append after finish should fail");
         let req = AppendRequest {
             event: ExecutionEventInner::Finished {
-                result: FinishedExecutionResult::Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
             },
             created_at,
@@ -768,7 +768,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                 vec![AppendRequest {
                     created_at: sim_clock.now(),
                     event: ExecutionEventInner::Finished {
-                        result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         http_client_traces: None,
                     },
                 }],
@@ -781,7 +781,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                         event: JoinSetResponse::ChildExecutionFinished {
                             child_execution_id: child_id.clone(),
                             finished_version: child_version, // will remain at 1.
-                            result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                            result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         },
                     },
                 },
@@ -817,7 +817,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
         let child_resp = vec![AppendRequest {
             created_at: sim_clock.now(),
             event: ExecutionEventInner::Finished {
-                result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
             },
         }];
@@ -836,7 +836,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                         event: JoinSetResponse::ChildExecutionFinished {
                             child_execution_id: child_id.clone(),
                             finished_version: child_version,
-                            result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                            result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         },
                     },
                 },
@@ -879,7 +879,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                 event: JoinSetResponse::ChildExecutionFinished {
                     child_execution_id: child_a,
                     finished_version: Version(1),
-                    result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                    result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 },
             }
         }
@@ -893,7 +893,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                 event: JoinSetResponse::ChildExecutionFinished {
                     child_execution_id: child_b,
                     finished_version: Version(1),
-                    result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                    result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 },
             }
         }

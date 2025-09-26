@@ -120,18 +120,9 @@ async fn main() -> Result<(), anyhow::Error> {
             ClientSubcommand::Execution(args::Execution::Stub(args::Stub {
                 execution_id,
                 return_value,
-                empty: _,
-                error,
             })) => {
-                let finished_result = if error {
-                    Err(())
-                } else if let Some(return_value) = return_value {
-                    Ok(Some(return_value))
-                } else {
-                    Ok(None)
-                };
                 let client = get_execution_repository_client(api_url).await?;
-                command::execution::stub(client, execution_id, finished_result).await
+                command::execution::stub(client, execution_id, return_value).await
             }
             ClientSubcommand::Execution(args::Execution::Get {
                 execution_id,

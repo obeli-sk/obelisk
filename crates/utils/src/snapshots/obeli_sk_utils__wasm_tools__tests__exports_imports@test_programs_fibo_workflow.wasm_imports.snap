@@ -3,215 +3,6 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "testing:fibo-obelisk-ext/fibo.fibo-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-obelisk-ext/fibo",
-      "function_name": "fibo-await-next"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": {
-        "result": {
-          "ok": {
-            "tuple": [
-              {
-                "record": {
-                  "id": "string"
-                }
-              },
-              {
-                "result": {
-                  "ok": "u64",
-                  "err": null
-                }
-              }
-            ]
-          },
-          "err": {
-            "variant": {
-              "all-processed": null,
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
-    },
-    "extension": "await_next",
-    "submittable": false
-  },
-  "testing:fibo-obelisk-ext/fibo.fibo-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-obelisk-ext/fibo",
-      "function_name": "fibo-submit"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
-      },
-      {
-        "type_wrapper": "u8",
-        "name": "n",
-        "wit_type": "u8"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
-    },
-    "extension": "submit",
-    "submittable": false
-  },
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fiboa-concurrent-await-next"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": {
-        "result": {
-          "ok": {
-            "tuple": [
-              {
-                "record": {
-                  "id": "string"
-                }
-              },
-              {
-                "result": {
-                  "ok": "u64",
-                  "err": null
-                }
-              }
-            ]
-          },
-          "err": {
-            "variant": {
-              "all-processed": null,
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
-    },
-    "extension": "await_next",
-    "submittable": false
-  },
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fiboa-concurrent-submit"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
-      },
-      {
-        "type_wrapper": "u8",
-        "name": "n",
-        "wit_type": "u8"
-      },
-      {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      }
-    ],
-    "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
-    },
-    "extension": "submit",
-    "submittable": false
-  },
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": {
     "ffqn": {
       "ifc_fqn": "testing:fibo-workflow/workflow-nesting",
@@ -225,13 +16,13 @@ expression: imports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": "u64",
           "err": null
-        }
-      },
-      "wit_type": "result<u64>"
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": null,
     "submittable": false
@@ -259,13 +50,13 @@ expression: imports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": "u64",
           "err": null
-        }
-      },
-      "wit_type": "result<u64>"
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": null,
     "submittable": false
@@ -283,13 +74,13 @@ expression: imports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": "u64",
           "err": null
-        }
-      },
-      "wit_type": "result<u64>"
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": null,
     "submittable": false

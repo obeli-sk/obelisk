@@ -1,7 +1,7 @@
 use concepts::ComponentId;
 use concepts::ExecutionId;
-use concepts::FinishedExecutionResult;
 use concepts::Params;
+use concepts::SupportedFunctionReturnValue;
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::DbConnection;
@@ -197,9 +197,9 @@ async fn persist_finished_event(
 
     let wast_val_with_type: WastValWithType = serde_json::from_str(WVWT_RECORD_UNSORTED).unwrap();
     let inner = ExecutionEventInner::Finished {
-        result: FinishedExecutionResult::Ok(concepts::SupportedFunctionReturnValue::Ok(
-            wast_val_with_type,
-        )),
+        result: SupportedFunctionReturnValue::Ok {
+            ok: Some(wast_val_with_type),
+        },
         http_client_traces: None,
     };
     // Finished

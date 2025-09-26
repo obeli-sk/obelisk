@@ -63,7 +63,10 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Retry customization: All activities are retried on trap (panic) and timeouts until `max_retries` condition is met.
 # max_retries = 5
 # retry_exp_backoff.milliseconds = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
-# retry_on_err = true # When a function with a return type `result` returns the `Err` variant, attept to retry the execution.
+## Retry on err setting
+# Activities are retried on timeouts and traps.
+# Moreover, with `retry_on_err`, a function that returns the `err` variant will be retried as well.
+# retry_on_err = true # default is true
 ## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".
 # forward_stdout="stderr" # forwards stdout to host's stderr
 # forward_stderr="stderr" # forwards stderr to host's stderr

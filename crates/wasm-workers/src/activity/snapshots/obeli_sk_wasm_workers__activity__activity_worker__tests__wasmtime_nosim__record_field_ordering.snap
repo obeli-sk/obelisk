@@ -2,9 +2,9 @@
 source: crates/wasm-workers/src/activity/activity_worker.rs
 expression: record
 ---
-WastValWithType {
-    type: Result {
-        ok: Record(
+Some(
+    WastValWithType {
+        type: Record(
             {
                 "a": Bool,
                 "image": String,
@@ -14,27 +14,21 @@ WastValWithType {
                 ),
             },
         ),
-    },
-    value: Result(
-        Ok(
-            Some(
-                Record(
-                    {
-                        "a": Bool(
-                            false,
-                        ),
-                        "image": String(
-                            "foo",
-                        ),
-                        "b": Bool(
-                            false,
-                        ),
-                        "opt": Option(
-                            None,
-                        ),
-                    },
+        value: Record(
+            {
+                "a": Bool(
+                    false,
                 ),
-            ),
+                "image": String(
+                    "foo",
+                ),
+                "b": Bool(
+                    false,
+                ),
+                "opt": Option(
+                    None,
+                ),
+            },
         ),
-    ),
-}
+    },
+)

@@ -1,4 +1,4 @@
-use clap::{ArgGroup, Parser};
+use clap::Parser;
 use concepts::{ComponentType, ExecutionId, FunctionFqn, prefixed_ulid::ExecutionIdDerived};
 use std::path::PathBuf;
 
@@ -269,26 +269,13 @@ pub(crate) mod params {
 }
 
 #[derive(Debug, clap::Args)]
-#[command(group(
-    ArgGroup::new("result")
-        .args(&["return_value", "empty", "error"])
-        .required(true)
-        .multiple(false)
-))]
+#[command()]
 pub(crate) struct Stub {
     /// Execution ID of the stub execution waiting for its return value.
     #[arg(value_name = "EXECUTION_ID")]
     pub(crate) execution_id: ExecutionIdDerived,
 
     /// Stub a return value encoded as JSON
-    #[arg(long)]
-    pub(crate) return_value: Option<String>,
-
-    /// Stub an empty return value
-    #[arg(long)]
-    pub(crate) empty: bool,
-
-    /// Stub an error
-    #[arg(long)]
-    pub(crate) error: bool,
+    #[arg(value_name = "RETURN_VAL")]
+    pub(crate) return_value: String,
 }

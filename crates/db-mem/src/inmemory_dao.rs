@@ -7,7 +7,6 @@ use self::index::JournalsIndex;
 use crate::journal::ExecutionJournal;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::JoinSetId;
 use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
@@ -17,7 +16,8 @@ use concepts::storage::{
     ResponseWithCursor, SpecificError, SubscribeError, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
-use concepts::{ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant};
+use concepts::{ComponentId, ExecutionId, FunctionFqn, StrVariant};
+use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
 use std::collections::BTreeMap;
@@ -261,7 +261,7 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         execution_id: &ExecutionId,
         timeout: Option<Duration>,
-    ) -> Result<FinishedExecutionResult, ClientError> {
+    ) -> Result<SupportedFunctionReturnValue, ClientError> {
         let execution_log = {
             let fut = async move {
                 loop {

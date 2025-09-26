@@ -4,8 +4,8 @@ package testing:stub-activity-obelisk-stub;
 interface activity {
   use obelisk:types/execution@3.0.0.{execution-id, stub-error};
 
-  foo-stub: func(execution-id: execution-id, execution-result: result<result<string>>) -> result<_, stub-error>;
+  foo-stub: func(execution-id: execution-id, execution-result: result<string>) -> result<_, stub-error>;
 
-  noret-stub: func(execution-id: execution-id, execution-result: result<result>) -> result<_, stub-error>;
+  noret-stub: func(execution-id: execution-id, execution-result: result) -> result<_, stub-error>;
 }
 

@@ -15,10 +15,10 @@ use concepts::ClosingStrategy;
 use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
 use concepts::ExecutionMetadata;
-use concepts::FinishedExecutionResult;
 use concepts::FunctionRegistry;
 use concepts::JoinSetId;
 use concepts::JoinSetKind;
+use concepts::SupportedFunctionReturnValue;
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage;
@@ -35,7 +35,7 @@ use concepts::storage::{
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::time::SleepFactory;
 use concepts::{ExecutionId, StrVariant};
-use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
+use concepts::{FunctionFqn, Params};
 use hashbrown::HashMap;
 use hashbrown::HashSet;
 use indexmap::IndexMap;
@@ -52,55 +52,15 @@ use tracing::Span;
 use tracing::info;
 use tracing::instrument;
 use tracing::{debug, error, trace};
-use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::WastVal;
 use wasmtime::component::Val;
 
 #[derive(Debug)]
 pub(crate) enum ChildReturnValue {
-    WastVal(WastVal),
+    WastVal(WastVal), // TODO: SupportedFunctionReturnValue(SupportedFunctionReturnValue)
     JoinSetCreate(JoinSetId),
     JoinNext(Result<types_execution::ResponseId, workflow_support::JoinNextError>),
     OneOffDelay { scheduled_at: DateTime<Utc> },
-}
-
-fn from_execution_error(
-    ret_type: &TypeWrapper,
-    child_execution_id: &ExecutionIdDerived,
-) -> WastVal {
-    match ret_type {
-        TypeWrapper::Result { ok: _, err: None } => return WastVal::Result(Err(None)),
-        TypeWrapper::Result {
-            ok: _,
-            err: Some(inner),
-        } => match inner.as_ref() {
-            TypeWrapper::String => {
-                return WastVal::Result(Err(Some(Box::new(WastVal::String(
-                    "execution-failed".to_string(),
-                )))));
-            }
-            TypeWrapper::Variant(variants) => {
-                if let Some(Some(TypeWrapper::Record(fields))) = variants.get("execution-failed")
-                    && fields.len() == 1
-                    && let Some(TypeWrapper::Record(execution_id_fields)) =
-                        fields.get("execution-id")
-                    && execution_id_fields.len() == 1
-                    && let Some(TypeWrapper::String) = execution_id_fields.get("id")
-                {
-                    return WastVal::Result(Err(Some(Box::new(WastVal::Variant(
-                        "execution-failed".to_string(),
-                        Some(Box::new(WastVal::Record(indexmap! {
-                        "execution-id".to_string() => execution_id_derived_into_wast_val(
-                                child_execution_id,
-                            )}))),
-                    )))));
-                }
-            }
-            _ => {}
-        },
-        _ => {}
-    }
-    unreachable!("unexpected return type {ret_type:?} must have not been allowed in ExImLite")
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -632,22 +592,10 @@ impl EventHistory {
                             .index_child_exe_to_ffqn
                             .get(child_execution_id)
                             .expect("if finished the index must have it");
-
-                        let ret_type = if result.is_err() {
-                            // perf tweak: Only obtain return type if needed for wastval conversion
-                            Some(self.fn_registry.get_by_exported_function(response_ffqn)
-                                .expect("even if components changed, workflow replayed, calling the child ffqn, thus it must be in fn_registry")
-                                .0
-                                .return_type.type_wrapper)
-                        } else {
-                            None
-                        };
-
                         JoinSetResponseEnriched::ChildExecutionFinished(ChildExecutionFinished {
                             child_execution_id,
                             result,
                             response_ffqn,
-                            ret_type,
                         })
                     }
                     JoinSetResponse::DelayFinished { delay_id } => {
@@ -829,52 +777,30 @@ impl EventHistory {
                             child_execution_id,
                             result,
                             response_ffqn,
-                            ret_type,
                         },
                     )) if requested_ffqn == response_ffqn => {
                         trace!(%join_set_id, "Matched JoinNext & ChildExecutionFinished");
                         match kind {
-                            JoinNextChildKind::DirectCall => match result {
-                                Ok(result) => Ok(FindMatchingResponse::Found(
-                                    ChildReturnValue::WastVal(result.clone().into_value()),
-                                )),
-                                // `FinishedExecutionError`s are mapped to Err
-                                Err(_execution_err) => {
-                                    // Transform FinishedExecutionError to WastVal
-                                    let ret_type = ret_type
-                                        .expect("must be present on FinishedExecutionError");
-                                    Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                                        from_execution_error(&ret_type, child_execution_id),
-                                    )))
-                                }
-                            },
+                            JoinNextChildKind::DirectCall => {
+                                let response_ffqn = response_ffqn.clone();
+                                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                                    result.clone().into_wast_val( || self.fn_registry.get_ret_type(&response_ffqn)
+                                        .expect("response_ffqn can only be exported and no-ext, thus must be returned by get_ret_type"))
+                                )))
+                            }
                             JoinNextChildKind::AwaitNext => {
-                                match result {
-                                    Ok(
-                                        SupportedFunctionReturnValue::Ok(v)
-                                        | SupportedFunctionReturnValue::Err(v),
-                                    ) => {
-                                        // result<(execution-id, inner>, await-next-extension-error>
-                                        Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                                            WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(
-                                                vec![
-                                                    execution_id_derived_into_wast_val(
-                                                        child_execution_id,
-                                                    ),
-                                                    v.value.clone(),
-                                                ],
-                                            ))))),
-                                        )))
-                                    }
-                                    Err(_execution_err) => {
-                                        // Transform FinishedExecutionError to WastVal
-                                        let ret_type = ret_type
-                                            .expect("must be present on FinishedExecutionError");
-                                        Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                                            from_execution_error(&ret_type, child_execution_id),
-                                        )))
-                                    }
-                                }
+                                // result<(execution-id, inner-res>, await-next-extension-error>
+                                // both cases will end in inner-res
+                                let response_ffqn = response_ffqn.clone();
+                                let child_execution_id = child_execution_id.clone();
+                                let inner_res = result.clone().into_wast_val( || self.fn_registry.get_ret_type(&response_ffqn)
+                                    .expect("response_ffqn can only be exported and no-ext, thus must be returned by get_ret_type"));
+                                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
+                                    WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
+                                        execution_id_derived_into_wast_val(&child_execution_id),
+                                        inner_res,
+                                    ]))))),
+                                )))
                             }
                         }
                     }
@@ -883,7 +809,6 @@ impl EventHistory {
                             child_execution_id,
                             result: _,
                             response_ffqn,
-                            ret_type: _,
                         },
                     )) => {
                         // mismatch between ffqns
@@ -962,7 +887,6 @@ impl EventHistory {
                             child_execution_id,
                             result: _,
                             response_ffqn: _,
-                            ret_type: _,
                         },
                     )) => {
                         trace!(%join_set_id, %child_execution_id, "DeterministicKey::JoinNext: Matched ChildExecutionFinished");
@@ -1847,14 +1771,21 @@ impl EventHistory {
             .event
         {
             JoinSetResponse::ChildExecutionFinished {
-                result: Ok(supported_retval),
-                ..
-            } => Ok(supported_retval.clone().into_value()),
-            JoinSetResponse::ChildExecutionFinished {
-                result: Err(_err), ..
-            } => Err(GetExtensionError::ExecutionFailed(
-                types_execution::ExecutionFailed::from(child_execution_id),
-            )),
+                result,
+                child_execution_id,
+                finished_version: _,
+            } => {
+                let response_ffqn = self
+                    .index_child_exe_to_ffqn
+                    .get(child_execution_id)
+                    .expect("got response so the request must have been processed");
+                Ok(result
+                    .clone()
+                    .into_wast_val( || self.fn_registry.get_ret_type(response_ffqn)
+                        .expect("response_ffqn can only be exported and no-ext, thus must be returned by get_ret_type"))
+
+                )
+            }
             JoinSetResponse::DelayFinished { .. } => unreachable!(
                 "`index_child_exe_to_processed_response_idx` must point to a ChildExecutionFinished"
             ),
@@ -2000,9 +1931,8 @@ enum JoinSetResponseEnriched<'a> {
 
 struct ChildExecutionFinished<'a> {
     child_execution_id: &'a ExecutionIdDerived,
-    result: &'a FinishedExecutionResult,
+    result: &'a SupportedFunctionReturnValue,
     response_ffqn: &'a FunctionFqn,
-    ret_type: Option<TypeWrapper>, // only present on FinishedExecutionError
 }
 
 #[derive(Debug)]
@@ -2241,7 +2171,7 @@ pub(crate) struct Stub {
     pub(crate) parent_id: ExecutionId,
     pub(crate) join_set_id: JoinSetId,
     #[debug(skip)]
-    pub(crate) result: FinishedExecutionResult,
+    pub(crate) result: SupportedFunctionReturnValue, // stubbed return value
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
@@ -2421,9 +2351,7 @@ impl OneOffChildExecutionRequest {
             .apply_inner(event, db_connection, version, called_at)
             .await
         {
-            Ok(ChildReturnValue::WastVal(wast_val)) => {
-                Ok(Val::Result(Ok(Some(Box::new(wast_val.as_val())))))
-            }
+            Ok(ChildReturnValue::WastVal(wast_val)) => Ok(wast_val.as_val()),
             Ok(
                 ChildReturnValue::JoinSetCreate(_)
                 | ChildReturnValue::JoinNext(_)
@@ -2652,7 +2580,7 @@ enum DeterministicKey {
     },
     Stub {
         target_execution_id: ExecutionIdDerived,
-        return_value: FinishedExecutionResult,
+        return_value: SupportedFunctionReturnValue,
     },
 }
 
@@ -2873,7 +2801,7 @@ mod tests {
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id.clone(),
                         finished_version: Version(0), // does not matter
-                        result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                     },
                 },
             )
@@ -2912,11 +2840,12 @@ mod tests {
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
-        const CHILD_RESP: SupportedFunctionReturnValue =
-            SupportedFunctionReturnValue::Ok(WastValWithType {
+        const CHILD_RESP: SupportedFunctionReturnValue = SupportedFunctionReturnValue::Ok {
+            ok: Some(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(1),
-            });
+            }),
+        };
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = Database::Memory.set_up().await;
@@ -2959,7 +2888,7 @@ mod tests {
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id.clone(),
                         finished_version: Version(0), // does not matter
-                        result: Ok(CHILD_RESP),
+                        result: CHILD_RESP,
                     },
                 },
             )
@@ -3005,7 +2934,7 @@ mod tests {
 
         let child_resp_wrapped = WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
             execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id)),
-            WastVal::U8(1),
+            WastVal::Result(Ok(Some(Box::new(WastVal::U8(1))))),
         ])))));
         let res = assert_matches!(res, ChildReturnValue::WastVal(res) => res);
         assert_eq!(child_resp_wrapped, res);
@@ -3019,16 +2948,18 @@ mod tests {
     async fn create_two_non_blocking_childs_then_two_join_nexts(
         #[values(true, false)] submits_and_awaits_in_correct_order: bool,
     ) {
-        const KID_A_RET: SupportedFunctionReturnValue =
-            SupportedFunctionReturnValue::Ok(WastValWithType {
+        const KID_A_RET: SupportedFunctionReturnValue = SupportedFunctionReturnValue::Ok {
+            ok: Some(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(1),
-            });
-        const KID_B_RET: SupportedFunctionReturnValue =
-            SupportedFunctionReturnValue::Ok(WastValWithType {
+            }),
+        };
+        const KID_B_RET: SupportedFunctionReturnValue = SupportedFunctionReturnValue::Ok {
+            ok: Some(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(2),
-            });
+            }),
+        };
 
         test_utils::set_up();
 
@@ -3097,7 +3028,7 @@ mod tests {
                             child_execution_id_b.clone()
                         },
                         finished_version: Version(0), // does not matter
-                        result: Ok(KID_A_RET),        // won't matter on mismatch
+                        result: KID_A_RET,            // won't matter on mismatch
                     },
                 },
             )
@@ -3116,7 +3047,7 @@ mod tests {
                             child_execution_id_a.clone()
                         },
                         finished_version: Version(0), // does not matter
-                        result: Ok(KID_B_RET),        // won't matter on mismatch
+                        result: KID_B_RET,            // won't matter on mismatch
                     },
                 },
             )
@@ -3150,7 +3081,7 @@ mod tests {
         .unwrap();
         if !submits_and_awaits_in_correct_order {
             // actually execution B was processed.
-            let mismatch = Some(WastVal::Result(Err(Some(Box::new(WastVal::Variant(
+            let mismatch = WastVal::Result(Err(Some(Box::new(WastVal::Variant(
                 "function-mismatch".to_string(),
                 Some(Box::new(WastVal::Record(indexmap! {
                     "specified-function".to_string() => ffqn_into_wast_val(&submit_ffqn_1),
@@ -3160,13 +3091,13 @@ mod tests {
                     "actual-id".to_string() => WastVal::Variant("execution-id".to_string(),
                         Some(Box::from(execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id_b))))),
                 }))),
-            ))))));
+            )))));
             assert_eq!(mismatch, res);
         } else {
-            let kid_a = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
+            let kid_a = WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
                 execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id_a)),
-                WastVal::U8(1),
-            ]))))));
+                WastVal::Result(Ok(Some(Box::new(WastVal::U8(1))))),
+            ])))));
             assert_eq!(kid_a, res);
             // second child result should be found
             let res = event_history
@@ -3184,7 +3115,7 @@ mod tests {
                 .unwrap();
             let kid_b = WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
                 execution_id_into_wast_val(&ExecutionId::Derived(child_execution_id_b)),
-                WastVal::U8(2),
+                WastVal::Result(Ok(Some(Box::new(WastVal::U8(2))))),
             ])))));
             let res = assert_matches!(res, ChildReturnValue::WastVal(res) => res);
             assert_eq!(kid_b, res);
@@ -3297,7 +3228,7 @@ mod tests {
                         target_execution_id: child_execution_id.clone(),
                         parent_id: execution_id.clone(),
                         join_set_id: join_set_id.clone(),
-                        result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         wasm_backtrace: None,
                     }),
                     db_connection,
@@ -3374,7 +3305,7 @@ mod tests {
                         target_execution_id: child_execution_id.clone(),
                         parent_id: execution_id.clone(),
                         join_set_id: join_set_id.clone(),
-                        result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         wasm_backtrace: None,
                     }),
                     db_connection,
@@ -3391,7 +3322,7 @@ mod tests {
                         target_execution_id: child_execution_id.clone(),
                         parent_id: execution_id.clone(),
                         join_set_id: join_set_id.clone(),
-                        result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         wasm_backtrace: None,
                     }),
                     db_connection,
@@ -3548,7 +3479,7 @@ mod tests {
         ffqn_b: FunctionFqn,
         child_execution_id_b: ExecutionIdDerived,
         called_at: DateTime<Utc>,
-    ) -> Result<Option<WastVal>, ApplyError> {
+    ) -> Result<WastVal, ApplyError> {
         apply_create_join_set_start_async(
             db_connection,
             event_history,
@@ -3589,7 +3520,7 @@ mod tests {
             )
             .await
             .map(|res| match res {
-                ChildReturnValue::WastVal(res) => Some(res),
+                ChildReturnValue::WastVal(res) => res,
                 other => {
                     unreachable!("BlockingChildAwaitNext returns WastVal, got {other:?}")
                 }

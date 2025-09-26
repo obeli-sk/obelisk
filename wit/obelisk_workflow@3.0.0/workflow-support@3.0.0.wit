@@ -49,7 +49,6 @@ interface workflow-support {
     /// The response is marked as processed.
     /// Child execution result can be obtained using `-get` extension function using the
     /// returned execution ID.
-    /// Return `none` if the join set has all requests matched with responses.
-    join-next: func(join-set-id: borrow<join-set-id>) ->
-        result<response-id, join-next-error>;
+    /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
+    join-next: func(join-set-id: borrow<join-set-id>) -> result<response-id, join-next-error>;
 }

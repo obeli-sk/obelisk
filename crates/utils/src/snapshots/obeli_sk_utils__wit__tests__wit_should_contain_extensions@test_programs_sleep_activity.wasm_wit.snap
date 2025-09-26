@@ -59,10 +59,6 @@ package obelisk:types@3.0.0 {
       id: string,
     }
 
-    record execution-failed {
-      execution-id: execution-id,
-    }
-
     record function {
       /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
       interface-name: string,
@@ -93,8 +89,6 @@ package obelisk:types@3.0.0 {
 
     /// Error that is thrown by `-get` extension functions.
     variant get-extension-error {
-      /// Execution is found in processed responses, but it finished with an error.
-      execution-failed(execution-failed),
       /// Execution is found in processed responses, but it belongs to a different function.
       /// This can happen when join set contains responses of multiple functions.
       function-mismatch(function-mismatch),
@@ -295,7 +289,7 @@ package testing:sleep {
 package testing:sleep-obelisk-ext {
   interface sleep {
     use obelisk:types/time@3.0.0.{duration};
-    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
 
     sleep-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 
@@ -303,7 +297,7 @@ package testing:sleep-obelisk-ext {
 
     sleep-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-invoke: func(duration: duration) -> result<result, execution-failed>;
+    sleep-invoke: func(duration: duration) -> result;
 
     sleep-loop-submit: func(join-set-id: borrow<join-set-id>, duration: duration, iterations: u32) -> execution-id;
 
@@ -311,7 +305,7 @@ package testing:sleep-obelisk-ext {
 
     sleep-loop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-loop-invoke: func(duration: duration, iterations: u32) -> result<result, execution-failed>;
+    sleep-loop-invoke: func(duration: duration, iterations: u32) -> result;
   }
 }
 

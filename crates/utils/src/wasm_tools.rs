@@ -2,9 +2,10 @@ use crate::{sha256sum::calculate_sha256_file, wit::from_wit_package_name_to_pkg_
 use anyhow::Context;
 use concepts::{
     ComponentType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
-    PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType, SUFFIX_FN_AWAIT_NEXT,
-    SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT,
-    SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
+    PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType, ReturnTypeCompatible,
+    ReturnTypeIncompatible, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_INVOKE,
+    SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE,
+    SUFFIX_PKG_STUB, StrVariant, TypeWrapperTopLevel,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -241,7 +242,7 @@ impl WasmComponent {
         world: &World,
         submittable_exports: bool,
     ) -> Result<ExImLite, DecodeError> {
-        let exports = populate_ifcs(
+        let exports = populate_ifcs_with_compatible_fns(
             resolve,
             world_interfaces(world, ExOrIm::Exports),
             if submittable_exports {
@@ -250,7 +251,7 @@ impl WasmComponent {
                 ProcessingKind::ExportsOfActivityStub
             },
         )?;
-        let imports = populate_ifcs(
+        let imports = populate_ifcs_with_compatible_fns(
             resolve,
             world_interfaces(world, ExOrIm::Imports),
             ProcessingKind::Imports,
@@ -394,10 +395,10 @@ impl ExIm {
             TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
         let join_set_id_type_wrapper = TypeWrapper::Borrow;
 
-        let return_type_execution_id = ReturnType {
+        let return_type_execution_id = ReturnType::Incompatible(ReturnTypeIncompatible {
             type_wrapper: execution_id_type_wrapper.clone(),
             wit_type: concepts::StrVariant::Static("execution-id"),
-        };
+        });
         let param_type_execution_id = ParameterType {
             type_wrapper: execution_id_type_wrapper.clone(),
             name: StrVariant::Static("execution-id"),
@@ -438,11 +439,6 @@ impl ExIm {
             Box::from("delay-id") => Some(delay_id_type_wrapper.clone()),
         });
 
-        // record execution-failed
-        let execution_failed_type_wrapper = TypeWrapper::Record(indexmap! {
-            Box::from("execution-id") => execution_id_type_wrapper.clone()
-        });
-
         // record function-mismatch
         let function_mismatch_type_wrapper = TypeWrapper::Record(indexmap! {
             Box::from("specified-function") => function_type_wrapper.clone(),
@@ -458,7 +454,6 @@ impl ExIm {
 
         // get-extension-error
         let get_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("execution-failed") => Some(execution_failed_type_wrapper.clone()),
             Box::from("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
             Box::from("not-found-in-processed-responses") => None,
         });
@@ -532,6 +527,9 @@ impl ExIm {
                     extension: None,
                     submittable: false,
                 };
+                let ReturnType::Compatible(return_type) = return_type else {
+                    unreachable!("all exported functions must have their return type validated")
+                };
 
                 // -submit(join-set-id: join-set-id, original params) -> execution id
                 let fn_submit = FunctionMetadata {
@@ -573,10 +571,10 @@ impl ExIm {
                         // (execution-id, original_ret)
                         let ok_type_wrapper = TypeWrapper::Tuple(Box::new([
                             execution_id_type_wrapper.clone(),
-                            exported_fn_metadata.return_type.type_wrapper.clone(),
+                            TypeWrapper::from(return_type.type_wrapper_tl.clone()),
                         ]));
-                        ReturnType {
-                            type_wrapper: TypeWrapper::Result {
+                        ReturnType::Compatible(ReturnTypeCompatible {
+                            type_wrapper_tl: TypeWrapperTopLevel {
                                 ok: Some(Box::new(ok_type_wrapper)),
                                 err: Some(Box::new(
                                     await_next_extension_error_type_wrapper.clone(),
@@ -585,7 +583,7 @@ impl ExIm {
                             wit_type: StrVariant::from(format!(
                                 "result<{ok_part}, await-next-extension-error>"
                             )),
-                        }
+                        })
                     },
                     extension: Some(FunctionExtension::AwaitNext),
                     submittable: false,
@@ -603,26 +601,26 @@ impl ExIm {
                     },
                     parameter_types: ParameterTypes(vec![param_type_execution_id.clone()]),
                     return_type: {
-                        let ok_wit = &exported_fn_metadata.return_type.wit_type;
-                        let ok_type_wrapper = Some(Box::new(
-                            exported_fn_metadata.return_type.type_wrapper.clone(),
-                        ));
-                        ReturnType {
-                            type_wrapper: TypeWrapper::Result {
+                        let ok_wit = &return_type.wit_type;
+                        let ok_type_wrapper = Some(Box::new(TypeWrapper::from(
+                            return_type.type_wrapper_tl.clone(),
+                        )));
+                        ReturnType::Compatible(ReturnTypeCompatible {
+                            type_wrapper_tl: TypeWrapperTopLevel {
                                 ok: ok_type_wrapper,
                                 err: Some(Box::new(get_extension_error_type_wrapper.clone())),
                             },
                             wit_type: StrVariant::from(format!(
                                 "result<{ok_wit}, get-extension-error>"
                             )),
-                        }
+                        })
                     },
                     extension: Some(FunctionExtension::Get),
                     submittable: false,
                 };
                 insert_ext(fn_get);
 
-                // -invoke(original params) -> result<original reslut or _, execution-failed>
+                // -invoke(original params) -> original reslut
                 let fn_invoke = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),
@@ -635,21 +633,7 @@ impl ExIm {
                         let params = exported_fn_metadata.parameter_types.0.clone();
                         ParameterTypes(params)
                     },
-                    return_type: {
-                        let ok_wit = &exported_fn_metadata.return_type.wit_type;
-                        let ok_type_wrapper = Some(Box::new(
-                            exported_fn_metadata.return_type.type_wrapper.clone(),
-                        ));
-                        ReturnType {
-                            type_wrapper: TypeWrapper::Result {
-                                ok: ok_type_wrapper,
-                                err: Some(Box::new(execution_failed_type_wrapper.clone())),
-                            },
-                            wit_type: StrVariant::from(format!(
-                                "result<{ok_wit}, execution-failed>"
-                            )),
-                        }
-                    },
+                    return_type: ReturnType::Compatible(return_type.clone()),
                     extension: Some(FunctionExtension::Invoke),
                     submittable: false,
                 };
@@ -697,29 +681,22 @@ impl ExIm {
                             let mut params = vec![param_type_execution_id.clone()];
 
                             params.push(ParameterType {
-                                type_wrapper: TypeWrapper::Result {
-                                    ok: Some(Box::new(
-                                        exported_fn_metadata.return_type.type_wrapper.clone(),
-                                    )),
-                                    err: None,
-                                },
+                                type_wrapper: TypeWrapper::from(
+                                    return_type.type_wrapper_tl.clone(),
+                                ),
                                 name: StrVariant::Static("execution-result"),
-                                wit_type: format!(
-                                    "result<{}>",
-                                    exported_fn_metadata.return_type.wit_type
-                                )
-                                .into(),
+                                wit_type: return_type.wit_type.clone(),
                             });
 
                             ParameterTypes(params)
                         },
-                        return_type: ReturnType {
-                            type_wrapper: TypeWrapper::Result {
+                        return_type: ReturnType::Compatible(ReturnTypeCompatible {
+                            type_wrapper_tl: TypeWrapperTopLevel {
                                 ok: None,
                                 err: Some(Box::new(stub_error_type_wrapper.clone())),
                             },
                             wit_type: StrVariant::Static("result<_, stub-error>"),
-                        },
+                        }),
                         extension: Some(FunctionExtension::Stub),
                         submittable: false,
                     };
@@ -767,9 +744,11 @@ impl ExIm {
     }
 }
 
+// Only contains functions with result types of ResultType::Compatible
 #[derive(Debug)]
 struct ExImLite {
     imports: Vec<PackageIfcFns>,
+    // Only no-ext functions in exports, guarded by DecodeError::ExportingExt
     exports: Vec<PackageIfcFns>,
 }
 
@@ -788,7 +767,7 @@ impl ProcessingKind {
     }
 }
 
-fn populate_ifcs(
+fn populate_ifcs_with_compatible_fns(
     resolve: &Resolve,
     ifc_ids: impl Iterator<Item = InterfaceId>,
     processing_kind: ProcessingKind,
@@ -848,15 +827,15 @@ fn populate_ifcs(
                     .map_or(StrVariant::Static("unknown"), |()| {
                         StrVariant::from(printer.output.to_string())
                     });
-                Some(ReturnType {
-                    type_wrapper: match TypeWrapper::from_wit_parser_type(resolve, &return_type) {
+                Some(ReturnType::detect(
+                    match TypeWrapper::from_wit_parser_type(resolve, &return_type) {
                         Ok(ok) => ok,
                         Err(err) => {
                             return Err(DecodeError::TypeNotSupported { err, ffqn });
                         }
                     },
                     wit_type,
-                })
+                ))
             } else {
                 None
             };
@@ -871,18 +850,18 @@ fn populate_ifcs(
                 }
             };
 
-            let return_type = ReturnTypeSupport::validate(return_type, imported_fn_extension);
+            let return_type_valid = matches!(return_type, Some(ReturnType::Compatible(_)));
 
             // Warn if this is export and a function return type does not validate.
             // Mute warnings for `incoming-handlers`, exported by webhooks.
             if processing_kind.is_export()
-                && matches!(return_type, ReturnTypeSupport::Invalid)
+                && !return_type_valid
                 && !ifc_fqn.starts_with("wasi:http/incoming-handler@")
             {
                 warn!("Ignoring export {ffqn} with unsupported return type");
             }
 
-            if let ReturnTypeSupport::Valid(return_type) = return_type {
+            if let Some(ReturnType::Compatible(return_type)) = return_type {
                 let ffqn =
                     FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
                 let parameter_types = ParameterTypes({
@@ -915,7 +894,7 @@ fn populate_ifcs(
                     FunctionMetadata {
                         ffqn,
                         parameter_types,
-                        return_type,
+                        return_type: ReturnType::Compatible(return_type),
                         extension: imported_fn_extension,
                         submittable,
                     },
@@ -933,51 +912,9 @@ fn populate_ifcs(
     Ok(vec)
 }
 
-enum ReturnTypeSupport {
-    Valid(ReturnType),
-    Invalid,
-}
-impl ReturnTypeSupport {
-    fn validate(
-        return_type: Option<ReturnType>,
-        imported_fn_extension: Option<FunctionExtension>,
-    ) -> ReturnTypeSupport {
-        let Some(return_type) = return_type else {
-            return ReturnTypeSupport::Invalid;
-        };
-        if imported_fn_extension.is_some() {
-            return ReturnTypeSupport::Valid(return_type);
-        }
-        if let TypeWrapper::Result { ok: _, err: None } = return_type.type_wrapper {
-            return ReturnTypeSupport::Valid(return_type);
-        }
-
-        if let TypeWrapper::Result {
-            ok: _,
-            err: Some(inner),
-        } = &return_type.type_wrapper
-        {
-            if let TypeWrapper::String = inner.as_ref() {
-                return ReturnTypeSupport::Valid(return_type);
-            }
-
-            if let TypeWrapper::Variant(variants) = inner.as_ref()
-                && let Some(Some(TypeWrapper::Record(fields))) = variants.get("execution-failed")
-                && fields.len() == 1
-                && let Some(TypeWrapper::Record(execution_id_fields)) = fields.get("execution-id")
-                && execution_id_fields.len() == 1
-                && let Some(TypeWrapper::String) = execution_id_fields.get("id")
-            {
-                return ReturnTypeSupport::Valid(return_type);
-            }
-        }
-        ReturnTypeSupport::Invalid
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::populate_ifcs;
+    use super::populate_ifcs_with_compatible_fns;
     use crate::wasm_tools::{ExOrIm, ProcessingKind, WasmComponent, world_interfaces};
     use concepts::ComponentType;
     use rstest::rstest;
@@ -1044,7 +981,7 @@ pub(crate) mod tests {
         let world = resolve.worlds.get(world_id).expect("world must exist");
 
         if exports {
-            let exports = populate_ifcs(
+            let exports = populate_ifcs_with_compatible_fns(
                 &resolve,
                 world_interfaces(world, ExOrIm::Exports),
                 ProcessingKind::ExportsSubmittable,
@@ -1056,7 +993,7 @@ pub(crate) mod tests {
             .collect::<hashbrown::HashMap<_, _>>();
             insta::with_settings!({sort_maps => true,  snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
         } else {
-            let imports = populate_ifcs(
+            let imports = populate_ifcs_with_compatible_fns(
                 &resolve,
                 world_interfaces(world, ExOrIm::Imports),
                 ProcessingKind::Imports,

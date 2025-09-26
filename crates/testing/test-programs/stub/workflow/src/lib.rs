@@ -5,10 +5,9 @@ use crate::testing::stub_activity_obelisk_ext::activity as activity_ext;
 use crate::testing::stub_activity_obelisk_stub::activity as activity_stub;
 use obelisk::log::log;
 use obelisk::types::execution::{
-    AwaitNextExtensionError, ExecutionFailed, ExecutionId, GetExtensionError, JoinSetId, ResponseId,
+    AwaitNextExtensionError, ExecutionId, GetExtensionError, JoinSetId, ResponseId,
 };
 use obelisk::workflow::workflow_support::new_join_set_named;
-use testing::stub_activity_obelisk_ext::activity::noret_invoke;
 use wit_bindgen::generate;
 generate!({ generate_all });
 struct Component;
@@ -18,7 +17,7 @@ impl Guest for Component {
     fn submit_stub_await(arg: String) -> Result<String, ()> {
         let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
         let execution_id = activity_ext::foo_submit(&join_set, &arg);
-        activity_stub::foo_stub(&execution_id, Ok(Ok(&format!("stubbing {arg}"))))
+        activity_stub::foo_stub(&execution_id, Ok(&format!("stubbing {arg}")))
             .expect("stubbed activity must accept returned value once");
         let (actual_execution_id, ret_val) =
             activity_ext::foo_await_next(&join_set).expect("stubbed execution result above");
@@ -48,8 +47,7 @@ impl Guest for Component {
     }
 
     fn stub_subworkflow(execution_id: ExecutionId, retval: String) -> Result<(), ()> {
-        activity_stub::foo_stub(&execution_id, Ok(Ok(&format!("stubbing {retval}"))))
-            .map_err(|_| ())
+        activity_stub::foo_stub(&execution_id, Ok(&format!("stubbing {retval}"))).map_err(|_| ())
     }
 
     fn await_next_produces_all_processed_error() -> Result<(), ()> {
@@ -67,7 +65,7 @@ impl Guest for Component {
         fn add_exec(join_set: &JoinSetId, names: Vec<&'static str>) {
             for name in names {
                 let execution_id = activity_ext::foo_submit(join_set, name);
-                activity_stub::foo_stub(&execution_id, Ok(Ok(name)))
+                activity_stub::foo_stub(&execution_id, Ok(name))
                     .expect("stubbed activity must accept returned value once");
             }
         }
@@ -88,7 +86,7 @@ impl Guest for Component {
     }
 
     fn invoke_expect_execution_error() -> Result<(), ()> {
-        noret_invoke().unwrap().unwrap_err();
+        activity_ext::noret_invoke().unwrap_err();
         Ok(())
     }
 }
@@ -110,7 +108,7 @@ fn submit_race_join_next(config: RaceConfig) {
     );
     match config {
         RaceConfig::Stub => {
-            activity_stub::foo_stub(&execution_id, Ok(Ok(OK_STUB_RESP)))
+            activity_stub::foo_stub(&execution_id, Ok(OK_STUB_RESP))
                 .expect("stubbed activity must accept returned value once");
         }
         RaceConfig::StubError => {
@@ -127,15 +125,12 @@ fn submit_race_join_next(config: RaceConfig) {
         ResponseId::ExecutionId(reported_id) => {
             assert_eq!(reported_id.id, execution_id.id);
             match activity_ext::foo_get(&execution_id) {
-                Ok(ok) => {
+                Ok(Ok(ok)) => {
                     assert_eq!(RaceConfig::Stub, config);
-                    assert_eq!(Ok(OK_STUB_RESP), ok.as_deref());
+                    assert_eq!(OK_STUB_RESP, ok);
                 }
-                Err(GetExtensionError::ExecutionFailed(ExecutionFailed {
-                    execution_id: err_id,
-                })) => {
+                Ok(Err(())) => {
                     assert_eq!(RaceConfig::StubError, config);
-                    assert_eq!(execution_id.id, err_id.id);
                 }
                 Err(GetExtensionError::FunctionMismatch(_)) => {
                     unreachable!("no other functions were submitted")
@@ -149,7 +144,7 @@ fn submit_race_join_next(config: RaceConfig) {
             assert_eq!(RaceConfig::Delay, config);
             assert_eq!(delay_id.id, reported_id.id);
             // Cannot cancel waiting for the execution when closing join set, just mock it:
-            activity_stub::foo_stub(&execution_id, Ok(Ok(OK_STUB_RESP)))
+            activity_stub::foo_stub(&execution_id, Ok(OK_STUB_RESP))
                 .expect("stubbed activity must accept returned value once");
         }
     }

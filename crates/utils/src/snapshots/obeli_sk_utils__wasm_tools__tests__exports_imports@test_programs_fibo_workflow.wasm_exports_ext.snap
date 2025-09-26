@@ -16,8 +16,8 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": {
             "tuple": [
               {
@@ -70,9 +70,9 @@ expression: exports
               }
             }
           }
-        }
-      },
-      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+        },
+        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+      }
     },
     "extension": "await_next",
     "submittable": false
@@ -94,8 +94,8 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": {
             "result": {
               "ok": "u64",
@@ -104,15 +104,6 @@ expression: exports
           },
           "err": {
             "variant": {
-              "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
               "function-mismatch": {
                 "record": {
                   "actual-function": {
@@ -148,9 +139,9 @@ expression: exports
               "not-found-in-processed-responses": null
             }
           }
-        }
-      },
-      "wit_type": "result<result<u64>, get-extension-error>"
+        },
+        "wit_type": "result<result<u64>, get-extension-error>"
+      }
     },
     "extension": "get",
     "submittable": false
@@ -168,26 +159,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
-          "ok": {
-            "result": {
-              "ok": "u64",
-              "err": null
-            }
-          },
-          "err": {
-            "record": {
-              "execution-id": {
-                "record": {
-                  "id": "string"
-                }
-              }
-            }
-          }
-        }
-      },
-      "wit_type": "result<result<u64>, execution-failed>"
+      "Compatible": {
+        "type_wrapper_tl": {
+          "ok": "u64",
+          "err": null
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": "invoke",
     "submittable": false
@@ -210,12 +188,14 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
+      "Incompatible": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
     },
     "extension": "submit",
     "submittable": false
@@ -233,8 +213,8 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": {
             "tuple": [
               {
@@ -287,9 +267,9 @@ expression: exports
               }
             }
           }
-        }
-      },
-      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+        },
+        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+      }
     },
     "extension": "await_next",
     "submittable": false
@@ -311,8 +291,8 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": {
             "result": {
               "ok": "u64",
@@ -321,15 +301,6 @@ expression: exports
           },
           "err": {
             "variant": {
-              "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
               "function-mismatch": {
                 "record": {
                   "actual-function": {
@@ -365,9 +336,9 @@ expression: exports
               "not-found-in-processed-responses": null
             }
           }
-        }
-      },
-      "wit_type": "result<result<u64>, get-extension-error>"
+        },
+        "wit_type": "result<result<u64>, get-extension-error>"
+      }
     },
     "extension": "get",
     "submittable": false
@@ -395,26 +366,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
-          "ok": {
-            "result": {
-              "ok": "u64",
-              "err": null
-            }
-          },
-          "err": {
-            "record": {
-              "execution-id": {
-                "record": {
-                  "id": "string"
-                }
-              }
-            }
-          }
-        }
-      },
-      "wit_type": "result<result<u64>, execution-failed>"
+      "Compatible": {
+        "type_wrapper_tl": {
+          "ok": "u64",
+          "err": null
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": "invoke",
     "submittable": false
@@ -447,12 +405,14 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
+      "Incompatible": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
     },
     "extension": "submit",
     "submittable": false
@@ -470,8 +430,8 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": {
             "tuple": [
               {
@@ -524,9 +484,9 @@ expression: exports
               }
             }
           }
-        }
-      },
-      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+        },
+        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+      }
     },
     "extension": "await_next",
     "submittable": false
@@ -544,8 +504,8 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": {
             "tuple": [
               {
@@ -598,9 +558,9 @@ expression: exports
               }
             }
           }
-        }
-      },
-      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+        },
+        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+      }
     },
     "extension": "await_next",
     "submittable": false
@@ -622,8 +582,8 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": {
             "result": {
               "ok": "u64",
@@ -632,15 +592,6 @@ expression: exports
           },
           "err": {
             "variant": {
-              "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
               "function-mismatch": {
                 "record": {
                   "actual-function": {
@@ -676,9 +627,9 @@ expression: exports
               "not-found-in-processed-responses": null
             }
           }
-        }
-      },
-      "wit_type": "result<result<u64>, get-extension-error>"
+        },
+        "wit_type": "result<result<u64>, get-extension-error>"
+      }
     },
     "extension": "get",
     "submittable": false
@@ -701,26 +652,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
-          "ok": {
-            "result": {
-              "ok": "u64",
-              "err": null
-            }
-          },
-          "err": {
-            "record": {
-              "execution-id": {
-                "record": {
-                  "id": "string"
-                }
-              }
-            }
-          }
-        }
-      },
-      "wit_type": "result<result<u64>, execution-failed>"
+      "Compatible": {
+        "type_wrapper_tl": {
+          "ok": "u64",
+          "err": null
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": "invoke",
     "submittable": false
@@ -748,12 +686,14 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
+      "Incompatible": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
     },
     "extension": "submit",
     "submittable": false
@@ -775,8 +715,8 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": {
             "result": {
               "ok": "u64",
@@ -785,15 +725,6 @@ expression: exports
           },
           "err": {
             "variant": {
-              "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
               "function-mismatch": {
                 "record": {
                   "actual-function": {
@@ -829,9 +760,9 @@ expression: exports
               "not-found-in-processed-responses": null
             }
           }
-        }
-      },
-      "wit_type": "result<result<u64>, get-extension-error>"
+        },
+        "wit_type": "result<result<u64>, get-extension-error>"
+      }
     },
     "extension": "get",
     "submittable": false
@@ -854,26 +785,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
-          "ok": {
-            "result": {
-              "ok": "u64",
-              "err": null
-            }
-          },
-          "err": {
-            "record": {
-              "execution-id": {
-                "record": {
-                  "id": "string"
-                }
-              }
-            }
-          }
-        }
-      },
-      "wit_type": "result<result<u64>, execution-failed>"
+      "Compatible": {
+        "type_wrapper_tl": {
+          "ok": "u64",
+          "err": null
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": "invoke",
     "submittable": false
@@ -901,12 +819,14 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
+      "Incompatible": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
     },
     "extension": "submit",
     "submittable": false
@@ -924,8 +844,8 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": {
             "tuple": [
               {
@@ -978,9 +898,9 @@ expression: exports
               }
             }
           }
-        }
-      },
-      "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+        },
+        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+      }
     },
     "extension": "await_next",
     "submittable": false
@@ -1002,8 +922,8 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": {
             "result": {
               "ok": "u64",
@@ -1012,15 +932,6 @@ expression: exports
           },
           "err": {
             "variant": {
-              "execution-failed": {
-                "record": {
-                  "execution-id": {
-                    "record": {
-                      "id": "string"
-                    }
-                  }
-                }
-              },
               "function-mismatch": {
                 "record": {
                   "actual-function": {
@@ -1056,9 +967,9 @@ expression: exports
               "not-found-in-processed-responses": null
             }
           }
-        }
-      },
-      "wit_type": "result<result<u64>, get-extension-error>"
+        },
+        "wit_type": "result<result<u64>, get-extension-error>"
+      }
     },
     "extension": "get",
     "submittable": false
@@ -1081,26 +992,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
-          "ok": {
-            "result": {
-              "ok": "u64",
-              "err": null
-            }
-          },
-          "err": {
-            "record": {
-              "execution-id": {
-                "record": {
-                  "id": "string"
-                }
-              }
-            }
-          }
-        }
-      },
-      "wit_type": "result<result<u64>, execution-failed>"
+      "Compatible": {
+        "type_wrapper_tl": {
+          "ok": "u64",
+          "err": null
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": "invoke",
     "submittable": false
@@ -1128,12 +1026,14 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
+      "Incompatible": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
     },
     "extension": "submit",
     "submittable": false
@@ -1175,12 +1075,14 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
+      "Incompatible": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
     },
     "extension": "schedule",
     "submittable": true
@@ -1232,12 +1134,14 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
+      "Incompatible": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
     },
     "extension": "schedule",
     "submittable": true
@@ -1284,12 +1188,14 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
+      "Incompatible": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
     },
     "extension": "schedule",
     "submittable": true
@@ -1336,12 +1242,14 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
+      "Incompatible": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
     },
     "extension": "schedule",
     "submittable": true
@@ -1388,12 +1296,14 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "record": {
-          "id": "string"
-        }
-      },
-      "wit_type": "execution-id"
+      "Incompatible": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
     },
     "extension": "schedule",
     "submittable": true
@@ -1411,13 +1321,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": "u64",
           "err": null
-        }
-      },
-      "wit_type": "result<u64>"
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": null,
     "submittable": true
@@ -1445,13 +1355,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": "u64",
           "err": null
-        }
-      },
-      "wit_type": "result<u64>"
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": null,
     "submittable": true
@@ -1474,13 +1384,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": "u64",
           "err": null
-        }
-      },
-      "wit_type": "result<u64>"
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": null,
     "submittable": true
@@ -1503,13 +1413,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": "u64",
           "err": null
-        }
-      },
-      "wit_type": "result<u64>"
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": null,
     "submittable": true
@@ -1532,13 +1442,13 @@ expression: exports
       }
     ],
     "return_type": {
-      "type_wrapper": {
-        "result": {
+      "Compatible": {
+        "type_wrapper_tl": {
           "ok": "u64",
           "err": null
-        }
-      },
-      "wit_type": "result<u64>"
+        },
+        "wit_type": "result<u64>"
+      }
     },
     "extension": null,
     "submittable": true

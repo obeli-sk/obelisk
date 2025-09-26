@@ -3,7 +3,7 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn,
+    ComponentId, ExecutionId, FunctionFqn, SupportedFunctionReturnValue,
     prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
@@ -208,7 +208,7 @@ impl DbConnection for DbConnectionProxy {
         &self,
         execution_id: &ExecutionId,
         timeout: Option<Duration>,
-    ) -> Result<FinishedExecutionResult, ClientError> {
+    ) -> Result<SupportedFunctionReturnValue, ClientError> {
         self.0.wait_for_finished_result(execution_id, timeout).await
     }
 

@@ -3,6 +3,7 @@ use crate::executor::Append;
 use crate::executor::ChildFinishedResponse;
 use chrono::{DateTime, Utc};
 use concepts::StrVariant;
+use concepts::SupportedFunctionReturnValue;
 use concepts::storage::AppendRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbError;
@@ -143,7 +144,9 @@ pub(crate) async fn tick(
                     }
                 } else {
                     info!(%execution_id, "Marking execution with expired lock as permanently timed out");
-                    let finished_exec_result = Err(FinishedExecutionError::PermanentTimeout);
+                    let finished_exec_result = SupportedFunctionReturnValue::ExecutionError(
+                        FinishedExecutionError::PermanentTimeout,
+                    );
                     let child_finished = parent.map(|(parent_execution_id, parent_join_set)| {
                         ChildFinishedResponse {
                             parent_execution_id,

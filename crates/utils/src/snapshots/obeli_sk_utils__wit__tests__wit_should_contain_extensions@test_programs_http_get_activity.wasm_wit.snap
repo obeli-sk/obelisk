@@ -61,10 +61,6 @@ package obelisk:types@3.0.0 {
       id: string,
     }
 
-    record execution-failed {
-      execution-id: execution-id,
-    }
-
     record function {
       /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
       interface-name: string,
@@ -95,8 +91,6 @@ package obelisk:types@3.0.0 {
 
     /// Error that is thrown by `-get` extension functions.
     variant get-extension-error {
-      /// Execution is found in processed responses, but it finished with an error.
-      execution-failed(execution-failed),
       /// Execution is found in processed responses, but it belongs to a different function.
       /// This can happen when join set contains responses of multiple functions.
       function-mismatch(function-mismatch),
@@ -454,7 +448,7 @@ package testing:http {
 package testing:http-obelisk-ext {
   interface http-get {
     use testing:http/http-get.{response, stargazers};
-    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
 
     get-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
@@ -462,7 +456,7 @@ package testing:http-obelisk-ext {
 
     get-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    get-invoke: func(url: string) -> result<result<string, string>, execution-failed>;
+    get-invoke: func(url: string) -> result<string, string>;
 
     get-resp-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
@@ -470,7 +464,7 @@ package testing:http-obelisk-ext {
 
     get-resp-get: func(execution-id: execution-id) -> result<result<response, string>, get-extension-error>;
 
-    get-resp-invoke: func(url: string) -> result<result<response, string>, execution-failed>;
+    get-resp-invoke: func(url: string) -> result<response, string>;
 
     get-stargazers-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
@@ -478,7 +472,7 @@ package testing:http-obelisk-ext {
 
     get-stargazers-get: func(execution-id: execution-id) -> result<result<stargazers, string>, get-extension-error>;
 
-    get-stargazers-invoke: func() -> result<result<stargazers, string>, execution-failed>;
+    get-stargazers-invoke: func() -> result<stargazers, string>;
 
     get-successful-submit: func(join-set-id: borrow<join-set-id>, url: string) -> execution-id;
 
@@ -486,7 +480,7 @@ package testing:http-obelisk-ext {
 
     get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    get-successful-invoke: func(url: string) -> result<result<string, string>, execution-failed>;
+    get-successful-invoke: func(url: string) -> result<string, string>;
   }
 }
 

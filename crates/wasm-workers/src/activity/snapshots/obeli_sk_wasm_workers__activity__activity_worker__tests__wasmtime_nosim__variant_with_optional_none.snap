@@ -2,9 +2,9 @@
 source: crates/wasm-workers/src/activity/activity_worker.rs
 expression: variant
 ---
-WastValWithType {
-    type: Result {
-        ok: Variant(
+Some(
+    WastValWithType {
+        type: Variant(
             {
                 "var1": Some(
                     Option(
@@ -13,19 +13,13 @@ WastValWithType {
                 ),
             },
         ),
-    },
-    value: Result(
-        Ok(
+        value: Variant(
+            "var1",
             Some(
-                Variant(
-                    "var1",
-                    Some(
-                        Option(
-                            None,
-                        ),
-                    ),
+                Option(
+                    None,
                 ),
             ),
         ),
-    ),
-}
+    },
+)

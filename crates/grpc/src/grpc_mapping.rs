@@ -1,7 +1,7 @@
 use crate::grpc_gen::{self, execution_event::history_event};
 use concepts::{
-    ClosingStrategy, ComponentId, ComponentType, ExecutionId, FinishedExecutionError,
-    FinishedExecutionResult, FunctionFqn, SupportedFunctionReturnValue,
+    ClosingStrategy, ComponentId, ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn,
+    SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, RunId},
     storage::{
         DbError, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, HistoryEvent,
@@ -292,51 +292,58 @@ impl TryFrom<grpc_gen::list_executions_request::Pagination> for ExecutionListPag
     }
 }
 
-pub fn to_any<T: serde::Serialize>(serializable: T, uri: String) -> Option<prost_wkt_types::Any> {
-    serde_json::to_string(&serializable)
-        .inspect_err(|ser_err| {
-            error!(
-                "Cannot serialize {:?} - {ser_err:?}",
-                std::any::type_name::<T>()
-            );
-        })
-        .ok()
-        .map(|res| prost_wkt_types::Any {
-            type_url: uri,
-            value: res.into_bytes(),
-        })
+pub fn to_any<T: serde::Serialize>(
+    serializable: T,
+    uri: String,
+) -> Result<prost_wkt_types::Any, serde_json::Error> {
+    Ok(prost_wkt_types::Any {
+        type_url: uri,
+        value: serde_json::to_string(&serializable)?.into_bytes(),
+    })
 }
 
-impl From<FinishedExecutionResult> for grpc_gen::ResultDetail {
-    fn from(finished_result: FinishedExecutionResult) -> Self {
+impl From<SupportedFunctionReturnValue> for grpc_gen::ResultDetail {
+    fn from(finished_result: SupportedFunctionReturnValue) -> Self {
         let value = match finished_result {
-            Ok(SupportedFunctionReturnValue::Ok(val_with_type)) => {
+            SupportedFunctionReturnValue::Ok { ok: val_with_type } => {
                 grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
-                    return_value: to_any(
-                        val_with_type.value,
-                        "urn:obelisk:json:retval:TBD".to_string(),
-                    ),
+                    return_value: val_with_type
+                        .map(|val_with_type| {
+                            to_any(
+                                val_with_type.value,
+                                "urn:obelisk:json:retval:TBD".to_string(),
+                            )
+                        })
+                        .transpose()
+                        .expect("SupportedFunctionReturnValue must be JSON-serializable"),
                 })
             }
-            Ok(SupportedFunctionReturnValue::Err(val_with_type)) => {
+            SupportedFunctionReturnValue::Err { err: val_with_type } => {
                 grpc_gen::result_detail::Value::FallibleError(
                     grpc_gen::result_detail::FallibleError {
-                        return_value: to_any(
-                            val_with_type.value,
-                            "urn:obelisk:json:retval:TBD".to_string(),
-                        ),
+                        return_value: val_with_type
+                            .map(|val_with_type| {
+                                to_any(
+                                    val_with_type.value,
+                                    "urn:obelisk:json:retval:TBD".to_string(),
+                                )
+                            })
+                            .transpose()
+                            .expect("SupportedFunctionReturnValue must be JSON-serializable"),
                     },
                 )
             }
-            Err(FinishedExecutionError::PermanentTimeout) => {
-                grpc_gen::result_detail::Value::Timeout(grpc_gen::result_detail::Timeout {})
-            }
-            Err(FinishedExecutionError::PermanentFailure {
-                reason_full,
-                kind: _, // TODO Add PermanentFailureKind
-                detail,
-                reason_inner: _,
-            }) => grpc_gen::result_detail::Value::ExecutionFailure(
+            SupportedFunctionReturnValue::ExecutionError(
+                FinishedExecutionError::PermanentTimeout,
+            ) => grpc_gen::result_detail::Value::Timeout(grpc_gen::result_detail::Timeout {}),
+            SupportedFunctionReturnValue::ExecutionError(
+                FinishedExecutionError::PermanentFailure {
+                    reason_full,
+                    kind: _, // TODO Add PermanentFailureKind
+                    detail,
+                    reason_inner: _,
+                },
+            ) => grpc_gen::result_detail::Value::ExecutionFailure(
                 grpc_gen::result_detail::ExecutionFailure {
                     reason: reason_full,
                     detail,
@@ -367,10 +374,10 @@ pub fn from_execution_event_to_grpc(
                     metadata: _,
                     scheduled_by,
                 } => grpc_gen::execution_event::Event::Created(grpc_gen::execution_event::Created {
-                    params: to_any(
+                    params: Some(to_any(
                         params,
                         format!("urn:obelisk:json:params:{ffqn}"),
-                    ),
+                    ).expect("Params must be JSON-serializable")),
                     function_name: Some(grpc_gen::FunctionName::from(ffqn)),
                     scheduled_at: Some(prost_wkt_types::Timestamp::from(scheduled_at)),
                     component_id: Some(component_id.into()),

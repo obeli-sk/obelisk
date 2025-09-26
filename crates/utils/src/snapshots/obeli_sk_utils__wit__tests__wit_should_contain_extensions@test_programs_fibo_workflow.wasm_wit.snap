@@ -55,10 +55,6 @@ package obelisk:types@3.0.0 {
       id: string,
     }
 
-    record execution-failed {
-      execution-id: execution-id,
-    }
-
     record function {
       /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
       interface-name: string,
@@ -89,8 +85,6 @@ package obelisk:types@3.0.0 {
 
     /// Error that is thrown by `-get` extension functions.
     variant get-extension-error {
-      /// Execution is found in processed responses, but it finished with an error.
-      execution-failed(execution-failed),
       /// Execution is found in processed responses, but it belongs to a different function.
       /// This can happen when join set contains responses of multiple functions.
       function-mismatch(function-mismatch),
@@ -135,7 +129,7 @@ package testing:fibo-obelisk-ext {
 
 package testing:fibo-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
 
     fibow-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
 
@@ -143,7 +137,7 @@ package testing:fibo-workflow-obelisk-ext {
 
     fibow-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-    fibow-invoke: func(n: u8, iterations: u32) -> result<result<u64>, execution-failed>;
+    fibow-invoke: func(n: u8, iterations: u32) -> result<u64>;
 
     fiboa-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
 
@@ -151,7 +145,7 @@ package testing:fibo-workflow-obelisk-ext {
 
     fiboa-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-    fiboa-invoke: func(n: u8, iterations: u32) -> result<result<u64>, execution-failed>;
+    fiboa-invoke: func(n: u8, iterations: u32) -> result<u64>;
 
     fiboa-concurrent-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
 
@@ -159,10 +153,10 @@ package testing:fibo-workflow-obelisk-ext {
 
     fiboa-concurrent-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-    fiboa-concurrent-invoke: func(n: u8, iterations: u32) -> result<result<u64>, execution-failed>;
+    fiboa-concurrent-invoke: func(n: u8, iterations: u32) -> result<u64>;
   }
   interface workflow-nesting {
-    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
 
     fibo-nested-workflow-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
 
@@ -170,7 +164,7 @@ package testing:fibo-workflow-obelisk-ext {
 
     fibo-nested-workflow-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-    fibo-nested-workflow-invoke: func(n: u8) -> result<result<u64>, execution-failed>;
+    fibo-nested-workflow-invoke: func(n: u8) -> result<u64>;
 
     fibo-start-fiboas-submit: func(join-set-id: borrow<join-set-id>, n: u8, fiboas: u32, iterations-per-fiboa: u32) -> execution-id;
 
@@ -178,7 +172,7 @@ package testing:fibo-workflow-obelisk-ext {
 
     fibo-start-fiboas-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-    fibo-start-fiboas-invoke: func(n: u8, fiboas: u32, iterations-per-fiboa: u32) -> result<result<u64>, execution-failed>;
+    fibo-start-fiboas-invoke: func(n: u8, fiboas: u32, iterations-per-fiboa: u32) -> result<u64>;
   }
 }
 

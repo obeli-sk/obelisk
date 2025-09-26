@@ -2,7 +2,7 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ExecutionId, FinishedExecutionResult, FunctionFqn, JoinSetId, StrVariant,
+    ComponentId, ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, PrefixedUlid, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
@@ -2898,7 +2898,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
         &self,
         execution_id: &ExecutionId,
         timeout: Option<Duration>,
-    ) -> Result<FinishedExecutionResult, ClientError> {
+    ) -> Result<SupportedFunctionReturnValue, ClientError> {
         let execution_result = {
             let fut = async move {
                 loop {

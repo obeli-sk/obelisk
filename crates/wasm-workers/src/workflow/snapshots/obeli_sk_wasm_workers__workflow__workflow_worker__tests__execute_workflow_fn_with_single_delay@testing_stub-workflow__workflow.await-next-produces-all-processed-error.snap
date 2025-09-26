@@ -75,17 +75,7 @@ expression: execution_log
         "Finished": {
           "result": {
             "Ok": {
-              "Ok": {
-                "type": {
-                  "result": {
-                    "ok": null,
-                    "err": null
-                  }
-                },
-                "value": {
-                  "ok": null
-                }
-              }
+              "ok": null
             }
           },
           "http_client_traces": null

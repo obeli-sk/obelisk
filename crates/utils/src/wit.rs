@@ -192,21 +192,6 @@ fn add_extended_interfaces(
             stability: wit_parser::Stability::default(),
         })
     };
-    // obelisk:types/execution.{execution-failed}
-    let type_id_execution_failed = {
-        let actual_type_id = *execution_ifc
-            .types
-            .get("execution-failed")
-            .expect("`execution-failed` must exist");
-        // Create a reference to the type.
-        resolve.types.alloc(TypeDef {
-            name: None,
-            kind: TypeDefKind::Type(Type::Id(actual_type_id)),
-            owner: TypeOwner::Interface(execution_ifc_id),
-            docs: wit_parser::Docs::default(),
-            stability: wit_parser::Stability::default(),
-        })
-    };
     // obelisk:types/execution.{stub-error}
     let type_id_stub_error = {
         let actual_type_id = *execution_ifc
@@ -281,7 +266,6 @@ fn add_extended_interfaces(
                         "get-extension-error".to_string(),
                         type_id_get_extension_error,
                     );
-                    types.insert("execution-failed".to_string(), type_id_execution_failed);
                 }
                 PackageExtension::ObeliskSchedule => {
                     types.insert("execution-id".to_string(), type_id_execution_id);
@@ -381,37 +365,25 @@ fn add_extended_interfaces(
                         (params, result)
                     }
                     FunctionExtension::Stub => {
-                        // -stub: func(execution_id: execution-id, <retval>) -> result<_, stub-error>;
+                        // -stub: func(execution_id: execution-id, original retval) -> result<_, stub-error>;
                         assert_eq!(pkg_ext, PackageExtension::ObeliskStub);
                         let mut params =
                             vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
-                        if let Some(actual_return_type_id) = &original_fn.result {
-                            let type_id_result_orig_none = Type::Id(resolve.types.alloc(TypeDef {
-                                name: None,
-                                kind: TypeDefKind::Result(wit_parser::Result_ {
-                                    ok: Some(*actual_return_type_id),
-                                    err: None,
-                                }),
-                                owner: TypeOwner::None,
-                                docs: wit_parser::Docs::default(),
-                                stability: wit_parser::Stability::default(),
-                            }));
-                            params.push(("execution-result".to_string(), type_id_result_orig_none));
-                        } else {
-                            let type_id_result_none_none = Type::Id(resolve.types.alloc(TypeDef {
-                                name: None,
-                                kind: TypeDefKind::Result(wit_parser::Result_ {
-                                    ok: None,
-                                    err: None,
-                                }),
-                                owner: TypeOwner::None,
-                                docs: wit_parser::Docs::default(),
-                                stability: wit_parser::Stability::default(),
-                            }));
-                            params.push(("execution-result".to_string(), type_id_result_none_none));
-                        }
+                        let Some(return_type) = &original_fn.result else {
+                            unreachable!(
+                                "return types of exported functions are validated in ExImLite"
+                            )
+                        };
+                        let return_type_id = Type::Id(resolve.types.alloc(TypeDef {
+                            name: None,
+                            kind: TypeDefKind::Type(*return_type),
+                            owner: TypeOwner::None,
+                            docs: wit_parser::Docs::default(),
+                            stability: wit_parser::Stability::default(),
+                        }));
+                        params.push(("execution-result".to_string(), return_type_id));
+
                         let result = {
-                            // TODO: can be externalized?
                             let type_id_result = resolve.types.alloc(TypeDef {
                                 name: None,
                                 kind: TypeDefKind::Result(wit_parser::Result_ {
@@ -427,7 +399,7 @@ fn add_extended_interfaces(
                         (params, result)
                     }
                     FunctionExtension::Get => {
-                        // -get(execution-id) -> result<originalreturn type or _, get-extension-error>
+                        // -get(execution-id) -> result<originalreturn type, get-extension-error>
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
                         let params =
                             vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
@@ -443,20 +415,12 @@ fn add_extended_interfaces(
                         })));
                         (params, result)
                     }
+                    // TODO: Add a name as parameter
                     FunctionExtension::Invoke => {
-                        // -invoke(original param) -> result<original return type or _, execution-failed>
+                        // -invoke(original param) -> original return type
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
                         let params = original_fn.params.clone();
-                        let result = Some(Type::Id(resolve.types.alloc(TypeDef {
-                            name: None,
-                            kind: TypeDefKind::Result(wit_parser::Result_ {
-                                ok: original_fn.result, // return type or None
-                                err: Some(Type::Id(type_id_execution_failed)),
-                            }),
-                            owner: TypeOwner::None,
-                            docs: wit_parser::Docs::default(),
-                            stability: wit_parser::Stability::default(),
-                        })));
+                        let result = original_fn.result;
                         (params, result)
                     }
                 };

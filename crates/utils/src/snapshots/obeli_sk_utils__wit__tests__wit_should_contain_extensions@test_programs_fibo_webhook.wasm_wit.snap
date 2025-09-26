@@ -69,10 +69,6 @@ package obelisk:types@3.0.0 {
       id: string,
     }
 
-    record execution-failed {
-      execution-id: execution-id,
-    }
-
     record function {
       /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
       interface-name: string,
@@ -103,8 +99,6 @@ package obelisk:types@3.0.0 {
 
     /// Error that is thrown by `-get` extension functions.
     variant get-extension-error {
-      /// Execution is found in processed responses, but it finished with an error.
-      execution-failed(execution-failed),
       /// Execution is found in processed responses, but it belongs to a different function.
       /// This can happen when join set contains responses of multiple functions.
       function-mismatch(function-mismatch),

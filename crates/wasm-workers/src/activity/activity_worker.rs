@@ -317,7 +317,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
 
                 if retry_on_err {
                     // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (TemporaryError)
-                    if let SupportedFunctionReturnValue::Err(result_err) = &result {
+                    if let SupportedFunctionReturnValue::Err { err: result_err } = &result {
                         if ctx.can_be_retried {
                             let detail = serde_json::to_string(result_err).expect(
                                 "SupportedFunctionReturnValue should be serializable to JSON",
@@ -560,11 +560,9 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        let res = assert_matches!(res, Ok(SupportedFunctionReturnValue::Ok(val)) => val);
-        let (fibo, ok_ty) = assert_matches!(res,
-            WastValWithType {value: WastVal::Result(Ok(Some(val))), r#type: TypeWrapper::Result { ok:Some(ok_ty), err:None } } => (val, ok_ty));
-        assert_matches!(*ok_ty, TypeWrapper::U64);
-        let fibo = assert_matches!(*fibo, WastVal::U64(val) => val);
+        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok} => ok);
+        let fibo = assert_matches!(res,
+            Some(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 }) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
         exec_task.close().await;
@@ -664,14 +662,26 @@ pub(crate) mod tests {
         }
 
         #[rstest::rstest]
-        #[case(10, 100, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
-        #[case(10, 10, Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY))] // 0.1s -> Ok
-        #[case(1500, 1, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
+        #[case(
+            10,
+            100,
+            SupportedFunctionReturnValue::ExecutionError(
+                concepts::FinishedExecutionError::PermanentTimeout
+            )
+        )] // 1s -> timeout
+        #[case(10, 10, SUPPORTED_RETURN_VALUE_OK_EMPTY)] // 0.1s -> Ok
+        #[case(
+            1500,
+            1,
+            SupportedFunctionReturnValue::ExecutionError(
+                concepts::FinishedExecutionError::PermanentTimeout
+            )
+        )] // 1s -> timeout
         #[tokio::test]
         async fn flaky_sleep_should_produce_temporary_timeout(
             #[case] sleep_millis: u32,
             #[case] sleep_iterations: u32,
-            #[case] expected: concepts::FinishedExecutionResult,
+            #[case] expected: concepts::SupportedFunctionReturnValue,
         ) {
             const LOCK_EXPIRY: Duration = Duration::from_millis(500);
             const TICK_SLEEP: Duration = Duration::from_millis(10);
@@ -954,15 +964,11 @@ pub(crate) mod tests {
                 exec_log.last_event().event.clone(),
                 ExecutionEventInner::Finished { result, http_client_traces: Some(http_client_traces) }
                 => (result, http_client_traces));
-            let res = res.unwrap();
-            let wast_val = assert_matches!(res.fallible_ok(), Some(Some(wast_val)) => wast_val);
-            let val = assert_matches!(wast_val, WastVal::String(val) => val);
+            let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(wast_val_with_type)} => wast_val_with_type);
+            let val = assert_matches!(wast_val_with_type.value, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());
             // check types
-            let (ok, err) =
-                assert_matches!(res.val_type(), TypeWrapper::Result{ok, err} => (ok, err));
-            assert_eq!(Some(Box::new(TypeWrapper::String)), *ok);
-            assert_eq!(Some(Box::new(TypeWrapper::String)), *err);
+            assert_matches!(wast_val_with_type.r#type, TypeWrapper::String);
             assert_eq!(1, http_client_traces.len());
             let http_client_trace = http_client_traces.into_iter().next().unwrap();
             let (method, uri_actual) = assert_matches!(
@@ -1077,7 +1083,8 @@ pub(crate) mod tests {
                 exec_log.last_event().event.clone(),
                 ExecutionEventInner::Finished { result, http_client_traces: Some(http_client_traces) }
                 => (result, http_client_traces));
-            let res = res.unwrap_err();
+            let res =
+                assert_matches!(res, SupportedFunctionReturnValue::ExecutionError(err) => err);
             assert_matches!(
                 res,
                 FinishedExecutionError::PermanentFailure {
@@ -1277,22 +1284,19 @@ pub(crate) mod tests {
             );
             let exec_log = db_connection.get(&execution_id).await.unwrap();
             let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionEventInner::Finished { result, .. } => result);
-            let res = res.unwrap();
-            if succeed_eventually {
-                let wast_val = assert_matches!(res.fallible_ok(), Some(Some(wast_val)) => wast_val);
-                let val = assert_matches!(wast_val, WastVal::String(val) => val);
+            let wast_val_with_type = if succeed_eventually {
+                let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(wast_val_with_type)} => wast_val_with_type);
+                let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
                 assert_eq!(BODY, val.deref());
+                wast_val_with_type
             } else {
-                let wast_val =
-                    assert_matches!(res.fallible_err(), Some(Some(wast_val)) => wast_val);
-                let val = assert_matches!(wast_val, WastVal::String(val) => val);
+                let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Err{err: Some(wast_val_with_type)} => wast_val_with_type);
+                let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
                 assert_eq!("wrong status code: 404", val.deref());
-            }
+                wast_val_with_type
+            };
             // check types
-            let (ok, err) =
-                assert_matches!(res.val_type(), TypeWrapper::Result{ok, err} => (ok, err));
-            assert_eq!(Some(Box::new(TypeWrapper::String)), *ok);
-            assert_eq!(Some(Box::new(TypeWrapper::String)), *err);
+            assert_matches!(wast_val_with_type.r#type, TypeWrapper::String); // in both cases
             drop(db_connection);
             drop(exec_task);
             db_pool.close().await.unwrap();
@@ -1350,9 +1354,8 @@ pub(crate) mod tests {
             let res = db_connection
                 .wait_for_finished_result(&execution_id, None)
                 .await
-                .unwrap()
                 .unwrap();
-            assert_matches!(res, SupportedFunctionReturnValue::Ok(_));
+            assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
             drop(db_connection);
             exec_task.close().await;
             db_pool.close().await.unwrap();
@@ -1418,9 +1421,8 @@ pub(crate) mod tests {
             let res = db_connection
                 .wait_for_finished_result(&execution_id, None)
                 .await
-                .unwrap()
                 .unwrap();
-            assert_matches!(res, SupportedFunctionReturnValue::Ok(_));
+            assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
             drop(db_connection);
             exec_task.close().await;
             db_pool.close().await.unwrap();
@@ -1497,12 +1499,11 @@ pub(crate) mod tests {
             let res = db_connection
                 .wait_for_finished_result(&execution_id, None)
                 .await
-                .unwrap()
                 .unwrap();
             let sleep_pid = assert_matches!(res,
-                SupportedFunctionReturnValue::Ok(WastValWithType {value: WastVal::Result(Ok(Some(val))),
-                    r#type: _}) => val);
-            let sleep_pid = assert_matches!(*sleep_pid, WastVal::U32(val) => val);
+                SupportedFunctionReturnValue::Ok{ok: Some(WastValWithType {value,
+                    r#type: _})} => value);
+            let sleep_pid = assert_matches!(sleep_pid, WastVal::U32(val) => val);
             debug!("Sleep pid: {sleep_pid}");
 
             // Test that the process was killed
@@ -1570,9 +1571,9 @@ pub(crate) mod tests {
             let res = db_connection
                 .wait_for_finished_result(&execution_id, None)
                 .await
-                .unwrap()
                 .unwrap();
-            let record = assert_matches!(res, SupportedFunctionReturnValue::Ok(record) => record);
+            let record =
+                assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: record} => record);
             assert_debug_snapshot!(record);
             drop(db_connection);
             exec_task.close().await;
@@ -1626,10 +1627,9 @@ pub(crate) mod tests {
             let res = db_connection
                 .wait_for_finished_result(&execution_id, None)
                 .await
-                .unwrap()
                 .unwrap();
             let variant =
-                assert_matches!(res, SupportedFunctionReturnValue::Ok(variant) => variant);
+                assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: variant} => variant);
             assert_debug_snapshot!(variant);
             drop(db_connection);
             exec_task.close().await;

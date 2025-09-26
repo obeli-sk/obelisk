@@ -112,14 +112,6 @@ pub(crate) mod v3_0_0 {
         }
     }
 
-    impl From<&ExecutionIdDerived> for types_execution::ExecutionFailed {
-        fn from(value: &ExecutionIdDerived) -> Self {
-            Self {
-                execution_id: types_execution::ExecutionId::from(value),
-            }
-        }
-    }
-
     impl From<&DelayId> for types_execution::DelayId {
         fn from(value: &DelayId) -> Self {
             Self {
@@ -160,15 +152,6 @@ pub(crate) mod v3_0_0 {
             }
         }
 
-        impl From<types_execution::ExecutionFailed> for Val {
-            fn from(value: types_execution::ExecutionFailed) -> Self {
-                Self::Record(vec![(
-                    "execution-id".to_string(),
-                    Val::from(value.execution_id),
-                )])
-            }
-        }
-
         impl From<types_execution::ResponseId> for Val {
             fn from(value: types_execution::ResponseId) -> Self {
                 match value {
@@ -202,12 +185,6 @@ pub(crate) mod v3_0_0 {
         impl From<types_execution::GetExtensionError> for Val {
             fn from(value: types_execution::GetExtensionError) -> Self {
                 match value {
-                    types_execution::GetExtensionError::ExecutionFailed(execution_failed) => {
-                        Self::Variant(
-                            "execution-failed".to_string(),
-                            Some(Box::new(Val::from(execution_failed))),
-                        )
-                    }
                     types_execution::GetExtensionError::FunctionMismatch(function_mismatch) => {
                         Self::Variant(
                             "function-mismatch".to_string(),

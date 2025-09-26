@@ -7,7 +7,7 @@ use concepts::storage::{
     LockedExecution,
 };
 use concepts::time::ClockFn;
-use concepts::{ComponentId, FinishedExecutionResult, FunctionMetadata, StrVariant};
+use concepts::{ComponentId, FunctionMetadata, StrVariant, SupportedFunctionReturnValue};
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use concepts::{
     FinishedExecutionError,
@@ -138,7 +138,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         let executor_id = config.executor_id;
         let abort_handle = tokio::spawn(async move {
             debug!(executor_id = %config.executor_id, component_id = %config.component_id, "Spawned executor");
-            let task = Self {
+            let task = ExecTask {
                 worker,
                 config,
                 db_pool,
@@ -351,13 +351,13 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         |(parent_execution_id, parent_join_set)| ChildFinishedResponse {
                             parent_execution_id,
                             parent_join_set,
-                            result: Ok(result.clone()),
+                            result: result.clone(),
                         },
                     );
                 let primary_event = AppendRequest {
                     created_at: result_obtained_at,
                     event: ExecutionEventInner::Finished {
-                        result: Ok(result),
+                        result,
                         http_client_traces,
                     },
                 };
@@ -393,7 +393,9 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                             )
                         } else {
                             info!("Permanent timeout");
-                            let result = Err(FinishedExecutionError::PermanentTimeout);
+                            let result = SupportedFunctionReturnValue::ExecutionError(
+                                FinishedExecutionError::PermanentTimeout,
+                            );
                             let child_finished =
                                 parent.map(|(parent_execution_id, parent_join_set)| {
                                     ChildFinishedResponse {
@@ -488,7 +490,9 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                     }
                     WorkerError::FatalError(fatal_error, version) => {
                         info!("Fatal worker error - {fatal_error:?}");
-                        let result = Err(FinishedExecutionError::from(fatal_error));
+                        let result = SupportedFunctionReturnValue::ExecutionError(
+                            FinishedExecutionError::from(fatal_error),
+                        );
                         let child_finished =
                             parent.map(|(parent_execution_id, parent_join_set)| {
                                 ChildFinishedResponse {
@@ -552,12 +556,15 @@ fn retry_or_fail(
         )
     } else {
         info!("Activity with `{err_kind_for_logs}` marked as permanent failure - {reason_inner}");
-        let result = Err(FinishedExecutionError::PermanentFailure {
-            reason_inner,
-            reason_full,
-            kind: PermanentFailureKind::ActivityTrap,
-            detail,
-        });
+        let result = SupportedFunctionReturnValue::ExecutionError(
+            FinishedExecutionError::PermanentFailure {
+                reason_inner,
+                reason_full,
+                kind: PermanentFailureKind::ActivityTrap,
+                detail,
+            },
+        );
+
         let child_finished =
             parent.map(
                 |(parent_execution_id, parent_join_set)| ChildFinishedResponse {
@@ -581,7 +588,7 @@ fn retry_or_fail(
 pub(crate) struct ChildFinishedResponse {
     pub(crate) parent_execution_id: ExecutionId,
     pub(crate) parent_join_set: JoinSetId,
-    pub(crate) result: FinishedExecutionResult,
+    pub(crate) result: SupportedFunctionReturnValue,
 }
 
 #[derive(Debug, Clone)]
@@ -739,8 +746,6 @@ mod tests {
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::set_up;
     use test_utils::sim_clock::{ConstClock, SimClock};
-    use val_json::type_wrapper::TypeWrapper;
-    use val_json::wast_val::{WastVal, WastValWithType};
 
     pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
 
@@ -820,13 +825,7 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
-                        r#type: TypeWrapper::Result {
-                            ok: None,
-                            err: None,
-                        },
-                        value: WastVal::Result(Ok(None)),
-                    })),
+                    result: SupportedFunctionReturnValue::Ok { ok: None },
                     http_client_traces: None
                 },
                 created_at: _,
@@ -886,13 +885,7 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
-                        r#type: TypeWrapper::Result {
-                            ok: None,
-                            err: None,
-                        },
-                        value: WastVal::Result(Ok(None)),
-                    })),
+                    result: SupportedFunctionReturnValue::Ok { ok: None },
                     http_client_traces: None
                 },
                 created_at: _,
@@ -1090,13 +1083,7 @@ mod tests {
             execution_log.events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
-                        r#type: TypeWrapper::Result {
-                            ok: None,
-                            err: None,
-                        },
-                        value: WastVal::Result(Ok(None)),
-                    })),
+                    result: SupportedFunctionReturnValue::Ok{ok:None},
                     http_client_traces: None
                 },
                 created_at: finished_at,
@@ -1152,7 +1139,7 @@ mod tests {
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished{
-                    result: Err(FinishedExecutionError::PermanentFailure{reason_inner, kind, detail, reason_full:_}),
+                    result: SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError::PermanentFailure{reason_inner, kind, detail, reason_full:_}),
                     http_client_traces: None
                 },
                 created_at: at,
@@ -1350,7 +1337,7 @@ mod tests {
         );
         assert_eq!(
             ExecutionEventInner::Finished {
-                result: Err(expected_child_err),
+                result: SupportedFunctionReturnValue::ExecutionError(expected_child_err),
                 http_client_traces: None
             },
             child_log.last_event().event
@@ -1386,7 +1373,10 @@ mod tests {
         assert_eq!(join_set_id, *found_join_set_id);
         assert_eq!(child_execution_id, *found_child_execution_id);
         assert_eq!(child_log.next_version, *child_finished_version);
-        assert!(found_result.is_err());
+        assert_matches!(
+            found_result,
+            SupportedFunctionReturnValue::ExecutionError(_)
+        );
 
         db_pool.close().await.unwrap();
     }

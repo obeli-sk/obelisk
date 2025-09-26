@@ -36,12 +36,6 @@ pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
 pub const SUFFIX_PKG_SCHEDULE: &str = "-obelisk-schedule";
 pub const SUFFIX_PKG_STUB: &str = "-obelisk-stub";
 
-pub type FinishedExecutionResult = Result<SupportedFunctionReturnValue, FinishedExecutionError>;
-
-#[cfg(any(test, feature = "test"))]
-const FINISHED_EXECUTION_RESULT_DUMMY: FinishedExecutionResult =
-    Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY);
-
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FinishedExecutionError {
     // Activity only, because workflows will be retried forever
@@ -545,19 +539,34 @@ impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct TypeWrapperTopLevel {
+    pub ok: Option<Box<TypeWrapper>>,
+    pub err: Option<Box<TypeWrapper>>,
+}
+impl From<TypeWrapperTopLevel> for TypeWrapper {
+    fn from(value: TypeWrapperTopLevel) -> TypeWrapper {
+        TypeWrapper::Result {
+            ok: value.ok,
+            err: value.err,
+        }
+    }
+}
+
 #[derive(Clone, derive_more::Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SupportedFunctionReturnValue {
-    Ok(#[debug(skip)] WastValWithType),
-    Err(#[debug(skip)] WastValWithType),
+    Ok {
+        #[debug(skip)]
+        ok: Option<WastValWithType>,
+    },
+    Err {
+        #[debug(skip)]
+        err: Option<WastValWithType>,
+    },
+    ExecutionError(FinishedExecutionError),
 }
 pub const SUPPORTED_RETURN_VALUE_OK_EMPTY: SupportedFunctionReturnValue =
-    SupportedFunctionReturnValue::Ok(WastValWithType {
-        r#type: TypeWrapper::Result {
-            ok: None,
-            err: None,
-        },
-        value: WastVal::Result(Ok(None)),
-    });
+    SupportedFunctionReturnValue::Ok { ok: None };
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResultParsingError {
@@ -566,9 +575,19 @@ pub enum ResultParsingError {
     #[error("return value cannot be parsed, multi-value results are not supported")]
     MultiValue,
     #[error("return value cannot be parsed, {0}")]
-    TypeConversionError(#[from] val_json::type_wrapper::TypeConversionError),
+    TypeConversionError(val_json::type_wrapper::TypeConversionError),
+    #[error(transparent)]
+    ResultParsingErrorFromVal(ResultParsingErrorFromVal),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ResultParsingErrorFromVal {
     #[error("return value cannot be parsed, {0}")]
-    ValueConversionError(#[from] val_json::wast_val::WastValConversionError),
+    WastValConversionError(val_json::wast_val::WastValConversionError),
+    #[error("top level type must be a result")]
+    TopLevelTypeMustBeAResult,
+    #[error("value does not type check")]
+    TypeCheckError,
 }
 
 impl SupportedFunctionReturnValue {
@@ -581,85 +600,156 @@ impl SupportedFunctionReturnValue {
             Err(ResultParsingError::NoValue)
         } else if iter.len() == 1 {
             let (val, r#type) = iter.next().unwrap();
-            let r#type = TypeWrapper::try_from(r#type)?;
+            let r#type =
+                TypeWrapper::try_from(r#type).map_err(ResultParsingError::TypeConversionError)?;
             Self::from_val_and_type_wrapper(val, r#type)
+                .map_err(ResultParsingError::ResultParsingErrorFromVal)
         } else {
             Err(ResultParsingError::MultiValue)
         }
     }
 
+    #[expect(clippy::result_unit_err)]
+    pub fn from_wast_val_with_type(
+        value: WastValWithType,
+    ) -> Result<SupportedFunctionReturnValue, ()> {
+        match value {
+            WastValWithType {
+                r#type: TypeWrapper::Result { ok: None, err: _ },
+                value: WastVal::Result(Ok(None)),
+            } => Ok(SupportedFunctionReturnValue::Ok { ok: None }),
+            WastValWithType {
+                r#type:
+                    TypeWrapper::Result {
+                        ok: Some(ok),
+                        err: _,
+                    },
+                value: WastVal::Result(Ok(Some(value))),
+            } => Ok(SupportedFunctionReturnValue::Ok {
+                ok: Some(WastValWithType {
+                    r#type: *ok,
+                    value: *value,
+                }),
+            }),
+            WastValWithType {
+                r#type: TypeWrapper::Result { ok: _, err: None },
+                value: WastVal::Result(Err(None)),
+            } => Ok(SupportedFunctionReturnValue::Err { err: None }),
+            WastValWithType {
+                r#type:
+                    TypeWrapper::Result {
+                        ok: _,
+                        err: Some(err),
+                    },
+                value: WastVal::Result(Err(Some(value))),
+            } => Ok(SupportedFunctionReturnValue::Err {
+                err: Some(WastValWithType {
+                    r#type: *err,
+                    value: *value,
+                }),
+            }),
+            _ => Err(()),
+        }
+    }
+
     pub fn from_val_and_type_wrapper(
         value: wasmtime::component::Val,
-        r#type: TypeWrapper,
-    ) -> Result<Self, ResultParsingError> {
-        Ok(Self::from(WastValWithType {
-            r#type,
-            value: WastVal::try_from(value)?,
-        }))
+        ty: TypeWrapper,
+    ) -> Result<Self, ResultParsingErrorFromVal> {
+        let TypeWrapper::Result { ok, err } = ty else {
+            return Err(ResultParsingErrorFromVal::TopLevelTypeMustBeAResult);
+        };
+        let ty = TypeWrapperTopLevel { ok, err };
+        Self::from_val_and_type_wrapper_tl(value, ty)
     }
 
-    #[cfg(feature = "test")]
-    #[must_use]
-    pub fn fallible_err(&self) -> Option<Option<&WastVal>> {
-        match self {
-            SupportedFunctionReturnValue::Err(WastValWithType {
-                value: WastVal::Result(Err(err)),
-                ..
-            }) => Some(err.as_deref()),
-            _ => None,
-        }
-    }
+    pub fn from_val_and_type_wrapper_tl(
+        value: wasmtime::component::Val,
+        ty: TypeWrapperTopLevel,
+    ) -> Result<Self, ResultParsingErrorFromVal> {
+        let wasmtime::component::Val::Result(value) = value else {
+            return Err(ResultParsingErrorFromVal::TopLevelTypeMustBeAResult);
+        };
 
-    #[cfg(feature = "test")]
-    #[must_use]
-    pub fn fallible_ok(&self) -> Option<Option<&WastVal>> {
-        match self {
-            SupportedFunctionReturnValue::Ok(WastValWithType {
-                value: WastVal::Result(Ok(ok)),
-                ..
-            }) => Some(ok.as_deref()),
-            _ => None,
-        }
-    }
-
-    #[cfg(feature = "test")]
-    #[must_use]
-    pub fn val_type(&self) -> &TypeWrapper {
-        match self {
-            SupportedFunctionReturnValue::Err(v) | SupportedFunctionReturnValue::Ok(v) => &v.r#type,
-        }
-    }
-
-    #[must_use]
-    pub fn value(&self) -> &WastVal {
-        match self {
-            SupportedFunctionReturnValue::Err(v) | SupportedFunctionReturnValue::Ok(v) => &v.value,
+        match (ty.ok, ty.err, value) {
+            (None, _, Ok(None)) => Ok(SupportedFunctionReturnValue::Ok { ok: None }),
+            (Some(ok_type), _, Ok(Some(value))) => Ok(SupportedFunctionReturnValue::Ok {
+                ok: Some(WastValWithType {
+                    r#type: *ok_type,
+                    value: WastVal::try_from(*value)
+                        .map_err(ResultParsingErrorFromVal::WastValConversionError)?,
+                }),
+            }),
+            (_, None, Err(None)) => Ok(SupportedFunctionReturnValue::Err { err: None }),
+            (_, Some(err_type), Err(Some(value))) => Ok(SupportedFunctionReturnValue::Err {
+                err: Some(WastValWithType {
+                    r#type: *err_type,
+                    value: WastVal::try_from(*value)
+                        .map_err(ResultParsingErrorFromVal::WastValConversionError)?,
+                }),
+            }),
+            _other => Err(ResultParsingErrorFromVal::TypeCheckError),
         }
     }
 
     #[must_use]
-    pub fn into_value(self) -> WastVal {
+    pub fn into_wast_val(self, get_return_type: impl FnOnce() -> TypeWrapperTopLevel) -> WastVal {
         match self {
-            SupportedFunctionReturnValue::Err(v) | SupportedFunctionReturnValue::Ok(v) => v.value,
+            SupportedFunctionReturnValue::Ok { ok: None } => WastVal::Result(Ok(None)),
+            SupportedFunctionReturnValue::Ok { ok: Some(v) } => {
+                WastVal::Result(Ok(Some(Box::new(v.value))))
+            }
+            SupportedFunctionReturnValue::Err { err: None } => WastVal::Result(Err(None)),
+            SupportedFunctionReturnValue::Err { err: Some(v) } => {
+                WastVal::Result(Err(Some(Box::new(v.value))))
+            }
+            SupportedFunctionReturnValue::ExecutionError(_) => {
+                execution_error_to_wast_val(&get_return_type())
+            }
         }
     }
 
     #[must_use]
     pub fn as_pending_state_finished_result(&self) -> PendingStateFinishedResultKind {
-        if let SupportedFunctionReturnValue::Err(_) = self {
-            PendingStateFinishedResultKind(Err(PendingStateFinishedError::FallibleError))
-        } else {
-            PendingStateFinishedResultKind(Ok(()))
+        match self {
+            SupportedFunctionReturnValue::Ok { ok: _ } => PendingStateFinishedResultKind(Ok(())),
+            SupportedFunctionReturnValue::Err { err: _ } => {
+                PendingStateFinishedResultKind(Err(PendingStateFinishedError::FallibleError))
+            }
+            SupportedFunctionReturnValue::ExecutionError(_) => {
+                PendingStateFinishedResultKind(Err(PendingStateFinishedError::ExecutionFailure))
+            }
         }
     }
 }
-impl From<WastValWithType> for SupportedFunctionReturnValue {
-    fn from(val: WastValWithType) -> Self {
-        match &val.value {
-            WastVal::Result(Err(_)) => Self::Err(val),
-            _ => Self::Ok(val),
-        }
+
+#[must_use]
+pub fn execution_error_to_wast_val(ret_type: &TypeWrapperTopLevel) -> WastVal {
+    match ret_type {
+        TypeWrapperTopLevel { ok: _, err: None } => return WastVal::Result(Err(None)),
+        TypeWrapperTopLevel {
+            ok: _,
+            err: Some(inner),
+        } => match inner.as_ref() {
+            TypeWrapper::String => {
+                return WastVal::Result(Err(Some(Box::new(WastVal::String(
+                    "execution-failed".to_string(),
+                )))));
+            }
+            TypeWrapper::Variant(variants) => {
+                if let Some(Some(TypeWrapper::Record(fields))) = variants.get("execution-failed")
+                    && fields.is_empty()
+                {
+                    return WastVal::Result(Err(Some(Box::new(WastVal::Variant(
+                        "execution-failed".to_string(),
+                        None,
+                    )))));
+                }
+            }
+            _ => {}
+        },
     }
+    unreachable!("unexpected top-level return type {ret_type:?} cannot be ReturnTypeCompatible")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1905,20 +1995,88 @@ impl FromStr for Digest {
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
 )]
+pub enum ReturnType {
+    Compatible(ReturnTypeCompatible), // Can be converted to execution failures.
+    Incompatible(ReturnTypeIncompatible), // e.g. -submit returns ExecutionId
+}
+impl ReturnType {
+    #[must_use]
+    pub fn detect(type_wrapper: TypeWrapper, wit_type: StrVariant) -> ReturnType {
+        if let TypeWrapper::Result { ok, err: None } = type_wrapper {
+            return ReturnType::Compatible(ReturnTypeCompatible {
+                type_wrapper_tl: TypeWrapperTopLevel { ok, err: None },
+                wit_type,
+            });
+        } else if let TypeWrapper::Result { ok, err: Some(err) } = type_wrapper {
+            if let TypeWrapper::String = err.as_ref() {
+                return ReturnType::Compatible(ReturnTypeCompatible {
+                    type_wrapper_tl: TypeWrapperTopLevel { ok, err: Some(err) },
+                    wit_type,
+                });
+            } else if let TypeWrapper::Variant(fields) = err.as_ref()
+                && let Some(None) = fields.get("execution-failure")
+            {
+                return ReturnType::Compatible(ReturnTypeCompatible {
+                    type_wrapper_tl: TypeWrapperTopLevel { ok, err: Some(err) },
+                    wit_type,
+                });
+            }
+            return ReturnType::Incompatible(ReturnTypeIncompatible {
+                type_wrapper: TypeWrapper::Result { ok, err: Some(err) },
+                wit_type,
+            });
+        }
+        ReturnType::Incompatible(ReturnTypeIncompatible {
+            type_wrapper: type_wrapper.clone(),
+            wit_type,
+        })
+    }
+
+    #[must_use]
+    pub fn wit_type(&self) -> &str {
+        match self {
+            ReturnType::Compatible(compatible) => compatible.wit_type.as_ref(),
+            ReturnType::Incompatible(incompatible) => incompatible.wit_type.as_ref(),
+        }
+    }
+
+    #[must_use]
+    pub fn type_wrapper(&self) -> TypeWrapper {
+        match self {
+            ReturnType::Compatible(compatible) => {
+                TypeWrapper::from(compatible.type_wrapper_tl.clone())
+            }
+            ReturnType::Incompatible(incompatible) => incompatible.type_wrapper.clone(),
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
+)]
 #[display("{wit_type}")]
-pub struct ReturnType {
+pub struct ReturnTypeIncompatible {
     pub type_wrapper: TypeWrapper,
     pub wit_type: StrVariant,
 }
 
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
+)]
+#[display("{wit_type}")]
+pub struct ReturnTypeCompatible {
+    pub type_wrapper_tl: TypeWrapperTopLevel,
+    pub wit_type: StrVariant,
+}
+
 #[cfg(any(test, feature = "test"))]
-pub const RETURN_TYPE_DUMMY: ReturnType = ReturnType {
-    type_wrapper: TypeWrapper::Result {
+pub const RETURN_TYPE_DUMMY: ReturnType = ReturnType::Compatible(ReturnTypeCompatible {
+    type_wrapper_tl: TypeWrapperTopLevel {
         ok: None,
         err: None,
     },
     wit_type: StrVariant::Static("result"),
-};
+});
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, derive_more::Display)]
 #[derive_where::derive_where(PartialEq)]
@@ -1989,6 +2147,23 @@ pub trait FunctionRegistry: Send + Sync {
         &self,
         ffqn: &FunctionFqn,
     ) -> Option<(FunctionMetadata, ComponentId, ComponentRetryConfig)>;
+
+    // TODO: return Option<&TypeWrapperTopLevel>, optimize
+    /// Get return type of a non-ext function, otherwise return `None`.
+    fn get_ret_type(&self, ffqn: &FunctionFqn) -> Option<TypeWrapperTopLevel> {
+        self.get_by_exported_function(ffqn)
+            .and_then(|(fn_meta, _, _)| {
+                if let ReturnType::Compatible(ReturnTypeCompatible {
+                    type_wrapper_tl: type_wrapper,
+                    wit_type: _,
+                }) = fn_meta.return_type
+                {
+                    Some(type_wrapper)
+                } else {
+                    None
+                }
+            })
+    }
 
     fn all_exports(&self) -> &[PackageIfcFns];
 }

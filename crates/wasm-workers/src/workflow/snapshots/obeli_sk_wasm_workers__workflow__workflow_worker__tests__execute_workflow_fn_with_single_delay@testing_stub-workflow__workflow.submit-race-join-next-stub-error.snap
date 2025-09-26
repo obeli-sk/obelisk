@@ -101,12 +101,7 @@ expression: execution_log
             "target_execution_id": "E_00000000000000000000000000.g:1_1",
             "result": {
               "Err": {
-                "PermanentFailure": {
-                  "reason_inner": "stubbed error",
-                  "reason_full": "stubbed error",
-                  "kind": "stubbed_error",
-                  "detail": null
-                }
+                "err": null
               }
             },
             "persist_result": {
@@ -150,17 +145,7 @@ expression: execution_log
         "Finished": {
           "result": {
             "Ok": {
-              "Ok": {
-                "type": {
-                  "result": {
-                    "ok": null,
-                    "err": null
-                  }
-                },
-                "value": {
-                  "ok": null
-                }
-              }
+              "ok": null
             }
           },
           "http_client_traces": null
@@ -180,12 +165,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "Err": {
-              "PermanentFailure": {
-                "reason_inner": "stubbed error",
-                "reason_full": "stubbed error",
-                "kind": "stubbed_error",
-                "detail": null
-              }
+              "err": null
             }
           }
         }

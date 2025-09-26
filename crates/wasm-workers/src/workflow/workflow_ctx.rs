@@ -19,8 +19,8 @@ use concepts::storage::{self, DbError, DbPool, HistoryEventScheduleAt, Version, 
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
-    ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FinishedExecutionError,
-    FunctionMetadata, FunctionRegistry, IfcFqnName, InvalidNameError, ReturnType, StrVariant,
+    ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FunctionMetadata,
+    FunctionRegistry, IfcFqnName, InvalidNameError, ReturnType, ReturnTypeCompatible, StrVariant,
     SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
@@ -32,7 +32,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, error, instrument};
-use val_json::wast_val::{WastVal, WastValWithType};
+use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, Val};
 use wasmtime_wasi::{
     ResourceTable, ResourceTableError, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView,
@@ -419,7 +419,7 @@ impl AwaitNextFnCall {
 pub(crate) struct StubFnCall<'a> {
     target_ffqn: FunctionFqn,
     target_execution_id: ExecutionIdDerived,
-    target_fn_metadata_return_type: ReturnType,
+    target_return_type: ReturnTypeCompatible,
     parent_id: ExecutionId,
     join_set_id: JoinSetId,
     #[debug(skip)]
@@ -474,10 +474,14 @@ impl StubFnCall<'_> {
                 });
             }
         };
+        let ReturnType::Compatible(target_return_type) = target_fn_metadata.return_type else {
+            unreachable!("only functions with compatible return types are exported and extended")
+        };
+
         Ok(StubFnCall {
             target_ffqn,
             target_execution_id,
-            target_fn_metadata_return_type: target_fn_metadata.return_type,
+            target_return_type,
             parent_id,
             join_set_id,
             return_value,
@@ -485,54 +489,34 @@ impl StubFnCall<'_> {
         })
     }
 
+    // -stub is called
     async fn call_imported_fn<C: ClockFn>(
         self,
         ctx: &mut WorkflowCtx<C>,
         called_at: DateTime<Utc>,
-        called_ffqn: &FunctionFqn,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let StubFnCall {
             target_ffqn,
             target_execution_id,
-            target_fn_metadata_return_type,
+            target_return_type,
             parent_id,
             join_set_id,
             return_value,
             wasm_backtrace,
         } = self;
-        let return_value_or_err = WastVal::try_from(return_value.clone()).map_err(|err| {
-            WorkflowFunctionError::ImportedFunctionCallError {
-                ffqn: called_ffqn.clone(),
-                reason: "cannot convert stub return value".into(),
-                detail: Some(format!("{err:?}")),
-            }
-        })?;
-        // Add TypeWrapper
-        let result = match return_value_or_err {
-            WastVal::Result(Err(None)) => Err(FinishedExecutionError::new_stubbed_error()),
-            WastVal::Result(Ok(Some(return_value))) => {
-                // TODO: type check
-                Ok(SupportedFunctionReturnValue::from(WastValWithType {
-                    r#type: target_fn_metadata_return_type.type_wrapper,
-                    value: *return_value,
-                }))
-            }
-            other => {
-                error!("Unexpected stub return value {other:?}");
-                return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                    ffqn: called_ffqn.clone(),
-                    reason: "unexpected stub return value".into(),
-                    detail: None,
-                });
-            }
-        };
+
+        let return_value = SupportedFunctionReturnValue::from_val_and_type_wrapper_tl(
+            return_value.clone(),
+            target_return_type.type_wrapper_tl,
+        )
+        .expect("only functions with compatible return types are exported and extended");
 
         Stub {
             target_ffqn: target_ffqn.clone(),
             target_execution_id: target_execution_id.clone(),
             parent_id,
             join_set_id,
-            result,
+            result: return_value,
             wasm_backtrace,
         }
         .apply(
@@ -1264,7 +1248,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             ImportedFnCall::AwaitNext(await_next) => {
                 await_next.call_imported_fn(self, called_at).await
             }
-            ImportedFnCall::Stub(stub) => stub.call_imported_fn(self, called_at, called_ffqn).await,
+            ImportedFnCall::Stub(stub) => stub.call_imported_fn(self, called_at).await,
             ImportedFnCall::Get(get) => Ok(get.call_imported_fn(self)),
             ImportedFnCall::Invoke(invoke) => invoke.call_imported_fn(self, called_at).await,
         }
@@ -1600,8 +1584,6 @@ pub(crate) mod tests {
     use test_utils::get_seed;
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info, info_span};
-    use val_json::type_wrapper::TypeWrapper;
-    use val_json::wast_val::{WastVal, WastValWithType};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const FFQN_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
@@ -2269,7 +2251,7 @@ pub(crate) mod tests {
                     AppendRequest {
                         created_at: sim_clock.now(),
                         event: concepts::storage::ExecutionEventInner::Finished {
-                            result: Ok(finished_value),
+                            result: finished_value,
                             http_client_traces: None,
                         },
                     },
@@ -2515,7 +2497,7 @@ pub(crate) mod tests {
                 vec![AppendRequest {
                     created_at: sim_clock.now(),
                     event: concepts::storage::ExecutionEventInner::Finished {
-                        result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         http_client_traces: None,
                     },
                 }],
@@ -2528,7 +2510,7 @@ pub(crate) mod tests {
                         event: JoinSetResponse::ChildExecutionFinished {
                             child_execution_id: child_execution_id.clone(),
                             finished_version: child_log.next_version.clone(),
-                            result: Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                            result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         },
                     },
                 },
@@ -2544,16 +2526,7 @@ pub(crate) mod tests {
             &child_log.events
         );
         let child_res = child_log.into_finished_result().unwrap();
-        assert_matches!(
-            child_res,
-            Ok(SupportedFunctionReturnValue::Ok(WastValWithType {
-                r#type: TypeWrapper::Result {
-                    ok: None,
-                    err: None,
-                },
-                value: WastVal::Result(Ok(None)),
-            }))
-        );
+        assert_matches!(child_res, SupportedFunctionReturnValue::Ok { ok: None });
     }
 
     fn skip_locked<'a>(

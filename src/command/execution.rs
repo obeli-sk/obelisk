@@ -1,5 +1,4 @@
 use crate::ExecutionRepositoryClient;
-use anyhow::Context as _;
 use chrono::DateTime;
 use concepts::JOIN_SET_ID_INFIX;
 use concepts::JoinSetKind;
@@ -8,7 +7,6 @@ use concepts::{ExecutionId, FunctionFqn};
 use grpc::grpc_gen;
 use grpc::grpc_gen::execution_status::BlockedByJoinSet;
 use grpc::grpc_gen::execution_status::Finished;
-use grpc::grpc_gen::stub_request;
 use grpc_gen::execution_status::Status;
 use itertools::Either;
 use serde_json::json;
@@ -66,33 +64,17 @@ pub(crate) async fn submit(
 pub(crate) async fn stub(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionIdDerived,
-    finished_result: Result<Option<String>, ()>,
+    return_value: String,
 ) -> anyhow::Result<()> {
     let execution_id = ExecutionId::Derived(execution_id);
-
-    let finished_result = match finished_result {
-        Err(()) => stub_request::FinishedResult::ExecutionError(stub_request::ExecutionError {}),
-        Ok(None) => stub_request::FinishedResult::ReturnValue(stub_request::ReturnValue {
-            return_value: None,
-        }),
-        Ok(Some(return_value)) => {
-            // Make sure `return_value` is a JSON string.
-            serde_json::from_str::<serde_json::Value>(&return_value)
-                .context("`RETURN_VALUE` must be a JSON-encoded string")?;
-
-            stub_request::FinishedResult::ReturnValue(stub_request::ReturnValue {
-                return_value: Some(prost_wkt_types::Any {
-                    type_url: "urn:obelisk:json:retval:TBD".to_string(),
-                    value: return_value.into_bytes(),
-                }),
-            })
-        }
-    };
 
     client
         .stub(tonic::Request::new(grpc_gen::StubRequest {
             execution_id: Some(execution_id.clone().into()),
-            finished_result: Some(finished_result),
+            return_value: Some(prost_wkt_types::Any {
+                type_url: "urn:obelisk:json:retval:TBD".to_string(),
+                value: return_value.into_bytes(),
+            }),
         }))
         .await?
         .into_inner();

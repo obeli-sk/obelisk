@@ -309,8 +309,7 @@ mod bench {
         let res = db_connection
             .wait_for_finished_result(&execution_id, None)
             .await
-            .unwrap()
             .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::Ok(_));
+        assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
     }
 }

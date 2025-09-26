@@ -3,7 +3,7 @@ package testing:sleep-obelisk-ext;
 
 interface sleep {
   use obelisk:types/time@3.0.0.{duration};
-  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, execution-failed};
+  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
 
   sleep-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 
@@ -11,7 +11,7 @@ interface sleep {
 
   sleep-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-  sleep-invoke: func(duration: duration) -> result<result, execution-failed>;
+  sleep-invoke: func(duration: duration) -> result;
 
   sleep-loop-submit: func(join-set-id: borrow<join-set-id>, duration: duration, iterations: u32) -> execution-id;
 
@@ -19,6 +19,6 @@ interface sleep {
 
   sleep-loop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-  sleep-loop-invoke: func(duration: duration, iterations: u32) -> result<result, execution-failed>;
+  sleep-loop-invoke: func(duration: duration, iterations: u32) -> result;
 }
 

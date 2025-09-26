@@ -3,7 +3,7 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
 use crate::{RunnableComponent, WasmFileError};
-use concepts::JoinSetId;
+use assert_matches::assert_matches;
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, ClientError, CreateRequest, DbError, DbPool, ExecutionEventInner,
@@ -13,9 +13,10 @@ use concepts::time::ClockFn;
 use concepts::{
     ClosingStrategy, ComponentId, ComponentType, ExecutionId, ExecutionMetadata,
     FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName,
-    JoinSetKind, Params, PermanentFailureKind, SUFFIX_PKG_SCHEDULE,
+    JoinSetKind, Params, PermanentFailureKind, ReturnType, SUFFIX_PKG_SCHEDULE,
     SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant, TrapKind,
 };
+use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -127,10 +128,22 @@ impl WebhookEndpointCompiled {
         WebhookEndpointCtx::add_to_linker(&mut linker)?;
 
         // Mock imported functions
-        for import in fn_registry.all_exports().iter().filter(|import| {
-            // Skip already linked functions to avoid unexpected behavior and security issues.
-            !import.ifc_fqn.is_namespace_obelisk() && !import.ifc_fqn.is_namespace_wasi()
-        }) {
+        for import in fn_registry
+            .all_exports()
+            .iter()
+            .filter(|import| {
+                // Skip already linked functions to avoid unexpected behavior and security issues.
+                !import.ifc_fqn.is_namespace_obelisk() && !import.ifc_fqn.is_namespace_wasi()
+            })
+            .filter(|import| {
+                // Keep only no-ext and -schedule interfaces
+                !import.ifc_fqn.is_extension()
+                    || import
+                        .ifc_fqn
+                        .package_strip_obelisk_schedule_suffix()
+                        .is_some()
+            })
+        {
             trace!(
                 ifc_fqn = %import.ifc_fqn,
                 "Adding imported interface to the linker",
@@ -413,11 +426,17 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
         wasm_backtrace: Option<concepts::storage::WasmBacktrace>,
     ) -> Result<(), WebhookEndpointFunctionError> {
         debug!(?params, "call_imported_fn start");
+        assert_eq!(
+            1,
+            results.len(),
+            "direct call: no-ext export must return `result`, -schedule returns `execuiton-id`"
+        );
         let (db_connection, version_min_including, version_max_excluding) = if let Some(
             package_name,
         ) =
             ffqn.ifc_fqn.package_strip_obelisk_schedule_suffix()
         {
+            // -schedule
             let ifc_fqn = IfcFqnName::from_parts(
                 ffqn.ifc_fqn.namespace(),
                 package_name,
@@ -525,10 +544,15 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             let child_execution_id =
                 ExecutionId::TopLevel(self.execution_id).next_level(&join_set_id_direct);
             let created_at = self.clock_fn.now();
-            let (_function_metadata, component_id, import_retry_config) = self
+            let (fn_metadata, component_id, import_retry_config) = self
                 .fn_registry
                 .get_by_exported_function(&ffqn)
-                .expect("imported function must be found in fn_registry");
+                .expect("import was mocked using fn_registry exports limited to -schedule and no-ext functions");
+            assert!(
+                fn_metadata.extension.is_none(),
+                "direct call: function must be no-ext"
+            );
+            let return_type_tl = assert_matches!(fn_metadata.return_type, ReturnType::Compatible(compatible) => compatible.type_wrapper_tl);
 
             let req_join_set_created = AppendRequest {
                 created_at,
@@ -564,7 +588,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             let req_create_child = CreateRequest {
                 created_at,
                 execution_id: ExecutionId::Derived(child_execution_id.clone()),
-                ffqn,
+                ffqn: ffqn.clone(),
                 params: Params::from_wasmtime(Arc::from(params)),
                 parent: Some((ExecutionId::TopLevel(self.execution_id), join_set_id_direct)),
                 metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
@@ -598,20 +622,14 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             trace!("Finished result: {res:?}");
 
             let res = match res {
-                Ok(res) => res?,
+                Ok(res) => res,
                 Err(ClientError::DbError(err)) => {
                     return Err(WebhookEndpointFunctionError::DbError(err));
                 }
                 Err(ClientError::Timeout) => unreachable!("timeout was not set"),
             };
-            if results.len() != 1 {
-                error!("Unexpected results length: {}", results.len());
-                return Err(WebhookEndpointFunctionError::UncategorizedError(
-                    "Unexpected results length",
-                ));
-            }
 
-            results[0] = res.value().as_val();
+            results[0] = res.into_wast_val(move || return_type_tl).as_val();
 
             trace!(?params, ?results, "call_imported_fn finish");
             (db_connection, version_min_including, version_max_excluding)
@@ -734,7 +752,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
         }
 
         let result = match &original_result {
-            Ok(()) => Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+            Ok(()) => SUPPORTED_RETURN_VALUE_OK_EMPTY,
             Err(err) => {
                 let err = if let Some(trap) = err
                     .source()
@@ -765,12 +783,14 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     }
                 };
 
-                Err(FinishedExecutionError::PermanentFailure {
-                    reason_full: err.to_string(),
-                    reason_inner: err.reason,
-                    kind: PermanentFailureKind::WebhookEndpointError,
-                    detail: err.detail,
-                })
+                SupportedFunctionReturnValue::ExecutionError(
+                    FinishedExecutionError::PermanentFailure {
+                        reason_full: err.to_string(),
+                        reason_inner: err.reason,
+                        kind: PermanentFailureKind::WebhookEndpointError,
+                        detail: err.detail,
+                    },
+                )
             }
         };
         if let Some(version) = self.version {
@@ -1201,12 +1221,12 @@ pub(crate) mod tests {
             let res = conn
                 .wait_for_finished_result(&execution_id, None)
                 .await
-                .unwrap()
                 .unwrap();
-            let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(val) => val);
-            let (fibo, ok_ty) = assert_matches!(res, WastValWithType {value: WastVal::Result(Ok(Some(val))), r#type: TypeWrapper::Result { ok:Some(ok_ty), err:None } } => (val, ok_ty));
-            assert_matches!(*ok_ty, TypeWrapper::U64);
-            let res = assert_matches!(*fibo, WastVal::U64(val) => val);
+            let res = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val);
+            let (fibo, ok_ty) =
+                assert_matches!(res, WastValWithType {value, r#type: ok_ty } => (value, ok_ty));
+            assert_matches!(ok_ty, TypeWrapper::U64);
+            let res = assert_matches!(fibo, WastVal::U64(val) => val);
             assert_eq!(FIBO_10_OUTPUT, res);
             fibo_webhook_harness.close().await;
         }
