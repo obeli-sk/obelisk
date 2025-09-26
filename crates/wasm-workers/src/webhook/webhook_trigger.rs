@@ -552,7 +552,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 fn_metadata.extension.is_none(),
                 "direct call: function must be no-ext"
             );
-            let return_type_tl = assert_matches!(fn_metadata.return_type, ReturnType::Compatible(compatible) => compatible.type_wrapper_tl);
+            let return_type_tl = assert_matches!(fn_metadata.return_type, ReturnType::Extendable(compatible) => compatible.type_wrapper_tl);
 
             let req_join_set_created = AppendRequest {
                 created_at,

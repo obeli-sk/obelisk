@@ -2,7 +2,7 @@ use crate::{sha256sum::calculate_sha256_file, wit::from_wit_package_name_to_pkg_
 use anyhow::Context;
 use concepts::{
     ComponentType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
-    PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType, ReturnTypeIncompatible,
+    PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType, ReturnTypeNonExtendable,
     SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB,
     SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
 };
@@ -394,7 +394,7 @@ impl ExIm {
             TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
         let join_set_id_type_wrapper = TypeWrapper::Borrow;
 
-        let return_type_execution_id = ReturnType::Incompatible(ReturnTypeIncompatible {
+        let return_type_execution_id = ReturnType::NonExtendable(ReturnTypeNonExtendable {
             type_wrapper: execution_id_type_wrapper.clone(),
             wit_type: concepts::StrVariant::Static("execution-id"),
         });
@@ -526,7 +526,7 @@ impl ExIm {
                     extension: None,
                     submittable: false,
                 };
-                let ReturnType::Compatible(return_type) = return_type else {
+                let ReturnType::Extendable(return_type) = return_type else {
                     unreachable!(
                         "all ExImLite exported functions must have their return type validated"
                     )
@@ -631,7 +631,7 @@ impl ExIm {
                         let params = exported_fn_metadata.parameter_types.0.clone();
                         ParameterTypes(params)
                     },
-                    return_type: ReturnType::Compatible(return_type.clone()),
+                    return_type: ReturnType::Extendable(return_type.clone()),
                     extension: Some(FunctionExtension::Invoke),
                     submittable: false,
                 };
@@ -838,10 +838,10 @@ fn populate_ifcs_with_compatible_fns(
                 None
             };
 
-            let return_type_valid = matches!(return_type, Some(ReturnType::Compatible(_)));
+            let return_type_valid = matches!(return_type, Some(ReturnType::Extendable(_)));
 
             match (return_type, processing_kind.is_export()) {
-                (Some(return_type @ ReturnType::Compatible(_)), true)
+                (Some(return_type @ ReturnType::Extendable(_)), true)
                 | (Some(return_type), false) => {
                     let ffqn =
                         FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));

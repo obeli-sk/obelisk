@@ -16,7 +16,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -96,7 +96,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -163,7 +163,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -192,7 +192,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -217,7 +217,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -297,7 +297,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -374,7 +374,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -413,7 +413,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -438,7 +438,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -514,7 +514,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -594,7 +594,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -666,7 +666,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -700,7 +700,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -729,7 +729,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -801,7 +801,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -835,7 +835,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -860,7 +860,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -940,7 +940,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -1012,7 +1012,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -1046,7 +1046,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -1095,7 +1095,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -1154,7 +1154,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -1208,7 +1208,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -1262,7 +1262,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -1316,7 +1316,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Incompatible": {
+      "NonExtendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -1341,7 +1341,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -1375,7 +1375,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -1404,7 +1404,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -1433,7 +1433,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -1462,7 +1462,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null

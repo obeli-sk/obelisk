@@ -16,7 +16,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -50,7 +50,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -79,7 +79,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -108,7 +108,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -137,7 +137,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
+      "Extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null

@@ -20,7 +20,7 @@ use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
     ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FunctionMetadata,
-    FunctionRegistry, IfcFqnName, InvalidNameError, ReturnType, ReturnTypeCompatible, StrVariant,
+    FunctionRegistry, IfcFqnName, InvalidNameError, ReturnType, ReturnTypeExtendable, StrVariant,
     SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
@@ -419,7 +419,7 @@ impl AwaitNextFnCall {
 pub(crate) struct StubFnCall<'a> {
     target_ffqn: FunctionFqn,
     target_execution_id: ExecutionIdDerived,
-    target_return_type: ReturnTypeCompatible,
+    target_return_type: ReturnTypeExtendable,
     parent_id: ExecutionId,
     join_set_id: JoinSetId,
     #[debug(skip)]
@@ -474,7 +474,7 @@ impl StubFnCall<'_> {
                 });
             }
         };
-        let ReturnType::Compatible(target_return_type) = target_fn_metadata.return_type else {
+        let ReturnType::Extendable(target_return_type) = target_fn_metadata.return_type else {
             unreachable!("only functions with compatible return types are exported and extended")
         };
 

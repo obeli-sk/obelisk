@@ -1996,37 +1996,37 @@ impl FromStr for Digest {
     Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
 )]
 pub enum ReturnType {
-    Compatible(ReturnTypeCompatible), // Can be converted to execution failures.
-    Incompatible(ReturnTypeIncompatible), // e.g. -submit returns ExecutionId
+    Extendable(ReturnTypeExtendable), // Execution failures can be converted to this return type, e.g. result<_, string>
+    NonExtendable(ReturnTypeNonExtendable), // e.g. -submit returns ExecutionId
 }
 impl ReturnType {
     #[must_use]
     pub fn detect(type_wrapper: TypeWrapper, wit_type: StrVariant) -> ReturnType {
         if let TypeWrapper::Result { ok, err: None } = type_wrapper {
-            return ReturnType::Compatible(ReturnTypeCompatible {
+            return ReturnType::Extendable(ReturnTypeExtendable {
                 type_wrapper_tl: TypeWrapperTopLevel { ok, err: None },
                 wit_type,
             });
         } else if let TypeWrapper::Result { ok, err: Some(err) } = type_wrapper {
             if let TypeWrapper::String = err.as_ref() {
-                return ReturnType::Compatible(ReturnTypeCompatible {
+                return ReturnType::Extendable(ReturnTypeExtendable {
                     type_wrapper_tl: TypeWrapperTopLevel { ok, err: Some(err) },
                     wit_type,
                 });
             } else if let TypeWrapper::Variant(fields) = err.as_ref()
                 && let Some(None) = fields.get("execution-failure")
             {
-                return ReturnType::Compatible(ReturnTypeCompatible {
+                return ReturnType::Extendable(ReturnTypeExtendable {
                     type_wrapper_tl: TypeWrapperTopLevel { ok, err: Some(err) },
                     wit_type,
                 });
             }
-            return ReturnType::Incompatible(ReturnTypeIncompatible {
+            return ReturnType::NonExtendable(ReturnTypeNonExtendable {
                 type_wrapper: TypeWrapper::Result { ok, err: Some(err) },
                 wit_type,
             });
         }
-        ReturnType::Incompatible(ReturnTypeIncompatible {
+        ReturnType::NonExtendable(ReturnTypeNonExtendable {
             type_wrapper: type_wrapper.clone(),
             wit_type,
         })
@@ -2035,18 +2035,18 @@ impl ReturnType {
     #[must_use]
     pub fn wit_type(&self) -> &str {
         match self {
-            ReturnType::Compatible(compatible) => compatible.wit_type.as_ref(),
-            ReturnType::Incompatible(incompatible) => incompatible.wit_type.as_ref(),
+            ReturnType::Extendable(compatible) => compatible.wit_type.as_ref(),
+            ReturnType::NonExtendable(incompatible) => incompatible.wit_type.as_ref(),
         }
     }
 
     #[must_use]
     pub fn type_wrapper(&self) -> TypeWrapper {
         match self {
-            ReturnType::Compatible(compatible) => {
+            ReturnType::Extendable(compatible) => {
                 TypeWrapper::from(compatible.type_wrapper_tl.clone())
             }
-            ReturnType::Incompatible(incompatible) => incompatible.type_wrapper.clone(),
+            ReturnType::NonExtendable(incompatible) => incompatible.type_wrapper.clone(),
         }
     }
 }
@@ -2055,7 +2055,7 @@ impl ReturnType {
     Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
 )]
 #[display("{wit_type}")]
-pub struct ReturnTypeIncompatible {
+pub struct ReturnTypeNonExtendable {
     pub type_wrapper: TypeWrapper,
     pub wit_type: StrVariant,
 }
@@ -2064,13 +2064,13 @@ pub struct ReturnTypeIncompatible {
     Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
 )]
 #[display("{wit_type}")]
-pub struct ReturnTypeCompatible {
+pub struct ReturnTypeExtendable {
     pub type_wrapper_tl: TypeWrapperTopLevel,
     pub wit_type: StrVariant,
 }
 
 #[cfg(any(test, feature = "test"))]
-pub const RETURN_TYPE_DUMMY: ReturnType = ReturnType::Compatible(ReturnTypeCompatible {
+pub const RETURN_TYPE_DUMMY: ReturnType = ReturnType::Extendable(ReturnTypeExtendable {
     type_wrapper_tl: TypeWrapperTopLevel {
         ok: None,
         err: None,
@@ -2153,7 +2153,7 @@ pub trait FunctionRegistry: Send + Sync {
     fn get_ret_type(&self, ffqn: &FunctionFqn) -> Option<TypeWrapperTopLevel> {
         self.get_by_exported_function(ffqn)
             .and_then(|(fn_meta, _, _)| {
-                if let ReturnType::Compatible(ReturnTypeCompatible {
+                if let ReturnType::Extendable(ReturnTypeExtendable {
                     type_wrapper_tl: type_wrapper,
                     wit_type: _,
                 }) = fn_meta.return_type
