@@ -1,6 +1,6 @@
 use super::event_history::{
-    ApplyError, EventHistory, JoinNextRequestingFfqn, JoinSetCloseError,
-    OneOffChildExecutionRequest, OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
+    ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
+    OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
 };
 use super::host_exports::v3_0_0::obelisk::types::execution as types_execution;
 use super::host_exports::v3_0_0::{ClosingStrategy_3_0_0, ScheduleAt_3_0_0};
@@ -1211,7 +1211,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         Ok(())
     }
 
-    pub(crate) async fn close_forgotten_join_sets(&mut self) -> Result<(), JoinSetCloseError> {
+    pub(crate) async fn close_forgotten_join_sets(&mut self) -> Result<(), ApplyError> {
         self.event_history
             .close_forgotten_join_sets(
                 self.db_pool.connection().as_ref(),
@@ -1547,7 +1547,7 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::testing_fn_registry::fn_registry_dummy;
-    use crate::workflow::event_history::JoinSetCloseError;
+    use crate::workflow::event_history::ApplyError;
     use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
     use crate::workflow::workflow_ctx::{
         DirectFnCall, ImportedFnCall, SubmitExecutionFnCall, WorkerPartialResult,
@@ -1852,7 +1852,7 @@ pub(crate) mod tests {
                     info!("Finishing");
                     WorkerResult::Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY, workflow_ctx.version, None)
                 }
-                Err(JoinSetCloseError::InterruptDbUpdated) => {
+                Err(ApplyError::InterruptDbUpdated) => {
                     info!("Interrupting");
                     return WorkerResult::DbUpdatedByWorkerOrWatcher;
                 }
@@ -1978,7 +1978,8 @@ pub(crate) mod tests {
             }
             // Expect that the same steps + same responses produce same exec log (lock events and timestamps may differ)
             loop {
-                workflow_exec
+                debug!("Ticking");
+                let executed = workflow_exec
                     .tick_test(
                         sim_clock.now(),
                         RunId::from_parts(
@@ -1991,6 +1992,7 @@ pub(crate) mod tests {
                     .wait_for_tasks()
                     .await
                     .unwrap();
+                assert!(executed > 0);
                 let pending_state = db_connection
                     .get_pending_state(&execution_id)
                     .await

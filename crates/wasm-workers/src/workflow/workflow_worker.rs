@@ -1,4 +1,4 @@
-use super::event_history::JoinSetCloseError;
+use super::event_history::ApplyError;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
@@ -636,9 +636,13 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             .close_forgotten_join_sets()
             .await
             .map_err(|err| match err {
-                JoinSetCloseError::InterruptDbUpdated => WorkerResult::DbUpdatedByWorkerOrWatcher,
-                JoinSetCloseError::DbError(db_error) => {
-                    WorkerResult::Err(WorkerError::DbError(db_error))
+                ApplyError::InterruptDbUpdated => WorkerResult::DbUpdatedByWorkerOrWatcher,
+                ApplyError::DbError(db_error) => WorkerResult::Err(WorkerError::DbError(db_error)),
+                ApplyError::NondeterminismDetected(detail) => {
+                    WorkerResult::Err(WorkerError::FatalError(
+                        FatalError::NondeterminismDetected { detail },
+                        workflow_ctx.version.clone(),
+                    ))
                 }
             })
     }

@@ -81,23 +81,6 @@ pub(crate) enum ApplyError {
     DbError(DbError),
 }
 
-#[derive(Debug, Clone, thiserror::Error)]
-pub(crate) enum JoinSetCloseError {
-    #[error("interrupt, db updated")]
-    InterruptDbUpdated,
-    #[error(transparent)]
-    DbError(DbError),
-}
-
-impl From<JoinSetCloseError> for ApplyError {
-    fn from(value: JoinSetCloseError) -> Self {
-        match value {
-            JoinSetCloseError::DbError(db_error) => Self::DbError(db_error),
-            JoinSetCloseError::InterruptDbUpdated => Self::InterruptDbUpdated,
-        }
-    }
-}
-
 #[expect(clippy::struct_field_names)]
 pub(crate) struct EventHistory {
     execution_id: ExecutionId,
@@ -409,7 +392,6 @@ impl EventHistory {
     ) -> Result<(), WorkflowFunctionError> {
         self.join_set_close_inner(join_set_id, db_connection, version, called_at)
             .await
-            .map_err(ApplyError::from)
             .map_err(WorkflowFunctionError::from)
     }
 
@@ -420,7 +402,7 @@ impl EventHistory {
         db_connection: &dyn DbConnection,
         version: &mut Version,
         called_at: DateTime<Utc>,
-    ) -> Result<(), JoinSetCloseError> {
+    ) -> Result<(), ApplyError> {
         // Keep submitting JoinNext-s until the created child requests == processed(paired) join nexts + closing join nexts.
         // After closing a join set, it must not be possible for code to add more join nexts.
 
@@ -433,48 +415,34 @@ impl EventHistory {
         let processed_child_response_count = self.responses.iter().filter(|(event, status)| *status == Processed &&
             matches!(event, JoinSetResponseEvent { join_set_id:found, event: JoinSetResponse::ChildExecutionFinished { .. } }
                 if join_set_id == *found)).count();
-        let close_count = self
+        let mut close_count = self
             .close_requests
             .get(&join_set_id)
             .copied()
             .unwrap_or_default();
         debug!(%join_set_id, created_child_request_count, processed_child_response_count,  close_count, "join_set_close");
-        if created_child_request_count > processed_child_response_count + close_count {
+        while created_child_request_count > processed_child_response_count + close_count {
             debug!(%join_set_id, created_child_request_count, processed_child_response_count, "Flusing and adding JoinNext");
-
-            self.flush_non_blocking_event_cache(db_connection, called_at)
-                .await
-                .map_err(JoinSetCloseError::DbError)?;
-            // Changing version here but currently Interrupt strategy is only one implemented.
-            *version = db_connection
-                .append(
-                    self.execution_id.clone(),
-                    version.clone(),
-                    AppendRequest {
-                        created_at: called_at,
-                        event: ExecutionEventInner::HistoryEvent {
-                            event: HistoryEvent::JoinNext {
-                                join_set_id,
-                                run_expires_at: called_at, // TODO: Implement the Await strategy.
-                                requested_ffqn: None,
-                                closing: true,
-                            },
-                        },
-                    },
-                )
-                .await
-                .map_err(JoinSetCloseError::DbError)?;
-
-            Err(JoinSetCloseError::InterruptDbUpdated) // TODO: Implement the Await strategy.
-        } else {
-            // Clean up for `last_join_set`
-            *self
-                .index_join_set_to_created_child_requests
-                .get_mut(&join_set_id)
-                .expect("must have been created in JoinSetCreate") = 0;
-            self.closed_join_sets.insert(join_set_id);
-            Ok(())
+            self.apply_inner(
+                EventCall::JoinNext(JoinNext {
+                    join_set_id: join_set_id.clone(),
+                    closing: true,
+                    wasm_backtrace: None,
+                }),
+                db_connection,
+                version,
+                called_at,
+            )
+            .await?;
+            close_count += 1;
         }
+        // Clean up for `last_join_set`, otherwise `last_join_set` would return the same join set.
+        *self
+            .index_join_set_to_created_child_requests
+            .get_mut(&join_set_id)
+            .expect("must have been created in JoinSetCreate") = 0;
+        self.closed_join_sets.insert(join_set_id);
+        Ok(())
     }
 
     fn last_join_set(&self) -> Option<JoinSetId> {
@@ -496,7 +464,7 @@ impl EventHistory {
         db_connection: &dyn DbConnection,
         version: &mut Version,
         called_at: DateTime<Utc>,
-    ) -> Result<(), JoinSetCloseError> {
+    ) -> Result<(), ApplyError> {
         debug!("close_forgotten_join_sets");
         while let Some(join_set_id) = self.last_join_set() {
             self.join_set_close_inner(join_set_id, db_connection, version, called_at)
