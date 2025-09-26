@@ -2,10 +2,9 @@ use crate::{sha256sum::calculate_sha256_file, wit::from_wit_package_name_to_pkg_
 use anyhow::Context;
 use concepts::{
     ComponentType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
-    PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType, ReturnTypeCompatible,
-    ReturnTypeIncompatible, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_INVOKE,
-    SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE,
-    SUFFIX_PKG_STUB, StrVariant, TypeWrapperTopLevel,
+    PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType, ReturnTypeIncompatible,
+    SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB,
+    SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -528,7 +527,9 @@ impl ExIm {
                     submittable: false,
                 };
                 let ReturnType::Compatible(return_type) = return_type else {
-                    unreachable!("all exported functions must have their return type validated")
+                    unreachable!(
+                        "all ExImLite exported functions must have their return type validated"
+                    )
                 };
 
                 // -submit(join-set-id: join-set-id, original params) -> execution id
@@ -573,17 +574,17 @@ impl ExIm {
                             execution_id_type_wrapper.clone(),
                             TypeWrapper::from(return_type.type_wrapper_tl.clone()),
                         ]));
-                        ReturnType::Compatible(ReturnTypeCompatible {
-                            type_wrapper_tl: TypeWrapperTopLevel {
+                        ReturnType::detect(
+                            TypeWrapper::Result {
                                 ok: Some(Box::new(ok_type_wrapper)),
                                 err: Some(Box::new(
                                     await_next_extension_error_type_wrapper.clone(),
                                 )),
                             },
-                            wit_type: StrVariant::from(format!(
+                            StrVariant::from(format!(
                                 "result<{ok_part}, await-next-extension-error>"
                             )),
-                        })
+                        )
                     },
                     extension: Some(FunctionExtension::AwaitNext),
                     submittable: false,
@@ -602,18 +603,15 @@ impl ExIm {
                     parameter_types: ParameterTypes(vec![param_type_execution_id.clone()]),
                     return_type: {
                         let ok_wit = &return_type.wit_type;
-                        let ok_type_wrapper = Some(Box::new(TypeWrapper::from(
-                            return_type.type_wrapper_tl.clone(),
-                        )));
-                        ReturnType::Compatible(ReturnTypeCompatible {
-                            type_wrapper_tl: TypeWrapperTopLevel {
-                                ok: ok_type_wrapper,
+                        ReturnType::detect(
+                            TypeWrapper::Result {
+                                ok: Some(Box::new(TypeWrapper::from(
+                                    return_type.type_wrapper_tl.clone(),
+                                ))),
                                 err: Some(Box::new(get_extension_error_type_wrapper.clone())),
                             },
-                            wit_type: StrVariant::from(format!(
-                                "result<{ok_wit}, get-extension-error>"
-                            )),
-                        })
+                            StrVariant::from(format!("result<{ok_wit}, get-extension-error>")),
+                        )
                     },
                     extension: Some(FunctionExtension::Get),
                     submittable: false,
@@ -690,13 +688,13 @@ impl ExIm {
 
                             ParameterTypes(params)
                         },
-                        return_type: ReturnType::Compatible(ReturnTypeCompatible {
-                            type_wrapper_tl: TypeWrapperTopLevel {
+                        return_type: ReturnType::detect(
+                            TypeWrapper::Result {
                                 ok: None,
                                 err: Some(Box::new(stub_error_type_wrapper.clone())),
                             },
-                            wit_type: StrVariant::Static("result<_, stub-error>"),
-                        }),
+                            StrVariant::Static("result<_, stub-error>"),
+                        ),
                         extension: Some(FunctionExtension::Stub),
                         submittable: false,
                     };
@@ -840,65 +838,70 @@ fn populate_ifcs_with_compatible_fns(
                 None
             };
 
-            let imported_fn_extension = {
-                let guessed_fn_extension = FunctionExtension::iter()
-                    .find(|fn_ext| function_name.ends_with(fn_ext.suffix()));
-                match (package_ext, guessed_fn_extension) {
-                    (None, _) => None,
-                    (Some(pkg_ext), Some(fn_ext)) if fn_ext.belongs_to(pkg_ext) => Some(fn_ext),
-                    _ => return Err(DecodeError::WrongExtImport(ffqn)),
-                }
-            };
-
             let return_type_valid = matches!(return_type, Some(ReturnType::Compatible(_)));
 
-            // Warn if this is export and a function return type does not validate.
-            // Mute warnings for `incoming-handlers`, exported by webhooks.
-            if processing_kind.is_export()
-                && !return_type_valid
-                && !ifc_fqn.starts_with("wasi:http/incoming-handler@")
-            {
-                warn!("Ignoring export {ffqn} with unsupported return type");
-            }
+            match (return_type, processing_kind.is_export()) {
+                (Some(return_type @ ReturnType::Compatible(_)), true)
+                | (Some(return_type), false) => {
+                    let ffqn =
+                        FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
+                    let parameter_types = ParameterTypes({
+                        let mut params = Vec::new();
+                        for (param_name, param_ty) in &function.params {
+                            let mut printer = WitPrinter::default();
+                            let item = ParameterType {
+                                type_wrapper: match TypeWrapper::from_wit_parser_type(
+                                    resolve, param_ty,
+                                ) {
+                                    Ok(ok) => ok,
+                                    Err(err) => {
+                                        return Err(DecodeError::TypeNotSupported { err, ffqn });
+                                    }
+                                },
+                                name: StrVariant::from(param_name.to_string()),
+                                wit_type: printer
+                                    .print_type_name(resolve, param_ty)
+                                    .ok()
+                                    .map_or(StrVariant::Static("unknown"), |()| {
+                                        StrVariant::from(printer.output.to_string())
+                                    }),
+                            };
+                            params.push(item);
+                        }
+                        params
+                    });
 
-            if let Some(ReturnType::Compatible(return_type)) = return_type {
-                let ffqn =
-                    FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
-                let parameter_types = ParameterTypes({
-                    let mut params = Vec::new();
-                    for (param_name, param_ty) in &function.params {
-                        let mut printer = WitPrinter::default();
-                        let item = ParameterType {
-                            type_wrapper: match TypeWrapper::from_wit_parser_type(resolve, param_ty)
-                            {
-                                Ok(ok) => ok,
-                                Err(err) => {
-                                    return Err(DecodeError::TypeNotSupported { err, ffqn });
+                    fns.insert(
+                        ffqn.function_name.clone(),
+                        FunctionMetadata {
+                            parameter_types,
+                            return_type,
+                            extension: {
+                                let guessed_fn_extension = FunctionExtension::iter()
+                                    .find(|fn_ext| function_name.ends_with(fn_ext.suffix()));
+                                match (package_ext, guessed_fn_extension) {
+                                    (None, _) => None,
+                                    (Some(pkg_ext), Some(fn_ext)) if fn_ext.belongs_to(pkg_ext) => {
+                                        Some(fn_ext)
+                                    }
+                                    _ => return Err(DecodeError::WrongExtImport(ffqn)),
                                 }
                             },
-                            name: StrVariant::from(param_name.to_string()),
-                            wit_type: printer
-                                .print_type_name(resolve, param_ty)
-                                .ok()
-                                .map_or(StrVariant::Static("unknown"), |()| {
-                                    StrVariant::from(printer.output.to_string())
-                                }),
-                        };
-                        params.push(item);
-                    }
-                    params
-                });
-
-                fns.insert(
-                    ffqn.function_name.clone(),
-                    FunctionMetadata {
-                        ffqn,
-                        parameter_types,
-                        return_type: ReturnType::Compatible(return_type),
-                        extension: imported_fn_extension,
-                        submittable,
-                    },
-                );
+                            ffqn,
+                            submittable,
+                        },
+                    );
+                }
+                (Some(return_type), true)
+                    if processing_kind.is_export()
+                        && !return_type_valid
+                        && !ifc_fqn.starts_with("wasi:http/incoming-handler@") =>
+                {
+                    // Warn if this is export and a function return type is not compatible.
+                    // Mute warnings for `incoming-handlers`, exported by webhooks.
+                    warn!("Ignoring export {ffqn} with unsupported return type {return_type:?}");
+                }
+                _ => {}
             }
         }
         if !fns.is_empty() {

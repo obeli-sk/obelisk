@@ -3,6 +3,158 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
+  "obelisk:types/execution@3.0.0.[method]join-set-id.id": {
+    "ffqn": {
+      "ifc_fqn": "obelisk:types/execution@3.0.0",
+      "function_name": "[method]join-set-id.id"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "self",
+        "wit_type": "borrow<join-set-id>"
+      }
+    ],
+    "return_type": {
+      "Incompatible": {
+        "type_wrapper": "string",
+        "wit_type": "string"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  },
+  "obelisk:workflow/workflow-support@3.0.0.new-join-set-generated": {
+    "ffqn": {
+      "ifc_fqn": "obelisk:workflow/workflow-support@3.0.0",
+      "function_name": "new-join-set-generated"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "enum": [
+            "complete"
+          ]
+        },
+        "name": "closing-strategy",
+        "wit_type": "closing-strategy"
+      }
+    ],
+    "return_type": {
+      "Incompatible": {
+        "type_wrapper": "own",
+        "wit_type": "join-set-id"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  },
+  "testing:http-obelisk-ext/http-get.get-successful-await-next": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-obelisk-ext/http-get",
+      "function_name": "get-successful-await-next"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set-id",
+        "wit_type": "borrow<join-set-id>"
+      }
+    ],
+    "return_type": {
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "string",
+                    "err": "string"
+                  }
+                }
+              ]
+            },
+            "err": {
+              "variant": {
+                "all-processed": null,
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "wit_type": "result<tuple<execution-id, result<string, string>>, await-next-extension-error>"
+      }
+    },
+    "extension": "await_next",
+    "submittable": false
+  },
+  "testing:http-obelisk-ext/http-get.get-successful-submit": {
+    "ffqn": {
+      "ifc_fqn": "testing:http-obelisk-ext/http-get",
+      "function_name": "get-successful-submit"
+    },
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set-id",
+        "wit_type": "borrow<join-set-id>"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "Incompatible": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
+    },
+    "extension": "submit",
+    "submittable": false
+  },
   "testing:http/http-get.get": {
     "ffqn": {
       "ifc_fqn": "testing:http/http-get",

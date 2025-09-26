@@ -16,54 +16,56 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "tuple": [
-              {
-                "record": {
-                  "id": "string"
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "string",
+                    "err": "string"
+                  }
                 }
-              },
-              {
-                "result": {
-                  "ok": "string",
-                  "err": "string"
-                }
-              }
-            ]
-          },
-          "err": {
-            "variant": {
-              "all-processed": null,
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+              ]
+            },
+            "err": {
+              "variant": {
+                "all-processed": null,
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
-                    }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
                     }
                   }
                 }
@@ -94,49 +96,51 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "result": {
-              "ok": "string",
-              "err": "string"
-            }
-          },
-          "err": {
-            "variant": {
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "string",
+                "err": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
                     }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
-                    }
                   }
-                }
-              },
-              "not-found-in-processed-responses": null
+                },
+                "not-found-in-processed-responses": null
+              }
             }
           }
         },
@@ -183,54 +187,56 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "tuple": [
-              {
-                "record": {
-                  "id": "string"
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "string",
+                    "err": "string"
+                  }
                 }
-              },
-              {
-                "result": {
-                  "ok": "string",
-                  "err": "string"
-                }
-              }
-            ]
-          },
-          "err": {
-            "variant": {
-              "all-processed": null,
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+              ]
+            },
+            "err": {
+              "variant": {
+                "all-processed": null,
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
-                    }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
                     }
                   }
                 }
@@ -261,49 +267,51 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "result": {
-              "ok": "string",
-              "err": "string"
-            }
-          },
-          "err": {
-            "variant": {
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "string",
+                "err": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
                     }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
-                    }
                   }
-                }
-              },
-              "not-found-in-processed-responses": null
+                },
+                "not-found-in-processed-responses": null
+              }
             }
           }
         },
@@ -380,54 +388,56 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "tuple": [
-              {
-                "record": {
-                  "id": "string"
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": null,
+                    "err": null
+                  }
                 }
-              },
-              {
-                "result": {
-                  "ok": null,
-                  "err": null
-                }
-              }
-            ]
-          },
-          "err": {
-            "variant": {
-              "all-processed": null,
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+              ]
+            },
+            "err": {
+              "variant": {
+                "all-processed": null,
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
-                    }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
                     }
                   }
                 }
@@ -458,49 +468,51 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "result": {
-              "ok": null,
-              "err": null
-            }
-          },
-          "err": {
-            "variant": {
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": null,
+                "err": null
+              }
+            },
+            "err": {
+              "variant": {
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
                     }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
-                    }
                   }
-                }
-              },
-              "not-found-in-processed-responses": null
+                },
+                "not-found-in-processed-responses": null
+              }
             }
           }
         },
@@ -596,54 +608,56 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "tuple": [
-              {
-                "record": {
-                  "id": "string"
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "string",
+                    "err": "string"
+                  }
                 }
-              },
-              {
-                "result": {
-                  "ok": "string",
-                  "err": "string"
-                }
-              }
-            ]
-          },
-          "err": {
-            "variant": {
-              "all-processed": null,
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+              ]
+            },
+            "err": {
+              "variant": {
+                "all-processed": null,
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
-                    }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
                     }
                   }
                 }
@@ -670,56 +684,58 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "tuple": [
-              {
-                "record": {
-                  "id": "string"
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": {
+                      "list": "string"
+                    },
+                    "err": "string"
+                  }
                 }
-              },
-              {
-                "result": {
-                  "ok": {
-                    "list": "string"
-                  },
-                  "err": "string"
-                }
-              }
-            ]
-          },
-          "err": {
-            "variant": {
-              "all-processed": null,
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+              ]
+            },
+            "err": {
+              "variant": {
+                "all-processed": null,
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
-                    }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
                     }
                   }
                 }
@@ -750,51 +766,53 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "result": {
-              "ok": {
-                "list": "string"
-              },
-              "err": "string"
-            }
-          },
-          "err": {
-            "variant": {
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": {
+                  "list": "string"
+                },
+                "err": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
                     }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
-                    }
                   }
-                }
-              },
-              "not-found-in-processed-responses": null
+                },
+                "not-found-in-processed-responses": null
+              }
             }
           }
         },
@@ -845,56 +863,58 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "tuple": [
-              {
-                "record": {
-                  "id": "string"
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": {
+                      "list": "string"
+                    },
+                    "err": "string"
+                  }
                 }
-              },
-              {
-                "result": {
-                  "ok": {
-                    "list": "string"
-                  },
-                  "err": "string"
-                }
-              }
-            ]
-          },
-          "err": {
-            "variant": {
-              "all-processed": null,
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+              ]
+            },
+            "err": {
+              "variant": {
+                "all-processed": null,
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
-                    }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
                     }
                   }
                 }
@@ -925,51 +945,53 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "result": {
-              "ok": {
-                "list": "string"
-              },
-              "err": "string"
-            }
-          },
-          "err": {
-            "variant": {
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": {
+                  "list": "string"
+                },
+                "err": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
                     }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
-                    }
                   }
-                }
-              },
-              "not-found-in-processed-responses": null
+                },
+                "not-found-in-processed-responses": null
+              }
             }
           }
         },
@@ -1094,49 +1116,51 @@ expression: exports
       }
     ],
     "return_type": {
-      "Compatible": {
-        "type_wrapper_tl": {
-          "ok": {
-            "result": {
-              "ok": "string",
-              "err": "string"
-            }
-          },
-          "err": {
-            "variant": {
-              "function-mismatch": {
-                "record": {
-                  "actual-function": {
-                    "option": {
+      "Incompatible": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "string",
+                "err": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
                       "record": {
                         "function-name": "string",
                         "interface-name": "string"
                       }
                     }
-                  },
-                  "actual-id": {
-                    "variant": {
-                      "delay-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      },
-                      "execution-id": {
-                        "record": {
-                          "id": "string"
-                        }
-                      }
-                    }
-                  },
-                  "specified-function": {
-                    "record": {
-                      "function-name": "string",
-                      "interface-name": "string"
-                    }
                   }
-                }
-              },
-              "not-found-in-processed-responses": null
+                },
+                "not-found-in-processed-responses": null
+              }
             }
           }
         },
