@@ -78,4 +78,4 @@ jobs:
 
         env:
           TAG: ${{ github.event.inputs.tag }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN_PR_RW }}
