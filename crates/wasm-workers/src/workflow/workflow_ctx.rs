@@ -602,11 +602,37 @@ pub(crate) struct InvokeFnCall<'a> {
     target_ffqn: FunctionFqn,
     fn_component_id: ComponentId,
     fn_retry_config: ComponentRetryConfig,
+    label: &'a str,
     params: &'a [Val],
     #[debug(skip)]
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl InvokeFnCall<'_> {
+    fn new(
+        called_ffqn: FunctionFqn,
+        target_ffqn: FunctionFqn,
+        fn_component_id: ComponentId,
+        fn_retry_config: ComponentRetryConfig,
+        params: &[Val],
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+    ) -> Result<InvokeFnCall<'_>, WorkflowFunctionError> {
+        let Some((Val::String(label), params)) = params.split_first() else {
+            return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                ffqn: called_ffqn,
+                reason: StrVariant::Static("exepcted first parameter `name` of type `string`"),
+                detail: None,
+            });
+        };
+        Ok(InvokeFnCall {
+            target_ffqn,
+            fn_component_id,
+            fn_retry_config,
+            label,
+            params,
+            wasm_backtrace,
+        })
+    }
+
     async fn call_imported_fn<C: ClockFn>(
         self,
         ctx: &mut WorkflowCtx<C>,
@@ -616,6 +642,7 @@ impl InvokeFnCall<'_> {
             target_ffqn,
             fn_component_id,
             fn_retry_config,
+            label,
             params,
             wasm_backtrace,
         } = self;
@@ -623,6 +650,7 @@ impl InvokeFnCall<'_> {
             target_ffqn,
             fn_component_id,
             fn_retry_config,
+            label,
             Params::from_wasmtime(Arc::from(params)),
             wasm_backtrace,
             &mut ctx.event_history,
@@ -743,13 +771,14 @@ impl<'a> ImportedFnCall<'a> {
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from `fn_registry.all_exports()` must be found");
                 assert_eq!(None, target_fn_metadata.extension);
-                let invoke = InvokeFnCall {
+                let invoke = InvokeFnCall::new(
+                    called_ffqn,
                     target_ffqn,
                     fn_component_id,
                     fn_retry_config,
                     params,
                     wasm_backtrace,
-                };
+                )?;
                 Ok(ImportedFnCall::Invoke(invoke))
             } else {
                 unreachable!(

@@ -108,6 +108,10 @@ package obelisk:types@3.0.0 {
       not-found-in-processed-responses,
     }
 
+    variant invoke-extension-error {
+      invalid-name(string),
+    }
+
     variant stub-error {
       /// Conflict can happen when a second writer attempts to stub a value, while the
       /// value is not equal to the already stubbed value.

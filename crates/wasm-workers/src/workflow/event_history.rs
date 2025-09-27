@@ -16,6 +16,7 @@ use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
 use concepts::ExecutionMetadata;
 use concepts::FunctionRegistry;
+use concepts::InvalidNameError;
 use concepts::JoinSetId;
 use concepts::JoinSetKind;
 use concepts::SupportedFunctionReturnValue;
@@ -57,7 +58,7 @@ use wasmtime::component::Val;
 
 #[derive(Debug)]
 pub(crate) enum ChildReturnValue {
-    WastVal(WastVal), // TODO: SupportedFunctionReturnValue(SupportedFunctionReturnValue)
+    WastVal(WastVal),
     JoinSetCreate(JoinSetId),
     JoinNext(Result<types_execution::ResponseId, workflow_support::JoinNextError>),
     OneOffDelay { scheduled_at: DateTime<Utc> },
@@ -1777,6 +1778,17 @@ impl EventHistory {
         .expect("next_join_set_name_index returns a number")
     }
 
+    fn next_join_set_one_off_named(
+        &self,
+        suffix: &str,
+    ) -> Result<JoinSetId, InvalidNameError<JoinSetId>> {
+        let index = self.next_join_set_name_index(JoinSetKind::OneOff);
+        JoinSetId::new(
+            JoinSetKind::OneOff,
+            StrVariant::from(format!("{index}-{suffix}")),
+        )
+    }
+
     fn count_submissions(&self, join_set_id: &JoinSetId) -> usize {
         // Processing status does matter in order to make replays make the same decisions.
         self.event_history
@@ -2296,6 +2308,7 @@ impl OneOffChildExecutionRequest {
         ffqn: FunctionFqn,
         fn_component_id: ComponentId,
         fn_retry_config: ComponentRetryConfig,
+        label: &str,
         params: Params,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         event_history: &mut EventHistory,
@@ -2303,7 +2316,16 @@ impl OneOffChildExecutionRequest {
         version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<Val, WorkflowFunctionError> {
-        let join_set_id = event_history.next_join_set_one_off();
+        let join_set_id = match event_history.next_join_set_one_off_named(label) {
+            Ok(ok) => ok,
+            Err(err) => {
+                // invoke-extension-error
+                return Ok(Val::Result(Err(Some(Box::new(Val::Variant(
+                    "invalid-name".to_string(),
+                    Some(Box::new(Val::String(err.to_string()))),
+                ))))));
+            }
+        };
         let child_execution_id = event_history.execution_id.next_level(&join_set_id);
         let event = EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
             ffqn,
@@ -2319,7 +2341,10 @@ impl OneOffChildExecutionRequest {
             .apply_inner(event, db_connection, version, called_at)
             .await
         {
-            Ok(ChildReturnValue::WastVal(wast_val)) => Ok(wast_val.as_val()),
+            Ok(ChildReturnValue::WastVal(wast_val)) => {
+                // wrap with an Ok in order to return result<T, invoke-extension-error>
+                Ok(Val::Result(Ok(Some(Box::new(wast_val.as_val())))))
+            }
             Ok(
                 ChildReturnValue::JoinSetCreate(_)
                 | ChildReturnValue::JoinNext(_)

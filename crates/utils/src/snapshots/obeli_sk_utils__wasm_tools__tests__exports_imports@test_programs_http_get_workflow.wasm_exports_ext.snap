@@ -158,17 +158,33 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "string",
+        "name": "label",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
     "return_type": {
-      "Extendable": {
-        "type_wrapper_tl": {
-          "ok": "string",
-          "err": "string"
+      "NonExtendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "string",
+                "err": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "invalid-name": "string"
+              }
+            }
+          }
         },
-        "wit_type": "result<string, string>"
+        "wit_type": "result<result<string, string>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -329,17 +345,33 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "string",
+        "name": "label",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
     "return_type": {
-      "Extendable": {
-        "type_wrapper_tl": {
-          "ok": "string",
-          "err": "string"
+      "NonExtendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "string",
+                "err": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "invalid-name": "string"
+              }
+            }
+          }
         },
-        "wit_type": "result<string, string>"
+        "wit_type": "result<result<string, string>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -527,14 +559,31 @@ expression: exports
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
       "function_name": "get-stargazers-invoke"
     },
-    "parameter_types": [],
+    "parameter_types": [
+      {
+        "type_wrapper": "string",
+        "name": "label",
+        "wit_type": "string"
+      }
+    ],
     "return_type": {
-      "Extendable": {
-        "type_wrapper_tl": {
-          "ok": null,
-          "err": null
+      "NonExtendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": null,
+                "err": null
+              }
+            },
+            "err": {
+              "variant": {
+                "invalid-name": "string"
+              }
+            }
+          }
         },
-        "wit_type": "result"
+        "wit_type": "result<result, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -829,6 +878,11 @@ expression: exports
     },
     "parameter_types": [
       {
+        "type_wrapper": "string",
+        "name": "label",
+        "wit_type": "string"
+      },
+      {
         "type_wrapper": {
           "list": "string"
         },
@@ -837,14 +891,25 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
-        "type_wrapper_tl": {
-          "ok": {
-            "list": "string"
-          },
-          "err": "string"
+      "NonExtendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": {
+                  "list": "string"
+                },
+                "err": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "invalid-name": "string"
+              }
+            }
+          }
         },
-        "wit_type": "result<list<string>, string>"
+        "wit_type": "result<result<list<string>, string>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -1009,6 +1074,11 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "string",
+        "name": "label",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       },
@@ -1019,14 +1089,25 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
-        "type_wrapper_tl": {
-          "ok": {
-            "list": "string"
-          },
-          "err": "string"
+      "NonExtendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": {
+                  "list": "string"
+                },
+                "err": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "invalid-name": "string"
+              }
+            }
+          }
         },
-        "wit_type": "result<list<string>, string>"
+        "wit_type": "result<result<list<string>, string>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -1178,17 +1259,33 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "string",
+        "name": "label",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
     "return_type": {
-      "Extendable": {
-        "type_wrapper_tl": {
-          "ok": "string",
-          "err": "string"
+      "NonExtendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "string",
+                "err": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "invalid-name": "string"
+              }
+            }
+          }
         },
-        "wit_type": "result<string, string>"
+        "wit_type": "result<result<string, string>, invoke-extension-error>"
       }
     },
     "extension": "invoke",

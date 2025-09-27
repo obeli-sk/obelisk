@@ -2,7 +2,7 @@
 package testing:fibo-obelisk-ext;
 
 interface fibo {
-  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
+  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, invoke-extension-error};
 
   fibo-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
 
@@ -10,6 +10,6 @@ interface fibo {
 
   fibo-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-  fibo-invoke: func(n: u8) -> result<u64>;
+  fibo-invoke: func(label: string, n: u8) -> result<result<u64>, invoke-extension-error>;
 }
 

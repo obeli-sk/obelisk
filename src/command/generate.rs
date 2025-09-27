@@ -93,7 +93,10 @@ pub(crate) async fn generate_support_wits(
             wit::WIT_OBELISK_LOG_PACKAGE,
         ],
         ComponentType::WebhookEndpoint => {
-            vec![wit::WIT_OBELISK_TYPES_PACKAGE, wit::WIT_OBELISK_LOG_PACKAGE]
+            vec![
+                wit::WIT_OBELISK_TYPES_PACKAGE, // Needed for -schedule ext functions.
+                wit::WIT_OBELISK_LOG_PACKAGE,
+            ]
         }
     };
     let output_directory = output_directory.unwrap_or_default();

@@ -157,18 +157,34 @@ expression: exports
     },
     "parameter_types": [
       {
+        "type_wrapper": "string",
+        "name": "label",
+        "wit_type": "string"
+      },
+      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       }
     ],
     "return_type": {
-      "Extendable": {
-        "type_wrapper_tl": {
-          "ok": "u64",
-          "err": null
+      "NonExtendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "u64",
+                "err": null
+              }
+            },
+            "err": {
+              "variant": {
+                "invalid-name": "string"
+              }
+            }
+          }
         },
-        "wit_type": "result<u64>"
+        "wit_type": "result<result<u64>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -358,6 +374,11 @@ expression: exports
     },
     "parameter_types": [
       {
+        "type_wrapper": "string",
+        "name": "label",
+        "wit_type": "string"
+      },
+      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
@@ -374,12 +395,23 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
-        "type_wrapper_tl": {
-          "ok": "u64",
-          "err": null
+      "NonExtendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "u64",
+                "err": null
+              }
+            },
+            "err": {
+              "variant": {
+                "invalid-name": "string"
+              }
+            }
+          }
         },
-        "wit_type": "result<u64>"
+        "wit_type": "result<result<u64>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -655,6 +687,11 @@ expression: exports
     },
     "parameter_types": [
       {
+        "type_wrapper": "string",
+        "name": "label",
+        "wit_type": "string"
+      },
+      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
@@ -666,12 +703,23 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
-        "type_wrapper_tl": {
-          "ok": "u64",
-          "err": null
+      "NonExtendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "u64",
+                "err": null
+              }
+            },
+            "err": {
+              "variant": {
+                "invalid-name": "string"
+              }
+            }
+          }
         },
-        "wit_type": "result<u64>"
+        "wit_type": "result<result<u64>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -790,6 +838,11 @@ expression: exports
     },
     "parameter_types": [
       {
+        "type_wrapper": "string",
+        "name": "label",
+        "wit_type": "string"
+      },
+      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
@@ -801,12 +854,23 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
-        "type_wrapper_tl": {
-          "ok": "u64",
-          "err": null
+      "NonExtendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "u64",
+                "err": null
+              }
+            },
+            "err": {
+              "variant": {
+                "invalid-name": "string"
+              }
+            }
+          }
         },
-        "wit_type": "result<u64>"
+        "wit_type": "result<result<u64>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -1001,6 +1065,11 @@ expression: exports
     },
     "parameter_types": [
       {
+        "type_wrapper": "string",
+        "name": "label",
+        "wit_type": "string"
+      },
+      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
@@ -1012,12 +1081,23 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
-        "type_wrapper_tl": {
-          "ok": "u64",
-          "err": null
+      "NonExtendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "u64",
+                "err": null
+              }
+            },
+            "err": {
+              "variant": {
+                "invalid-name": "string"
+              }
+            }
+          }
         },
-        "wit_type": "result<u64>"
+        "wit_type": "result<result<u64>, invoke-extension-error>"
       }
     },
     "extension": "invoke",

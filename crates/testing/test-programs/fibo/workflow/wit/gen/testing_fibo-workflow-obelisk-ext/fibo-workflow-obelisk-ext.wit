@@ -2,7 +2,7 @@
 package testing:fibo-workflow-obelisk-ext;
 
 interface workflow {
-  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
+  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, invoke-extension-error};
 
   fibow-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
 
@@ -10,7 +10,7 @@ interface workflow {
 
   fibow-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-  fibow-invoke: func(n: u8, iterations: u32) -> result<u64>;
+  fibow-invoke: func(label: string, n: u8, iterations: u32) -> result<result<u64>, invoke-extension-error>;
 
   fiboa-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
 
@@ -18,7 +18,7 @@ interface workflow {
 
   fiboa-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-  fiboa-invoke: func(n: u8, iterations: u32) -> result<u64>;
+  fiboa-invoke: func(label: string, n: u8, iterations: u32) -> result<result<u64>, invoke-extension-error>;
 
   fiboa-concurrent-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
 
@@ -26,11 +26,11 @@ interface workflow {
 
   fiboa-concurrent-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-  fiboa-concurrent-invoke: func(n: u8, iterations: u32) -> result<u64>;
+  fiboa-concurrent-invoke: func(label: string, n: u8, iterations: u32) -> result<result<u64>, invoke-extension-error>;
 }
 
 interface workflow-nesting {
-  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
+  use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, invoke-extension-error};
 
   fibo-nested-workflow-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
 
@@ -38,7 +38,7 @@ interface workflow-nesting {
 
   fibo-nested-workflow-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-  fibo-nested-workflow-invoke: func(n: u8) -> result<u64>;
+  fibo-nested-workflow-invoke: func(label: string, n: u8) -> result<result<u64>, invoke-extension-error>;
 
   fibo-start-fiboas-submit: func(join-set-id: borrow<join-set-id>, n: u8, fiboas: u32, iterations-per-fiboa: u32) -> execution-id;
 
@@ -46,6 +46,6 @@ interface workflow-nesting {
 
   fibo-start-fiboas-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-  fibo-start-fiboas-invoke: func(n: u8, fiboas: u32, iterations-per-fiboa: u32) -> result<u64>;
+  fibo-start-fiboas-invoke: func(label: string, n: u8, fiboas: u32, iterations-per-fiboa: u32) -> result<result<u64>, invoke-extension-error>;
 }
 

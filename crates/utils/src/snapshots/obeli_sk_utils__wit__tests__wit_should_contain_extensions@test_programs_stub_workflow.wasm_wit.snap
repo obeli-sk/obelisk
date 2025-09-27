@@ -99,6 +99,10 @@ package obelisk:types@3.0.0 {
       not-found-in-processed-responses,
     }
 
+    variant invoke-extension-error {
+      invalid-name(string),
+    }
+
     variant stub-error {
       /// Conflict can happen when a second writer attempts to stub a value, while the
       /// value is not equal to the already stubbed value.
@@ -140,7 +144,7 @@ package obelisk:workflow@3.0.0 {
 
 package testing:stub-activity-obelisk-ext {
   interface activity {
-    use obelisk:types/execution@3.0.0.{join-set-id, execution-id, get-extension-error, await-next-extension-error};
+    use obelisk:types/execution@3.0.0.{join-set-id, execution-id, get-extension-error, invoke-extension-error, await-next-extension-error};
 
     foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
 
@@ -148,7 +152,7 @@ package testing:stub-activity-obelisk-ext {
 
     foo-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
-    noret-invoke: func() -> result;
+    noret-invoke: func(label: string) -> result<result, invoke-extension-error>;
   }
 }
 
@@ -200,7 +204,7 @@ package testing:stub-workflow {
 
 package testing:stub-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, invoke-extension-error};
 
     submit-stub-await-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
 
@@ -208,7 +212,7 @@ package testing:stub-workflow-obelisk-ext {
 
     submit-stub-await-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
-    submit-stub-await-invoke: func(arg: string) -> result<string>;
+    submit-stub-await-invoke: func(label: string, arg: string) -> result<result<string>, invoke-extension-error>;
 
     submit-await-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
 
@@ -216,7 +220,7 @@ package testing:stub-workflow-obelisk-ext {
 
     submit-await-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
-    submit-await-invoke: func(arg: string) -> result<string>;
+    submit-await-invoke: func(label: string, arg: string) -> result<result<string>, invoke-extension-error>;
 
     noret-submit-await-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
@@ -224,7 +228,7 @@ package testing:stub-workflow-obelisk-ext {
 
     noret-submit-await-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    noret-submit-await-invoke: func() -> result;
+    noret-submit-await-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
     submit-race-join-next-stub-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
@@ -232,7 +236,7 @@ package testing:stub-workflow-obelisk-ext {
 
     submit-race-join-next-stub-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    submit-race-join-next-stub-invoke: func() -> result;
+    submit-race-join-next-stub-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
     submit-race-join-next-stub-error-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
@@ -240,7 +244,7 @@ package testing:stub-workflow-obelisk-ext {
 
     submit-race-join-next-stub-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    submit-race-join-next-stub-error-invoke: func() -> result;
+    submit-race-join-next-stub-error-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
     submit-race-join-next-delay-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
@@ -248,7 +252,7 @@ package testing:stub-workflow-obelisk-ext {
 
     submit-race-join-next-delay-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    submit-race-join-next-delay-invoke: func() -> result;
+    submit-race-join-next-delay-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
     stub-subworkflow-submit: func(join-set-id: borrow<join-set-id>, execution-id: execution-id, retval: string) -> execution-id;
 
@@ -256,7 +260,7 @@ package testing:stub-workflow-obelisk-ext {
 
     stub-subworkflow-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    stub-subworkflow-invoke: func(execution-id: execution-id, retval: string) -> result;
+    stub-subworkflow-invoke: func(label: string, execution-id: execution-id, retval: string) -> result<result, invoke-extension-error>;
 
     await-next-produces-all-processed-error-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
@@ -264,7 +268,7 @@ package testing:stub-workflow-obelisk-ext {
 
     await-next-produces-all-processed-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    await-next-produces-all-processed-error-invoke: func() -> result;
+    await-next-produces-all-processed-error-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
     join-next-in-scope-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
@@ -272,7 +276,7 @@ package testing:stub-workflow-obelisk-ext {
 
     join-next-in-scope-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    join-next-in-scope-invoke: func() -> result;
+    join-next-in-scope-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
     invoke-expect-execution-error-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
 
@@ -280,7 +284,7 @@ package testing:stub-workflow-obelisk-ext {
 
     invoke-expect-execution-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    invoke-expect-execution-error-invoke: func() -> result;
+    invoke-expect-execution-error-invoke: func(label: string) -> result<result, invoke-extension-error>;
   }
 }
 

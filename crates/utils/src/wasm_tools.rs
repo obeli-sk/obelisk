@@ -415,6 +415,11 @@ impl ExIm {
             Box::from("hours") => Some(TypeWrapper::U32),
             Box::from("days") => Some(TypeWrapper::U32),
         });
+        let param_type_invoke_label = ParameterType {
+            type_wrapper: TypeWrapper::String,
+            name: "label".into(),
+            wit_type: "string".into(),
+        };
         let param_type_scheduled_at = ParameterType {
             type_wrapper: TypeWrapper::Variant(indexmap! {
                 Box::from("now") => None,
@@ -455,6 +460,11 @@ impl ExIm {
         let get_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
             Box::from("not-found-in-processed-responses") => None,
+        });
+
+        // invoke-extension-error
+        let invoke_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
+            Box::from("invalid-name") => Some(TypeWrapper::String),
         });
 
         // stub-error
@@ -602,7 +612,6 @@ impl ExIm {
                     },
                     parameter_types: ParameterTypes(vec![param_type_execution_id.clone()]),
                     return_type: {
-                        let ok_wit = &return_type.wit_type;
                         ReturnType::detect(
                             TypeWrapper::Result {
                                 ok: Some(Box::new(TypeWrapper::from(
@@ -610,7 +619,10 @@ impl ExIm {
                                 ))),
                                 err: Some(Box::new(get_extension_error_type_wrapper.clone())),
                             },
-                            StrVariant::from(format!("result<{ok_wit}, get-extension-error>")),
+                            StrVariant::from(format!(
+                                "result<{}, get-extension-error>",
+                                return_type.wit_type
+                            )),
                         )
                     },
                     extension: Some(FunctionExtension::Get),
@@ -618,7 +630,7 @@ impl ExIm {
                 };
                 insert_ext(fn_get);
 
-                // -invoke(original params) -> original reslut
+                // -invoke(label: string, original params) -> result<original reslut, invoke-extension-error>
                 let fn_invoke = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),
@@ -628,10 +640,24 @@ impl ExIm {
                         )),
                     },
                     parameter_types: {
-                        let params = exported_fn_metadata.parameter_types.0.clone();
+                        let mut params =
+                            Vec::with_capacity(exported_fn_metadata.parameter_types.len() + 1);
+                        params.push(param_type_invoke_label.clone());
+                        params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
                         ParameterTypes(params)
                     },
-                    return_type: ReturnType::Extendable(return_type.clone()),
+                    return_type: ReturnType::detect(
+                        TypeWrapper::Result {
+                            ok: Some(Box::new(TypeWrapper::from(
+                                return_type.type_wrapper_tl.clone(),
+                            ))),
+                            err: Some(Box::new(invoke_extension_error_type_wrapper.clone())),
+                        },
+                        StrVariant::from(format!(
+                            "result<{}, invoke-extension-error>",
+                            return_type.wit_type
+                        )),
+                    ),
                     extension: Some(FunctionExtension::Invoke),
                     submittable: false,
                 };

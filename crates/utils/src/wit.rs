@@ -221,6 +221,21 @@ fn add_extended_interfaces(
             stability: wit_parser::Stability::default(),
         })
     };
+    // obelisk:types/execution.{invoke-extension-error}
+    let type_id_invoke_extension_error = {
+        let actual_type_id = *execution_ifc
+            .types
+            .get("invoke-extension-error")
+            .expect("`invoke-extension-error` must exist");
+        // Create a reference to the type.
+        resolve.types.alloc(TypeDef {
+            name: None,
+            kind: TypeDefKind::Type(Type::Id(actual_type_id)),
+            owner: TypeOwner::Interface(execution_ifc_id),
+            docs: wit_parser::Docs::default(),
+            stability: wit_parser::Stability::default(),
+        })
+    };
     // obelisk:types/execution.{stub-error}
     let type_id_stub_error = {
         let actual_type_id = *execution_ifc
@@ -294,6 +309,10 @@ fn add_extended_interfaces(
                     types.insert(
                         "get-extension-error".to_string(),
                         type_id_get_extension_error,
+                    );
+                    types.insert(
+                        "invoke-extension-error".to_string(),
+                        type_id_invoke_extension_error,
                     );
                 }
                 PackageExtension::ObeliskSchedule => {
@@ -435,7 +454,7 @@ fn add_extended_interfaces(
                         let result = Some(Type::Id(resolve.types.alloc(TypeDef {
                             name: None,
                             kind: TypeDefKind::Result(wit_parser::Result_ {
-                                ok: original_fn.result, // return type or None
+                                ok: original_fn.result,
                                 err: Some(Type::Id(type_id_get_extension_error)),
                             }),
                             owner: TypeOwner::None,
@@ -444,12 +463,27 @@ fn add_extended_interfaces(
                         })));
                         (params, result)
                     }
-                    // TODO: Add a name as parameter
                     FunctionExtension::Invoke => {
-                        // -invoke(original param) -> original return type
+                        // -invoke(label: string, original param) -> result<original return type, invoke-extension-error>
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
-                        let params = original_fn.params.clone();
-                        let result = original_fn.result;
+                        let params = {
+                            let schedule_at_param_name =
+                                generate_param_name("label", &original_fn.params);
+                            let mut params =
+                                vec![(schedule_at_param_name.to_string(), Type::String)];
+                            params.extend_from_slice(&original_fn.params);
+                            params
+                        };
+                        let result = Some(Type::Id(resolve.types.alloc(TypeDef {
+                            name: None,
+                            kind: TypeDefKind::Result(wit_parser::Result_ {
+                                ok: original_fn.result,
+                                err: Some(Type::Id(type_id_invoke_extension_error)),
+                            }),
+                            owner: TypeOwner::None,
+                            docs: wit_parser::Docs::default(),
+                            stability: wit_parser::Stability::default(),
+                        })));
                         (params, result)
                     }
                 };

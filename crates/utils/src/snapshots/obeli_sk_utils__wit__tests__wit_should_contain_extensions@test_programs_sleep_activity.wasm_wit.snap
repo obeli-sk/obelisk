@@ -98,6 +98,10 @@ package obelisk:types@3.0.0 {
       not-found-in-processed-responses,
     }
 
+    variant invoke-extension-error {
+      invalid-name(string),
+    }
+
     variant stub-error {
       /// Conflict can happen when a second writer attempts to stub a value, while the
       /// value is not equal to the already stubbed value.
@@ -289,7 +293,7 @@ package testing:sleep {
 package testing:sleep-obelisk-ext {
   interface sleep {
     use obelisk:types/time@3.0.0.{duration};
-    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, invoke-extension-error};
 
     sleep-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 
@@ -297,7 +301,7 @@ package testing:sleep-obelisk-ext {
 
     sleep-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-invoke: func(duration: duration) -> result;
+    sleep-invoke: func(label: string, duration: duration) -> result<result, invoke-extension-error>;
 
     sleep-loop-submit: func(join-set-id: borrow<join-set-id>, duration: duration, iterations: u32) -> execution-id;
 
@@ -305,7 +309,7 @@ package testing:sleep-obelisk-ext {
 
     sleep-loop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-loop-invoke: func(duration: duration, iterations: u32) -> result;
+    sleep-loop-invoke: func(label: string, duration: duration, iterations: u32) -> result<result, invoke-extension-error>;
   }
 }
 
