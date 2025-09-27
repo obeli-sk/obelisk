@@ -159,6 +159,10 @@ async fn main() -> Result<(), anyhow::Error> {
             )
             .await
         }
+        Subcommand::Generate(Generate::WitSupport {
+            component_type,
+            output_directory,
+        }) => command::generate::generate_support_wits(component_type, output_directory).await,
     }
 }
 

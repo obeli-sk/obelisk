@@ -1,4 +1,5 @@
 use crate::{args::shadow::PKG_VERSION, config::toml::ConfigToml};
+use anyhow::Context;
 use concepts::ComponentType;
 use schemars::schema_for;
 use std::{
@@ -7,7 +8,7 @@ use std::{
     io::{BufWriter, Write as _, stdout},
     path::PathBuf,
 };
-use utils::wasm_tools::WasmComponent;
+use utils::{wasm_tools::WasmComponent, wit};
 
 pub(crate) fn generate_toml_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     let schema = schema_for!(ConfigToml);
@@ -34,7 +35,6 @@ pub(crate) async fn generate_exported_extension_wits(
     let output_deps_directory = output_deps_directory.unwrap_or(input_wit_directory);
     for (pkg_fqn, wit) in pkgs_to_wits {
         let pkg_folder = output_deps_directory.join(pkg_fqn.to_string().replace(':', "_"));
-        tokio::fs::create_dir_all(&pkg_folder).await?;
         let wit_file = pkg_folder.join(format!("{}.wit", pkg_fqn.package_name));
         let wit = match wit.strip_prefix(HEADER) {
             Some(wit) => {
@@ -63,8 +63,55 @@ pub(crate) async fn generate_exported_extension_wits(
         {
             println!("{wit_file:?} is up to date");
         } else {
+            tokio::fs::create_dir_all(&pkg_folder)
+                .await
+                .with_context(|| format!("cannot write {pkg_folder:?}"))?;
+            tokio::fs::write(&wit_file, wit.as_bytes())
+                .await
+                .with_context(|| format!("cannot write {wit_file:?}"))?;
             println!("{wit_file:?} created or updated");
-            tokio::fs::write(&wit_file, wit.as_bytes()).await?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn generate_support_wits(
+    component_type: ComponentType,
+    output_directory: Option<PathBuf>,
+) -> Result<(), anyhow::Error> {
+    let files = match component_type {
+        ComponentType::ActivityWasm => {
+            vec![
+                wit::WIT_OBELISK_ACTIVITY_PACKAGE_PROCESS,
+                wit::WIT_OBELISK_LOG_PACKAGE,
+            ]
+        }
+        ComponentType::ActivityStub => vec![],
+        ComponentType::Workflow => vec![
+            wit::WIT_OBELISK_TYPES_PACKAGE,
+            wit::WIT_OBELISK_WORKFLOW_PACKAGE,
+            wit::WIT_OBELISK_LOG_PACKAGE,
+        ],
+        ComponentType::WebhookEndpoint => {
+            vec![wit::WIT_OBELISK_TYPES_PACKAGE, wit::WIT_OBELISK_LOG_PACKAGE]
+        }
+    };
+    let output_directory = output_directory.unwrap_or_default();
+    for [folder, filename, content] in files {
+        let output_directory = output_directory.join(folder);
+        let path = output_directory.join(filename);
+        if let Ok(actual) = tokio::fs::read_to_string(&path).await
+            && actual == content
+        {
+            println!("{path:?} is up to date");
+        } else {
+            tokio::fs::create_dir_all(&output_directory)
+                .await
+                .with_context(|| format!("cannot write {output_directory:?}"))?;
+            tokio::fs::write(&path, content)
+                .await
+                .with_context(|| format!("cannot write {path:?}"))?;
+            println!("{path:?} created or updated");
         }
     }
     Ok(())

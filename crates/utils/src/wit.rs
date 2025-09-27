@@ -20,10 +20,39 @@ const OBELISK_TYPES_VERSION: &str = formatcp!(
 );
 const OBELISK_TYPES_PACKAGE_NAME: &str = formatcp!("obelisk:types@{OBELISK_TYPES_VERSION}");
 
-const OBELISK_TYPES_PACKAGE_NO_NESTING: &str = include_str!(concat!(
+pub const WIT_OBELISK_ACTIVITY_PACKAGE_PROCESS: [&str; 3] = [
+    "obelisk_activity@1.0.0",
+    "process.wit",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/wit/obelisk_activity@1.0.0/process.wit"
+    )),
+];
+pub const WIT_OBELISK_LOG_PACKAGE: [&str; 3] = [
+    "obelisk_log@1.0.0",
+    "log.wit",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/wit/obelisk_log@1.0.0/log.wit"
+    )),
+];
+const WIT_OBELISK_TYPES_PACKAGE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@3.0.0/types@3.0.0.wit"
+    "/wit/obelisk_types@3.0.0/types.wit"
 ));
+pub const WIT_OBELISK_TYPES_PACKAGE: [&str; 3] = [
+    "obelisk_types@3.0.0",
+    "types.wit",
+    WIT_OBELISK_TYPES_PACKAGE_CONTENT,
+];
+pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
+    "obelisk_workflow@3.0.0",
+    "workflow-support.wit",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/wit/obelisk_workflow@3.0.0/workflow-support.wit"
+    )),
+];
 
 pub(crate) fn wit(resolve: &Resolve, main_package: PackageId) -> Result<String, anyhow::Error> {
     // print all packages, with the main package as root, others as nested.
@@ -473,7 +502,7 @@ pub(crate) fn packages_except_main(
 fn replace_obelisk_types(wit: &str) -> String {
     // Replace last character of the first line from ; to {
     let types_nesting = {
-        let mut types_nesting = OBELISK_TYPES_PACKAGE_NO_NESTING.replacen(';', "{", 1);
+        let mut types_nesting = WIT_OBELISK_TYPES_PACKAGE_CONTENT.replacen(';', "{", 1);
         types_nesting.push('}');
         types_nesting
     };

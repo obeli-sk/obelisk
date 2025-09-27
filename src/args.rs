@@ -48,6 +48,13 @@ pub(crate) enum Generate {
         /// Optional. If not set, WIT files will be written to the input directory.
         output_deps_directory: Option<PathBuf>,
     },
+    /// Generate Obelisk WIT files for given component type.
+    WitSupport {
+        /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
+        component_type: ComponentType,
+        /// Directory where folders and WIT files will be written to.
+        output_directory: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]
