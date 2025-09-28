@@ -305,6 +305,8 @@ package testing:sleep {
     sleep: func(duration: duration) -> result;
 
     sleep-loop: func(duration: duration, iterations: u32) -> result;
+
+    noop: func() -> result;
   }
 }
 
@@ -329,6 +331,14 @@ package testing:sleep-obelisk-ext {
     sleep-loop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
     sleep-loop-invoke: func(label: string, duration: duration, iterations: u32) -> result<result, invoke-extension-error>;
+
+    noop-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+    noop-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+
+    noop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+
+    noop-invoke: func(label: string) -> result<result, invoke-extension-error>;
   }
 }
 
@@ -342,5 +352,7 @@ package testing:sleep-obelisk-schedule {
     sleep-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 
     sleep-loop-schedule: func(schedule-at: schedule-at, duration: duration, iterations: u32) -> execution-id;
+
+    noop-schedule: func(schedule-at: schedule-at) -> execution-id;
   }
 }

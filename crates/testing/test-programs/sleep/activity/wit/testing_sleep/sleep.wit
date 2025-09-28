@@ -5,4 +5,5 @@ interface sleep {
 
     sleep: func(duration: duration) -> result;
     sleep-loop: func(duration: duration, iterations: u32) -> result;
+    noop: func() -> result;
 }

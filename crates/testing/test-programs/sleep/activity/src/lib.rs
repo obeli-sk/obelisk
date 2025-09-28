@@ -19,6 +19,10 @@ impl Guest for Component {
         }
         Ok(())
     }
+
+    fn noop() -> Result<(), ()> {
+        Ok(())
+    }
 }
 
 impl From<DurationEnum> for Duration {

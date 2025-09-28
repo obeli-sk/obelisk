@@ -1550,7 +1550,7 @@ pub(crate) mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
-    async fn schedule(
+    async fn scheduling_should_work(
         #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_strategy: JoinNextBlockingStrategy,
@@ -1558,9 +1558,11 @@ pub(crate) mod tests {
         use concepts::prefixed_ulid::ExecutorId;
 
         const SLEEP_DURATION: Duration = Duration::from_millis(100);
-        const ITERATIONS: u8 = 1;
-        const FFQN_WORKFLOW_SLEEP_RESCHEDULE_FFQN: FunctionFqn =
-            FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::RESCHEDULE);
+        const FFQN_WORKFLOW_SLEEP_SCHEDULE_NOOP_FFQN: FunctionFqn =
+            FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SCHEDULE_NOOP);
+        const FFQN_ACTIVITY_SLEEP_NOOP_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_sleep_activity_builder::exports::testing::sleep::sleep::NOOP,
+        );
         test_utils::set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = db.set_up().await;
@@ -1578,15 +1580,13 @@ pub(crate) mod tests {
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
 
-        let params = Params::from_json_values(vec![
-            json!({"milliseconds": SLEEP_DURATION.as_millis()}),
-            json!(ITERATIONS),
-        ]);
+        let params =
+            Params::from_json_values(vec![json!({"milliseconds": SLEEP_DURATION.as_millis()})]);
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id: execution_id.clone(),
-                ffqn: FFQN_WORKFLOW_SLEEP_RESCHEDULE_FFQN,
+                ffqn: FFQN_WORKFLOW_SLEEP_SCHEDULE_NOOP_FFQN,
                 params,
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -1610,7 +1610,7 @@ pub(crate) mod tests {
             },
             sim_clock.clone(),
             db_pool.clone(),
-            Arc::new([FFQN_WORKFLOW_SLEEP_RESCHEDULE_FFQN]),
+            Arc::new([FFQN_WORKFLOW_SLEEP_SCHEDULE_NOOP_FFQN]),
         );
         {
             let task_count = exec_task
@@ -1628,13 +1628,13 @@ pub(crate) mod tests {
             SupportedFunctionReturnValue::Ok { ok: None }
         );
         sim_clock.move_time_forward(SLEEP_DURATION);
-        // New execution should be pending.
+        // The scheduled `noop` execution should be pending.
         let mut next_pending = db_pool
             .connection()
             .lock_pending(
                 10,
                 sim_clock.now(),
-                Arc::from([FFQN_WORKFLOW_SLEEP_RESCHEDULE_FFQN]),
+                Arc::from([FFQN_ACTIVITY_SLEEP_NOOP_FFQN]),
                 sim_clock.now(),
                 ComponentId::dummy_workflow(),
                 ExecutorId::generate(),
@@ -1646,11 +1646,7 @@ pub(crate) mod tests {
         assert_eq!(1, next_pending.len());
         let next_pending = next_pending.pop().unwrap();
         assert!(next_pending.parent.is_none());
-        let params = serde_json::to_string(&Params::from_json_values(vec![
-            json!({"milliseconds":SLEEP_DURATION.as_millis()}),
-            json!(ITERATIONS - 1),
-        ]))
-        .unwrap();
+        let params = serde_json::to_string(&Params::empty()).unwrap();
         assert_eq!(params, serde_json::to_string(&next_pending.params).unwrap());
         drop(exec_task);
         db_pool.close().await.unwrap();
