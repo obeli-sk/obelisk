@@ -390,10 +390,17 @@ impl EventHistory {
         db_connection: &dyn DbConnection,
         version: &mut Version,
         called_at: DateTime<Utc>,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), WorkflowFunctionError> {
-        self.join_set_close_inner(join_set_id, db_connection, version, called_at)
-            .await
-            .map_err(WorkflowFunctionError::from)
+        self.join_set_close_inner(
+            join_set_id,
+            db_connection,
+            version,
+            called_at,
+            wasm_backtrace,
+        )
+        .await
+        .map_err(WorkflowFunctionError::from)
     }
 
     /// For each open join set deterministically emit `JoinNext` and wait for the response.
@@ -403,6 +410,7 @@ impl EventHistory {
         db_connection: &dyn DbConnection,
         version: &mut Version,
         called_at: DateTime<Utc>,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), ApplyError> {
         // Keep submitting JoinNext-s until the created child requests == processed(paired) join nexts + closing join nexts.
         // After closing a join set, it must not be possible for code to add more join nexts.
@@ -428,7 +436,7 @@ impl EventHistory {
                 EventCall::JoinNext(JoinNext {
                     join_set_id: join_set_id.clone(),
                     closing: true,
-                    wasm_backtrace: None,
+                    wasm_backtrace: wasm_backtrace.clone(),
                 }),
                 db_connection,
                 version,
@@ -468,7 +476,7 @@ impl EventHistory {
     ) -> Result<(), ApplyError> {
         debug!("close_forgotten_join_sets");
         while let Some(join_set_id) = self.last_join_set() {
-            self.join_set_close_inner(join_set_id, db_connection, version, called_at)
+            self.join_set_close_inner(join_set_id, db_connection, version, called_at, None)
                 .await?;
             // No action was needed, continue with next join set.
         }

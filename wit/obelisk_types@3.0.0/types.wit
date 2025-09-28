@@ -31,6 +31,7 @@ interface time {
 @since(version = 3.0.0)
 interface execution {
 
+    /// Join set resouce.
     @since(version = 3.0.0)
     resource join-set-id {
         @since(version = 3.0.0)

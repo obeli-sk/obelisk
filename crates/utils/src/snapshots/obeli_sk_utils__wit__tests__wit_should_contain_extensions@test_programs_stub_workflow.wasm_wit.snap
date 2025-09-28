@@ -53,6 +53,7 @@ package obelisk:types@3.0.0 {
   }
   @since(version = 3.0.0)
   interface execution {
+    /// Join set resouce.
     @since(version = 3.0.0)
     resource join-set-id {
       @since(version = 3.0.0)
@@ -155,7 +156,7 @@ package obelisk:workflow@3.0.0 {
 
     new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set-id;
 
-    join-next: func(join-set-id: borrow<join-set-id>) -> result<response-id, join-next-error>;
+    join-next: func(join-set: borrow<join-set-id>) -> result<response-id, join-next-error>;
   }
 }
 

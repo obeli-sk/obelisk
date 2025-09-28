@@ -1237,6 +1237,26 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 err: err.into(),
             })?;
 
+        inst_workflow_support
+            .func_wrap_async(
+                "close",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                      (join_set_resource,): (Resource<JoinSetId>,)| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        host.join_set_close(join_set_resource, wasm_backtrace)
+                            .await?;
+
+                        Ok(())
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking function new-join-set-generated"),
+                err: err.into(),
+            })?;
+
         Ok(())
     }
 
@@ -1320,6 +1340,18 @@ mod workflow_support {
         }
 
         async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
+            self.join_set_close(resource, None).await
+        }
+    }
+
+    impl<C: ClockFn> ExecutionIfcHost for WorkflowCtx<C> {}
+
+    impl<C: ClockFn> WorkflowCtx<C> {
+        pub(crate) async fn join_set_close(
+            &mut self,
+            resource: Resource<JoinSetId>,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
+        ) -> wasmtime::Result<()> {
             let join_set_id = self.resource_table.delete(resource)?;
             self.event_history
                 .join_set_close(
@@ -1327,16 +1359,12 @@ mod workflow_support {
                     self.db_pool.connection().as_ref(),
                     &mut self.version,
                     self.clock_fn.now(),
+                    wasm_backtrace,
                 )
                 .await?;
             Ok(())
         }
-    }
 
-    impl<C: ClockFn> ExecutionIfcHost for WorkflowCtx<C> {}
-
-    // Functions dynamically linked for Workflow Support 1.0.0 and 1.1.0
-    impl<C: ClockFn> WorkflowCtx<C> {
         pub(crate) async fn random_u64(
             &mut self,
             min: u64,

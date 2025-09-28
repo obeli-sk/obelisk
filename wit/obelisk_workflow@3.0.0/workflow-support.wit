@@ -57,11 +57,19 @@ interface workflow-support {
         /// All submitted requests and their responses were already processed.
         all-processed,
     }
+
+    /// Explicitly close join set. All executions that were submitted and not awaited,
+    /// in other words executions with unprocessed responses, will be either
+    /// awaited or cancelled based on `closing-strategy`.
+    /// Extension function `-get` can be used to lookup the execution result.
+    @since(version = 3.0.0)
+    close: func(join-set: join-set-id);
+
     /// Block the workflow execution until next response associated with the join set arrives.
     /// The response is marked as processed.
     /// Child execution result can be obtained using `-get` extension function using the
     /// returned execution ID.
     /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
     @since(version = 3.0.0)
-    join-next: func(join-set-id: borrow<join-set-id>) -> result<response-id, join-next-error>;
+    join-next: func(join-set: borrow<join-set-id>) -> result<response-id, join-next-error>;
 }
