@@ -5071,6 +5071,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-programs-fibo-workflow-outer"
+version = "0.24.2"
+dependencies = [
+ "wit-bindgen 0.46.0",
+]
+
+[[package]]
+name = "test-programs-fibo-workflow-outer-builder"
+version = "0.24.2"
+dependencies = [
+ "obelisk-component-builder",
+]
+
+[[package]]
 name = "test-programs-http-get-activity"
 version = "0.24.2"
 dependencies = [

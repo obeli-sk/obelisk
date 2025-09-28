@@ -18,6 +18,12 @@ location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-
 exec.lock_expiry.seconds = 2
 backtrace.sources = { "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
 
+[[workflow]]
+name = "test_programs_fibo_workflow_outer"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release/test_programs_fibo_workflow_outer.wasm"
+exec.lock_expiry.seconds = 2
+backtrace.sources = { "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow-outer/src/lib.rs" }
+
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release/test_programs_fibo_webhook.wasm"

@@ -7,16 +7,11 @@ package root:component;
 world root {
   import obelisk:types/execution@3.0.0;
   import obelisk:workflow/workflow-support@3.0.0;
-  import testing:fibo-obelisk-ext/fibo;
-  import testing:fibo-workflow-obelisk-ext/workflow;
-  import testing:fibo-workflow/workflow-nesting;
   import testing:fibo/fibo;
+  import testing:fibo-obelisk-ext/fibo;
 
-  export testing:fibo-workflow/workflow-nesting;
   export testing:fibo-workflow/workflow;
-  export testing:fibo-workflow-obelisk-ext/workflow-nesting;
   export testing:fibo-workflow-obelisk-ext/workflow;
-  export testing:fibo-workflow-obelisk-schedule/workflow-nesting;
   export testing:fibo-workflow-obelisk-schedule/workflow;
 }
 package obelisk:types@3.0.0 {
@@ -139,6 +134,13 @@ package obelisk:workflow@3.0.0 {
 }
 
 
+package testing:fibo {
+  interface fibo {
+    fibo: func(n: u8) -> result<u64>;
+  }
+}
+
+
 package testing:fibo-obelisk-ext {
   interface fibo {
     use obelisk:types/execution@3.0.0.{join-set, execution-id, await-next-extension-error};
@@ -146,6 +148,17 @@ package testing:fibo-obelisk-ext {
     fibo-submit: func(join-set: borrow<join-set>, n: u8) -> execution-id;
 
     fibo-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+  }
+}
+
+
+package testing:fibo-workflow {
+  interface workflow {
+    fibow: func(n: u8, iterations: u32) -> result<u64>;
+
+    fiboa: func(n: u8, iterations: u32) -> result<u64>;
+
+    fiboa-concurrent: func(n: u8, iterations: u32) -> result<u64>;
   }
 }
 
@@ -178,60 +191,10 @@ package testing:fibo-workflow-obelisk-ext {
 
     fiboa-concurrent-invoke: func(label: string, n: u8, iterations: u32) -> result<result<u64>, invoke-extension-error>;
   }
-  interface workflow-nesting {
-    use obelisk:types/execution@3.0.0.{execution-id, join-set, await-next-extension-error, get-extension-error, invoke-extension-error};
-
-    fibo-nested-workflow-submit: func(join-set: borrow<join-set>, n: u8) -> execution-id;
-
-    fibo-nested-workflow-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
-
-    fibo-nested-workflow-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
-
-    fibo-nested-workflow-invoke: func(label: string, n: u8) -> result<result<u64>, invoke-extension-error>;
-
-    fibo-start-fiboas-submit: func(join-set: borrow<join-set>, n: u8, fiboas: u32, iterations-per-fiboa: u32) -> execution-id;
-
-    fibo-start-fiboas-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
-
-    fibo-start-fiboas-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
-
-    fibo-start-fiboas-invoke: func(label: string, n: u8, fiboas: u32, iterations-per-fiboa: u32) -> result<result<u64>, invoke-extension-error>;
-  }
-}
-
-
-package testing:fibo-workflow {
-  interface workflow-nesting {
-    fibo-nested-workflow: func(n: u8) -> result<u64>;
-
-    fibo-start-fiboas: func(n: u8, fiboas: u32, iterations-per-fiboa: u32) -> result<u64>;
-  }
-  interface workflow {
-    fibow: func(n: u8, iterations: u32) -> result<u64>;
-
-    fiboa: func(n: u8, iterations: u32) -> result<u64>;
-
-    fiboa-concurrent: func(n: u8, iterations: u32) -> result<u64>;
-  }
-}
-
-
-package testing:fibo {
-  interface fibo {
-    fibo: func(n: u8) -> result<u64>;
-  }
 }
 
 
 package testing:fibo-workflow-obelisk-schedule {
-  interface workflow-nesting {
-    use obelisk:types/execution@3.0.0.{execution-id};
-    use obelisk:types/time@3.0.0.{schedule-at};
-
-    fibo-nested-workflow-schedule: func(schedule-at: schedule-at, n: u8) -> execution-id;
-
-    fibo-start-fiboas-schedule: func(schedule-at: schedule-at, n: u8, fiboas: u32, iterations-per-fiboa: u32) -> execution-id;
-  }
   interface workflow {
     use obelisk:types/execution@3.0.0.{execution-id};
     use obelisk:types/time@3.0.0.{schedule-at};

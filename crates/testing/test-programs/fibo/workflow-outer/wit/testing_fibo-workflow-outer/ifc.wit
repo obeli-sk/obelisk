@@ -1,0 +1,6 @@
+package testing:fibo-workflow-outer;
+
+interface workflow {
+    fibo-nested-workflow: func(n: u8) -> result<u64>;
+    fibo-start-fiboas: func(n: u8, fiboas: u32, iterations-per-fiboa: u32) -> result<u64>;
+}

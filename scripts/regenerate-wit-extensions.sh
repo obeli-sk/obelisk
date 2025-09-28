@@ -13,7 +13,7 @@ CARGO_WORKSPACE_DIR=$(pwd)
 )
 (
     cd crates/testing/test-programs/fibo/workflow/wit
-    # cannot run `rm -rf gen` - workflow imports its own extension.
+    rm -rf gen
     $CARGO_WORKSPACE_DIR/target/debug/obelisk generate extensions workflow . gen
 )
 (

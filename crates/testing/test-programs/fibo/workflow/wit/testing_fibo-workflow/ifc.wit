@@ -5,8 +5,3 @@ interface workflow {
     fiboa: func(n: u8, iterations: u32) -> result<u64>;
     fiboa-concurrent: func(n: u8, iterations: u32) -> result<u64>;
 }
-
-interface workflow-nesting {
-    fibo-nested-workflow: func(n: u8) -> result<u64>;
-    fibo-start-fiboas: func(n: u8, fiboas: u32, iterations-per-fiboa: u32) -> result<u64>;
-}

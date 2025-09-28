@@ -1,0 +1,12 @@
+package any:any;
+
+world any {
+    export testing:fibo-workflow-outer/workflow;
+
+    import obelisk:log/log@1.0.0;
+    import obelisk:workflow/workflow-support@3.0.0;
+
+    import testing:fibo-workflow/workflow;
+    import testing:fibo-workflow-obelisk-ext/workflow;
+    import testing:fibo-workflow-outer/workflow;
+}

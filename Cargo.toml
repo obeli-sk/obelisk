@@ -113,6 +113,8 @@ members = [
     "crates/testing/test-programs/fibo/webhook/builder",
     "crates/testing/test-programs/fibo/workflow",
     "crates/testing/test-programs/fibo/workflow/builder",
+    "crates/testing/test-programs/fibo/workflow-outer",
+    "crates/testing/test-programs/fibo/workflow-outer/builder",
     "crates/testing/test-programs/http/activity",
     "crates/testing/test-programs/http/activity/builder",
     "crates/testing/test-programs/http/workflow",
