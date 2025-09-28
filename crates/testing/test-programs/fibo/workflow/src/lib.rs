@@ -36,13 +36,13 @@ impl Guest for Component {
     }
 
     fn fiboa_concurrent(n: u8, iterations: u32) -> Result<u64, ()> {
-        let join_set_id = new_join_set_generated(ClosingStrategy::Complete);
+        let join_set = new_join_set_generated(ClosingStrategy::Complete);
         for _ in 0..iterations {
-            fibo_submit(&join_set_id, n);
+            fibo_submit(&join_set, n);
         }
         let mut last = 0;
         for _ in 0..iterations {
-            last = fibo_await_next(&join_set_id).unwrap().1.unwrap();
+            last = fibo_await_next(&join_set).unwrap().1.unwrap();
         }
         Ok(last)
     }

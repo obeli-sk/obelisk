@@ -25,16 +25,16 @@ impl Guest for Component {
     }
 
     fn get_successful_concurrently(urls: Vec<String>) -> Result<Vec<String>, String> {
-        let join_set_id = new_join_set_generated(ClosingStrategy::Complete);
-        println!("Created join set {}", join_set_id.id());
+        let join_set = new_join_set_generated(ClosingStrategy::Complete);
+        println!("Created join set {}", join_set.id());
         let length = urls.len();
         for url in urls {
-            let _execution_id = get_successful_submit(&join_set_id, &url);
+            let _execution_id = get_successful_submit(&join_set, &url);
         }
         let mut list = Vec::with_capacity(length);
         for _ in 0..length {
             // Mark the whole result as failed if any child execution fails.
-            let contents = get_successful_await_next(&join_set_id).unwrap().1?;
+            let contents = get_successful_await_next(&join_set).unwrap().1?;
             list.push(contents);
         }
         Ok(list)
@@ -44,14 +44,14 @@ impl Guest for Component {
         url: String,
         concurrency: u32,
     ) -> Result<Vec<String>, String> {
-        let join_set_id = new_join_set_generated(ClosingStrategy::Complete);
+        let join_set = new_join_set_generated(ClosingStrategy::Complete);
         for _ in 0..concurrency {
-            let _execution_id = get_successful_submit(&join_set_id, &url);
+            let _execution_id = get_successful_submit(&join_set, &url);
         }
         let mut list = Vec::with_capacity(concurrency as usize);
         for _ in 0..concurrency {
             // Mark the whole result as failed if any child execution fails.
-            let contents = get_successful_await_next(&join_set_id).unwrap().1?;
+            let contents = get_successful_await_next(&join_set).unwrap().1?;
             list.push(contents);
         }
         Ok(list)

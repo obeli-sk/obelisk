@@ -5,7 +5,6 @@ use obelisk::types::time::ScheduleAt;
 use obelisk::workflow::workflow_support;
 use obelisk::workflow::workflow_support::ClosingStrategy;
 use obelisk::workflow::workflow_support::JoinNextError;
-use obelisk::workflow::workflow_support::new_join_set_generated as new_join_set_generated1;
 use testing::sleep::sleep as sleep_activity;
 use testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
 use testing::sleep_obelisk_schedule::sleep as sleep_activity_schedule;
@@ -32,8 +31,8 @@ impl Guest for Component {
     }
 
     fn sleep_activity_submit(duration: DurationEnum) -> Result<ExecutionId, ()> {
-        let join_set_id = new_join_set_generated1(ClosingStrategy::Complete);
-        Ok(sleep_activity_ext::sleep_submit(&join_set_id, duration))
+        let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+        Ok(sleep_activity_ext::sleep_submit(&join_set, duration))
     }
 
     fn sleep_random(min_millis: u64, max_millis_inclusive: u64) -> Result<(), ()> {
@@ -50,15 +49,15 @@ impl Guest for Component {
     }
 
     fn two_delays_in_same_join_set() -> Result<(), ()> {
-        let join_set_id = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+        let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
         let _long =
-            workflow_support::submit_delay(&join_set_id, ScheduleAt::In(DurationEnum::Seconds(10)));
+            workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Seconds(10)));
         let short = workflow_support::submit_delay(
-            &join_set_id,
+            &join_set,
             ScheduleAt::In(DurationEnum::Milliseconds(10)),
         );
         let obelisk::types::execution::ResponseId::DelayId(first) =
-            workflow_support::join_next(&join_set_id).unwrap()
+            workflow_support::join_next(&join_set).unwrap()
         else {
             unreachable!("only delays have been submitted");
         };
@@ -67,13 +66,10 @@ impl Guest for Component {
     }
 
     fn join_next_produces_all_processed_error() -> Result<(), ()> {
-        let join_set_id = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
-        workflow_support::submit_delay(
-            &join_set_id,
-            ScheduleAt::In(DurationEnum::Milliseconds(10)),
-        );
-        workflow_support::join_next(&join_set_id).unwrap();
-        let JoinNextError::AllProcessed = workflow_support::join_next(&join_set_id).unwrap_err();
+        let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+        workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Milliseconds(10)));
+        workflow_support::join_next(&join_set).unwrap();
+        let JoinNextError::AllProcessed = workflow_support::join_next(&join_set).unwrap_err();
         Ok(())
     }
 }
