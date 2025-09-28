@@ -17,7 +17,9 @@ world root {
   export testing:sleep-workflow-obelisk-schedule/workflow;
 }
 package obelisk:types@3.0.0 {
+  @since(version = 3.0.0)
   interface time {
+    @since(version = 3.0.0)
     variant duration {
       milliseconds(u64),
       seconds(u64),
@@ -28,41 +30,51 @@ package obelisk:types@3.0.0 {
 
     /// A time and date in seconds plus nanoseconds.
     /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
+    @since(version = 3.0.0)
     record datetime {
       seconds: u64,
       nanoseconds: u32,
     }
 
+    @since(version = 3.0.0)
     variant schedule-at {
       now,
       at(datetime),
       in(duration),
     }
   }
+  @since(version = 3.0.0)
   interface execution {
+    @since(version = 3.0.0)
     resource join-set-id {
+      @since(version = 3.0.0)
       id: func() -> string;
     }
 
+    @since(version = 3.0.0)
     record execution-id {
       id: string,
     }
 
+    @since(version = 3.0.0)
     record delay-id {
       id: string,
     }
 
+    @since(version = 3.0.0)
     record function {
       /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
       interface-name: string,
       function-name: string,
     }
 
+    @since(version = 3.0.0)
     variant response-id {
       execution-id(execution-id),
       delay-id(delay-id),
     }
 
+    @since(version = 3.0.0)
     record function-mismatch {
       /// Workflow requested function
       specified-function: function,
@@ -72,6 +84,7 @@ package obelisk:types@3.0.0 {
     }
 
     /// Error that is thrown by `-await-next` extension functions.
+    @since(version = 3.0.0)
     variant await-next-extension-error {
       /// All submitted requests and their responses of specified function and join set were already processed.
       all-processed,
@@ -80,7 +93,8 @@ package obelisk:types@3.0.0 {
       function-mismatch(function-mismatch),
     }
 
-    /// Error that is thrown by `-get` extension functions.
+    /// Error variants that may occur when calling `-get` extension functions.
+    @since(version = 3.0.0)
     variant get-extension-error {
       /// Execution is found in processed responses, but it belongs to a different function.
       /// This can happen when join set contains responses of multiple functions.
@@ -91,10 +105,14 @@ package obelisk:types@3.0.0 {
       not-found-in-processed-responses,
     }
 
+    /// Error variants that may occur when calling `-invoke` extension functions.
+    @since(version = 3.0.0)
     variant invoke-extension-error {
       invalid-name(string),
     }
 
+    /// Error variants that may occur when calling `-stub` extension functions.
+    @since(version = 3.0.0)
     variant stub-error {
       /// Conflict can happen when a second writer attempts to stub a value, while the
       /// value is not equal to the already stubbed value.

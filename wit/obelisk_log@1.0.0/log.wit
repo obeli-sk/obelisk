@@ -1,9 +1,15 @@
 package obelisk:log@1.0.0;
 
+@since(version = 1.0.0)
 interface log {
+    @since(version = 1.0.0)
     trace: func(message: string);
+    @since(version = 1.0.0)
     debug: func(message: string);
+    @since(version = 1.0.0)
     info: func(message: string);
+    @since(version = 1.0.0)
     warn: func(message: string);
+    @since(version = 1.0.0)
     error: func(message: string);
 }

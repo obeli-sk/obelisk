@@ -1,112 +1,128 @@
 package obelisk:activity@1.0.0;
 
+@since(version = 1.0.0)
 interface process {
     use wasi:io/streams@0.2.3.{input-stream, output-stream};
     use wasi:io/poll@0.2.3.{pollable};
 
-    // How to handle standard I/O for the spawned process
+    /// Configure handling of standard I/O for the spawned process
+    @since(version = 1.0.0)
     enum stdio {
-        pipe,    // Create a new pipe for communication
-        discard, // Send to /dev/null or equivalent
+        /// Create a new pipe for communication
+        pipe,
+        /// Send to /dev/null or equivalent
+        discard,
     }
 
-    // Configuration for spawning a process
+    /// Configuration for spawning a process
+    @since(version = 1.0.0)
     record spawn-options {
-        // Arguments to pass to the command
+        /// Arguments to pass to the command
         args: list<string>,
 
-        // Environment variables to set for the spawned process.
-        environment: list<tuple<string, string>>, // list of (key, value)
+        /// Environment variables to set for the spawned process.
+        environment: list<tuple<string, string>>, /// list of (key, value)
 
-        // Current working directory for the spawned process.
-        // If `none`, defaults to the guest's preopened working directory as configured by `activities.directories.parent_directory`.
+        /// Current working directory for the spawned process.
+        /// If `none`, defaults to the guest's preopened working directory as configured by `activities.directories.parent_directory`.
         current-working-directory: option<string>,
 
-        // How to handle the standard input of the spawned process.
+        /// Configure the standard input handling of the spawned process.
         stdin: stdio,
 
-        // How to handle the standard output of the spawned process.
+        /// Configure the standard output handling of the spawned process.
         stdout: stdio,
 
-        // How to handle the standard error of the spawned process.
+        /// Configure the standard error handling of the spawned process.
         stderr: stdio,
     }
 
-    // Potential errors during spawning or process management
+    /// Potential errors during spawning or process management
+    @since(version = 1.0.0)
     enum spawn-error {
-        // The specified command was not found.
+        /// The specified command was not found.
         command-not-found,
-        // The host denied permission to spawn the process or access resources.
+        /// The host denied permission to spawn the process or access resources.
         permission-denied,
-        // The current working directory specified does not exist or is not accessible.
+        /// The current working directory specified does not exist or is not accessible.
         cwd-not-found,
-        // A generic error occurred during spawning.
+        /// A generic error occurred during spawning.
         generic-error,
     }
 
+    @since(version = 1.0.0)
     enum wait-error {
-        // When `wait` returns `error(would-block)`, this pollable can be used to wait for
-        // the process termination, after which the method can be retried.
+        /// When `wait` returns `error(would-block)`, this pollable can be used to wait for
+        /// the process termination, after which the method can be retried.
         would-block,
-        // An OS-level error occurred while interacting with the process.
+        /// An OS-level error occurred while interacting with the process.
         os-error,
     }
 
+    @since(version = 1.0.0)
     enum kill-error {
-        // An OS-level error occurred while interacting with the process.
+        /// An OS-level error occurred while interacting with the process.
         os-error,
     }
 
-    // Represents a handle to a spawned child process
+    /// Represents a handle to a spawned child process
+    @since(version = 1.0.0)
     resource child-process {
-        // Returns a unique identifier for the process (e.g., PID).
-        // This is host-defined but should be unique for concurrently running processes
-        // spawned by this interface.
+        /// Returns a unique identifier for the process (e.g., PID).
+        /// This is host-defined but should be unique for concurrently running processes
+        /// spawned by this interface.
+        @since(version = 1.0.0)
         id: func() -> u32;
 
-        // If stdin was set to `pipe`, this returns the stream to write to it.
-        // Returns `none` if stdin is not piped or if called multiple times (stream moved).
+        /// If stdin was set to `pipe`, this returns the stream to write to it.
+        /// Returns `none` if stdin is not piped or if called multiple times (stream moved).
+        @since(version = 1.0.0)
         take-stdin: func() -> option<output-stream>;
 
-        // If stdout was set to `pipe`, this returns the stream to read from it.
-        // Returns `none` if stdout is not piped or if called multiple times.
+        /// If stdout was set to `pipe`, this returns the stream to read from it.
+        /// Returns `none` if stdout is not piped or if called multiple times.
+        @since(version = 1.0.0)
         take-stdout: func() -> option<input-stream>;
 
-        // If stderr was set to `pipe`, this returns the stream to read from it.
-        // Returns `none` if stderr is not piped or if called multiple times.
+        /// If stderr was set to `pipe`, this returns the stream to read from it.
+        /// Returns `none` if stderr is not piped or if called multiple times.
+        @since(version = 1.0.0)
         take-stderr: func() -> option<input-stream>;
 
-        // Returns a pollable that becomes ready when the process terminates.
-        // This function can be called multiple times; it will return a pollable
-        // that resolves when the same process-exit event occurs.
+        /// Returns a pollable that becomes ready when the process terminates.
+        /// This function can be called multiple times; it will return a pollable
+        /// that resolves when the same process-exit event occurs.
+        @since(version = 1.0.0)
         subscribe-wait: func() -> pollable;
 
-        // Waits for the process to exit and returns its exit code.
-        // This is a blocking call.
-        // Returns:
-        //  - ok(some(s32)): The exit code of the process.
-        //  - ok(none): E.g. if the process was terminated by a signal.
-        //  - error(would-block): Returned if process is still running, `subscribe-wait` can be used to wait for
-        //   process termination, after which this method can be retried.
-        //  - error(os-error): If waiting failed or process terminated abnormally (e.g. by signal).
+        /// Waits for the process to exit and returns its exit code.
+        /// This is a blocking call.
+        /// Returns:
+        ///  - ok(some(s32)): The exit code of the process.
+        ///  - ok(none): E.g. if the process was terminated by a signal.
+        ///  - error(would-block): Returned if process is still running, `subscribe-wait` can be used to wait for
+        ///   process termination, after which this method can be retried.
+        ///  - error(os-error): If waiting failed or process terminated abnormally (e.g. by signal).
+        @since(version = 1.0.0)
         wait: func() -> result<option<s32>, wait-error>;
 
-        // Attempts to terminate the process.
-        // The exact behavior (e.g., signal used) is host-dependent.
-        // Returns `ok` if the request to terminate was successfully sent,
-        // `error` otherwise. Does not guarantee the process has exited.
+        /// Attempts to terminate the process.
+        /// The exact behavior (e.g., signal used) is host-dependent.
+        /// Returns `ok` if the request to terminate was successfully sent,
+        /// `error` otherwise. Does not guarantee the process has exited.
+        @since(version = 1.0.0)
         kill: func() -> result<_, kill-error>;
     }
 
-    // Spawns a new process.
+    /// Spawns a new process.
     //
-    // - `command`: The executable to run (e.g., "/usr/bin/ls", "my_script.sh").
-    // - `options`: Configuration for the spawned process.
+    /// - `command`: The executable to run (e.g., "/usr/bin/ls", "my_script.sh").
+    /// - `options`: Configuration for the spawned process.
     //
-    // Returns a handle to the `child-process` on success, or a `spawn-error`.
+    /// Returns a handle to the `child-process` on success, or a `spawn-error`.
+    @since(version = 1.0.0)
     spawn: func(
         command: string,
         options: spawn-options
     ) -> result<child-process, spawn-error>;
-
 }
