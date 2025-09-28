@@ -3,6 +3,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.0](https://github.com/obeli-sk/obelisk/compare/v0.24.2...v0.25.0)
+
+### ⛰️ Features
+
+- *(wit)* Add explicit `close(join-set)` - ([eecc907](https://github.com/obeli-sk/obelisk/commit/eecc9075d9d450f0d377e61559ee36b23e65b03f))
+- *(wit)* [**breaking**] Make `-invoke` accept a label of join set name - ([fdc9ce0](https://github.com/obeli-sk/obelisk/commit/fdc9ce0009298a836d807180fc357f4c78ca1cd8))
+- *(wit)* [**breaking**] Translate execution errors to `err` variants in `-await-next` - ([0f27f6a](https://github.com/obeli-sk/obelisk/commit/0f27f6aac30bd3f9989c1878dec787a5f380b101))
+- Add `obelisk generate wit-support` - ([a4dd8a3](https://github.com/obeli-sk/obelisk/commit/a4dd8a34906067c3afd7695cff406a249c3da81d))
+- [**breaking**] Disallow infallible exports - ([db1dd5e](https://github.com/obeli-sk/obelisk/commit/db1dd5e42f2d9a1d35b92ae2d1ca61af459ad35c))
+
+### 🐛 Bug Fixes
+
+- *(wit)* Properly duplicate types into extension interfaces - ([f5cfe59](https://github.com/obeli-sk/obelisk/commit/f5cfe59b1456da3c98d0312a8580e41ee4933ca5))
+- Unblock execution during join set close on full replay - ([3de827a](https://github.com/obeli-sk/obelisk/commit/3de827a95bd00e8a8ef04ca743c84bf6ac7e6f9a))
+
+### 📚 Documentation
+
+- *(wit)* Add `@since` annotation to WIT definitions - ([095485f](https://github.com/obeli-sk/obelisk/commit/095485f8c986a17254b979aebb0fb1bc6c238e17))
+- Remove stray `forward_unhandled_child_errors_in_completing_join_set_close` - ([795bc11](https://github.com/obeli-sk/obelisk/commit/795bc11ebf6c14aa8f8aa4cde85090d3c44198fb))
+
+### 🚜 Refactor
+
+- *(cli)* [**breaking**] Make output dir of `generate extensions` mandatory - ([5183929](https://github.com/obeli-sk/obelisk/commit/5183929447cd98cf9d2a2b55ddf515fc3debaf27))
+- *(cli)* [**breaking**] Make output dir of `generate wit-support` mandatory - ([9b2ba47](https://github.com/obeli-sk/obelisk/commit/9b2ba4783f28c0144e37148d9904b57a1bb8cc3b))
+- *(wit)* [**breaking**] Rename resource `join-set-id` to `join-set` - ([6bcf127](https://github.com/obeli-sk/obelisk/commit/6bcf127ace0fc16734dbe6b18722882fbd304e0e))
+- *(wit)* [**breaking**] Bump version of `obelisk:types`,`obelisk:workflow` - ([d4b38c6](https://github.com/obeli-sk/obelisk/commit/d4b38c620047a76ec072d1141f50de310c81aacb))
+- *(wit,grpc)* [**breaking**] Remove `execution-failed`, introduce `ReturnTypeCompatible` - ([bc05671](https://github.com/obeli-sk/obelisk/commit/bc056716bdcdc7c3b85ca08bc2e6f5881398fd49))
+- Check for supported return types in `populate_ifcs` - ([08e907e](https://github.com/obeli-sk/obelisk/commit/08e907e61a279c25527493b1d00f92100c816cb2))
+- Rename `SupportedFunctionReturnValue` variants to `Ok`,`Err` - ([4cf302b](https://github.com/obeli-sk/obelisk/commit/4cf302b665645ebc2f15bdfbca3b1c10104e4dff))
+- Extract `is_package_name_ext` - ([ef31f20](https://github.com/obeli-sk/obelisk/commit/ef31f204ae051c337b1589b25c814c76ceab7226))
+- Readd ext fns to `ExIm` imports, detect compatibility - ([f31eae1](https://github.com/obeli-sk/obelisk/commit/f31eae1b634c2e70bcc1900c621f1f62621e7168))
+
+
 ## [0.24.2](https://github.com/obeli-sk/obelisk/compare/v0.24.1...v0.24.2)
 
 ### ⛰️ Features
