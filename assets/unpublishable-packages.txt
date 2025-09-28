@@ -10,6 +10,8 @@ test-programs-fibo-webhook
 test-programs-fibo-webhook-builder
 test-programs-fibo-workflow
 test-programs-fibo-workflow-builder
+test-programs-fibo-workflow-outer
+test-programs-fibo-workflow-outer-builder
 test-programs-http-get-activity
 test-programs-http-get-activity-builder
 test-programs-http-get-workflow
