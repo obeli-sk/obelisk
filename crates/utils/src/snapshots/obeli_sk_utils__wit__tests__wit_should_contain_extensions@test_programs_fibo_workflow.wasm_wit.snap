@@ -50,7 +50,7 @@ package obelisk:types@3.0.0 {
   interface execution {
     /// Join set resouce.
     @since(version = 3.0.0)
-    resource join-set-id {
+    resource join-set {
       @since(version = 3.0.0)
       id: func() -> string;
     }
@@ -128,70 +128,70 @@ package obelisk:types@3.0.0 {
 
 package obelisk:workflow@3.0.0 {
   interface workflow-support {
-    use obelisk:types/execution@3.0.0.{join-set-id};
+    use obelisk:types/execution@3.0.0.{join-set};
 
     enum closing-strategy {
       complete,
     }
 
-    new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set-id;
+    new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set;
   }
 }
 
 
 package testing:fibo-obelisk-ext {
   interface fibo {
-    use obelisk:types/execution@3.0.0.{join-set-id, execution-id, await-next-extension-error};
+    use obelisk:types/execution@3.0.0.{join-set, execution-id, await-next-extension-error};
 
-    fibo-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
+    fibo-submit: func(join-set: borrow<join-set>, n: u8) -> execution-id;
 
-    fibo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+    fibo-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
   }
 }
 
 
 package testing:fibo-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, invoke-extension-error};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set, await-next-extension-error, get-extension-error, invoke-extension-error};
 
-    fibow-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
+    fibow-submit: func(join-set: borrow<join-set>, n: u8, iterations: u32) -> execution-id;
 
-    fibow-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+    fibow-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
 
     fibow-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
     fibow-invoke: func(label: string, n: u8, iterations: u32) -> result<result<u64>, invoke-extension-error>;
 
-    fiboa-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
+    fiboa-submit: func(join-set: borrow<join-set>, n: u8, iterations: u32) -> execution-id;
 
-    fiboa-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+    fiboa-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
 
     fiboa-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
     fiboa-invoke: func(label: string, n: u8, iterations: u32) -> result<result<u64>, invoke-extension-error>;
 
-    fiboa-concurrent-submit: func(join-set-id: borrow<join-set-id>, n: u8, iterations: u32) -> execution-id;
+    fiboa-concurrent-submit: func(join-set: borrow<join-set>, n: u8, iterations: u32) -> execution-id;
 
-    fiboa-concurrent-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+    fiboa-concurrent-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
 
     fiboa-concurrent-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
     fiboa-concurrent-invoke: func(label: string, n: u8, iterations: u32) -> result<result<u64>, invoke-extension-error>;
   }
   interface workflow-nesting {
-    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, invoke-extension-error};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set, await-next-extension-error, get-extension-error, invoke-extension-error};
 
-    fibo-nested-workflow-submit: func(join-set-id: borrow<join-set-id>, n: u8) -> execution-id;
+    fibo-nested-workflow-submit: func(join-set: borrow<join-set>, n: u8) -> execution-id;
 
-    fibo-nested-workflow-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+    fibo-nested-workflow-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
 
     fibo-nested-workflow-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
     fibo-nested-workflow-invoke: func(label: string, n: u8) -> result<result<u64>, invoke-extension-error>;
 
-    fibo-start-fiboas-submit: func(join-set-id: borrow<join-set-id>, n: u8, fiboas: u32, iterations-per-fiboa: u32) -> execution-id;
+    fibo-start-fiboas-submit: func(join-set: borrow<join-set>, n: u8, fiboas: u32, iterations-per-fiboa: u32) -> execution-id;
 
-    fibo-start-fiboas-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+    fibo-start-fiboas-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
 
     fibo-start-fiboas-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 

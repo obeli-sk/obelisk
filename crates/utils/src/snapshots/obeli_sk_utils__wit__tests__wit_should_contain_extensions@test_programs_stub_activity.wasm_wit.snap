@@ -51,7 +51,7 @@ package obelisk:types@3.0.0 {
   interface execution {
     /// Join set resouce.
     @since(version = 3.0.0)
-    resource join-set-id {
+    resource join-set {
       @since(version = 3.0.0)
       id: func() -> string;
     }
@@ -283,19 +283,19 @@ package testing:stub-activity {
 
 package testing:stub-activity-obelisk-ext {
   interface activity {
-    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, invoke-extension-error};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set, await-next-extension-error, get-extension-error, invoke-extension-error};
 
-    foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
+    foo-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
 
-    foo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string>>, await-next-extension-error>;
+    foo-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string>>, await-next-extension-error>;
 
     foo-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
     foo-invoke: func(label: string, arg: string) -> result<result<string>, invoke-extension-error>;
 
-    noret-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+    noret-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    noret-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+    noret-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     noret-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 

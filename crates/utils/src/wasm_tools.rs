@@ -405,8 +405,8 @@ impl ExIm {
         };
         let param_type_join_set = ParameterType {
             type_wrapper: join_set_id_type_wrapper.clone(),
-            name: StrVariant::Static("join-set-id"),
-            wit_type: StrVariant::Static("borrow<join-set-id>"),
+            name: StrVariant::Static("join-set"),
+            wit_type: StrVariant::Static("borrow<join-set>"),
         };
         let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("milliseconds") => Some(TypeWrapper::U64),
@@ -542,7 +542,7 @@ impl ExIm {
                     )
                 };
 
-                // -submit(join-set-id: join-set-id, original params) -> execution id
+                // -submit(join-set: join-set, original params) -> execution id
                 let fn_submit = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),
@@ -564,7 +564,7 @@ impl ExIm {
                 };
                 insert_ext(fn_submit);
 
-                // -await-next(join-set-id: join-set-id) ->  result<(execution_id, original_return_type), await-next-extension-error>
+                // -await-next(join-set: join-set) ->  result<(execution_id, original_return_type), await-next-extension-error>
                 let fn_await_next = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),

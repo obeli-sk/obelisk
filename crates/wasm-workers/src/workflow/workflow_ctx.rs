@@ -1322,7 +1322,7 @@ mod workflow_support {
     use crate::workflow::event_history::{JoinNext, Persist, SubmitDelay};
     use crate::workflow::host_exports;
     use crate::workflow::host_exports::v3_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
-    use crate::workflow::host_exports::v3_0_0::obelisk::types::execution::HostJoinSetId;
+    use crate::workflow::host_exports::v3_0_0::obelisk::types::execution::HostJoinSet;
     use crate::workflow::host_exports::v3_0_0::obelisk::workflow::workflow_support;
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_3, JoinSetCreateError};
     use concepts::storage::HistoryEventScheduleAt;
@@ -1331,7 +1331,7 @@ mod workflow_support {
     use tracing::trace;
     use wasmtime::component::Resource;
 
-    impl<C: ClockFn> HostJoinSetId for WorkflowCtx<C> {
+    impl<C: ClockFn> HostJoinSet for WorkflowCtx<C> {
         async fn id(
             &mut self,
             resource: wasmtime::component::Resource<JoinSetId>,

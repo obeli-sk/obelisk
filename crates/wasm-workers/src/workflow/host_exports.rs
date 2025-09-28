@@ -40,7 +40,7 @@ pub(crate) mod v3_0_0 {
             }",
         world: "any:any/bindings",
         with: {
-            "obelisk:types/execution/join-set-id": concepts::JoinSetId,
+            "obelisk:types/execution/join-set": concepts::JoinSetId,
         },
         imports: {
             default: trappable | async

@@ -55,7 +55,7 @@ package obelisk:types@3.0.0 {
   interface execution {
     /// Join set resouce.
     @since(version = 3.0.0)
-    resource join-set-id {
+    resource join-set {
       @since(version = 3.0.0)
       id: func() -> string;
     }
@@ -133,7 +133,7 @@ package obelisk:types@3.0.0 {
 
 package obelisk:workflow@3.0.0 {
   interface workflow-support {
-    use obelisk:types/execution@3.0.0.{join-set-id};
+    use obelisk:types/execution@3.0.0.{join-set};
     use obelisk:types/time@3.0.0.{schedule-at};
     use obelisk:types/execution@3.0.0.{delay-id, response-id};
 
@@ -150,24 +150,24 @@ package obelisk:workflow@3.0.0 {
       invalid-name(string),
     }
 
-    submit-delay: func(join-set-id: borrow<join-set-id>, timeout: schedule-at) -> delay-id;
+    submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id;
 
-    new-join-set-named: func(name: string, closing-strategy: closing-strategy) -> result<join-set-id, join-set-create-error>;
+    new-join-set-named: func(name: string, closing-strategy: closing-strategy) -> result<join-set, join-set-create-error>;
 
-    new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set-id;
+    new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set;
 
-    join-next: func(join-set: borrow<join-set-id>) -> result<response-id, join-next-error>;
+    join-next: func(join-set: borrow<join-set>) -> result<response-id, join-next-error>;
   }
 }
 
 
 package testing:stub-activity-obelisk-ext {
   interface activity {
-    use obelisk:types/execution@3.0.0.{join-set-id, execution-id, get-extension-error, invoke-extension-error, await-next-extension-error};
+    use obelisk:types/execution@3.0.0.{join-set, execution-id, get-extension-error, invoke-extension-error, await-next-extension-error};
 
-    foo-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
+    foo-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
 
-    foo-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string>>, await-next-extension-error>;
+    foo-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string>>, await-next-extension-error>;
 
     foo-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
@@ -223,83 +223,83 @@ package testing:stub-workflow {
 
 package testing:stub-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@3.0.0.{execution-id, join-set-id, await-next-extension-error, get-extension-error, invoke-extension-error};
+    use obelisk:types/execution@3.0.0.{execution-id, join-set, await-next-extension-error, get-extension-error, invoke-extension-error};
 
-    submit-stub-await-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
+    submit-stub-await-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
 
-    submit-stub-await-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string>>, await-next-extension-error>;
+    submit-stub-await-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string>>, await-next-extension-error>;
 
     submit-stub-await-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
     submit-stub-await-invoke: func(label: string, arg: string) -> result<result<string>, invoke-extension-error>;
 
-    submit-await-submit: func(join-set-id: borrow<join-set-id>, arg: string) -> execution-id;
+    submit-await-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
 
-    submit-await-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result<string>>, await-next-extension-error>;
+    submit-await-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string>>, await-next-extension-error>;
 
     submit-await-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
     submit-await-invoke: func(label: string, arg: string) -> result<result<string>, invoke-extension-error>;
 
-    noret-submit-await-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+    noret-submit-await-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    noret-submit-await-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+    noret-submit-await-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     noret-submit-await-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
     noret-submit-await-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
-    submit-race-join-next-stub-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+    submit-race-join-next-stub-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    submit-race-join-next-stub-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+    submit-race-join-next-stub-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     submit-race-join-next-stub-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
     submit-race-join-next-stub-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
-    submit-race-join-next-stub-error-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+    submit-race-join-next-stub-error-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    submit-race-join-next-stub-error-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+    submit-race-join-next-stub-error-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     submit-race-join-next-stub-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
     submit-race-join-next-stub-error-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
-    submit-race-join-next-delay-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+    submit-race-join-next-delay-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    submit-race-join-next-delay-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+    submit-race-join-next-delay-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     submit-race-join-next-delay-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
     submit-race-join-next-delay-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
-    stub-subworkflow-submit: func(join-set-id: borrow<join-set-id>, execution-id: execution-id, retval: string) -> execution-id;
+    stub-subworkflow-submit: func(join-set: borrow<join-set>, execution-id: execution-id, retval: string) -> execution-id;
 
-    stub-subworkflow-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+    stub-subworkflow-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     stub-subworkflow-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
     stub-subworkflow-invoke: func(label: string, execution-id: execution-id, retval: string) -> result<result, invoke-extension-error>;
 
-    await-next-produces-all-processed-error-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+    await-next-produces-all-processed-error-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    await-next-produces-all-processed-error-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+    await-next-produces-all-processed-error-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     await-next-produces-all-processed-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
     await-next-produces-all-processed-error-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
-    join-next-in-scope-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+    join-next-in-scope-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    join-next-in-scope-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+    join-next-in-scope-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     join-next-in-scope-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
     join-next-in-scope-invoke: func(label: string) -> result<result, invoke-extension-error>;
 
-    invoke-expect-execution-error-submit: func(join-set-id: borrow<join-set-id>) -> execution-id;
+    invoke-expect-execution-error-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    invoke-expect-execution-error-await-next: func(join-set-id: borrow<join-set-id>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+    invoke-expect-execution-error-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     invoke-expect-execution-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 

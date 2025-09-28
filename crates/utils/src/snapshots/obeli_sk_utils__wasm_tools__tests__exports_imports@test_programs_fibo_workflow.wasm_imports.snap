@@ -22,7 +22,7 @@ expression: imports
     "return_type": {
       "NonExtendable": {
         "type_wrapper": "own",
-        "wit_type": "join-set-id"
+        "wit_type": "join-set"
       }
     },
     "extension": null,
@@ -36,8 +36,8 @@ expression: imports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       }
     ],
     "return_type": {
@@ -112,8 +112,8 @@ expression: imports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       },
       {
         "type_wrapper": "u8",
@@ -142,8 +142,8 @@ expression: imports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       }
     ],
     "return_type": {
@@ -218,8 +218,8 @@ expression: imports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       },
       {
         "type_wrapper": "u8",

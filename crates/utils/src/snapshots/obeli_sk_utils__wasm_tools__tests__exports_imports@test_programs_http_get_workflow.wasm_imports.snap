@@ -3,16 +3,16 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:types/execution@3.0.0.[method]join-set-id.id": {
+  "obelisk:types/execution@3.0.0.[method]join-set.id": {
     "ffqn": {
       "ifc_fqn": "obelisk:types/execution@3.0.0",
-      "function_name": "[method]join-set-id.id"
+      "function_name": "[method]join-set.id"
     },
     "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "self",
-        "wit_type": "borrow<join-set-id>"
+        "wit_type": "borrow<join-set>"
       }
     ],
     "return_type": {
@@ -43,7 +43,7 @@ expression: imports
     "return_type": {
       "NonExtendable": {
         "type_wrapper": "own",
-        "wit_type": "join-set-id"
+        "wit_type": "join-set"
       }
     },
     "extension": null,
@@ -57,8 +57,8 @@ expression: imports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       }
     ],
     "return_type": {
@@ -133,8 +133,8 @@ expression: imports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       },
       {
         "type_wrapper": "string",

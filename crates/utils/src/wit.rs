@@ -167,15 +167,15 @@ fn add_extended_interfaces(
             stability: wit_parser::Stability::default(),
         })
     };
-    // obelisk:types/execution@VERSION.{join-set-id}
+    // obelisk:types/execution@VERSION.{join-set}
     let (type_id_join_set_id, type_id_join_set_id_borrow_handle) = {
         let actual_type_id = *execution_ifc
             .types
-            .get("join-set-id")
-            .expect("`join-set-id` must exist");
+            .get("join-set")
+            .expect("`join-set` must exist");
         // Create a reference to the type.
         let type_id_join_set_id = resolve.types.alloc(TypeDef {
-            name: Some("join-set-id".to_string()),
+            name: Some("join-set".to_string()),
             kind: TypeDefKind::Type(Type::Id(actual_type_id)),
             owner: TypeOwner::Interface(execution_ifc_id),
             docs: wit_parser::Docs::default(),
@@ -301,7 +301,7 @@ fn add_extended_interfaces(
             match pkg_ext {
                 PackageExtension::ObeliskExt => {
                     types.insert("execution-id".to_string(), type_id_execution_id);
-                    types.insert("join-set-id".to_string(), type_id_join_set_id);
+                    types.insert("join-set".to_string(), type_id_join_set_id);
                     types.insert(
                         "await-next-extension-error".to_string(),
                         type_id_await_next_extension_error,
@@ -340,10 +340,10 @@ fn add_extended_interfaces(
                 });
                 let (params, result) = match fn_ext {
                     FunctionExtension::Submit => {
-                        // -submit: func(join-set-id: borrow<join-set-id>, <params>) -> execution-id;
+                        // -submit: func(join-set: borrow<join-set>, <params>) -> execution-id;
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
                         let mut params = vec![(
-                            generate_param_name("join-set-id", &original_fn.params),
+                            generate_param_name("join-set", &original_fn.params),
                             Type::Id(type_id_join_set_id_borrow_handle),
                         )];
                         params.extend_from_slice(&original_fn.params);
@@ -351,13 +351,13 @@ fn add_extended_interfaces(
                         (params, Some(Type::Id(type_id_execution_id)))
                     }
                     FunctionExtension::AwaitNext => {
-                        // -await-next: func(join-set-id: borrow<join-set-id>) ->
+                        // -await-next: func(join-set: borrow<join-set>) ->
                         //  result<tuple<execution-id, return-type>, await-next-extension-error>;
                         // or if the function does not return anything:
                         //  result<execution-id, await-next-extension-error>;
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
                         let params = vec![(
-                            "join-set-id".to_string(),
+                            "join-set".to_string(),
                             Type::Id(type_id_join_set_id_borrow_handle),
                         )];
                         let result = if let Some(actual_return_type_id) = &original_fn.result {

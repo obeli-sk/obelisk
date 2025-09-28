@@ -33,7 +33,7 @@ use tracing::{
     Instrument, Level, Span, debug, debug_span, error, info, info_span, instrument, trace,
 };
 use types_v3_0_0::obelisk::types::execution::Host as ExecutionHost;
-use types_v3_0_0::obelisk::types::execution::HostJoinSetId;
+use types_v3_0_0::obelisk::types::execution::HostJoinSet;
 use utils::wasm_tools::ExIm;
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
@@ -62,7 +62,7 @@ pub(crate) mod types_v3_0_0 {
             default: trappable | async,
         },
         with: {
-            "obelisk:types/execution/join-set-id": concepts::JoinSetId,
+            "obelisk:types/execution/join-set": concepts::JoinSetId,
         }
     });
 }
@@ -359,7 +359,7 @@ struct WebhookEndpointCtx<C: ClockFn> {
     component_logger: ComponentLogger,
 }
 
-impl<C: ClockFn> HostJoinSetId for WebhookEndpointCtx<C> {
+impl<C: ClockFn> HostJoinSet for WebhookEndpointCtx<C> {
     fn id(&mut self, _resource: wasmtime::component::Resource<JoinSetId>) -> String {
         unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }

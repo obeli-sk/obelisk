@@ -64,7 +64,7 @@ package obelisk:types@3.0.0 {
   interface execution {
     /// Join set resouce.
     @since(version = 3.0.0)
-    resource join-set-id {
+    resource join-set {
       @since(version = 3.0.0)
       id: func() -> string;
     }

@@ -11,8 +11,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       }
     ],
     "return_type": {
@@ -198,8 +198,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       }
     ],
     "return_type": {
@@ -385,8 +385,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       },
       {
         "type_wrapper": "string",
@@ -415,8 +415,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       }
     ],
     "return_type": {
@@ -597,8 +597,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       }
     ],
     "return_type": {
@@ -622,8 +622,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       },
       {
         "type_wrapper": "string",
@@ -652,8 +652,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       }
     ],
     "return_type": {
@@ -728,8 +728,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       }
     ],
     "return_type": {
@@ -923,8 +923,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       }
     ],
     "return_type": {
@@ -1121,8 +1121,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       },
       {
         "type_wrapper": "string",
@@ -1156,8 +1156,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       },
       {
         "type_wrapper": {
@@ -1299,8 +1299,8 @@ expression: exports
     "parameter_types": [
       {
         "type_wrapper": "borrow",
-        "name": "join-set-id",
-        "wit_type": "borrow<join-set-id>"
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
       },
       {
         "type_wrapper": "string",

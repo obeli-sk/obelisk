@@ -5,7 +5,7 @@ use crate::testing::stub_activity_obelisk_ext::activity as activity_ext;
 use crate::testing::stub_activity_obelisk_stub::activity as activity_stub;
 use obelisk::log::log;
 use obelisk::types::execution::{
-    AwaitNextExtensionError, ExecutionId, GetExtensionError, JoinSetId, ResponseId,
+    AwaitNextExtensionError, ExecutionId, GetExtensionError, JoinSet, ResponseId,
 };
 use obelisk::workflow::workflow_support::new_join_set_named;
 use wit_bindgen::generate;
@@ -62,7 +62,7 @@ impl Guest for Component {
 
     // Used for testing Join Set Closing
     fn join_next_in_scope() -> Result<(), ()> {
-        fn add_exec(join_set: &JoinSetId, names: Vec<&'static str>) {
+        fn add_exec(join_set: &JoinSet, names: Vec<&'static str>) {
             for name in names {
                 let execution_id = activity_ext::foo_submit(join_set, name);
                 activity_stub::foo_stub(&execution_id, Ok(name))
