@@ -43,7 +43,6 @@ jobs:
 
       - name: Push test components
         run: |
-          which obelisk
           nix develop --command ./scripts/push-test-components.sh $TAG
         env:
           TAG: ${{ github.event.inputs.tag }}
