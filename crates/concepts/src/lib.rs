@@ -733,15 +733,16 @@ pub fn execution_error_to_wast_val(ret_type: &TypeWrapperTopLevel) -> WastVal {
         } => match inner.as_ref() {
             TypeWrapper::String => {
                 return WastVal::Result(Err(Some(Box::new(WastVal::String(
-                    "execution-failed".to_string(),
+                    EXECUTION_FAILED_STRING_OR_VARIANT.to_string(),
                 )))));
             }
             TypeWrapper::Variant(variants) => {
-                if let Some(Some(TypeWrapper::Record(fields))) = variants.get("execution-failed")
+                if let Some(Some(TypeWrapper::Record(fields))) =
+                    variants.get(EXECUTION_FAILED_STRING_OR_VARIANT)
                     && fields.is_empty()
                 {
                     return WastVal::Result(Err(Some(Box::new(WastVal::Variant(
-                        "execution-failed".to_string(),
+                        EXECUTION_FAILED_STRING_OR_VARIANT.to_string(),
                         None,
                     )))));
                 }
@@ -1992,7 +1993,7 @@ impl FromStr for Digest {
     }
 }
 
-const EXECUTION_FAILED_VARIANT: &str = "execution-failed";
+const EXECUTION_FAILED_STRING_OR_VARIANT: &str = "execution-failed";
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
 )]
@@ -2022,7 +2023,7 @@ impl ReturnType {
                     wit_type,
                 });
             } else if let TypeWrapper::Variant(fields) = err.as_ref()
-                && let Some(None) = fields.get(EXECUTION_FAILED_VARIANT)
+                && let Some(None) = fields.get(EXECUTION_FAILED_STRING_OR_VARIANT)
             {
                 return ReturnType::Extendable(ReturnTypeExtendable {
                     type_wrapper_tl: TypeWrapperTopLevel { ok, err: Some(err) },
