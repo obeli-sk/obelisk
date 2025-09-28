@@ -77,7 +77,7 @@ pub(crate) async fn generate_exported_extension_wits(
 
 pub(crate) async fn generate_support_wits(
     component_type: ComponentType,
-    output_directory: Option<PathBuf>,
+    output_directory: PathBuf,
 ) -> Result<(), anyhow::Error> {
     let files = match component_type {
         ComponentType::ActivityWasm => {
@@ -99,7 +99,6 @@ pub(crate) async fn generate_support_wits(
             ]
         }
     };
-    let output_directory = output_directory.unwrap_or_default();
     for [folder, filename, content] in files {
         let output_directory = output_directory.join(folder);
         let path = output_directory.join(filename);

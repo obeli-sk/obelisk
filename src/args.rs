@@ -53,7 +53,7 @@ pub(crate) enum Generate {
         /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
         component_type: ComponentType,
         /// Directory where folders and WIT files will be written to.
-        output_directory: Option<PathBuf>,
+        output_directory: PathBuf,
     },
 }
 
