@@ -150,11 +150,11 @@ async fn main() -> Result<(), anyhow::Error> {
         Subcommand::Generate(Generate::Extensions {
             component_type,
             input_wit_directory,
-            output_deps_directory,
+            output_directory,
         }) => {
             command::generate::generate_exported_extension_wits(
                 input_wit_directory,
-                output_deps_directory,
+                output_directory,
                 component_type,
             )
             .await

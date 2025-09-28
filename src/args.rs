@@ -45,8 +45,8 @@ pub(crate) enum Generate {
         component_type: ComponentType,
         /// Path to the `wit` folder, containing the target world and possibly `deps` subfolder.
         input_wit_directory: PathBuf,
-        /// Optional. If not set, WIT files will be written to the input directory.
-        output_deps_directory: Option<PathBuf>,
+        /// Directory where folders and WIT files will be written to.
+        output_directory: PathBuf,
     },
     /// Generate Obelisk WIT files for given component type.
     WitSupport {
