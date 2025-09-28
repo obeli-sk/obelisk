@@ -41,7 +41,7 @@ pub(crate) async fn generate_exported_extension_wits(
             .await
             .unwrap_or_default();
 
-        let old_content = strip_header(old_content);
+        let old_content = strip_header(&old_content);
         if old_content != new_content {
             let new_content = format!("{HEADER} {PKG_VERSION}\n{new_content}");
             tokio::fs::create_dir_all(&pkg_folder)
@@ -58,7 +58,7 @@ pub(crate) async fn generate_exported_extension_wits(
     Ok(())
 }
 
-fn strip_header(old_content: String) -> String {
+fn strip_header(old_content: &str) -> String {
     let old_content = match old_content.strip_prefix(HEADER) {
         Some(wit) => {
             if let Some((_, wit)) = wit.split_once('\n') {
@@ -67,7 +67,7 @@ fn strip_header(old_content: String) -> String {
                 Cow::Borrowed(wit)
             }
         }
-        None => Cow::Borrowed(old_content.as_str()),
+        None => Cow::Borrowed(old_content),
     };
     let old_content = match old_content.strip_prefix(&format!("/{HEADER}")) {
         // Bug in wasm_tools is turning // into ///
