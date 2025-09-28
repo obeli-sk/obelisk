@@ -1992,6 +1992,7 @@ impl FromStr for Digest {
     }
 }
 
+const EXECUTION_FAILED_VARIANT: &str = "execution-failed";
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
 )]
@@ -2000,6 +2001,13 @@ pub enum ReturnType {
     NonExtendable(ReturnTypeNonExtendable), // e.g. -submit returns ExecutionId
 }
 impl ReturnType {
+    /// Evaluate whether the return type is one of supported types:
+    /// * `result`
+    /// * `result<T>`
+    /// * `result<_, string>`
+    /// * `result<T, string>`
+    /// * `result<T, E>` where T can be `_` and E is a `variant` containing `execution-failed`
+    ///   variant with no associated value.
     #[must_use]
     pub fn detect(type_wrapper: TypeWrapper, wit_type: StrVariant) -> ReturnType {
         if let TypeWrapper::Result { ok, err: None } = type_wrapper {
@@ -2014,7 +2022,7 @@ impl ReturnType {
                     wit_type,
                 });
             } else if let TypeWrapper::Variant(fields) = err.as_ref()
-                && let Some(None) = fields.get("execution-failure")
+                && let Some(None) = fields.get(EXECUTION_FAILED_VARIANT)
             {
                 return ReturnType::Extendable(ReturnTypeExtendable {
                     type_wrapper_tl: TypeWrapperTopLevel { ok, err: Some(err) },
