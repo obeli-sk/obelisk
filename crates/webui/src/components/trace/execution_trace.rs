@@ -58,7 +58,13 @@ pub fn execution_trace(props: &ExecutionStepProps) -> Html {
     html! {
         <div class="execution-trace">
             <div class="step-row">
-                <span class="step-icon">{"▶"}</span>
+                <span class="step-icon">
+                    if let Some(html) = props.data.expand_colapse() {
+                        {html}
+                    } else {
+                        {"▶"}
+                    }
+                </span>
                 <span class="step-name" title={props.data.title().to_string()}>{props.data.name().clone()}</span>
                 if let Some(status) = last_status {
                     <span class="step-status">

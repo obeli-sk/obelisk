@@ -51,6 +51,13 @@ impl TraceData {
             TraceData::Child(child) => child.load_button.clone(),
         }
     }
+
+    pub fn expand_colapse(&self) -> Option<Html> {
+        match self {
+            TraceData::Root(root) => root.expand_collapse.clone(),
+            TraceData::Child(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, derive_more::Display)]
@@ -132,6 +139,7 @@ pub struct TraceDataRoot {
     pub busy: Vec<BusyInterval>,
     pub children: Vec<TraceData>,
     pub load_button: Option<Html>,
+    pub expand_collapse: Option<Html>,
 }
 impl TraceDataRoot {
     pub fn total_duration(&self) -> Duration {

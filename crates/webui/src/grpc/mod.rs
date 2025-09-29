@@ -1,5 +1,6 @@
 use grpc_client::{ComponentType, result_detail};
 
+mod component_id;
 pub mod execution_id;
 pub mod ffqn;
 pub mod function_detail;
@@ -32,19 +33,6 @@ impl grpc_client::Component {
     pub fn as_type(&self) -> ComponentType {
         ComponentType::try_from(self.r#type)
             .expect("generated ComponentType must contain all types")
-    }
-}
-
-impl grpc_client::ComponentId {
-    pub fn as_type(&self) -> ComponentType {
-        let ty = self
-            .id
-            .split_once(":")
-            .expect("ComponentId must contain `:` infix")
-            .0
-            .to_uppercase();
-        ComponentType::from_str_name(&ty)
-            .unwrap_or_else(|| panic!("ComponentType must be found for {ty}"))
     }
 }
 

@@ -55,6 +55,10 @@ enum ExecutionFetchState {
 
 enum TraceviewStateAction {
     AddExecutionId(ExecutionId),
+    HttpTracesSwitch {
+        execution_id: ExecutionId,
+        show: bool,
+    },
     SetPending(ExecutionId),
     SavePage {
         execution_id: ExecutionId,
@@ -73,6 +77,7 @@ struct TraceViewState {
     execution_ids_to_fetch_state: HashMap<ExecutionId, ExecutionFetchState>,
     events: HashMap<ExecutionId, Vec<ExecutionEvent>>,
     responses: HashMap<ExecutionId, HashMap<JoinSetId, Vec<JoinSetResponseEvent>>>,
+    execution_ids_to_show_http_traces: HashMap<ExecutionId, bool>,
 }
 impl Reducible for TraceViewState {
     type Action = TraceviewStateAction;
@@ -144,6 +149,12 @@ impl Reducible for TraceViewState {
                     .insert(execution_id, new_state);
                 Rc::from(this)
             }
+            TraceviewStateAction::HttpTracesSwitch { execution_id, show } => {
+                let mut this = self.as_ref().clone();
+                this.execution_ids_to_show_http_traces
+                    .insert(execution_id, show);
+                Rc::from(this)
+            }
         }
     }
 }
@@ -173,12 +184,6 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
             execution_id,
             events_map,
             responses_map,
-            // is_fetched fn
-            |execution_id| {
-                trace_view
-                    .execution_ids_to_fetch_state
-                    .contains_key(execution_id)
-            },
             &trace_view_state,
             &app_state,
         )
@@ -317,7 +322,6 @@ fn compute_root_trace(
     execution_id: &ExecutionId,
     events_map: &HashMap<ExecutionId, Vec<ExecutionEvent>>,
     responses_map: &HashMap<ExecutionId, HashMap<JoinSetId, Vec<JoinSetResponseEvent>>>,
-    is_fetched: impl Fn(&ExecutionId) -> bool + Clone,
     trace_view_state: &UseReducerHandle<TraceViewState>,
     app_state: &AppState,
 ) -> Option<TraceDataRoot> {
@@ -348,10 +352,12 @@ fn compute_root_trace(
     );
 
     let ffqn = FunctionFqn::from(create_event);
+    let component_type = app_state
+        .ffqns_to_details
+        .get(&ffqn)
+        .map(|(_, c)| c.as_type());
     let maybe_stub_link = if events.len() == 1 // stub execution can only contain Created and Finished events
-        && let Some((_, component_id)) = app_state.ffqns_to_details.get(&ffqn)
-        && let Some(found_component) = app_state.components_by_id.get(component_id)
-        && found_component.as_type() == ComponentType::ActivityStub
+        && component_type == Some(ComponentType::ActivityStub)
     {
         Some(html! {
             <Link<Route> to={Route::ExecutionStubResult { ffqn: ffqn.clone(), execution_id: execution_id.clone() }}>{"Submit stub response"}</Link<Route>>
@@ -363,6 +369,13 @@ fn compute_root_trace(
     let child_ids_to_results = compute_child_execution_id_to_child_execution_finished(responses);
 
     let mut loadable_child_ids = vec![];
+
+    let http_traces_enabled = trace_view_state
+        .deref()
+        .execution_ids_to_show_http_traces
+        .get(execution_id)
+        .cloned()
+        .unwrap_or_default();
 
     let children = events
             .iter()
@@ -382,34 +395,38 @@ fn compute_root_trace(
                     | execution_event::Event::Finished(Finished {
                         http_client_traces, ..
                     }) => {
-                        let children: Vec<_> = http_client_traces
-                            .iter()
-                            .map(|trace| {
-                                let name = format!(
-                                    "{method} {uri}",
-                                    method = trace.method,
-                                    uri = trace.uri,
-                                );
-                                let status = match trace.result {
-                                    Some(http_client_trace::Result::Status(status_code)) => BusyIntervalStatus::HttpTraceFinished(status_code),
-                                    Some(http_client_trace::Result::Error(_)) => BusyIntervalStatus::HttpTraceError,
-                                    None => BusyIntervalStatus::HttpTraceNotResponded,
-                                };
-                                TraceData::Child(TraceDataChild {
-                                    name: name.to_html(),
-                                    title: name,
-                                    busy: vec![BusyInterval {
-                                        started_at: DateTime::from(trace.sent_at.expect("sent_at is sent")),
-                                        finished_at: Some(trace.finished_at.map(DateTime::from).unwrap_or(event_created_at)),
-                                        title: None,
-                                        status,
-                                    }],
-                                    children: vec![],
-                                    load_button: None,
+                        if http_traces_enabled {
+                            let children: Vec<_> = http_client_traces
+                                .iter()
+                                .map(|trace| {
+                                    let name = format!(
+                                        "{method} {uri}",
+                                        method = trace.method,
+                                        uri = trace.uri,
+                                    );
+                                    let status = match trace.result {
+                                        Some(http_client_trace::Result::Status(status_code)) => BusyIntervalStatus::HttpTraceFinished(status_code),
+                                        Some(http_client_trace::Result::Error(_)) => BusyIntervalStatus::HttpTraceError,
+                                        None => BusyIntervalStatus::HttpTraceNotResponded,
+                                    };
+                                    TraceData::Child(TraceDataChild {
+                                        name: name.to_html(),
+                                        title: name,
+                                        busy: vec![BusyInterval {
+                                            started_at: DateTime::from(trace.sent_at.expect("sent_at is sent")),
+                                            finished_at: Some(trace.finished_at.map(DateTime::from).unwrap_or(event_created_at)),
+                                            title: None,
+                                            status,
+                                        }],
+                                        children: vec![],
+                                        load_button: None,
+                                    })
                                 })
-                            })
-                            .collect();
-                        Some(children)
+                                .collect();
+                            Some(children)
+                        } else {
+                            None
+                        }
                     }
                     // Add child executions
                     execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
@@ -428,7 +445,7 @@ fn compute_root_trace(
                             child_execution_id.to_string()
                         };
 
-                        if !is_fetched(child_execution_id) {
+                        if !trace_view_state.deref().execution_ids_to_fetch_state.contains_key(child_execution_id) {
                             loadable_child_ids.push(child_execution_id.clone());
                         }
 
@@ -436,7 +453,6 @@ fn compute_root_trace(
                             child_execution_id,
                             events_map,
                             responses_map,
-                            is_fetched.clone(),
                             trace_view_state,
                             app_state
                         ) {
@@ -468,7 +484,7 @@ fn compute_root_trace(
                                         status
                                     }],
                                     children: Vec::new(),
-                                    load_button: None, // TODO
+                                    load_button: None,
                                 })
                             ])
                         }
@@ -576,6 +592,34 @@ fn compute_root_trace(
         FunctionFqn::from(fn_name.clone())
     };
 
+    let http_traces_button = if matches!(
+        component_type,
+        Some(ComponentType::ActivityWasm | ComponentType::WebhookEndpoint)
+    ) {
+        let show = !http_traces_enabled;
+        let onclick = Callback::from({
+            let trace_view_state = trace_view_state.clone();
+            let execution_id = execution_id.clone();
+            move |_| {
+                trace_view_state.dispatch(TraceviewStateAction::HttpTracesSwitch {
+                    execution_id: execution_id.clone(),
+                    show,
+                });
+            }
+        });
+        Some(html! {
+            <a {onclick} >
+                if show {
+                    {"+"}
+                } else {
+                    {"-"}
+                }
+            </a>
+        })
+    } else {
+        None
+    };
+
     let load_button = if !loadable_child_ids.is_empty() {
         let onclick = Callback::from({
             let trace_view_state = trace_view_state.clone();
@@ -611,6 +655,7 @@ fn compute_root_trace(
         busy,
         children,
         load_button,
+        expand_collapse: http_traces_button,
     })
 }
 
