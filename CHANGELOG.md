@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.25.1](https://github.com/obeli-sk/obelisk/compare/v0.25.0...v0.25.1)
 
-### 🚜 Refactor
+### 🐛 Bug Fixes
 
 - *(wit)* Rename extendable error variant `execution-failure` to `execution-failed` - ([e4bcdf2](https://github.com/obeli-sk/obelisk/commit/e4bcdf202953305859fe28c1a8877b4888cc14de))
 
