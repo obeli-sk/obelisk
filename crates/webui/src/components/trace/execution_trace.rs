@@ -73,9 +73,11 @@ pub fn execution_trace(props: &ExecutionStepProps) -> Html {
                     </span>
                 }
                 <div class="relative-duration-container">
-                    <div class="total-duration-line" style="width: 100%" title={tooltip}>
-                        {intervals}
-                    </div>
+                    if !intervals.is_empty() {
+                        <div class="total-duration-line" style="width: 100%" title={tooltip}>
+                            {intervals}
+                        </div>
+                    }
                 </div>
             </div>
             {children_html}

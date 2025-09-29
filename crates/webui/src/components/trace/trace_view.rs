@@ -418,7 +418,35 @@ fn compute_root_trace(
                                             title: None,
                                             status,
                                         }],
-                                        children: vec![],
+                                        children: match &trace.result {
+                                            Some(http_client_trace::Result::Status(status_code)) => {
+                                                let name = format!("Status code: {status_code}");
+                                                vec![
+                                                    TraceData::Child(TraceDataChild {
+                                                        name: name.to_html(),
+                                                        title: name,
+                                                        busy: vec![],
+                                                        children: vec![],
+                                                        load_button: None,
+                                                    })
+                                                ]
+                                            },
+                                            Some(http_client_trace::Result::Error(error)) => {
+                                                let name = format!("Failed: `{error}`");
+                                                vec![
+                                                    TraceData::Child(TraceDataChild {
+                                                        name: name.to_html(),
+                                                        title: name,
+                                                        busy: vec![],
+                                                        children: vec![],
+                                                        load_button: None,
+                                                    })
+                                                ]
+                                            },
+                                            None => {
+                                                vec![]
+                                            }
+                                        },
                                         load_button: None,
                                     })
                                 })
