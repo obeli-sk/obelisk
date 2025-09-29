@@ -47,7 +47,7 @@ impl TraceData {
 
     pub fn load_button(&self) -> Option<Html> {
         match self {
-            TraceData::Root(_) => None,
+            TraceData::Root(root) => root.load_button.clone(),
             TraceData::Child(child) => child.load_button.clone(),
         }
     }
@@ -131,6 +131,7 @@ pub struct TraceDataRoot {
     pub last_event_at: DateTime<Utc>,
     pub busy: Vec<BusyInterval>,
     pub children: Vec<TraceData>,
+    pub load_button: Option<Html>,
 }
 impl TraceDataRoot {
     pub fn total_duration(&self) -> Duration {

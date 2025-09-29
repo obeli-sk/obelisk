@@ -78,41 +78,51 @@ impl Reducible for TraceViewState {
     type Action = TraceviewStateAction;
 
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
-        let (execution_id, next_state) = match action {
+        match action {
             TraceviewStateAction::AddExecutionId(execution_id) => {
                 if !self
                     .execution_ids_to_fetch_state
                     .contains_key(&execution_id)
                 {
-                    (
+                    let mut this = self.as_ref().clone();
+                    this.execution_ids_to_fetch_state.insert(
                         execution_id,
                         ExecutionFetchState::Requested(Cursors::default()),
-                    )
+                    );
+                    Rc::from(this)
                 } else {
-                    return self;
+                    self
                 }
             }
             TraceviewStateAction::SetPending(execution_id) => {
-                (execution_id, ExecutionFetchState::Pending)
+                let mut this = self.as_ref().clone();
+                this.execution_ids_to_fetch_state
+                    .insert(execution_id, ExecutionFetchState::Pending);
+                Rc::from(this)
             }
             TraceviewStateAction::RequestNextPage {
                 execution_id,
                 cursors,
-            } => (execution_id, ExecutionFetchState::Requested(cursors)),
+            } => {
+                let mut this = self.as_ref().clone();
+                this.execution_ids_to_fetch_state
+                    .insert(execution_id, ExecutionFetchState::Requested(cursors));
+                Rc::from(this)
+            }
             TraceviewStateAction::SavePage {
                 execution_id,
                 new_events,
                 new_responses,
                 is_finished: finished,
             } => {
-                let mut s = self.as_ref().clone();
+                let mut this = self.as_ref().clone();
 
-                s.events
+                this.events
                     .entry(execution_id.clone())
                     .or_default()
                     .extend(new_events);
 
-                let join_set_to_resps = s.responses.entry(execution_id.clone()).or_default();
+                let join_set_to_resps = this.responses.entry(execution_id.clone()).or_default();
                 for response in new_responses {
                     let response = response
                         .event
@@ -130,15 +140,11 @@ impl Reducible for TraceViewState {
                     ExecutionFetchState::Pending
                 };
                 // Will be followed by ExecutionFetchState::RequestNextPage
-                s.execution_ids_to_fetch_state
+                this.execution_ids_to_fetch_state
                     .insert(execution_id, new_state);
-                return Rc::from(s);
+                Rc::from(this)
             }
-        };
-        let mut s = self.as_ref().clone();
-        s.execution_ids_to_fetch_state
-            .insert(execution_id, next_state);
-        Rc::from(s)
+        }
     }
 }
 
@@ -167,17 +173,13 @@ pub fn trace_view(TraceViewProps { execution_id }: &TraceViewProps) -> Html {
             execution_id,
             events_map,
             responses_map,
+            // is_fetched fn
             |execution_id| {
                 trace_view
                     .execution_ids_to_fetch_state
                     .contains_key(execution_id)
             },
-            {
-                let trace_view_state = trace_view_state.clone();
-                move |execution_id| {
-                    trace_view_state.dispatch(TraceviewStateAction::AddExecutionId(execution_id));
-                }
-            },
+            &trace_view_state,
             &app_state,
         )
     };
@@ -315,8 +317,8 @@ fn compute_root_trace(
     execution_id: &ExecutionId,
     events_map: &HashMap<ExecutionId, Vec<ExecutionEvent>>,
     responses_map: &HashMap<ExecutionId, HashMap<JoinSetId, Vec<JoinSetResponseEvent>>>,
-    contains: impl Fn(&ExecutionId) -> bool + Clone,
-    on_execution_load: impl Fn(ExecutionId) + Clone + 'static,
+    is_fetched: impl Fn(&ExecutionId) -> bool + Clone,
+    trace_view_state: &UseReducerHandle<TraceViewState>,
     app_state: &AppState,
 ) -> Option<TraceDataRoot> {
     let events = match events_map.get(execution_id) {
@@ -359,6 +361,8 @@ fn compute_root_trace(
     };
 
     let child_ids_to_results = compute_child_execution_id_to_child_execution_finished(responses);
+
+    let mut loadable_child_ids = vec![];
 
     let children = events
             .iter()
@@ -424,44 +428,31 @@ fn compute_root_trace(
                             child_execution_id.to_string()
                         };
 
-                        let load_button = if !contains(child_execution_id) {
-                                let onclick =
-                                Callback::from({
-                                    let on_execution_load=on_execution_load.clone();
-                                    let child_execution_id = child_execution_id.clone();
-                                    move |_| {
-                                        debug!("Adding {child_execution_id}");
-                                        on_execution_load(child_execution_id.clone());
-                                    }
-                                });
-
-                            html!{
-                                <button {onclick} >{"Load"} </button>
-                            }
-                        } else {
-                            Html::default()
+                        if !is_fetched(child_execution_id) {
+                            loadable_child_ids.push(child_execution_id.clone());
                         }
-                        ;
+
                         if let Some(child_root) = compute_root_trace(
                             child_execution_id,
                             events_map,
                             responses_map,
-                            contains.clone(),
-                            on_execution_load.clone(),
+                            is_fetched.clone(),
+                            trace_view_state,
                             app_state
                         ) {
                             last_event_at = last_event_at.max(child_root.last_event_at);
                             Some(vec![TraceData::Root(child_root)])
                         } else {
                             let started_at = DateTime::from(event.created_at.expect("event.created_at must be sent"));
-                            let (status, finished_at, interval_title) = if let Some((result_detail_value, finished_at)) = child_ids_to_results.get(child_execution_id) {
-                                let status = BusyIntervalStatus::from(result_detail_value);
-                                let duration = (*finished_at - started_at).to_std().expect("started_at must be <= finished_at");
-                                (status, Some(*finished_at), format!("{status} in {duration:?}"))
-                            } else {
-                                let status = BusyIntervalStatus::ExecutionUnfinished;
-                                (status, None, status.to_string())
-                            };
+                            let (status, finished_at, interval_title) =
+                                if let Some((result_detail_value, finished_at)) = child_ids_to_results.get(child_execution_id) {
+                                    let status = BusyIntervalStatus::from(result_detail_value);
+                                    let duration = (*finished_at - started_at).to_std().expect("started_at must be <= finished_at");
+                                    (status, Some(*finished_at), format!("{status} in {duration:?}"))
+                                } else {
+                                    let status = BusyIntervalStatus::ExecutionUnfinished;
+                                    (status, None, status.to_string())
+                                };
                             Some(vec![
                                 TraceData::Child(TraceDataChild {
                                     name: html!{<>
@@ -477,7 +468,7 @@ fn compute_root_trace(
                                         status
                                     }],
                                     children: Vec::new(),
-                                    load_button: Some(load_button),
+                                    load_button: None, // TODO
                                 })
                             ])
                         }
@@ -585,10 +576,29 @@ fn compute_root_trace(
         FunctionFqn::from(fn_name.clone())
     };
 
+    let load_button = if !loadable_child_ids.is_empty() {
+        let onclick = Callback::from({
+            let trace_view_state = trace_view_state.clone();
+            move |_| {
+                for child_execution_id in &loadable_child_ids {
+                    debug!("Adding {child_execution_id}");
+                    trace_view_state.dispatch(TraceviewStateAction::AddExecutionId(
+                        child_execution_id.clone(),
+                    ));
+                }
+            }
+        });
+        Some(html! {
+            <button {onclick} >{"Load"} </button>
+        })
+    } else {
+        None
+    };
+
     let name = html! {
         <>
             {execution_id.render_execution_parts(true, ExecutionLink::Trace)}
-            {" "}{&ffqn.function_name}
+            {" "}{&ffqn.ifc_fqn.ifc_name}{"."}{&ffqn.function_name}
             {" "}
             {maybe_stub_link}
         </>
@@ -600,6 +610,7 @@ fn compute_root_trace(
         last_event_at,
         busy,
         children,
+        load_button,
     })
 }
 
