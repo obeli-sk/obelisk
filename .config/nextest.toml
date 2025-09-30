@@ -1,4 +1,4 @@
-[profile.ci-test-nosim]
+[profile.ci-test]
 failure-output = "immediate"
 fail-fast = false
 status-level = "all"

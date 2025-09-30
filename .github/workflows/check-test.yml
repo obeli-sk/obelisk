@@ -23,7 +23,7 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  ci-test-nosim:
+  ci-test:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
@@ -49,10 +49,17 @@ jobs:
           CI: true
         run: nix develop --command cargo nextest run --workspace --all-features  --profile ${{ github.job }} --test-threads 1
 
-      - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@3a74b2957438d0b6e2e61d67b05318aa25c9e6c6
+
+      - name: Upload test results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: junit-report
+          path: target/nextest/${{ github.job }}/junit.xml
+
+      - name: Report results in GitHub UI
+        uses: dorny/test-reporter@dc3a92680fcc15842eef52e8c4606ea7ce6bd3f3
         if: always()
         with:
-          check_name: Test results - nosim
-          files: |
-            target/nextest/${{ github.job }}/junit.xml
+          name: Rust tests
+          path: target/nextest/${{ github.job }}/junit.xml
+          reporter: java-junit
