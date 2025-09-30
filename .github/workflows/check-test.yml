@@ -47,8 +47,7 @@ jobs:
         env:
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
           CI: true
-        run: nix develop --command cargo nextest run --workspace --all-features  --profile ${{ github.job }} --test-threads 1
-
+        run: nix develop --command cargo nextest run --workspace --all-features  --profile ${{ github.job }}
 
       - name: Upload test results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
