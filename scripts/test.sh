@@ -7,4 +7,4 @@ cd "$(dirname "$0")/.."
 
 RUST_BACKTRACE=1 \
 RUST_LOG="${RUST_LOG:-obeli=debug}" \
-cargo nextest run  --no-output-indent --workspace -P ci-test-nosim "$@"
+cargo nextest run  --no-output-indent --workspace -P ci-test "$@"
