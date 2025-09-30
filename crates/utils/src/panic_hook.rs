@@ -7,30 +7,23 @@ pub fn tracing_panic_hook(panic_info: &std::panic::PanicHookInfo) {
         Some(s.as_str())
     } else {
         None
-    };
+    }
+    .unwrap_or_default();
     let location = panic_info.location().map(ToString::to_string);
     let backtrace = std::backtrace::Backtrace::capture();
     if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
         if tracing::enabled!(tracing::Level::ERROR) {
             tracing::error!(
-                panic.payload = payload,
                 panic.location = location,
-                "A panic occurred: {backtrace}"
+                "A panic occurred: `{payload}` {backtrace}"
             );
-        } else if let Some(payload) = payload {
-            eprintln!("A panic occurred: {payload}\n{backtrace}");
         } else {
-            eprintln!("A panic occurred\n{backtrace}");
+            eprintln!("A panic occurred: `{payload}`\n{backtrace}");
         }
     } else if tracing::enabled!(tracing::Level::ERROR) {
-        tracing::error!(
-            panic.payload = payload,
-            panic.location = location,
-            "A panic occurred",
-        );
-    } else if let Some(payload) = payload {
-        eprintln!("A panic occurred: {payload}");
+        tracing::error!(panic.location = location, "A panic occurred: `{payload}`",);
     } else {
+        eprintln!("A panic occurred: `{payload}`");
         eprintln!("A panic occurred");
     }
 }
