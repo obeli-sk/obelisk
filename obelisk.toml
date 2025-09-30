@@ -4,9 +4,9 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # Note: listening on all interfaces using [::]:port is not advised, as there is no auth yet.
 
 # sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
-## Customize PRAGMA statements. Switch to "FULL" sync to perform fsync on each commit.
+## Customize PRAGMA statements.
 ## Defaults are in `crates/db-sqlite/src/sqlite_dao.rs`.
-# sqlite.pragma = { "cache_size" = "3000", "synchronous" = "FULL" }
+# sqlite.pragma = { "cache_size" = "3000" }
 
 ## Global WASM Configuration
 # [wasm]

@@ -60,7 +60,7 @@ Inspired by https://github.com/rails/rails/pull/49349
 
 const PRAGMA: [[&str; 2]; 9] = [
     ["journal_mode", "wal"],
-    ["synchronous", "NORMAL"],
+    ["synchronous", "FULL"],
     ["foreign_keys", "true"],
     ["busy_timeout", "1000"],
     ["cache_size", "10000"], // number of pages
