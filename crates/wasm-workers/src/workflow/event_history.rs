@@ -1778,14 +1778,6 @@ impl EventHistory {
         (self.join_set_count(kind) + 1).to_string()
     }
 
-    fn next_join_set_one_off(&self) -> JoinSetId {
-        JoinSetId::new(
-            JoinSetKind::OneOff,
-            StrVariant::from(self.next_join_set_name_index(JoinSetKind::OneOff)),
-        )
-        .expect("next_join_set_name_index returns a number")
-    }
-
     fn next_join_set_one_off_named(
         &self,
         suffix: &str,
@@ -2286,7 +2278,9 @@ impl OneOffChildExecutionRequest {
         version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
-        let join_set_id = event_history.next_join_set_one_off();
+        let join_set_id = event_history
+            .next_join_set_one_off_named(&ffqn.function_name)
+            .expect("no illegal chars in fn name: only alphanumeric and dash");
         let child_execution_id = event_history.execution_id.next_level(&join_set_id);
         let event = EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
             ffqn,
@@ -2384,7 +2378,9 @@ impl OneOffDelayRequest {
         version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<DateTime<Utc>, WorkflowFunctionError> {
-        let join_set_id = event_history.next_join_set_one_off();
+        let join_set_id = event_history
+            .next_join_set_one_off_named("sleep")
+            .expect("no illegal chars in sleep");
         let delay_id = DelayId::new(&event_history.execution_id, &join_set_id);
 
         let ChildReturnValue::OneOffDelay { scheduled_at } = event_history
