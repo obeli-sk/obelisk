@@ -85,6 +85,7 @@ use grpc::grpc_mapping::TonicServerOptionExt;
 use grpc::grpc_mapping::TonicServerResultExt;
 use grpc::grpc_mapping::db_error_to_status;
 use grpc::grpc_mapping::from_execution_event_to_grpc;
+use hashbrown::HashMap;
 use itertools::Either;
 use serde::Deserialize;
 use serde_json::json;
@@ -130,7 +131,7 @@ const EPOCH_MILLIS: u64 = 10;
 const WEBUI_OCI_REFERENCE: &str = include_str!("../../assets/webui-version.txt");
 const GET_STATUS_POLLING_SLEEP: Duration = Duration::from_secs(1);
 
-type ComponentSourceMap = hashbrown::HashMap<ComponentId, hashbrown::HashMap<String, PathBuf>>;
+type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
 
 #[derive(derive_more::Debug)]
 struct GrpcServer {
@@ -855,8 +856,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let request = request.into_inner();
         let component_id =
             ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
-        if let Some(inner_map) = self.component_source_map.get(&component_id) {
-            if let Some(actual_path) = inner_map.get(&request.file) {
+        if let Some(matchable_source_map) = self.component_source_map.get(&component_id) {
+            if let Some(actual_path) = matchable_source_map.find_matching(&request.file) {
                 match tokio::fs::read_to_string(actual_path).await {
                     Ok(content) => Ok(tonic::Response::new(grpc_gen::GetBacktraceSourceResponse {
                         content,
@@ -1318,11 +1319,13 @@ impl ServerVerified {
             let mut map = hashbrown::HashMap::new();
             for workflow in &mut config.workflows {
                 let inner_map = std::mem::take(&mut workflow.frame_files_to_sources);
-                map.insert(workflow.component_id().clone(), inner_map);
+                let matchable_source_map = MatchableSourceMap::new(inner_map);
+                map.insert(workflow.component_id().clone(), matchable_source_map);
             }
             for webhook in &mut config.webhooks_by_names.values_mut() {
                 let inner_map = std::mem::take(&mut webhook.frame_files_to_sources);
-                map.insert(webhook.component_id.clone(), inner_map);
+                let matchable_source_map = MatchableSourceMap::new(inner_map);
+                map.insert(webhook.component_id.clone(), matchable_source_map);
             }
             map
         };
@@ -2424,6 +2427,55 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
 
     fn all_exports(&self) -> &[PackageIfcFns] {
         &self.inner.export_hierarchy
+    }
+}
+
+#[derive(Debug)]
+struct MatchableSourceMap {
+    exact_matches: HashMap<String, PathBuf>,
+    suffix_matches: HashMap<String, PathBuf>,
+}
+impl MatchableSourceMap {
+    fn new(config_map: HashMap<String, PathBuf>) -> Self {
+        let mut exact_matches = HashMap::new();
+        let mut suffix_matches = HashMap::new();
+
+        for (k, v) in config_map {
+            if let Some(stripped) = k.strip_prefix(".../") {
+                // Ensure that all suffixes start with a slash, so the `ends_with` below will only matches full path segments.
+                suffix_matches.insert(format!("/{stripped}"), v);
+            } else {
+                exact_matches.insert(k, v);
+            }
+        }
+
+        Self {
+            exact_matches,
+            suffix_matches,
+        }
+    }
+
+    fn find_matching(&self, frame_symbol_path: &str) -> Option<&PathBuf> {
+        if let Some(v) = self.exact_matches.get(frame_symbol_path) {
+            return Some(v);
+        }
+
+        let mut matches = vec![];
+
+        for (suffix, v) in &self.suffix_matches {
+            if frame_symbol_path.ends_with(suffix) {
+                matches.push(v);
+            }
+        }
+
+        match matches.len() {
+            0 => None,
+            1 => Some(matches[0]),
+            _ => {
+                warn!("Multiple suffix matches for '{frame_symbol_path}', returning None",);
+                None
+            }
+        }
     }
 }
 

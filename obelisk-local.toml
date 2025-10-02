@@ -16,20 +16,20 @@ max_retries = 0
 name = "test_programs_fibo_workflow"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release/test_programs_fibo_workflow.wasm"
 exec.lock_expiry.seconds = 2
-backtrace.sources = { "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
 
 [[workflow]]
 name = "test_programs_fibo_workflow_outer"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release/test_programs_fibo_workflow_outer.wasm"
 exec.lock_expiry.seconds = 2
-backtrace.sources = { "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow-outer/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow-outer/src/lib.rs" }
 
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release/test_programs_fibo_webhook.wasm"
 http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
-backtrace.sources = { "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
 
 [[activity_wasm]]
 name = "test_programs_http_get_activity"
@@ -40,7 +40,7 @@ forward_stderr = "stderr"
 [[workflow]]
 name = "test_programs_http_get_workflow"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release/test_programs_http_get_workflow.wasm"
-backtrace.sources = { "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
 
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
@@ -50,7 +50,7 @@ exec.lock_expiry.seconds = 10
 [[workflow]]
 name = "test_programs_sleep_workflow"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release/test_programs_sleep_workflow.wasm"
-backtrace.sources = { "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
 
 [[activity_wasm]]
 name = "test_programs_dir_activity"
@@ -83,4 +83,4 @@ location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/r
 [[workflow]]
 name = "test_programs_stub_workflow"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release/test_programs_stub_workflow.wasm"
-backtrace.sources = { "${OBELISK_TOML_DIR}/crates/testing/test-programs/stub/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/stub/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/stub/workflow/src/lib.rs" }

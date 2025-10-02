@@ -98,7 +98,8 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # convert_core_module = true # Transparently convert Core WASM modules to WASM Components during startup.
 
 ## Map from frame symbol file names to corresponding file paths on local filesystem. Supports path path prefixes on both sides.
-# backtrace.sources = {"frame symbol file path" = "path to the source file"}
+## If frame symbol path starts with `...`, only the suffix will be used to find the matching source file.
+# backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
 
 # Stub WASI CLI world imports. Only needed for workflows authored in TinyGo.
 # stub_wasi = false # Default is false.
@@ -148,7 +149,7 @@ max_retries = 0
 name = "test_programs_fibo_workflow"
 location.oci = "docker.io/getobelisk/test_programs_fibo_workflow:2025-09-28@sha256:bafc83b7784248377b082a92d44c57b8e6e1597fcce7d0959bfa6aae225c505f"
 exec.lock_expiry.seconds = 2
-backtrace.sources = { "/home/runner/work/obelisk/obelisk/crates/testing/test-programs/fibo/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
 
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
@@ -165,7 +166,7 @@ forward_stderr = "stderr"
 [[workflow]]
 name = "test_programs_http_get_workflow"
 location.oci = "docker.io/getobelisk/test_programs_http_get_workflow:2025-09-28@sha256:c1f1866d15fa14062e95da06a539ede858063d8518a06087e5ba34a3c620b8c6"
-backtrace.sources = { "/home/runner/work/obelisk/obelisk/crates/testing/test-programs/http/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
 
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
@@ -175,7 +176,7 @@ exec.lock_expiry.seconds = 10
 [[workflow]]
 name = "test_programs_sleep_workflow"
 location.oci = "docker.io/getobelisk/test_programs_sleep_workflow:2025-09-28@sha256:787f2df183a7cb9d522f930dafa2d393d7f18134970009a34305726b15407be8"
-backtrace.sources = { "/home/runner/work/obelisk/obelisk/crates/testing/test-programs/sleep/workflow/src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
 
 ### Send spans via gRPC to an OTLP collector.
 # [otlp]
