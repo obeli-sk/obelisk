@@ -3,6 +3,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.2](https://github.com/obeli-sk/obelisk/compare/v0.25.1...v0.25.2)
+This release contains small tweaks to the web UI, better ergonomics in CLI and in TOML.
+More notably, sqlite now uses `FULL` sync, lowering the chance of data loss.
+
+### ⛰️ Features
+
+- *(cli)* Allow omitting package in `submit` - ([918acb8](https://github.com/obeli-sk/obelisk/commit/918acb82e22e2bc37ac74ec69747de612ad98f8d))
+- Allow specifying just the suffix of frame symbol path - ([b76254c](https://github.com/obeli-sk/obelisk/commit/b76254cd8c9a6286f4864e1b05fa6f35e132fba6))
+- Add function name / `sleep` as label to one-off join sets - ([663cbf5](https://github.com/obeli-sk/obelisk/commit/663cbf55dab487922ff8549c8a000d9bd25eaee8))
+
+### 🐛 Bug Fixes
+
+- *(cli)* Ignore old version header in `generate extensions` - ([79b2bbd](https://github.com/obeli-sk/obelisk/commit/79b2bbde5c2b75a56884cfe55a217aa1948a41e4))
+
+### 🚜 Refactor
+
+- *(sqlite)* Use `FULL` sync instead of `NORMAL` - ([7c4a570](https://github.com/obeli-sk/obelisk/commit/7c4a570ab68a2e1f50e851d2a8dcd5d6fffde662))
+- Extract all occurrences of `execution-failed` into a constant - ([dcf043d](https://github.com/obeli-sk/obelisk/commit/dcf043d0a901b9d02487e7c28bc4f7122c954a99))
+- Make the panic hook report the payload more clearly - ([f24c253](https://github.com/obeli-sk/obelisk/commit/f24c25390e231c97942b1e37ce41f3f711d5bb16))
+
+
 ## [0.25.1](https://github.com/obeli-sk/obelisk/compare/v0.25.0...v0.25.1)
 
 ### 🐛 Bug Fixes
