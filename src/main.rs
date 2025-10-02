@@ -87,7 +87,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 imports,
                 extensions,
             }) => {
-                let client = get_fn_repository_client(api_url).await?;
+                let client = get_fn_repository_client(&api_url).await?;
                 command::component::list_components(
                     client,
                     if imports {
@@ -109,19 +109,27 @@ async fn main() -> Result<(), anyhow::Error> {
                 json: json_output,
                 no_reconnect,
             }) => {
-                let client = get_execution_repository_client(api_url).await?;
+                let client = get_execution_repository_client(&api_url).await?;
                 let opts = if json_output {
                     SubmitOutputOpts::Json
                 } else {
                     SubmitOutputOpts::PlainFollow { no_reconnect }
                 };
-                command::execution::submit(client, ffqn, parse_params(params)?, follow, opts).await
+                command::execution::submit(
+                    client,
+                    ffqn,
+                    parse_params(params)?,
+                    follow,
+                    opts,
+                    &api_url,
+                )
+                .await
             }
             ClientSubcommand::Execution(args::Execution::Stub(args::Stub {
                 execution_id,
                 return_value,
             })) => {
-                let client = get_execution_repository_client(api_url).await?;
+                let client = get_execution_repository_client(&api_url).await?;
                 command::execution::stub(client, execution_id, return_value).await
             }
             ClientSubcommand::Execution(args::Execution::Get {
@@ -129,7 +137,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 follow,
                 no_reconnect,
             }) => {
-                let client = get_execution_repository_client(api_url).await?;
+                let client = get_execution_repository_client(&api_url).await?;
                 let opts = GetStatusOptions {
                     follow,
                     no_reconnect,
@@ -140,7 +148,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 follow,
                 execution_id,
             }) => {
-                let client = get_execution_repository_client(api_url).await?;
+                let client = get_execution_repository_client(&api_url).await?;
                 command::execution::get_status_json(client, execution_id, follow, false).await
             }
         },
@@ -175,7 +183,7 @@ type ExecutionRepositoryClient = grpc_gen::execution_repository_client::Executio
 >;
 
 async fn get_execution_repository_client(
-    url: String,
+    url: &str,
 ) -> Result<ExecutionRepositoryClient, anyhow::Error> {
     Ok(
         grpc_gen::execution_repository_client::ExecutionRepositoryClient::with_interceptor(
@@ -190,7 +198,7 @@ async fn get_execution_repository_client(
 type FunctionRepositoryClient = grpc_gen::function_repository_client::FunctionRepositoryClient<
     tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
 >;
-async fn get_fn_repository_client(url: String) -> Result<FunctionRepositoryClient, anyhow::Error> {
+async fn get_fn_repository_client(url: &str) -> Result<FunctionRepositoryClient, anyhow::Error> {
     Ok(
         grpc_gen::function_repository_client::FunctionRepositoryClient::with_interceptor(
             to_channel(url).await?,

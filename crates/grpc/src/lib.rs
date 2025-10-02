@@ -18,7 +18,7 @@ pub enum ToChannelError {
     UnknownScheme(String),
 }
 
-pub async fn to_channel(url: String) -> Result<Channel, ToChannelError> {
+pub async fn to_channel(url: &str) -> Result<Channel, ToChannelError> {
     let tls = ClientTlsConfig::new().with_native_roots();
     let url: Uri = url.parse().map_err(ToChannelError::InvalidUri)?;
     if url.scheme() == Some(&Scheme::HTTP) {

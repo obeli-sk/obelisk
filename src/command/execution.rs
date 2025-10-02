@@ -1,4 +1,6 @@
 use crate::ExecutionRepositoryClient;
+use crate::get_fn_repository_client;
+use anyhow::bail;
 use chrono::DateTime;
 use concepts::JOIN_SET_ID_INFIX;
 use concepts::JoinSetKind;
@@ -26,7 +28,44 @@ pub(crate) async fn submit(
     params: Vec<u8>,
     follow: bool,
     opts: SubmitOutputOpts,
+    api_url: &str,
 ) -> anyhow::Result<()> {
+    let ffqn = if let Some(ifc_name) = ffqn.ifc_fqn.strip_prefix(".../") {
+        // Guess function
+        let mut component_client = get_fn_repository_client(api_url).await?;
+        let components = component_client
+            .list_components(tonic::Request::new(grpc_gen::ListComponentsRequest {
+                function_name: None,
+                component_id: None,
+                extensions: false,
+            }))
+            .await?
+            .into_inner()
+            .components;
+        let mut matched = Vec::new();
+        for export in components
+            .into_iter()
+            .flat_map(|component| component.exports)
+            .map(|detail| detail.function_name.expect("function_name is sent"))
+        {
+            if export.function_name == ffqn.function_name.as_ref() {
+                let ffqn =
+                    FunctionFqn::try_from(export).expect("sent FunctionName must be parseable");
+                if ffqn.ifc_fqn.ifc_name() == ifc_name {
+                    matched.push(ffqn);
+                }
+            }
+        }
+        let ffqn = match matched.as_slice() {
+            [] => bail!("no matching function found"),
+            [_] => matched.remove(0),
+            _ => bail!("more than one matching function found: {matched:?}"),
+        };
+        println!("Matched {ffqn}");
+        ffqn
+    } else {
+        ffqn
+    };
     let execution_id = ExecutionId::generate();
     client
         .submit(tonic::Request::new(grpc_gen::SubmitRequest {
@@ -35,7 +74,7 @@ pub(crate) async fn submit(
                 type_url: format!("urn:obelisk:json:params:{ffqn}"),
                 value: params,
             }),
-            function_name: Some(ffqn.into()),
+            function_name: Some(grpc_gen::FunctionName::from(ffqn)),
         }))
         .await?;
     if opts == SubmitOutputOpts::Json {
