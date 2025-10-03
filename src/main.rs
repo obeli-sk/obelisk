@@ -106,14 +106,14 @@ async fn main() -> Result<(), anyhow::Error> {
                 ffqn,
                 params,
                 follow,
-                json: json_output,
+                json,
                 no_reconnect,
             }) => {
                 let client = get_execution_repository_client(&api_url).await?;
-                let opts = if json_output {
+                let opts = if json {
                     SubmitOutputOpts::Json
                 } else {
-                    SubmitOutputOpts::PlainFollow { no_reconnect }
+                    SubmitOutputOpts::Plain { no_reconnect }
                 };
                 command::execution::submit(
                     client,

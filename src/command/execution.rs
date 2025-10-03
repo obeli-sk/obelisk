@@ -18,7 +18,7 @@ use tracing::instrument;
 #[derive(PartialEq)]
 pub(crate) enum SubmitOutputOpts {
     Json,
-    PlainFollow { no_reconnect: bool },
+    Plain { no_reconnect: bool },
 }
 
 #[instrument(skip_all)]
@@ -61,7 +61,7 @@ pub(crate) async fn submit(
             [_] => matched.remove(0),
             _ => bail!("more than one matching function found: {matched:?}"),
         };
-        if matches!(opts, SubmitOutputOpts::PlainFollow { .. }) {
+        if matches!(opts, SubmitOutputOpts::Plain { .. }) {
             println!("Matched {ffqn}");
         }
         ffqn
@@ -90,7 +90,7 @@ pub(crate) async fn submit(
     if follow {
         match opts {
             SubmitOutputOpts::Json => get_status_json(client, execution_id, true, true).await?,
-            SubmitOutputOpts::PlainFollow { no_reconnect } => {
+            SubmitOutputOpts::Plain { no_reconnect } => {
                 let opts = GetStatusOptions {
                     follow: true,
                     no_reconnect,
