@@ -127,3 +127,22 @@ cargo run --release
 ```sh
 ./scripts/test.sh
 ```
+
+# Project Licensing Information
+
+This project (all files and folders except as noted below) is licensed
+under the [GNU Affero General Public License version 3](LICENSE-AGPL).
+
+## Subfolder Exceptions
+
+The following subfolders are licensed under the MIT License:
+
+* `wit/`   – see [LICENSE-MIT](wit/LICENSE-MIT)
+* `toml/`  – see [LICENSE-MIT](toml/LICENSE-MIT)
+* `proto/` – see [LICENSE-MIT](proto/LICENSE-MIT)
+
+## Generated WIT Files
+
+The runtime includes functionality that may generate new "extension" WIT files. These generated files are typically based on a combination of user-provided WIT files and the base WIT definitions found in the MIT-licensed `wit/` directory.
+
+Users are free to use, modify, and distribute these generated WIT files under the terms of the MIT License, for example, to allow other WASM components to interact via these extended interfaces.
