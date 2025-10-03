@@ -61,7 +61,9 @@ pub(crate) async fn submit(
             [_] => matched.remove(0),
             _ => bail!("more than one matching function found: {matched:?}"),
         };
-        println!("Matched {ffqn}");
+        if matches!(opts, SubmitOutputOpts::PlainFollow { .. }) {
+            println!("Matched {ffqn}");
+        }
         ffqn
     } else {
         ffqn
