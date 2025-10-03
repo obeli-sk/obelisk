@@ -58,7 +58,7 @@ https://www.sqlite.org/pragma.html#pragma_journal_size_limit
 Inspired by https://github.com/rails/rails/pull/49349
 */
 
-const PRAGMA: [[&str; 2]; 9] = [
+const PRAGMA: [[&str; 2]; 10] = [
     ["journal_mode", "wal"],
     ["synchronous", "FULL"],
     ["foreign_keys", "true"],
@@ -68,6 +68,7 @@ const PRAGMA: [[&str; 2]; 9] = [
     ["page_size", "8192"], // 8 KB
     ["mmap_size", "134217728"],
     ["journal_size_limit", "67108864"],
+    ["integrity_check", ""],
 ];
 
 const CREATE_TABLE_T_METADATA: &str = r"
