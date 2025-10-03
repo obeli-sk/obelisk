@@ -510,18 +510,28 @@ impl<S: Sleep> SqlitePool<S> {
                 .unwrap_or_else(|err| panic!("cannot run `{sql}` - {err:?}"));
         }
         fn pragma_update(conn: &Connection, name: &str, value: &str) {
-            debug!("Setting PRAGMA {name}={value}");
-            conn.pragma_update(None, name, value)
+            if value.is_empty() {
+                debug!("Querying PRAGMA {name}");
+                conn.pragma_query(None, name, |row| {
+                    debug!("{row:?}");
+                    Ok(())
+                })
                 .unwrap_or_else(|err| panic!("cannot update pragma `{name}`=`{value}` - {err:?}"));
+            } else {
+                debug!("Setting PRAGMA {name}={value}");
+                conn.pragma_update(None, name, value).unwrap_or_else(|err| {
+                    panic!("cannot update pragma `{name}`=`{value}` - {err:?}")
+                });
+            }
         }
 
         let conn = Connection::open_with_flags(path, OpenFlags::default())
             .unwrap_or_else(|err| panic!("cannot open the connection - {err:?}"));
 
-        for [pragma_name, pragma_value] in PRAGMA {
+        for [pragma_name, default_value] in PRAGMA {
             let pragma_value = pragma_override
                 .remove(pragma_name)
-                .unwrap_or_else(|| pragma_value.to_string());
+                .unwrap_or_else(|| default_value.to_string());
             pragma_update(&conn, pragma_name, &pragma_value);
         }
         // drain the rest overrides
