@@ -141,7 +141,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.25.2"
+version = "0.25.3"
 license = "AGPL-3.0-only"
 repository = "https://github.com/obeli-sk/obelisk"
 authors = ["Project Developers"]
@@ -149,12 +149,12 @@ edition = "2024"
 rust-version = "1.90.0"
 
 [workspace.dependencies]
-concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.25.2" }
+concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.25.3" }
 db-mem = { path = "crates/db-mem" }
-db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.25.2" }
+db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.25.3" }
 db-tests = { path = "crates/testing/db-tests" }
-executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.25.2" }
-grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.25.2" }
+executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.25.3" }
+grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.25.3" }
 obelisk-component-builder = { path = "crates/testing/component-builder", features = [
     "genrs",
 ] }
@@ -171,9 +171,9 @@ test-programs-sleep-workflow-builder = { path = "crates/testing/test-programs/sl
 test-programs-stub-activity-builder = { path = "crates/testing/test-programs/stub/activity/builder" }
 test-programs-stub-workflow-builder = { path = "crates/testing/test-programs/stub/workflow/builder" }
 test-utils = { path = "crates/testing/test-utils" }
-utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.25.2" }
-val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.25.2" }
-wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.25.2" }
+utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.25.3" }
+val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.25.3" }
+wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.25.3" }
 webui-builder = { path = "crates/webui/builder" }
 
 anyhow = { version = "1.0", features = ["backtrace"] }

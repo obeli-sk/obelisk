@@ -3,6 +3,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.3](https://github.com/obeli-sk/obelisk/compare/v0.25.2...v0.25.3)
+
+### 🐛 Bug Fixes
+
+- *(cli)* Avoid printing plaintext when JSON output is selected - ([4bd4cb9](https://github.com/obeli-sk/obelisk/commit/4bd4cb958af05e1db2df139c4bda1e7ca2a3186f))
+
+### 📚 Documentation
+
+- Merge licensing info into readme - ([19c300a](https://github.com/obeli-sk/obelisk/commit/19c300a0d19d0fd904902f682589815aab4a0d27))
+
+
 ## [0.25.2](https://github.com/obeli-sk/obelisk/compare/v0.25.1...v0.25.2)
 This release contains small tweaks to the web UI, better ergonomics in CLI and in TOML.
 More notably, sqlite now uses `FULL` sync, lowering the chance of data loss.
