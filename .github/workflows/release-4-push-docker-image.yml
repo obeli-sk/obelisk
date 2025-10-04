@@ -36,6 +36,11 @@ jobs:
           - tarfile: obelisk-x86_64-unknown-linux-gnu.tar.gz
             dockerfile: ubuntu-24.04.Dockerfile
             image_tag: ubuntu
+
+          - tarfile: obelisk-x86_64-unknown-linux-gnu.tar.gz
+            dockerfile: ubuntu-24.04-litestream.Dockerfile
+            image_tag: ubuntu-litestream
+
           - tarfile: obelisk-x86_64-unknown-linux-musl.tar.gz
             dockerfile: alpine.Dockerfile
             image_tag: alpine
