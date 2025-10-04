@@ -3,6 +3,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.4](https://github.com/obeli-sk/obelisk/compare/v0.25.3...v0.25.4)
+
+### ⛰️ Features
+
+- *(sqlite)* Allow running pragma queries at startup - ([969d5d1](https://github.com/obeli-sk/obelisk/commit/969d5d14521ffeccf66e588f09f9a75a2dff4d7e))
+
+### 🐛 Bug Fixes
+
+- Correct error variant detection in `execution_error_to_wast_val` - ([714deeb](https://github.com/obeli-sk/obelisk/commit/714deebf5215760273df2eaccb30035ce72923db))
+
+### 🚜 Refactor
+
+- *(sqlite)* Perform integrity check at startup - ([04339fe](https://github.com/obeli-sk/obelisk/commit/04339fe90ef63bba11c0db293942bfeb323cb7d7))
+
+
 ## [0.25.3](https://github.com/obeli-sk/obelisk/compare/v0.25.2...v0.25.3)
 
 ### 🐛 Bug Fixes
