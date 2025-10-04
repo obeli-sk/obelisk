@@ -737,10 +737,7 @@ pub fn execution_error_to_wast_val(ret_type: &TypeWrapperTopLevel) -> WastVal {
                 )))));
             }
             TypeWrapper::Variant(variants) => {
-                if let Some(Some(TypeWrapper::Record(fields))) =
-                    variants.get(EXECUTION_FAILED_STRING_OR_VARIANT)
-                    && fields.is_empty()
-                {
+                if variants.get(EXECUTION_FAILED_STRING_OR_VARIANT) == Some(&None) {
                     return WastVal::Result(Err(Some(Box::new(WastVal::Variant(
                         EXECUTION_FAILED_STRING_OR_VARIANT.to_string(),
                         None,

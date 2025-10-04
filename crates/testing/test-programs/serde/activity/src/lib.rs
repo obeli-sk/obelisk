@@ -1,4 +1,4 @@
-use exports::testing::serde::serde::{Guest, MyRecord, MyVariant};
+use exports::testing::serde::serde::{Guest, MyError, MyRecord, MyVariant};
 use wit_bindgen::generate;
 
 generate!({ generate_all });
@@ -12,5 +12,9 @@ impl Guest for Component {
 
     fn var(my_variant: MyVariant) -> Result<MyVariant, ()> {
         Ok(my_variant)
+    }
+
+    fn trap() -> Result<(), MyError> {
+        panic!()
     }
 }

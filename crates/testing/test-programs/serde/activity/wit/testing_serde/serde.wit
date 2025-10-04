@@ -17,5 +17,11 @@ interface serde {
 
     var: func(my-variant: my-variant) -> result<my-variant>;
 
+    variant my-error {
+        foo,
+        execution-failed
+    }
+    trap: func() -> result<_, my-error>;
+
 }
 

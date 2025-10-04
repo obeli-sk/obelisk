@@ -76,6 +76,10 @@ max_retries = 0
 forward_stdout = "stderr"
 forward_stderr = "stderr"
 
+[[workflow]]
+name = "test_programs_serde_workflow"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release/test_programs_serde_workflow.wasm"
+
 [[activity_stub]]
 name = "test_programs_stub_activity_dummy"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release/test_programs_stub_activity.wasm"

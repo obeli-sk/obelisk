@@ -1,0 +1,8 @@
+package testing:serde-workflow;
+
+interface serde-workflow {
+
+    expect-trap: func() -> result;
+
+}
+

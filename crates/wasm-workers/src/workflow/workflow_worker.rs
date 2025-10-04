@@ -686,7 +686,7 @@ impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::activity::activity_worker::tests::compile_activity_stub;
+    use crate::activity::activity_worker::tests::{compile_activity_stub, new_activity_worker};
     use crate::testing_fn_registry::{TestingFnRegistry, fn_registry_dummy};
     use crate::{
         activity::activity_worker::tests::{
@@ -2217,5 +2217,150 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn execution_failed_variant_should_work(
+        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
+    ) {
+        const FFQN_WORKFLOW: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_serde_workflow_builder::exports::testing::serde_workflow::serde_workflow::EXPECT_TRAP,
+        );
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool) = db.set_up().await;
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(
+                test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
+            ),
+            compile_workflow(test_programs_serde_workflow_builder::TEST_PROGRAMS_SERDE_WORKFLOW),
+        ]);
+
+        let workflow_worker = compile_workflow_worker(
+            test_programs_serde_workflow_builder::TEST_PROGRAMS_SERDE_WORKFLOW,
+            db_pool.clone(),
+            sim_clock.clone(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+        );
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection();
+
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: FFQN_WORKFLOW,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: u32::MAX,
+                component_id: ComponentId::dummy_workflow(),
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        let exec_workflow = ExecTask::new(
+            workflow_worker,
+            ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: TICK_SLEEP,
+                component_id: ComponentId::dummy_workflow(),
+                task_limiter: None,
+                executor_id: ExecutorId::generate(),
+            },
+            sim_clock.clone(),
+            db_pool.clone(),
+            Arc::new([FFQN_WORKFLOW]),
+        );
+
+        // 1. Tick workflow executor
+        {
+            let task_count = exec_workflow
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap();
+            assert_eq!(1, task_count);
+        }
+
+        let pending_state = db_connection
+            .get_pending_state(&execution_id)
+            .await
+            .unwrap();
+        assert_matches!(
+            pending_state,
+            PendingState::BlockedByJoinSet {
+                join_set_id: _,
+                lock_expires_at: _,
+                closing: false
+            }
+        );
+
+        // 2. Tick the activity executor
+        {
+            let (activity_worker, component_id) = new_activity_worker(
+                test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
+                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap(),
+                sim_clock.clone(),
+                TokioSleep,
+            );
+            let exec_activity = ExecTask::new_all_ffqns_test(
+                activity_worker,
+                ExecConfig {
+                    batch_size: 1,
+                    lock_expiry: Duration::from_secs(1),
+                    tick_sleep: TICK_SLEEP,
+                    component_id,
+                    task_limiter: None,
+                    executor_id: ExecutorId::generate(),
+                },
+                sim_clock.clone(),
+                db_pool.clone(),
+            );
+            {
+                let task_count = exec_activity
+                    .tick_test(sim_clock.now(), RunId::generate())
+                    .await
+                    .unwrap()
+                    .wait_for_tasks()
+                    .await
+                    .unwrap();
+                assert_eq!(1, task_count);
+            }
+        }
+
+        // 3. Tick workflow executor
+        {
+            let task_count = exec_workflow
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap();
+            assert_eq!(1, task_count);
+        }
+
+        let pending_state = db_connection
+            .get_pending_state(&execution_id)
+            .await
+            .unwrap();
+        assert_matches!(
+            pending_state,
+            PendingState::Finished {
+                finished: PendingStateFinished {
+                    result_kind: PendingStateFinishedResultKind(Ok(())),
+                    ..
+                }
+            }
+        );
     }
 }

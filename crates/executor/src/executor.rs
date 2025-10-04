@@ -125,6 +125,27 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         }
     }
 
+    #[cfg(feature = "test")]
+    pub fn new_all_ffqns_test(
+        worker: Arc<dyn Worker>,
+        config: ExecConfig,
+        clock_fn: C,
+        db_pool: Arc<dyn DbPool>,
+    ) -> Self {
+        let ffqns = worker
+            .exported_functions()
+            .iter()
+            .map(|meta| meta.ffqn.clone())
+            .collect();
+        Self {
+            worker,
+            config,
+            clock_fn,
+            db_pool,
+            ffqns,
+        }
+    }
+
     pub fn spawn_new(
         worker: Arc<dyn Worker>,
         config: ExecConfig,

@@ -451,7 +451,7 @@ pub(crate) mod tests {
         )
     }
 
-    fn new_activity_worker(
+    pub(crate) fn new_activity_worker(
         wasm_path: &str,
         engine: Arc<Engine>,
         clock_fn: impl ClockFn + 'static,
