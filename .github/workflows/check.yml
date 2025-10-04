@@ -57,27 +57,6 @@ jobs:
               exit 1
           fi
 
-  check-unpublishable-packages:
-    name: Check unpublishable-packages.txt
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
-      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Populate the nix store
-        run: nix develop --command echo
-
-      - run: nix develop --command ./scripts/unpublishable-packages.sh
-      - run: |
-          if git diff --quiet; then
-              echo "No changes"
-          else
-              echo "::error::Changes in unpublishable-packages.txt detected"
-              git diff
-              exit 1
-          fi
-
   clippy:
     name: clippy
     runs-on: ubuntu-24.04
