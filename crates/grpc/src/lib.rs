@@ -121,7 +121,7 @@ pub mod extractor {
         let parent_context = opentelemetry::global::get_text_map_propagator(|propagator| {
             propagator.extract(&HttpHeaderExtractor(request.headers()))
         });
-        Span::current().set_parent(parent_context);
+        let _ = Span::current().set_parent(parent_context);
         request
     }
 }

@@ -186,7 +186,7 @@ arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"
 bytes = "1.10"
-cargo_metadata = "0.22"
+cargo_metadata = "0.23"
 cfg-if = "1.0.3"
 chrono = { version = "0.4.42", features = ["arbitrary", "serde"] }
 clap = { version = "4.5.48", features = ["derive"] }
@@ -197,7 +197,7 @@ config = { version = "0.15.18", default-features = false, features = [
     "convert-case",
 ] }
 console-subscriber = "0.4.1"
-const_format = "0.2.34"
+const_format = "0.2.35"
 criterion = "0.7"
 crossterm = "0.29.0"
 derive_more = { version = "2.0.1", features = [
@@ -330,15 +330,15 @@ wasip2 = "1.0.1"
 wit-bindgen = "0.46.0"
 
 # otlp
-opentelemetry = "0.30.0"
-opentelemetry_sdk = { version = "0.30.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.30.0", features = [
+opentelemetry = "0.31.0"
+opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31.0", features = [
     "tls",
     "tls-roots",
     "grpc-tonic",
 ] }
-opentelemetry-semantic-conventions = "0.30.0"
-tracing-opentelemetry = "0.31"
+opentelemetry-semantic-conventions = "0.31.0"
+tracing-opentelemetry = "0.32"
 
 [workspace.lints]
 # lower the priority to allow overriding later

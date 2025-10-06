@@ -2237,7 +2237,7 @@ impl ExecutionMetadata {
             let linked_span_context = otel_context.span().span_context().clone();
             span.add_link(linked_span_context);
         } else {
-            span.set_parent(otel_context);
+            let _ = span.set_parent(otel_context);
         }
     }
 }
