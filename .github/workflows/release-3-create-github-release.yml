@@ -10,11 +10,13 @@ on:
         description: "The ref (branch or SHA) to process"
         required: false
         type: string
-  workflow_run:
-    workflows:
-      - release-2-cargo-publish
-    types:
-      - completed
+  workflow_call:
+    inputs:
+      skip_latest:
+        description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
+        required: true
+        type: boolean
+        default: false
 
 defaults:
   run:
@@ -23,7 +25,6 @@ defaults:
 jobs:
   create-github-release:
     runs-on: ubuntu-24.04
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
@@ -58,3 +59,9 @@ jobs:
           SHA: ${{ steps.git-info.outputs.sha }}
           TAG: ${{ steps.git-info.outputs.tag }}
           VERSION: ${{ steps.git-info.outputs.version }}
+
+  call_child:
+    needs: create-github-release
+    uses: ./.github/workflows/release-3.1-upload-artifacts.yml
+    with:
+      skip_latest: "${{inputs.skip_latest}}"

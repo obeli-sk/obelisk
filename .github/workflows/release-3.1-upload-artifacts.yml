@@ -12,11 +12,13 @@ on:
         description: "The ref (branch or SHA) to process"
         required: false
         type: string
-  workflow_run:
-    workflows:
-      - release-3-create-github-release
-    types:
-      - completed
+  workflow_call:
+    inputs:
+      skip_latest:
+        description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
+        required: true
+        type: boolean
+        default: false
 
 env:
   CARGO_INCREMENTAL: 0
@@ -34,7 +36,6 @@ jobs:
   upload-assets:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -108,3 +109,9 @@ jobs:
             -H "Content-Type: application/octet-stream" \
             --data-binary @archive.tar.gz \
             "https://uploads.github.com/repos/obeli-sk/obelisk/releases/${{ steps.release-info.outputs.release_id }}/assets?name=obelisk-${{ matrix.target }}.tar.gz"
+
+  call_child:
+    needs: upload-assets
+    uses: ./.github/workflows/release-4-push-docker-image.yml
+    with:
+      skip_latest: "${{inputs.skip_latest}}"

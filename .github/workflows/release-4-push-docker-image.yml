@@ -9,16 +9,18 @@ on:
         description: "The ref (branch or SHA) to process"
         required: false
         type: string
-      latest:
-        description: "Tag with `latest` if $image == this value"
-        required: false
-        type: string
-        default: ubuntu
-  workflow_run:
-    workflows:
-      - release-3.1-upload-artifacts
-    types:
-      - completed
+      skip_latest:
+        description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
+        required: true
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      skip_latest:
+        description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
+        required: true
+        type: boolean
+        default: false
 
 defaults:
   run:
@@ -28,7 +30,6 @@ jobs:
   push-image:
     name: ${{ matrix.dockerfile }}
     runs-on: ubuntu-24.04
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -77,9 +78,11 @@ jobs:
           docker tag $IMAGE $IMAGE2
           docker push $IMAGE2
 
-          if [ "${{ github.event.inputs.latest }}" = "${{ matrix.image_tag }}" ]; then
-            docker tag $IMAGE $IMAGE_BASE
-            docker push $IMAGE_BASE
+          if [ "${{ inputs.skip_latest }}" = "true" ]; then
+            echo "Skipping latest tag"
+          elif [ "${{ matrix.image_tag }}" = "ubuntu" ]; then
+            docker tag $IMAGE $IMAGE_BASE:latest
+            docker push $IMAGE_BASE:latest
           fi
         env:
           TAG: ${{ steps.git-info.outputs.tag }}

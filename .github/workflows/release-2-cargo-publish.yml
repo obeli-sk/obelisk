@@ -21,6 +21,11 @@ on:
         type: string
         required: false
         default: ""
+      skip_latest:
+        description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
+        required: true
+        type: boolean
+        default: false
 
 defaults:
   run:
@@ -55,3 +60,9 @@ jobs:
         if: ${{ github.event.inputs.update-main }}
         run: |
           git push origin HEAD:main
+
+  call_child:
+    needs: cargo-publish
+    uses: ./.github/workflows/release-3-create-github-release.yml
+    with:
+      skip_latest: "${{inputs.skip_latest}}"
