@@ -225,7 +225,7 @@ indexmap = { version = "2.11", features = ["serde"] }
 insta = { version = "1.43.2", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
-libc = "0.2.176"
+libc = "0.2.177"
 oci-client = { version = "0.15.0", default-features = false, features = [
     "rustls-tls",
 ] }
@@ -276,7 +276,7 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.17"
-toml = { version = "0.9.7", features = ["preserve_order"] }
+toml = { version = "0.9.8", features = ["preserve_order"] }
 tonic = { version = "0.14.2", default-features = false }
 tonic-prost = "0.14.2"
 tonic-prost-build = "0.14.2"
@@ -314,11 +314,11 @@ yewprint-css = "0.4.0"
 wstd = "0.5.6"
 
 # wasmtime
-wasmtime = { version = "37.0.1", features = ["memory-protection-keys"] }
-wasmtime-wasi = "37.0.1"
-wasmtime-wasi-io = "37.0.1"
-wasmtime-wasi-http = "37.0.1"
-wasmtime-environ = "37.0.1"
+wasmtime = { version = "37.0.2", features = ["memory-protection-keys"] }
+wasmtime-wasi = "37.0.2"
+wasmtime-wasi-io = "37.0.2"
+wasmtime-wasi-http = "37.0.2"
+wasmtime-environ = "37.0.2"
 # wasm-tools
 wast = "239.0.0"
 wit-parser = "0.239.0"
