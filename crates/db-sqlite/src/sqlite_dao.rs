@@ -71,15 +71,15 @@ const PRAGMA: [[&str; 2]; 10] = [
     ["integrity_check", ""],
 ];
 
+// Append only
 const CREATE_TABLE_T_METADATA: &str = r"
 CREATE TABLE IF NOT EXISTS t_metadata (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     schema_version INTEGER NOT NULL,
     created_at TEXT NOT NULL
 ) STRICT
 ";
-const T_METADATA_SINGLETON: u32 = 1;
-const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 1;
+const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 2;
 
 /// Stores execution history. Append only.
 const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
@@ -195,6 +195,7 @@ CREATE TABLE IF NOT EXISTS t_delay (
 ) STRICT
 ";
 
+// Append only.
 const CREATE_TABLE_T_BACKTRACE: &str = r"
 CREATE TABLE IF NOT EXISTS t_backtrace (
     execution_id TEXT NOT NULL,
@@ -546,14 +547,14 @@ impl<S: Sleep> SqlitePool<S> {
         execute(
             &conn,
             &format!(
-                "INSERT INTO t_metadata (id, schema_version, created_at) VALUES
-                    ({T_METADATA_SINGLETON}, {T_METADATA_EXPECTED_SCHEMA_VERSION}, ?) ON CONFLICT DO NOTHING"
+                "INSERT INTO t_metadata (schema_version, created_at) VALUES
+                    ({T_METADATA_EXPECTED_SCHEMA_VERSION}, ?) ON CONFLICT DO NOTHING"
             ),
             [Utc::now()],
         );
         // Fail on unexpected `schema_version`.
         let actual_version = conn
-            .prepare("SELECT schema_version FROM t_metadata")
+            .prepare("SELECT schema_version FROM t_metadata ORDER BY id DESC LIMIT 1")
             .unwrap_or_else(|err| panic!("cannot select schema version - {err:?}"))
             .query_row([], |row| row.get::<_, u32>("schema_version"));
 
