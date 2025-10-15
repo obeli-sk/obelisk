@@ -20,7 +20,6 @@ val-json.workspace = true
 wasm-workers.workspace = true
 
 anyhow.workspace = true
-assert_matches.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 cfg-if.workspace = true

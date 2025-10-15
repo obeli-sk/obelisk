@@ -28,7 +28,6 @@ use crate::init;
 use crate::init::Guard;
 use anyhow::Context;
 use anyhow::bail;
-use assert_matches::assert_matches;
 use chrono::DateTime;
 use chrono::Utc;
 use concepts::ComponentId;
@@ -511,10 +510,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             })),
         };
         if current_pending_state.is_finished() || !request.follow {
-            let output: Self::GetStatusStream = if request.send_finished_status {
-                let pending_state_finished = assert_matches!(current_pending_state, PendingState::Finished { finished } => finished);
+            // No waiting in this case
+            let output: Self::GetStatusStream = if let PendingState::Finished { finished } =
+                current_pending_state
+                && request.send_finished_status
+            {
+                // Send summary + finished status only if the execution is finished && request.send_finished_status
                 let finished_result = conn
-                    .get_finished_result(&execution_id, pending_state_finished)
+                    .get_finished_result(&execution_id, finished)
                     .await
                     .to_status()?
                     .expect("checked using `current_pending_state.is_finished()` that the execution is finished");
@@ -522,7 +525,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     message: Some(Message::FinishedStatus(to_finished_status(
                         finished_result,
                         &create_request,
-                        pending_state_finished.finished_at,
+                        finished.finished_at,
                     ))),
                 };
                 Box::pin(tokio_stream::iter([Ok(summary), Ok(finished_message)]))

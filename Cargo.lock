@@ -3260,7 +3260,6 @@ name = "obelisk"
 version = "0.25.4"
 dependencies = [
  "anyhow",
- "assert_matches",
  "async-trait",
  "axum 0.8.6",
  "cfg-if",
