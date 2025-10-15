@@ -44,7 +44,7 @@
       "$ref": "#/$defs/SqliteConfigToml"
     },
     "timers_watcher": {
-      "$ref": "#/$defs/TimersWatcher"
+      "$ref": "#/$defs/TimersWatcherTomlConfig"
     },
     "wasm": {
       "$ref": "#/$defs/WasmGlobalConfigToml"
@@ -636,9 +636,13 @@
         "stderr"
       ]
     },
-    "TimersWatcher": {
+    "TimersWatcherTomlConfig": {
       "type": "object",
       "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
         "leeway": {
           "$ref": "#/$defs/DurationConfig"
         },
@@ -697,6 +701,10 @@
         },
         "codegen_cache": {
           "$ref": "#/$defs/CodegenCache"
+        },
+        "debug": {
+          "type": "boolean",
+          "default": false
         },
         "fuel": {
           "$ref": "#/$defs/ValueOrUnlimited"
