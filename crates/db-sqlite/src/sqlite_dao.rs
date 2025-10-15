@@ -2835,7 +2835,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                             },
                             |row| {
                                 let execution_id = row.get("execution_id")?;
-                                let version = Version::new(row.get::<_, VersionType>("next_version")?);
+                                let next_version = Version::new(row.get::<_, VersionType>("next_version")?);
                                 let locked_at_version = Version::new(row.get::<_, VersionType>("locked_at_version")?);
 
                                 let temporary_event_count = row.get::<_, u32>("temporary_event_count")?;
@@ -2844,7 +2844,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                                 let parent_execution_id = row.get::<_, Option<ExecutionId>>("parent_execution_id")?;
                                 let parent_join_set_id = row.get::<_, Option<JoinSetId>>("parent_join_set_id")?;
 
-                                Ok(ExpiredTimer::Lock { execution_id, locked_at_version, version, temporary_event_count, max_retries,
+                                Ok(ExpiredTimer::Lock { execution_id, locked_at_version, next_version, temporary_event_count, max_retries,
                                     retry_exp_backoff, parent: parent_execution_id.and_then(|pexe| parent_join_set_id.map(|pjs| (pexe, pjs)))})
                             },
                         ).map_err(convert_err)?

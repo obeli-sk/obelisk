@@ -695,7 +695,7 @@ impl DbHolder {
                         })
                         .map(|(idx, _)| Version::new(VersionType::try_from(idx).unwrap()))
                         .expect("must have been locked"),
-                    version: journal.version(),
+                    next_version: journal.version(),
                     max_retries: journal.max_retries(),
                     temporary_event_count: journal.temporary_event_count(),
                     retry_exp_backoff: journal.retry_exp_backoff(),

@@ -650,17 +650,17 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
         let (
             found_execution_id,
             locked_at_version,
-            version,
+            next_version,
             already_retried_count,
             max_retries,
             retry_exp_backoff,
             parent,
         ) = assert_matches!(expired,
-            ExpiredTimer::Lock { execution_id, locked_at_version, version, temporary_event_count, max_retries, retry_exp_backoff, parent } =>
-            (execution_id, locked_at_version, version, temporary_event_count, max_retries, retry_exp_backoff, parent));
+            ExpiredTimer::Lock { execution_id, locked_at_version, next_version, temporary_event_count, max_retries, retry_exp_backoff, parent } =>
+            (execution_id, locked_at_version, next_version, temporary_event_count, max_retries, retry_exp_backoff, parent));
         assert_eq!(execution_id, *found_execution_id);
         assert_eq!(Version::new(1), *locked_at_version);
-        assert_eq!(Version::new(2), *version);
+        assert_eq!(Version::new(2), *next_version);
         assert_eq!(0, *already_retried_count);
         assert_eq!(MAX_RETRIES, *max_retries);
         assert_eq!(RETRY_EXP_BACKOFF, *retry_exp_backoff);
@@ -1095,7 +1095,7 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
     let expected = ExpiredTimer::Lock {
         execution_id,
         locked_at_version: Version::new(1),
-        version,
+        next_version: version,
         temporary_event_count: 0,
         max_retries: 0,
         retry_exp_backoff: Duration::ZERO,

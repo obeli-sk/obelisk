@@ -100,13 +100,14 @@ pub(crate) async fn tick(
             ExpiredTimer::Lock {
                 execution_id,
                 locked_at_version,
-                version,
+                next_version,
                 temporary_event_count,
                 max_retries,
                 retry_exp_backoff,
                 parent,
             } => {
-                let append = if max_retries == u32::MAX && locked_at_version.0 + 1 < version.0 {
+                let append = if max_retries == u32::MAX && locked_at_version.0 + 1 < next_version.0
+                {
                     // Workflow that made progress is unlocked and immediately available for locking.
                     info!(%execution_id, "Unlocking workflow execution");
                     Append {
@@ -119,7 +120,7 @@ pub(crate) async fn tick(
                             },
                         },
                         execution_id: execution_id.clone(),
-                        version,
+                        version: next_version,
                         child_finished: None,
                     }
                 } else if let Some(duration) = ExecutionLog::can_be_retried_after(
@@ -139,7 +140,7 @@ pub(crate) async fn tick(
                             },
                         },
                         execution_id: execution_id.clone(),
-                        version,
+                        version: next_version,
                         child_finished: None,
                     }
                 } else {
@@ -164,7 +165,7 @@ pub(crate) async fn tick(
                             },
                         },
                         execution_id: execution_id.clone(),
-                        version,
+                        version: next_version,
                         child_finished,
                     }
                 };

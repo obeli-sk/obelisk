@@ -1015,7 +1015,8 @@ pub enum ExpiredTimer {
     Lock {
         execution_id: ExecutionId,
         locked_at_version: Version,
-        version: Version, // Next version
+        // when finished, `next_version` points to the finished version (is not bumped anymore).
+        next_version: Version,
         /// As the execution may still be running, this represents the number of temporary failures + timeouts prior to this execution.
         temporary_event_count: u32,
         max_retries: u32,
