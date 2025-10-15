@@ -6,6 +6,21 @@
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
+
+get_litestream_version() {
+  WORKSPACE_DIR="$(pwd -P)"
+  TMP_DIR=$(mktemp -d)
+  (
+    cd "$TMP_DIR" || exit 1
+    touch obelisk obelisk.toml
+
+    docker build -f "$WORKSPACE_DIR/.github/workflows/release/docker-image/ubuntu-24.04-litestream.Dockerfile" . --tag temp >/dev/null
+    docker run --rm --entrypoint litestream temp version
+    docker rmi temp >/dev/null
+  )
+  rm -rf "$TMP_DIR"
+}
+
 rm -f dev-deps.txt
 echo "cargo-binstall $(cargo-binstall -V)" >> dev-deps.txt
 cargo upgrade --version >> dev-deps.txt
@@ -28,6 +43,9 @@ echo "trunk $(grep wasm_opt crates/webui/Trunk.toml)" >> dev-deps.txt
 nix develop .#web --command trunk --version >> dev-deps.txt
 nix develop .#web --command wasm-bindgen --version >> dev-deps.txt
 echo "trunk $(grep wasm_bindgen crates/webui/Trunk.toml)" >> dev-deps.txt
+
+# docker deps
+echo "litestream $(get_litestream_version)" >> dev-deps.txt
 
 # libc
 ldd --version | head -n 1 >> dev-deps.txt
