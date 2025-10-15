@@ -216,11 +216,13 @@ impl Engines {
                 workflow_engine: Self::get_workflow_engine_internal(engine_config.clone())?,
             })
         })(&engine_config);
-        let res = if let Err(err) = &res
+
+        if let Err(err) = &res
             && matches!(
                 engine_config.pooling_config,
                 PoolingConfig::PoolingWithFallback(_)
-            ) {
+            )
+        {
             warn!("Falling back to on-demand allocator - {err}");
             debug!("{err:?}");
             let engine_config = EngineConfig {
@@ -233,7 +235,6 @@ impl Engines {
             Self::new(engine_config)
         } else {
             res
-        };
-        res
+        }
     }
 }
