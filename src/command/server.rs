@@ -1239,17 +1239,20 @@ impl ServerVerified {
                     codegen_cache_dir,
                     consume_fuel,
                     config.wasm_global_config.parallel_compilation,
+                    config.wasm_global_config.debug,
                 )?,
                 WasmtimeAllocatorConfig::OnDemand => Engines::on_demand(
                     codegen_cache_dir,
                     consume_fuel,
                     config.wasm_global_config.parallel_compilation,
+                    config.wasm_global_config.debug,
                 )?,
                 WasmtimeAllocatorConfig::Pooling => Engines::pooling(
                     config.wasm_global_config.wasmtime_pooling_config.into(),
                     codegen_cache_dir,
                     consume_fuel,
                     config.wasm_global_config.parallel_compilation,
+                    config.wasm_global_config.debug,
                 )?,
             }
         };

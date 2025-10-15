@@ -56,6 +56,7 @@ pub struct EngineConfig {
     codegen_cache_dir: Option<PathBuf>,
     consume_fuel: bool,
     parallel_compilation: bool,
+    debug: bool,
 }
 
 impl EngineConfig {
@@ -109,6 +110,7 @@ impl EngineConfig {
             codegen_cache_dir: Some(codegen_cache),
             consume_fuel: false,
             parallel_compilation: true,
+            debug: false,
         }
     }
     #[cfg(test)]
@@ -118,6 +120,7 @@ impl EngineConfig {
             codegen_cache_dir: None,
             consume_fuel: false,
             parallel_compilation: true,
+            debug: false,
         }
     }
 }
@@ -140,23 +143,33 @@ impl Engines {
     }
 
     fn configure_common(
-        mut wasmtime_config: wasmtime::Config,
+        mut dst_wasmtime_config: wasmtime::Config,
         config: EngineConfig,
     ) -> Result<Arc<Engine>, EngineError> {
-        wasmtime_config.wasm_component_model(true);
-        wasmtime_config.async_support(true);
+        dst_wasmtime_config.wasm_component_model(true);
+        dst_wasmtime_config.async_support(true);
 
-        wasmtime_config.parallel_compilation(config.parallel_compilation);
+        // TODO: Set everywhere:
+        // wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
+        // wasmtime_config.epoch_interruption(true);
+        // wasmtime_config.consume_fuel(config.consume_fuel);
 
-        wasmtime_config.allocation_strategy(config.strategy());
+        if config.debug {
+            dst_wasmtime_config.debug_info(true);
+            dst_wasmtime_config.cranelift_opt_level(wasmtime::OptLevel::None);
+        }
+
+        dst_wasmtime_config.parallel_compilation(config.parallel_compilation);
+
+        dst_wasmtime_config.allocation_strategy(config.strategy());
         if let Some(codegen_cache_dir) = config.codegen_cache_dir {
             let mut cache_config = CacheConfig::new();
             cache_config.with_directory(codegen_cache_dir);
             let cache =
                 Cache::new(cache_config).map_err(|err| EngineError::CodegenCache(err.into()))?;
-            wasmtime_config.cache(Some(cache));
+            dst_wasmtime_config.cache(Some(cache));
         }
-        Engine::new(&wasmtime_config)
+        Engine::new(&dst_wasmtime_config)
             .map(Arc::new)
             .map_err(|err| EngineError::Uncategorized(err.into()))
     }
@@ -202,12 +215,14 @@ impl Engines {
         codegen_cache_dir: Option<PathBuf>,
         consume_fuel: bool,
         parallel_compilation: bool,
+        debug: bool,
     ) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: None,
             codegen_cache_dir,
             consume_fuel,
             parallel_compilation,
+            debug,
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine_internal(engine_config.clone())?,
@@ -222,12 +237,14 @@ impl Engines {
         codegen_cache_dir: Option<PathBuf>,
         consume_fuel: bool,
         parallel_compilation: bool,
+        debug: bool,
     ) -> Result<Self, EngineError> {
         let engine_config = EngineConfig {
             pooling_opts: Some(pooling_opts),
             codegen_cache_dir,
             consume_fuel,
             parallel_compilation,
+            debug,
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine_internal(engine_config.clone())?,
@@ -241,17 +258,19 @@ impl Engines {
         codegen_cache_dir: Option<PathBuf>,
         consume_fuel: bool,
         parallel_compilation: bool,
+        debug: bool,
     ) -> Result<Self, EngineError> {
         Self::pooling(
             pooling_opts,
             codegen_cache_dir.clone(),
             consume_fuel,
             parallel_compilation,
+            debug,
         )
         .or_else(|err| {
             warn!("Falling back to on-demand allocator - {err}");
             debug!("{err:?}");
-            Self::on_demand(codegen_cache_dir, consume_fuel, parallel_compilation)
+            Self::on_demand(codegen_cache_dir, consume_fuel, parallel_compilation, debug)
         })
     }
 }

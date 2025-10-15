@@ -151,6 +151,8 @@ pub(crate) struct WasmGlobalConfigToml {
     pub(crate) parallel_compilation: bool,
     #[serde(default)]
     pub(crate) wasmtime_pooling_config: WasmtimePoolingAllocatorConfig,
+    #[serde(default = "default_debug")]
+    pub(crate) debug: bool,
 }
 impl Default for WasmGlobalConfigToml {
     fn default() -> Self {
@@ -165,6 +167,7 @@ impl Default for WasmGlobalConfigToml {
             build_semaphore: ValueOrUnlimited::default(),
             parallel_compilation: default_parallel_compilation(),
             wasmtime_pooling_config: WasmtimePoolingAllocatorConfig::default(),
+            debug: default_debug(),
         }
     }
 }
@@ -1283,7 +1286,9 @@ fn resolve_env_vars(
 const fn default_parallel_compilation() -> bool {
     true
 }
-
+const fn default_debug() -> bool {
+    false
+}
 const fn default_global_backtrace_persist() -> bool {
     true
 }
