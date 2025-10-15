@@ -158,10 +158,9 @@ impl Engines {
         dst_wasmtime_config.wasm_component_model(true);
         dst_wasmtime_config.async_support(true);
 
-        // TODO: Set everywhere:
-        // wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
-        // wasmtime_config.epoch_interruption(true);
-        // wasmtime_config.consume_fuel(config.consume_fuel);
+        dst_wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
+        dst_wasmtime_config.epoch_interruption(true);
+        dst_wasmtime_config.consume_fuel(config.consume_fuel);
 
         if config.debug {
             dst_wasmtime_config.debug_info(true);
@@ -184,23 +183,16 @@ impl Engines {
     }
 
     pub(crate) fn get_webhook_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
-        let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
-        wasmtime_config.epoch_interruption(true);
-        wasmtime_config.consume_fuel(config.consume_fuel);
-        Self::configure_common(wasmtime_config, config)
+        Self::configure_common(wasmtime::Config::new(), config)
     }
 
     #[cfg(test)]
     pub fn get_activity_engine_test(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         Self::get_activity_engine_internal(config)
     }
+
     fn get_activity_engine_internal(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
-        let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
-        wasmtime_config.epoch_interruption(true);
-        wasmtime_config.consume_fuel(config.consume_fuel);
-        Self::configure_common(wasmtime_config, config)
+        Self::configure_common(wasmtime::Config::new(), config)
     }
 
     #[cfg(test)]
@@ -209,13 +201,10 @@ impl Engines {
     }
     fn get_workflow_engine_internal(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
-        wasmtime_config.epoch_interruption(true);
         // Make sure the runtime is deterministic when using `simd` or `relaxed_simd`.
         // https://bytecodealliance.zulipchat.com/#narrow/channel/206238-general/topic/Determinism.20of.20Wasm.20SIMD.20in.20Wasmtime
         wasmtime_config.cranelift_nan_canonicalization(true);
         wasmtime_config.relaxed_simd_deterministic(true);
-        wasmtime_config.consume_fuel(config.consume_fuel);
         Self::configure_common(wasmtime_config, config)
     }
 
