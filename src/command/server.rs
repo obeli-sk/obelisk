@@ -80,10 +80,13 @@ use grpc::TonicResult;
 use grpc::extractor::accept_trace;
 use grpc::grpc_gen;
 use grpc::grpc_gen::GenerateExecutionIdResponse;
+use grpc::grpc_gen::GetStatusResponse;
+use grpc::grpc_gen::get_status_response::Message;
 use grpc::grpc_mapping::TonicServerOptionExt;
 use grpc::grpc_mapping::TonicServerResultExt;
 use grpc::grpc_mapping::db_error_to_status;
 use grpc::grpc_mapping::from_execution_event_to_grpc;
+use grpc_gen::ExecutionSummary;
 use hashbrown::HashMap;
 use itertools::Either;
 use serde::Deserialize;
@@ -485,9 +488,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         &self,
         request: tonic::Request<grpc_gen::GetStatusRequest>,
     ) -> TonicRespResult<Self::GetStatusStream> {
-        use grpc_gen::ExecutionSummary;
-        use grpc_gen::get_status_response::Message;
-
         let request = request.into_inner();
         let execution_id: ExecutionId = request
             .execution_id
@@ -496,7 +496,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
         let conn = self.db_pool.connection();
         let current_pending_state = conn.get_pending_state(&execution_id).await.to_status()?;
-        let (create_request, mut current_pending_state, grpc_pending_status) = {
+        let (create_request, current_pending_state, grpc_pending_status) = {
             let create_request = conn.get_create_request(&execution_id).await.to_status()?;
             let grpc_pending_status =
                 grpc_gen::ExecutionStatus::from(current_pending_state.clone());
@@ -544,85 +544,18 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             let db_pool = self.db_pool.clone();
 
             tokio::spawn(
-                async move {
-                    loop {
-                        let sleep_until = now_tokio_instant() + GET_STATUS_POLLING_SLEEP;
-                        loop {
-                            tokio::time::sleep(Duration::from_millis(10)).await;
-                            if db_pool.is_closing() {
-                                debug!("Exitting get_status early, database is closing");
-                                let _ = tx
-                                    .send(TonicResult::Err(tonic::Status::aborted(
-                                        "server is shutting down",
-                                    )))
-                                    .await;
-                                return;
-                            }
-                            if now_tokio_instant() >= sleep_until {
-                                break;
-                            }
-                        }
-                        let conn = db_pool.connection();
-                        match conn.get_pending_state(&execution_id).await {
-                            Ok(pending_state) => {
-                                if pending_state != current_pending_state {
-                                    let grpc_pending_status =
-                                        grpc_gen::ExecutionStatus::from(pending_state.clone());
-
-                                    let message = grpc_gen::GetStatusResponse {
-                                        message: Some(Message::CurrentStatus(grpc_pending_status)),
-                                    };
-                                    let send_res = tx.send(TonicResult::Ok(message)).await;
-                                    if let Err(err) = send_res {
-                                        info!("Cannot send the message - {err:?}");
-                                        return;
-                                    }
-                                    if let PendingState::Finished { finished: pending_state_finished } = pending_state {
-                                        if !request.send_finished_status {
-                                            return;
-                                        }
-                                        // Send the last message and close the RPC.
-                                        let finished_result = match conn
-                                            .get_finished_result(&execution_id, pending_state_finished)
-                                            .await
-                                        {
-                                            Ok(ok) => ok.expect("checked using `if let PendingState::Finished` that the execution is finished"),
-                                            Err(db_err) => {
-                                                error!("Cannot obtain finished result: {db_err:?}");
-                                                let _ =
-                                                    tx.send(Err(db_error_to_status(&db_err))).await;
-                                                return;
-                                            }
-                                        };
-                                        let message = grpc_gen::GetStatusResponse {
-                                            message: Some(Message::FinishedStatus(to_finished_status(
-                                                finished_result,
-                                                &create_request,
-                                                pending_state_finished.finished_at,
-                                            ))),
-                                        };
-                                        let send_res = tx.send(TonicResult::Ok(message)).await;
-                                        if let Err(err) = send_res {
-                                            error!("Cannot send the final message - {err:?}");
-                                        }
-                                        return;
-                                    }
-                                    current_pending_state = pending_state;
-                                }
-                            }
-                            Err(db_err) => {
-                                error!("Database error while streaming status - {db_err:?}");
-                                let _ = tx.send(Err(db_error_to_status(&db_err))).await;
-                                return;
-                            }
-                        }
-                    }
-                }
+                poll_status(
+                    db_pool,
+                    execution_id,
+                    tx,
+                    current_pending_state,
+                    create_request,
+                    request.send_finished_status,
+                )
                 .in_current_span(),
             );
-            let output = ReceiverStream::new(rx);
             Ok(tonic::Response::new(
-                Box::pin(output) as Self::GetStatusStream
+                Box::pin(ReceiverStream::new(rx)) as Self::GetStatusStream
             ))
         }
     }
@@ -882,6 +815,90 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         } else {
             warn!("Component {component_id} not found");
             Err(tonic::Status::not_found("component not found"))
+        }
+    }
+}
+
+async fn poll_status(
+    db_pool: Arc<dyn DbPool>,
+    execution_id: ExecutionId,
+    tx: tokio::sync::mpsc::Sender<TonicResult<GetStatusResponse>>,
+    mut current_pending_state: PendingState,
+    create_request: CreateRequest,
+    send_finished_status: bool,
+) {
+    loop {
+        let sleep_until = now_tokio_instant() + GET_STATUS_POLLING_SLEEP;
+        loop {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if db_pool.is_closing() {
+                debug!("Exitting get_status early, database is closing");
+                let _ = tx
+                    .send(TonicResult::Err(tonic::Status::aborted(
+                        "server is shutting down",
+                    )))
+                    .await;
+                return;
+            }
+            if now_tokio_instant() >= sleep_until {
+                break;
+            }
+        }
+        let conn = db_pool.connection();
+        match conn.get_pending_state(&execution_id).await {
+            Ok(pending_state) => {
+                if pending_state != current_pending_state {
+                    let grpc_pending_status =
+                        grpc_gen::ExecutionStatus::from(pending_state.clone());
+
+                    let message = grpc_gen::GetStatusResponse {
+                        message: Some(Message::CurrentStatus(grpc_pending_status)),
+                    };
+                    let send_res = tx.send(TonicResult::Ok(message)).await;
+                    if let Err(err) = send_res {
+                        info!("Cannot send the message - {err:?}");
+                        return;
+                    }
+                    if let PendingState::Finished {
+                        finished: pending_state_finished,
+                    } = pending_state
+                    {
+                        if send_finished_status {
+                            // Send the last message and close the RPC.
+                            let finished_result = match conn
+                                            .get_finished_result(&execution_id, pending_state_finished)
+                                            .await
+                                        {
+                                            Ok(ok) => ok.expect("checked using `if let PendingState::Finished` that the execution is finished"),
+                                            Err(db_err) => {
+                                                error!("Cannot obtain finished result: {db_err:?}");
+                                                let _ =
+                                                    tx.send(Err(db_error_to_status(&db_err))).await;
+                                                return;
+                                            }
+                                        };
+                            let message = grpc_gen::GetStatusResponse {
+                                message: Some(Message::FinishedStatus(to_finished_status(
+                                    finished_result,
+                                    &create_request,
+                                    pending_state_finished.finished_at,
+                                ))),
+                            };
+                            let send_res = tx.send(TonicResult::Ok(message)).await;
+                            if let Err(err) = send_res {
+                                error!("Cannot send the final message - {err:?}");
+                            }
+                        }
+                        return;
+                    }
+                    current_pending_state = pending_state;
+                }
+            }
+            Err(db_err) => {
+                error!("Database error while streaming status - {db_err:?}");
+                let _ = tx.send(Err(db_error_to_status(&db_err))).await;
+                return;
+            }
         }
     }
 }
