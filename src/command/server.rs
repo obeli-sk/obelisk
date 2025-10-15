@@ -114,7 +114,9 @@ use val_json::wast_val::WastValWithType;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::RunnableComponent;
 use wasm_workers::activity::activity_worker::ActivityWorker;
+use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
+use wasm_workers::engines::PoolingConfig;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::preopens_cleaner::PreopensCleaner;
 use wasm_workers::webhook::webhook_trigger;
@@ -1233,28 +1235,22 @@ impl ServerVerified {
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
         let engines = {
             let consume_fuel = fuel.is_some();
-            match config.wasm_global_config.allocator_config {
-                WasmtimeAllocatorConfig::Auto => Engines::auto_detect_allocator(
-                    config.wasm_global_config.wasmtime_pooling_config.into(),
-                    codegen_cache_dir,
-                    consume_fuel,
-                    config.wasm_global_config.parallel_compilation,
-                    config.wasm_global_config.debug,
-                )?,
-                WasmtimeAllocatorConfig::OnDemand => Engines::on_demand(
-                    codegen_cache_dir,
-                    consume_fuel,
-                    config.wasm_global_config.parallel_compilation,
-                    config.wasm_global_config.debug,
-                )?,
-                WasmtimeAllocatorConfig::Pooling => Engines::pooling(
-                    config.wasm_global_config.wasmtime_pooling_config.into(),
-                    codegen_cache_dir,
-                    consume_fuel,
-                    config.wasm_global_config.parallel_compilation,
-                    config.wasm_global_config.debug,
-                )?,
-            }
+            let engine_config = EngineConfig {
+                codegen_cache_dir,
+                consume_fuel,
+                parallel_compilation: config.wasm_global_config.parallel_compilation,
+                debug: config.wasm_global_config.debug,
+                pooling_config: match config.wasm_global_config.allocator_config {
+                    WasmtimeAllocatorConfig::OnDemand => PoolingConfig::OnDemand,
+                    WasmtimeAllocatorConfig::Pooling => PoolingConfig::Pooling(
+                        config.wasm_global_config.wasmtime_pooling_config.into(),
+                    ),
+                    WasmtimeAllocatorConfig::Auto => PoolingConfig::PoolingWithFallback(
+                        config.wasm_global_config.wasmtime_pooling_config.into(),
+                    ),
+                },
+            };
+            Engines::new(engine_config)?
         };
         let mut http_servers = config.http_servers;
         let mut webhooks = config.webhooks;

@@ -1,5 +1,5 @@
 use std::{error::Error, fmt::Debug, path::PathBuf, sync::Arc};
-use tracing::{debug, instrument, warn};
+use tracing::{debug, warn};
 use wasmtime::{Cache, CacheConfig, Engine, EngineWeak, WasmBacktraceDetails};
 
 #[derive(thiserror::Error, Debug)]
@@ -51,53 +51,61 @@ pub struct PoolingOptions {
 }
 
 #[derive(Clone, Debug)]
+pub enum PoolingConfig {
+    OnDemand,
+    Pooling(PoolingOptions),
+    PoolingWithFallback(PoolingOptions),
+}
+impl PoolingConfig {
+    fn strategy(&self) -> wasmtime::InstanceAllocationStrategy {
+        match self {
+            PoolingConfig::OnDemand => wasmtime::InstanceAllocationStrategy::OnDemand,
+            PoolingConfig::Pooling(opts) | PoolingConfig::PoolingWithFallback(opts) => {
+                let mut cfg = wasmtime::PoolingAllocationConfig::default();
+                if let Some(size) = opts.pooling_memory_keep_resident {
+                    cfg.linear_memory_keep_resident(size);
+                }
+                if let Some(size) = opts.pooling_table_keep_resident {
+                    cfg.table_keep_resident(size);
+                }
+                if let Some(limit) = opts.pooling_total_core_instances {
+                    cfg.total_core_instances(limit);
+                }
+                if let Some(limit) = opts.pooling_total_component_instances {
+                    cfg.total_component_instances(limit);
+                }
+                if let Some(limit) = opts.pooling_total_memories {
+                    cfg.total_memories(limit);
+                }
+                if let Some(limit) = opts.pooling_total_tables {
+                    cfg.total_tables(limit);
+                }
+                if let Some(limit) = opts.pooling_total_stacks {
+                    cfg.total_stacks(limit);
+                }
+                if let Some(limit) = opts.pooling_max_memory_size {
+                    cfg.max_memory_size(limit);
+                }
+                if let Some(enable) = opts.memory_protection_keys
+                    && enable
+                {
+                    cfg.memory_protection_keys(wasmtime::Enabled::Auto);
+                }
+                wasmtime::InstanceAllocationStrategy::Pooling(cfg)
+            }
+        }
+    }
+}
+#[derive(Clone, Debug)]
 pub struct EngineConfig {
-    pooling_opts: Option<PoolingOptions>,
-    codegen_cache_dir: Option<PathBuf>,
-    consume_fuel: bool,
-    parallel_compilation: bool,
-    debug: bool,
+    pub pooling_config: PoolingConfig,
+    pub codegen_cache_dir: Option<PathBuf>,
+    pub consume_fuel: bool,
+    pub parallel_compilation: bool,
+    pub debug: bool,
 }
 
 impl EngineConfig {
-    fn strategy(&self) -> wasmtime::InstanceAllocationStrategy {
-        if let Some(opts) = &self.pooling_opts {
-            let mut cfg = wasmtime::PoolingAllocationConfig::default();
-            if let Some(size) = opts.pooling_memory_keep_resident {
-                cfg.linear_memory_keep_resident(size);
-            }
-            if let Some(size) = opts.pooling_table_keep_resident {
-                cfg.table_keep_resident(size);
-            }
-            if let Some(limit) = opts.pooling_total_core_instances {
-                cfg.total_core_instances(limit);
-            }
-            if let Some(limit) = opts.pooling_total_component_instances {
-                cfg.total_component_instances(limit);
-            }
-            if let Some(limit) = opts.pooling_total_memories {
-                cfg.total_memories(limit);
-            }
-            if let Some(limit) = opts.pooling_total_tables {
-                cfg.total_tables(limit);
-            }
-            if let Some(limit) = opts.pooling_total_stacks {
-                cfg.total_stacks(limit);
-            }
-            if let Some(limit) = opts.pooling_max_memory_size {
-                cfg.max_memory_size(limit);
-            }
-            if let Some(enable) = opts.memory_protection_keys
-                && enable
-            {
-                cfg.memory_protection_keys(wasmtime::Enabled::Auto);
-            }
-            wasmtime::InstanceAllocationStrategy::Pooling(cfg)
-        } else {
-            wasmtime::InstanceAllocationStrategy::OnDemand
-        }
-    }
-
     #[cfg(test)]
     #[must_use]
     pub fn on_demand_testing() -> Self {
@@ -106,17 +114,18 @@ impl EngineConfig {
         );
         let codegen_cache = workspace_dir.join("test-codegen-cache");
         Self {
-            pooling_opts: None,
+            pooling_config: PoolingConfig::OnDemand,
             codegen_cache_dir: Some(codegen_cache),
             consume_fuel: false,
             parallel_compilation: true,
             debug: false,
         }
     }
+
     #[cfg(test)]
     pub(crate) fn pooling_nocache_testing(opts: PoolingOptions) -> Self {
         Self {
-            pooling_opts: Some(opts),
+            pooling_config: PoolingConfig::Pooling(opts),
             codegen_cache_dir: None,
             consume_fuel: false,
             parallel_compilation: true,
@@ -161,7 +170,7 @@ impl Engines {
 
         dst_wasmtime_config.parallel_compilation(config.parallel_compilation);
 
-        dst_wasmtime_config.allocation_strategy(config.strategy());
+        dst_wasmtime_config.allocation_strategy(config.pooling_config.strategy());
         if let Some(codegen_cache_dir) = config.codegen_cache_dir {
             let mut cache_config = CacheConfig::new();
             cache_config.with_directory(codegen_cache_dir);
@@ -210,67 +219,32 @@ impl Engines {
         Self::configure_common(wasmtime_config, config)
     }
 
-    #[instrument(skip_all)]
-    pub fn on_demand(
-        codegen_cache_dir: Option<PathBuf>,
-        consume_fuel: bool,
-        parallel_compilation: bool,
-        debug: bool,
-    ) -> Result<Self, EngineError> {
-        let engine_config = EngineConfig {
-            pooling_opts: None,
-            codegen_cache_dir,
-            consume_fuel,
-            parallel_compilation,
-            debug,
-        };
-        Ok(Engines {
-            activity_engine: Self::get_activity_engine_internal(engine_config.clone())?,
-            webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
-            workflow_engine: Self::get_workflow_engine_internal(engine_config)?,
-        })
-    }
-
-    #[instrument(skip_all)]
-    pub fn pooling(
-        pooling_opts: PoolingOptions,
-        codegen_cache_dir: Option<PathBuf>,
-        consume_fuel: bool,
-        parallel_compilation: bool,
-        debug: bool,
-    ) -> Result<Self, EngineError> {
-        let engine_config = EngineConfig {
-            pooling_opts: Some(pooling_opts),
-            codegen_cache_dir,
-            consume_fuel,
-            parallel_compilation,
-            debug,
-        };
-        Ok(Engines {
-            activity_engine: Self::get_activity_engine_internal(engine_config.clone())?,
-            webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
-            workflow_engine: Self::get_workflow_engine_internal(engine_config)?,
-        })
-    }
-
-    pub fn auto_detect_allocator(
-        pooling_opts: PoolingOptions,
-        codegen_cache_dir: Option<PathBuf>,
-        consume_fuel: bool,
-        parallel_compilation: bool,
-        debug: bool,
-    ) -> Result<Self, EngineError> {
-        Self::pooling(
-            pooling_opts,
-            codegen_cache_dir.clone(),
-            consume_fuel,
-            parallel_compilation,
-            debug,
-        )
-        .or_else(|err| {
+    pub fn new(engine_config: EngineConfig) -> Result<Self, EngineError> {
+        let res: Result<_, EngineError> = (|engine_config: &EngineConfig| {
+            Ok(Engines {
+                activity_engine: Self::get_activity_engine_internal(engine_config.clone())?,
+                webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
+                workflow_engine: Self::get_workflow_engine_internal(engine_config.clone())?,
+            })
+        })(&engine_config);
+        let res = if let Err(err) = &res
+            && matches!(
+                engine_config.pooling_config,
+                PoolingConfig::PoolingWithFallback(_)
+            ) {
             warn!("Falling back to on-demand allocator - {err}");
             debug!("{err:?}");
-            Self::on_demand(codegen_cache_dir, consume_fuel, parallel_compilation, debug)
-        })
+            let engine_config = EngineConfig {
+                pooling_config: PoolingConfig::OnDemand,
+                codegen_cache_dir: engine_config.codegen_cache_dir,
+                consume_fuel: engine_config.consume_fuel,
+                parallel_compilation: engine_config.parallel_compilation,
+                debug: engine_config.debug,
+            };
+            Self::new(engine_config)
+        } else {
+            res
+        };
+        res
     }
 }

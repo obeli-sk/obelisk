@@ -24,7 +24,7 @@ mod bench {
     use tokio::runtime::Handle;
     use wasm_workers::RunnableComponent;
     use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorker};
-    use wasm_workers::engines::Engines;
+    use wasm_workers::engines::{EngineConfig, Engines, PoolingConfig};
     use wasm_workers::testing_fn_registry::TestingFnRegistry;
     use wasm_workers::workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
@@ -234,9 +234,15 @@ mod bench {
         )
         .canonicalize()
         .unwrap();
-        let codegen_cache = workspace_dir.join("test-codegen-cache");
-        let engines =
-            Arc::new(Engines::on_demand(Some(codegen_cache), false, true, false).unwrap()); // TODO test with pooling engine as well.
+        let codegen_cache_dir = workspace_dir.join("test-codegen-cache");
+        let engine_config = EngineConfig {
+            pooling_config: PoolingConfig::OnDemand, // TODO test with pooling engine as well.
+            codegen_cache_dir: Some(codegen_cache_dir),
+            consume_fuel: false,
+            parallel_compilation: true,
+            debug: false,
+        };
+        let engines = Arc::new(Engines::new(engine_config).unwrap());
 
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity_with_engine(
