@@ -15,7 +15,7 @@ use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::StdOutput;
-use crate::config::toml::TimersWatcher;
+use crate::config::toml::TimersWatcherTomlConfig;
 use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowComponentBacktraceConfig;
 use crate::config::toml::WorkflowComponentConfigToml;
@@ -1384,7 +1384,7 @@ struct ServerInit {
     db_pool: Arc<dyn DbPool>,
     exec_join_handles: Vec<ExecutorTaskHandle>,
     #[expect(dead_code)]
-    timers_watcher: AbortOnDropHandle,
+    timers_watcher: Option<AbortOnDropHandle>,
     #[expect(dead_code)] // http servers will be aborted automatically
     http_servers_handles: Vec<AbortOnDropHandle>,
     #[expect(dead_code)] // Shuts itself down in drop
@@ -1400,7 +1400,7 @@ impl ServerInit {
         sqlite_file: &Path,
         sqlite_config: SqliteConfig,
         global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
-        timers_watcher: TimersWatcher,
+        timers_watcher: TimersWatcherTomlConfig,
     ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
         // Start components requiring a database
         let epoch_ticker = EpochTicker::spawn_new(
@@ -1413,14 +1413,18 @@ impl ServerInit {
                 .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
         );
 
-        let timers_watcher = expired_timers_watcher::spawn_new(
-            db_pool.clone(),
-            TimersWatcherConfig {
-                tick_sleep: timers_watcher.tick_sleep.into(),
-                clock_fn: Now,
-                leeway: timers_watcher.leeway.into(),
-            },
-        );
+        let timers_watcher = if timers_watcher.enabled {
+            Some(expired_timers_watcher::spawn_new(
+                db_pool.clone(),
+                TimersWatcherConfig {
+                    tick_sleep: timers_watcher.tick_sleep.into(),
+                    clock_fn: Now,
+                    leeway: timers_watcher.leeway.into(),
+                },
+            ))
+        } else {
+            None
+        };
 
         let preopens_cleaner = if let (Some(parent_preopen_dir), Some(activities_cleanup)) = (
             server_compiled_linked.parent_preopen_dir,

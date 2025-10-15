@@ -37,6 +37,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 
 ## Timers Watcher Configuration
 # [timers_watcher]
+# enabled = true
 # leeway.milliseconds = 500
 # tick_sleep.milliseconds = 100
 
