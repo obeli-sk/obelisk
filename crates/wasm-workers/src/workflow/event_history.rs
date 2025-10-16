@@ -1016,9 +1016,11 @@ impl EventHistory {
                     childs,
                 )
                 .await?;
-            let res = db_connection.append_backtrace_batch(wasm_backtraces).await;
-            if let Err(err) = res {
-                debug!("Ignoring error while appending backtrace: {err:?}");
+            if !wasm_backtraces.is_empty() {
+                let res = db_connection.append_backtrace_batch(wasm_backtraces).await;
+                if let Err(err) = res {
+                    debug!("Ignoring error while appending backtrace: {err:?}");
+                }
             }
         }
         Ok(())
