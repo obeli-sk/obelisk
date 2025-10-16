@@ -982,44 +982,44 @@ impl EventHistory {
         db_connection: &dyn DbConnection,
         current_time: DateTime<Utc>,
     ) -> Result<(), DbError> {
-        match &mut self.non_blocking_event_batch {
-            Some(non_blocking_event_batch) if !non_blocking_event_batch.is_empty() => {
-                let mut batches = Vec::with_capacity(non_blocking_event_batch.len());
-                let mut childs = Vec::with_capacity(non_blocking_event_batch.len());
-                let mut first_version = None;
-                let mut wasm_backtraces = Vec::with_capacity(non_blocking_event_batch.len());
-                for non_blocking in non_blocking_event_batch.drain(..) {
-                    match non_blocking {
-                        NonBlockingCache::StartAsync {
-                            batch,
-                            version,
-                            child_req,
-                        } => {
-                            if first_version.is_none() {
-                                first_version.replace(version);
-                            }
-                            childs.push(child_req);
-                            batches.extend(batch);
+        if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch
+            && !non_blocking_event_batch.is_empty()
+        {
+            let mut batches = Vec::with_capacity(non_blocking_event_batch.len());
+            let mut childs = Vec::with_capacity(non_blocking_event_batch.len());
+            let mut first_version = None;
+            let mut wasm_backtraces = Vec::with_capacity(non_blocking_event_batch.len());
+            for non_blocking in non_blocking_event_batch.drain(..) {
+                match non_blocking {
+                    NonBlockingCache::StartAsync {
+                        batch,
+                        version,
+                        child_req,
+                    } => {
+                        if first_version.is_none() {
+                            first_version.replace(version);
                         }
-                        NonBlockingCache::WasmBacktrace { append_backtrace } => {
-                            wasm_backtraces.push(append_backtrace);
-                        }
+                        childs.push(child_req);
+                        batches.extend(batch);
+                    }
+                    NonBlockingCache::WasmBacktrace { append_backtrace } => {
+                        wasm_backtraces.push(append_backtrace);
                     }
                 }
-                db_connection
-                    .append_batch_create_new_execution(
-                        current_time,
-                        batches,
-                        self.execution_id.clone(),
-                        first_version.expect("checked that !non_blocking_event_batch.is_empty()"),
-                        childs,
-                    )
-                    .await?;
-                if let Err(err) = db_connection.append_backtrace_batch(wasm_backtraces).await {
-                    debug!("Ignoring error while appending backtrace: {err:?}");
-                }
             }
-            _ => {}
+            db_connection
+                .append_batch_create_new_execution(
+                    current_time,
+                    batches,
+                    self.execution_id.clone(),
+                    first_version.expect("checked that !non_blocking_event_batch.is_empty()"),
+                    childs,
+                )
+                .await?;
+            let res = db_connection.append_backtrace_batch(wasm_backtraces).await;
+            if let Err(err) = res {
+                debug!("Ignoring error while appending backtrace: {err:?}");
+            }
         }
         Ok(())
     }
