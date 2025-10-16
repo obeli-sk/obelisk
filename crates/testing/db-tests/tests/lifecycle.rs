@@ -1,11 +1,11 @@
 use assert_matches::assert_matches;
+use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, RunId};
-use concepts::storage::HistoryEvent;
 use concepts::storage::{
-    AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
-    JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, PendingState, PersistKind,
-    SpecificError, Version,
+    AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, ExpiredTimer, JoinSetRequest,
+    JoinSetResponse, JoinSetResponseEventOuter, LockedExecution, PendingState, Version,
 };
+use concepts::storage::{DbError, HistoryEvent, SpecificError};
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
@@ -19,28 +19,6 @@ use std::time::Duration;
 use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
 use tracing::{debug, info};
-
-#[tokio::test]
-async fn test_lifecycle_mem() {
-    set_up();
-    let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Memory.set_up().await;
-    let db_connection = db_pool.connection();
-    lifecycle(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
-}
-
-#[tokio::test]
-async fn test_lifecycle_sqlite() {
-    set_up();
-    let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Sqlite.set_up().await;
-    let db_connection = db_pool.connection();
-    lifecycle(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
-}
 
 #[tokio::test]
 async fn test_expired_lock_should_be_found_mem() {
@@ -114,7 +92,7 @@ async fn test_lock_mem() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
-    lock(db_connection.as_ref(), sim_clock).await;
+    test_lock(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -125,7 +103,7 @@ async fn test_lock_sqlite() {
     let sim_clock = SimClock::default();
     let (_guard, db_pool) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
-    lock(db_connection.as_ref(), sim_clock).await;
+    test_lock(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -174,10 +152,456 @@ async fn test_get_expired_delay_sqlite() {
     db_pool.close().await.unwrap();
 }
 
-async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
+#[tokio::test]
+#[rstest::rstest]
+async fn append_after_finish_should_not_be_possible(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let (_guard, db_pool) = database.set_up().await;
+    let db_connection = db_pool.connection();
+    let sim_clock = SimClock::default();
+
     let execution_id = ExecutionId::generate();
     let exec1 = ExecutorId::generate();
-    let exec2 = ExecutorId::generate();
+    let lock_expiry = Duration::from_millis(500);
+
+    // Create
+    let component_id = ComponentId::dummy_activity();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+            component_id: component_id.clone(),
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+    let version = lock_pending(
+        &execution_id,
+        sim_clock.now() + lock_expiry,
+        exec1,
+        &component_id,
+        db_connection.as_ref(),
+        &sim_clock,
+    )
+    .await;
+    let version = {
+        let created_at = sim_clock.now();
+        debug!(now = %created_at, "Finish execution");
+        let req = AppendRequest {
+            event: ExecutionEventInner::Finished {
+                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                http_client_traces: None,
+            },
+            created_at,
+        };
+        db_connection
+            .append(execution_id.clone(), version, req)
+            .await
+            .unwrap()
+    };
+    {
+        let created_at = sim_clock.now();
+        debug!(now = %created_at, "Append after finish should fail");
+        let req = AppendRequest {
+            event: ExecutionEventInner::Finished {
+                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                http_client_traces: None,
+            },
+            created_at,
+        };
+        let err = db_connection
+            .append(execution_id, version, req)
+            .await
+            .unwrap_err();
+
+        let msg = assert_matches!(
+            err,
+            DbError::Specific(SpecificError::ValidationFailed(StrVariant::Static(
+                msg
+            )))
+            => msg
+        );
+        assert!(
+            msg.contains("already finished"),
+            "Message `{msg}` must contain text `already finished`"
+        );
+    }
+}
+
+async fn lock_pending(
+    execution_id: &ExecutionId,
+    lock_expires_at: DateTime<Utc>,
+    executor_id: ExecutorId,
+    component_id: &ComponentId,
+    db_connection: &dyn DbConnection,
+    sim_clock: &SimClock,
+) -> Version {
+    let created_at = sim_clock.now();
+    info!(now = %created_at, "LockPending");
+    let locked_executions = db_connection
+        .lock_pending(
+            1,
+            created_at,
+            Arc::from([SOME_FFQN]),
+            created_at,
+            component_id.clone(),
+            executor_id,
+            lock_expires_at,
+            RunId::generate(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(1, locked_executions.len());
+    let locked_execution = locked_executions.into_iter().next().unwrap();
+    assert_eq!(*execution_id, locked_execution.execution_id);
+    assert_eq!(Version::new(2), locked_execution.next_version);
+    assert_eq!(0, locked_execution.params.len());
+    assert_eq!(SOME_FFQN, locked_execution.ffqn);
+    locked_execution.next_version
+}
+
+#[tokio::test]
+#[rstest::rstest]
+async fn locking_in_unlock_backoff_should_not_be_possible(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let (_guard, db_pool) = database.set_up().await;
+    let db_connection = db_pool.connection();
+    let sim_clock = SimClock::default();
+
+    let execution_id = ExecutionId::generate();
+    let exec1 = ExecutorId::generate();
+    let lock_expiry = Duration::from_millis(500);
+
+    // Create
+    let component_id = ComponentId::dummy_activity();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+            component_id: component_id.clone(),
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    let version = lock_pending(
+        &execution_id,
+        sim_clock.now() + lock_expiry,
+        exec1,
+        &component_id,
+        db_connection.as_ref(),
+        &sim_clock,
+    )
+    .await;
+
+    // The Executor / Worker responds with a Unlock
+    let backoff = Duration::from_millis(500);
+    let backoff_expires_at = sim_clock.now() + backoff;
+    let _version = {
+        let created_at = sim_clock.now();
+        info!(now = %created_at, "unlock");
+        let req = AppendRequest {
+            event: ExecutionEventInner::Unlocked {
+                backoff_expires_at,
+                reason: StrVariant::Static("reason"),
+            },
+            created_at,
+        };
+        db_connection
+            .append(execution_id.clone(), version, req)
+            .await
+            .unwrap()
+    };
+
+    // Too soon
+    sim_clock.move_time_forward(backoff - Duration::from_millis(100));
+    {
+        let created_at = sim_clock.now();
+        info!(now = %created_at, "Attempt to lock while in timeout backoff");
+        let locked_executions = db_connection
+            .lock_pending(
+                1,
+                created_at,
+                Arc::from([SOME_FFQN]),
+                created_at,
+                component_id.clone(),
+                exec1,
+                created_at + lock_expiry,
+                RunId::generate(),
+            )
+            .await
+            .unwrap();
+        assert!(locked_executions.is_empty());
+    }
+
+    sim_clock.move_time_to(backoff_expires_at);
+    {
+        let created_at = sim_clock.now();
+        info!(now = %created_at, "Locking exactly at `backoff_expires_at` should succeed");
+        let locked_executions = db_connection
+            .lock_pending(
+                1,
+                created_at,
+                Arc::from([SOME_FFQN]),
+                created_at,
+                component_id.clone(),
+                exec1,
+                created_at + lock_expiry,
+                RunId::generate(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(1, locked_executions.len());
+    }
+}
+
+#[tokio::test]
+#[rstest::rstest]
+async fn lock_extended_with_the_same_executor_should_work(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let (_guard, db_pool) = database.set_up().await;
+    {
+        let db_connection = db_pool.connection();
+        let lock_resp = lock_and_attept_to_extend(true, true, db_connection.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(Version::new(3), lock_resp.next_version);
+    }
+    db_pool.close().await.unwrap();
+}
+#[tokio::test]
+#[rstest::rstest]
+async fn lock_extended_with_another_executor_should_fail(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let (_guard, db_pool) = database.set_up().await;
+    {
+        let db_connection = db_pool.connection();
+        lock_and_attept_to_extend(false, true, db_connection.as_ref())
+            .await
+            .unwrap_err();
+        lock_and_attept_to_extend(true, false, db_connection.as_ref())
+            .await
+            .unwrap_err();
+        lock_and_attept_to_extend(false, false, db_connection.as_ref())
+            .await
+            .unwrap_err();
+    }
+    db_pool.close().await.unwrap();
+}
+async fn lock_and_attept_to_extend(
+    same_executor_id: bool,
+    same_run_id: bool,
+    db_connection: &dyn DbConnection,
+) -> Result<LockedExecution, DbError> {
+    let sim_clock = SimClock::epoch();
+    let execution_id = ExecutionId::generate();
+    let exec_pending = ExecutorId::generate();
+    let run_pending = RunId::generate();
+    let exec_extend = if same_executor_id {
+        exec_pending.clone()
+    } else {
+        ExecutorId::generate()
+    };
+    let run_extend = if same_run_id {
+        run_pending.clone()
+    } else {
+        RunId::generate()
+    };
+
+    // Create
+    let component_id = ComponentId::dummy_activity();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+            component_id: component_id.clone(),
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    let lock_expiry = Duration::from_millis(500);
+
+    // Lock using lock_pending
+    let version = {
+        let created_at = sim_clock.now();
+        info!(now = %created_at, "LockPending");
+        let locked_executions = db_connection
+            .lock_pending(
+                1,
+                created_at,
+                Arc::from([SOME_FFQN]),
+                created_at,
+                component_id.clone(),
+                exec_pending,
+                created_at + lock_expiry,
+                run_pending,
+            )
+            .await
+            .unwrap();
+        assert_eq!(1, locked_executions.len());
+        let locked_execution = locked_executions.into_iter().next().unwrap();
+        assert_eq!(execution_id, locked_execution.execution_id);
+        assert_eq!(Version::new(2), locked_execution.next_version);
+        assert_eq!(0, locked_execution.params.len());
+        assert_eq!(SOME_FFQN, locked_execution.ffqn);
+        locked_execution.next_version
+    };
+
+    sim_clock.move_time_forward(lock_expiry); // does not matter, as long as the execution is still in Locked state.
+    let created_at = sim_clock.now();
+    info!(now = %created_at, "Attempt extend the lock");
+    db_connection
+        .lock_one(
+            created_at,
+            component_id.clone(),
+            &execution_id,
+            run_extend,
+            version,
+            exec_extend,
+            created_at + lock_expiry,
+        )
+        .await
+}
+
+#[tokio::test]
+#[rstest::rstest]
+async fn locking_in_timeout_backoff_should_not_be_possible(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let (_guard, db_pool) = database.set_up().await;
+    let db_connection = db_pool.connection();
+    let sim_clock = SimClock::default();
+
+    let execution_id = ExecutionId::generate();
+    let exec1 = ExecutorId::generate();
+    let lock_expiry = Duration::from_millis(500);
+
+    // Create
+    let component_id = ComponentId::dummy_activity();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+            component_id: component_id.clone(),
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // LockPending
+    let version = {
+        let created_at = sim_clock.now();
+        info!(now = %created_at, "LockPending");
+        let locked_executions = db_connection
+            .lock_pending(
+                1,
+                created_at,
+                Arc::from([SOME_FFQN]),
+                created_at,
+                component_id.clone(),
+                exec1,
+                created_at + lock_expiry,
+                RunId::generate(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(1, locked_executions.len());
+        let locked_execution = locked_executions.into_iter().next().unwrap();
+        assert_eq!(execution_id, locked_execution.execution_id);
+        assert_eq!(Version::new(2), locked_execution.next_version);
+        assert_eq!(0, locked_execution.params.len());
+        assert_eq!(SOME_FFQN, locked_execution.ffqn);
+        locked_execution.next_version
+    };
+    // The Executor / Worker responds with a timeout
+    sim_clock.move_time_forward(lock_expiry);
+    let backoff = Duration::from_millis(300);
+    {
+        let created_at = sim_clock.now();
+        info!(now = %created_at, "Temporary timeout");
+        let req = AppendRequest {
+            created_at,
+            event: ExecutionEventInner::TemporarilyTimedOut {
+                backoff_expires_at: created_at + backoff,
+                http_client_traces: None,
+            },
+        };
+
+        db_connection
+            .append(execution_id.clone(), version, req)
+            .await
+            .unwrap();
+    }
+    sim_clock.move_time_forward(backoff - Duration::from_millis(100));
+    {
+        let created_at = sim_clock.now();
+        info!(now = %created_at, "Attempt to lock while in timeout backoff");
+        let locked_executions = db_connection
+            .lock_pending(
+                1,
+                created_at,
+                Arc::from([SOME_FFQN]),
+                created_at,
+                component_id.clone(),
+                exec1,
+                created_at + lock_expiry,
+                RunId::generate(),
+            )
+            .await
+            .unwrap();
+        assert!(locked_executions.is_empty());
+    }
+}
+
+#[tokio::test]
+#[rstest::rstest]
+async fn lock_pending_while_nothing_is_stored_should_work(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let (_guard, db_pool) = database.set_up().await;
+    let db_connection = db_pool.connection();
+    let sim_clock = SimClock::default();
+
+    let exec1 = ExecutorId::generate();
     let lock_expiry = Duration::from_millis(500);
 
     assert!(
@@ -196,8 +620,40 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
             .unwrap()
             .is_empty()
     );
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
 
-    let mut version;
+#[tokio::test]
+#[rstest::rstest]
+async fn creating_execution_twice_should_fail(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let (_guard, db_pool) = database.set_up().await;
+    let db_connection = db_pool.connection();
+    let sim_clock = SimClock::default();
+
+    let execution_id = ExecutionId::generate();
+    let exec1 = ExecutorId::generate();
+    let lock_expiry = Duration::from_millis(500);
+
+    assert!(
+        db_connection
+            .lock_pending(
+                1,
+                sim_clock.now(),
+                Arc::from([SOME_FFQN]),
+                sim_clock.now(),
+                ComponentId::dummy_activity(),
+                exec1,
+                sim_clock.now() + lock_expiry,
+                RunId::generate()
+            )
+            .await
+            .unwrap()
+            .is_empty()
+    );
     // Create
     let component_id = ComponentId::dummy_activity();
     db_connection
@@ -234,274 +690,8 @@ async fn lifecycle(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         })
         .await
         .unwrap_err();
-
-    // LockPending
-    let run_id = {
-        let created_at = sim_clock.now();
-        info!(now = %created_at, "LockPending");
-        let mut locked_executions = db_connection
-            .lock_pending(
-                1,
-                created_at,
-                Arc::from([SOME_FFQN]),
-                created_at,
-                component_id.clone(),
-                exec1,
-                created_at + lock_expiry,
-                RunId::generate(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(1, locked_executions.len());
-        let locked_execution = locked_executions.pop().unwrap();
-        assert_eq!(execution_id, locked_execution.execution_id);
-        assert_eq!(Version::new(2), locked_execution.version);
-        assert_eq!(0, locked_execution.params.len());
-        assert_eq!(SOME_FFQN, locked_execution.ffqn);
-        version = locked_execution.version;
-        locked_execution.run_id
-    };
-    sim_clock.move_time_forward(Duration::from_millis(499));
-    {
-        let created_at = sim_clock.now();
-        info!(now = %created_at, "Temporary timeout");
-        let req = AppendRequest {
-            created_at,
-            event: ExecutionEventInner::TemporarilyTimedOut {
-                backoff_expires_at: created_at + lock_expiry,
-                http_client_traces: None,
-            },
-        };
-
-        version = db_connection
-            .append(execution_id.clone(), version, req)
-            .await
-            .unwrap();
-    }
-    sim_clock.move_time_forward(lock_expiry - Duration::from_millis(100));
-    {
-        let created_at = sim_clock.now();
-        info!(now = %created_at, "Attempt to lock using exec2");
-        let not_yet_pending = db_connection
-            .lock(
-                created_at,
-                component_id.clone(),
-                &execution_id,
-                RunId::generate(),
-                version.clone(),
-                exec2,
-                created_at + lock_expiry,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(
-            DbError::Specific(SpecificError::ValidationFailed(StrVariant::Static(
-                "cannot lock, not yet pending"
-            ))),
-            not_yet_pending
-        );
-    }
-    // TODO: attempt to append an event requiring version without it.
-
-    sim_clock.move_time_forward(Duration::from_millis(100));
-    {
-        let created_at = sim_clock.now();
-        info!(now = %created_at, "Lock again using exec1");
-        let (event_history, current_version) = db_connection
-            .lock(
-                created_at,
-                component_id.clone(),
-                &execution_id,
-                run_id,
-                version,
-                exec1,
-                created_at + Duration::from_secs(1),
-            )
-            .await
-            .unwrap();
-        assert!(event_history.is_empty());
-        version = current_version;
-    }
-    sim_clock.move_time_forward(Duration::from_millis(700));
-    {
-        let created_at = sim_clock.now();
-        info!(now = %created_at, "Attempt to lock using exec2  while in a lock");
-        assert!(
-            db_connection
-                .lock(
-                    created_at,
-                    component_id.clone(),
-                    &execution_id,
-                    RunId::generate(),
-                    version.clone(),
-                    exec2,
-                    created_at + lock_expiry,
-                )
-                .await
-                .is_err()
-        );
-        // Version is not changed
-    }
-
-    {
-        let created_at = sim_clock.now();
-        info!(now = %created_at, "Extend lock using exec1");
-        let (event_history, current_version) = db_connection
-            .lock(
-                created_at,
-                component_id.clone(),
-                &execution_id,
-                run_id,
-                version,
-                exec1,
-                created_at + lock_expiry,
-            )
-            .await
-            .unwrap();
-        assert!(event_history.is_empty());
-        version = current_version;
-    }
-    sim_clock.move_time_forward(Duration::from_millis(200));
-    {
-        let created_at = sim_clock.now();
-        info!(now = %created_at, "Extend lock using exec1 and wrong run id should fail");
-        assert!(
-            db_connection
-                .lock(
-                    created_at,
-                    component_id.clone(),
-                    &execution_id,
-                    RunId::generate(),
-                    version.clone(),
-                    exec1,
-                    created_at + lock_expiry,
-                )
-                .await
-                .is_err()
-        );
-    }
-    let backoff_expires_at = {
-        let created_at = sim_clock.now();
-        let backoff_expires_at = created_at + lock_expiry;
-        info!(now = %created_at, "persist and unlock");
-        let req = AppendRequest {
-            event: ExecutionEventInner::HistoryEvent {
-                event: HistoryEvent::Persist {
-                    value: Vec::from("hello".as_bytes()),
-                    kind: PersistKind::RandomString {
-                        min_length: 1,
-                        max_length_exclusive: 6,
-                    },
-                },
-            },
-            created_at,
-        };
-        version = db_connection
-            .append(execution_id.clone(), version, req)
-            .await
-            .unwrap();
-        let req = AppendRequest {
-            event: ExecutionEventInner::Unlocked {
-                backoff_expires_at,
-                reason: StrVariant::Static("reason"),
-            },
-            created_at,
-        };
-        version = db_connection
-            .append(execution_id.clone(), version, req)
-            .await
-            .unwrap();
-        backoff_expires_at
-    };
-    sim_clock.move_time_forward(Duration::from_millis(200));
-    assert!(sim_clock.now() < backoff_expires_at);
-    {
-        let created_at = sim_clock.now();
-        info!(now = %created_at, "Locking before backoff_expires_at should fail");
-        let not_yet_pending = db_connection
-            .lock(
-                created_at,
-                component_id.clone(),
-                &execution_id,
-                RunId::generate(),
-                version.clone(),
-                exec1,
-                created_at + lock_expiry,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(
-            DbError::Specific(SpecificError::ValidationFailed(StrVariant::Static(
-                "cannot lock, not yet pending"
-            ))),
-            not_yet_pending
-        );
-    }
-    sim_clock.move_time_to(backoff_expires_at);
-    {
-        let created_at = sim_clock.now();
-        info!(now = %created_at, "Locking exactly at `backoff_expires_at` should succeed");
-        let (event_history, current_version) = db_connection
-            .lock(
-                created_at,
-                component_id.clone(),
-                &execution_id,
-                RunId::generate(),
-                version,
-                exec1,
-                created_at + lock_expiry,
-            )
-            .await
-            .unwrap();
-        assert_eq!(1, event_history.len());
-        let value = assert_matches!(event_history.last(),
-            Some(HistoryEvent::Persist { value, kind: PersistKind::RandomString { .. } }) => value );
-        assert_eq!(Vec::from("hello".as_bytes()), *value);
-        version = current_version;
-    }
-    sim_clock.move_time_forward(Duration::from_millis(300));
-    {
-        let created_at = sim_clock.now();
-        debug!(now = %created_at, "Finish execution");
-        let req = AppendRequest {
-            event: ExecutionEventInner::Finished {
-                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                http_client_traces: None,
-            },
-            created_at,
-        };
-        version = db_connection
-            .append(execution_id.clone(), version, req)
-            .await
-            .unwrap();
-    }
-    {
-        let created_at = sim_clock.now();
-        debug!(now = %created_at, "Append after finish should fail");
-        let req = AppendRequest {
-            event: ExecutionEventInner::Finished {
-                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                http_client_traces: None,
-            },
-            created_at,
-        };
-        let err = db_connection
-            .append(execution_id, version, req)
-            .await
-            .unwrap_err();
-
-        let msg = assert_matches!(
-            err,
-            DbError::Specific(SpecificError::ValidationFailed(StrVariant::Static(
-                msg
-            )))
-            => msg
-        );
-        assert!(
-            msg.contains("already finished"),
-            "Message `{msg}` must contain text `already finished`"
-        );
-    }
+    drop(db_connection);
+    db_pool.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -565,7 +755,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
         assert_eq!(1, locked_executions.len());
         let locked_execution = locked_executions.pop().unwrap();
         assert_eq!(execution_id, locked_execution.execution_id);
-        assert_eq!(Version::new(2), locked_execution.version);
+        assert_eq!(Version::new(2), locked_execution.next_version);
         assert_eq!(0, locked_execution.params.len());
         assert_eq!(SOME_FFQN, locked_execution.ffqn);
     }
@@ -638,7 +828,7 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
         let locked_execution = locked_executions.pop().unwrap();
         assert_eq!(execution_id, locked_execution.execution_id);
         assert_eq!(SOME_FFQN, locked_execution.ffqn);
-        assert_eq!(Version::new(2), locked_execution.version);
+        assert_eq!(Version::new(2), locked_execution.next_version);
     }
     // Calling `get_expired_timers` after lock expiry should return the expired execution.
     sim_clock.move_time_forward(lock_duration);
@@ -656,8 +846,8 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
             retry_exp_backoff,
             parent,
         ) = assert_matches!(expired,
-            ExpiredTimer::Lock { execution_id, locked_at_version, next_version, temporary_event_count, max_retries, retry_exp_backoff, parent } =>
-            (execution_id, locked_at_version, next_version, temporary_event_count, max_retries, retry_exp_backoff, parent));
+            ExpiredTimer::Lock { execution_id, locked_at_version, next_version, intermittent_event_count, max_retries, retry_exp_backoff, parent } =>
+            (execution_id, locked_at_version, next_version, intermittent_event_count, max_retries, retry_exp_backoff, parent));
         assert_eq!(execution_id, *found_execution_id);
         assert_eq!(Version::new(1), *locked_at_version);
         assert_eq!(Version::new(2), *next_version);
@@ -982,7 +1172,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
     assert_eq!(vec![older_id, newer_id, newest_id], locked_ids);
 }
 
-pub async fn lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
+pub async fn test_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let executor_id = ExecutorId::generate();
     // Create
@@ -1003,7 +1193,7 @@ pub async fn lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         .await
         .unwrap();
     // Append an event that does not change Pending state but must update the version.
-    let version = {
+    {
         let join_set_id =
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         db_connection
@@ -1027,26 +1217,49 @@ pub async fn lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
             .await
             .unwrap()
     };
-    let locked_at = sim_clock.now();
-    let (_, _version) = db_connection
-        .lock(
-            locked_at,
+
+    lock(
+        db_connection,
+        &execution_id,
+        &sim_clock,
+        executor_id,
+        sim_clock.now() + Duration::from_millis(100), // lock expires at
+    )
+    .await;
+}
+
+async fn lock(
+    db_connection: &dyn DbConnection,
+    execution_id: &ExecutionId,
+    sim_clock: &SimClock,
+    executor_id: ExecutorId,
+    lock_expires_at: DateTime<Utc>,
+) -> Version {
+    let lock_pending_res = db_connection
+        .lock_pending(
+            1,
+            sim_clock.now(), // pending at or sooner
+            Arc::from([SOME_FFQN]),
+            sim_clock.now(), // created at
             ComponentId::dummy_activity(),
-            &execution_id,
-            RunId::generate(),
-            version,
             executor_id,
-            locked_at + Duration::from_millis(100),
+            lock_expires_at,
+            RunId::generate(),
         )
         .await
         .unwrap();
+    assert_eq!(1, lock_pending_res.len());
+    let lock_pending_res = lock_pending_res.into_iter().next().unwrap();
+    assert_eq!(*execution_id, lock_pending_res.execution_id);
+    let version = lock_pending_res.next_version;
+    version
 }
 
 pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let executor_id = ExecutorId::generate();
     // Create
-    let version = db_connection
+    db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
             execution_id: execution_id.clone(),
@@ -1063,18 +1276,15 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
         .await
         .unwrap();
     let lock_expiry = Duration::from_millis(100);
-    let (_, version) = db_connection
-        .lock(
-            sim_clock.now(),
-            ComponentId::dummy_activity(),
-            &execution_id,
-            RunId::generate(),
-            version,
-            executor_id,
-            sim_clock.now() + lock_expiry,
-        )
-        .await
-        .unwrap();
+
+    let version = lock(
+        db_connection,
+        &execution_id,
+        &sim_clock,
+        executor_id,
+        sim_clock.now() + lock_expiry,
+    )
+    .await;
 
     assert!(
         db_connection
@@ -1096,7 +1306,7 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
         execution_id,
         locked_at_version: Version::new(1),
         next_version: version,
-        temporary_event_count: 0,
+        intermittent_event_count: 0,
         max_retries: 0,
         retry_exp_backoff: Duration::ZERO,
         parent: None,
@@ -1108,7 +1318,7 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
     let execution_id = ExecutionId::generate();
     let executor_id = ExecutorId::generate();
     // Create
-    let version = db_connection
+    db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
             execution_id: execution_id.clone(),
@@ -1125,18 +1335,14 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
         .await
         .unwrap();
     let lock_expiry = Duration::from_millis(100);
-    let (_, version) = db_connection
-        .lock(
-            sim_clock.now(),
-            ComponentId::dummy_activity(),
-            &execution_id,
-            RunId::generate(),
-            version,
-            executor_id,
-            sim_clock.now() + lock_expiry * 2,
-        )
-        .await
-        .unwrap();
+    let version = lock(
+        db_connection,
+        &execution_id,
+        &sim_clock,
+        executor_id,
+        sim_clock.now() + lock_expiry * 2, // lock expires at
+    )
+    .await;
 
     // Create joinset
     let join_set_id = JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();

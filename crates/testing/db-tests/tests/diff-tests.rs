@@ -191,8 +191,8 @@ async fn persist_finished_event(
             .unwrap();
         assert_eq!(1, locked_executions.len());
         let locked_execution = locked_executions.pop().unwrap();
-        assert_eq!(Version::new(2), locked_execution.version);
-        locked_execution.version
+        assert_eq!(Version::new(2), locked_execution.next_version);
+        locked_execution.next_version
     };
 
     let wast_val_with_type: WastValWithType = serde_json::from_str(WVWT_RECORD_UNSORTED).unwrap();

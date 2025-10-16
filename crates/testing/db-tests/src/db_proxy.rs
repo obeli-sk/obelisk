@@ -9,7 +9,7 @@ use concepts::{
         AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
         ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEvent,
         ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockResponse,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution,
         Pagination, PendingState, ResponseWithCursor, SubscribeError, Version, VersionType,
     },
     time::TokioSleep,
@@ -79,12 +79,7 @@ impl DbConnection for DbConnectionProxy {
             )
             .await
     }
-
-    async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
-        self.0.get_expired_timers(at).await
-    }
-
-    async fn lock(
+    async fn lock_one(
         &self,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
@@ -93,9 +88,9 @@ impl DbConnection for DbConnectionProxy {
         version: Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockResponse, DbError> {
+    ) -> Result<LockedExecution, DbError> {
         self.0
-            .lock(
+            .lock_one(
                 created_at,
                 component_id,
                 execution_id,
@@ -105,6 +100,10 @@ impl DbConnection for DbConnectionProxy {
                 lock_expires_at,
             )
             .await
+    }
+
+    async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
+        self.0.get_expired_timers(at).await
     }
 
     async fn append(

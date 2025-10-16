@@ -159,8 +159,13 @@ pub type VersionType = u32;
 pub struct Version(pub VersionType);
 impl Version {
     #[must_use]
-    pub fn new(arg: VersionType) -> Self {
-        Self(arg)
+    pub fn new(arg: VersionType) -> Version {
+        Version(arg)
+    }
+
+    #[must_use]
+    pub fn increment(&self) -> Version {
+        Version(self.0 + 1)
     }
 }
 
@@ -222,18 +227,6 @@ pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::Histor
         },
         closing_strategy: ClosingStrategy::Complete,
     },
-};
-pub const DUMMY_TEMPORARILY_TIMED_OUT: ExecutionEventInner =
-    ExecutionEventInner::TemporarilyTimedOut {
-        backoff_expires_at: DateTime::from_timestamp_nanos(0),
-        http_client_traces: None,
-    };
-pub const DUMMY_TEMPORARILY_FAILED: ExecutionEventInner = ExecutionEventInner::TemporarilyFailed {
-    backoff_expires_at: DateTime::from_timestamp_nanos(0),
-    reason_full: StrVariant::empty(),
-    reason_inner: StrVariant::empty(),
-    detail: None,
-    http_client_traces: None,
 };
 
 #[derive(
@@ -537,25 +530,25 @@ pub enum SubscribeError {
     DbError(DbError),
 }
 
+// Represents next version after successfuly appended to execution log.
+// TODO: Convert to struct with next_version
 pub type AppendResponse = Version;
 pub type PendingExecution = (ExecutionId, Version, Params, Option<DateTime<Utc>>);
-pub type LockResponse = (Vec<HistoryEvent>, Version);
 
 #[derive(Debug, Clone)]
 pub struct LockedExecution {
     pub execution_id: ExecutionId,
+    pub next_version: Version,
     pub metadata: ExecutionMetadata,
     pub run_id: RunId,
-    pub version: Version,
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub event_history: Vec<HistoryEvent>,
     pub responses: Vec<JoinSetResponseEventOuter>,
-    pub scheduled_at: DateTime<Utc>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
     pub parent: Option<(ExecutionId, JoinSetId)>,
-    pub temporary_event_count: u32,
+    pub intermittent_event_count: u32,
 }
 
 pub type LockPendingResponse = Vec<LockedExecution>;
@@ -629,9 +622,8 @@ pub trait DbConnection: Send + Sync {
         run_id: RunId,
     ) -> Result<LockPendingResponse, DbError>;
 
-    /// Specialized `append` which returns the event history.
-    #[expect(clippy::too_many_arguments)]
-    async fn lock(
+    /// Specialized locking for e.g. extending the lock by the original executor and run.
+    async fn lock_one(
         &self,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
@@ -640,7 +632,7 @@ pub trait DbConnection: Send + Sync {
         version: Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockResponse, DbError>;
+    ) -> Result<LockedExecution, DbError>;
 
     /// Append a single event to an existing execution log
     async fn append(
@@ -918,10 +910,12 @@ mod wasm_backtrace {
     }
 }
 
+pub type ResponseCursorType = u32; // FIXME: Switch to u64
+
 #[derive(Debug, Clone)]
 pub struct ResponseWithCursor {
     pub event: JoinSetResponseEventOuter,
-    pub cursor: u32,
+    pub cursor: ResponseCursorType,
 }
 
 pub struct ExecutionWithState {
@@ -940,18 +934,18 @@ pub enum ExecutionListPagination {
 #[derive(Debug, Clone, Copy)]
 pub enum Pagination<T> {
     NewerThan {
-        length: u32,
+        length: ResponseCursorType,
         cursor: T,
         including_cursor: bool,
     },
     OlderThan {
-        length: u32,
+        length: ResponseCursorType,
         cursor: T,
         including_cursor: bool,
     },
 }
 impl<T> Pagination<T> {
-    pub fn length(&self) -> u32 {
+    pub fn length(&self) -> ResponseCursorType {
         match self {
             Pagination::NewerThan { length, .. } | Pagination::OlderThan { length, .. } => *length,
         }
@@ -1016,12 +1010,12 @@ pub enum ExpiredTimer {
         execution_id: ExecutionId,
         locked_at_version: Version,
         // when finished, `next_version` points to the finished version (is not bumped anymore).
-        next_version: Version,
-        /// As the execution may still be running, this represents the number of temporary failures + timeouts prior to this execution.
-        temporary_event_count: u32,
+        next_version: Version, // TODO: Remove, locked_at_version.increment() is enough.
+        /// As the execution may still be running, this represents the number of intermittent failures + timeouts prior to this execution.
+        intermittent_event_count: u32,
         max_retries: u32,
         retry_exp_backoff: Duration,
-        parent: Option<(ExecutionId, JoinSetId)>,
+        parent: Option<(ExecutionId, JoinSetId)>, // TODO: Remove
     },
     Delay {
         execution_id: ExecutionId,

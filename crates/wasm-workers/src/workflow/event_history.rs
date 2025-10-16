@@ -106,7 +106,6 @@ pub(crate) struct EventHistory {
     fn_registry: Arc<dyn FunctionRegistry>,
 }
 
-#[expect(clippy::large_enum_variant)]
 enum NonBlockingCache {
     StartAsync {
         batch: Vec<AppendRequest>,

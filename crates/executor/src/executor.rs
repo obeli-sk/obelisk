@@ -300,19 +300,19 @@ impl<C: ClockFn + 'static> ExecTask<C> {
     ) -> Result<(), DbError> {
         debug!("Worker::run starting");
         trace!(
-            version = %locked_execution.version,
+            version = %locked_execution.next_version,
             params = ?locked_execution.params,
             event_history = ?locked_execution.event_history,
             "Worker::run starting"
         );
         let can_be_retried = ExecutionLog::can_be_retried_after(
-            locked_execution.temporary_event_count + 1,
+            locked_execution.intermittent_event_count + 1,
             locked_execution.max_retries,
             locked_execution.retry_exp_backoff,
         );
         let unlock_expiry_on_limit_reached =
             ExecutionLog::compute_retry_duration_when_retrying_forever(
-                locked_execution.temporary_event_count + 1,
+                locked_execution.intermittent_event_count + 1,
                 locked_execution.retry_exp_backoff,
             );
         let ctx = WorkerContext {
@@ -326,7 +326,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 .into_iter()
                 .map(|outer| outer.event)
                 .collect(),
-            version: locked_execution.version,
+            version: locked_execution.next_version,
             execution_deadline,
             can_be_retried: can_be_retried.is_some(),
             run_id: locked_execution.run_id,

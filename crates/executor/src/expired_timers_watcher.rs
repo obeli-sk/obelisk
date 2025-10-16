@@ -101,7 +101,7 @@ pub(crate) async fn tick(
                 execution_id,
                 locked_at_version,
                 next_version,
-                temporary_event_count,
+                intermittent_event_count,
                 max_retries,
                 retry_exp_backoff,
                 parent,
@@ -124,7 +124,7 @@ pub(crate) async fn tick(
                         child_finished: None,
                     }
                 } else if let Some(duration) = ExecutionLog::can_be_retried_after(
-                    temporary_event_count + 1,
+                    intermittent_event_count + 1,
                     max_retries,
                     retry_exp_backoff,
                 ) {

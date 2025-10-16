@@ -12,7 +12,7 @@ use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
     ClientError, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
     ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
-    JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
+    HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution, Pagination,
     ResponseWithCursor, SpecificError, SubscribeError, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
@@ -72,7 +72,7 @@ impl DbConnection for InMemoryDbConnection {
     }
 
     #[instrument(skip_all, %execution_id)]
-    async fn lock(
+    async fn lock_one(
         &self,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
@@ -81,8 +81,9 @@ impl DbConnection for InMemoryDbConnection {
         version: Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockResponse, DbError> {
-        self.0
+    ) -> Result<LockedExecution, DbError> {
+        let (next_version, event_history) = self
+            .0
             .lock()
             .unwrap()
             .lock(
@@ -94,7 +95,26 @@ impl DbConnection for InMemoryDbConnection {
                 executor_id,
                 lock_expires_at,
             )
-            .map_err(DbError::Specific)
+            .map_err(DbError::Specific)?;
+        let db_holder_guard = self.0.lock().unwrap();
+        let journal = db_holder_guard
+            .journals
+            .get(execution_id)
+            .expect("must exist as already locked");
+        Ok(LockedExecution {
+            execution_id: journal.execution_id().clone(),
+            metadata: journal.metadata().clone(),
+            next_version,
+            ffqn: journal.ffqn().clone(),
+            params: journal.params(),
+            event_history,
+            responses: journal.responses.clone(),
+            retry_exp_backoff: journal.retry_exp_backoff(),
+            max_retries: journal.max_retries(),
+            run_id,
+            parent: journal.parent(),
+            intermittent_event_count: journal.temporary_event_count(),
+        })
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -370,7 +390,7 @@ mod index {
             batch_size: usize,
             expiring_at_or_before: DateTime<Utc>,
             ffqns: &[concepts::FunctionFqn],
-        ) -> Vec<(&'a ExecutionJournal, DateTime<Utc>)> {
+        ) -> Vec<(&'a ExecutionJournal, DateTime<Utc> /* scheduled at */)> {
             let mut pending = self
                 .pending_scheduled
                 .range(..=expiring_at_or_before)
@@ -547,42 +567,41 @@ impl DbHolder {
         let pending =
             self.index
                 .fetch_pending(&self.journals, batch_size, pending_at_or_sooner, ffqns);
-        let mut payload = Vec::with_capacity(pending.len());
-        for (journal, scheduled_at) in pending {
-            let item = LockedExecution {
+        let mut resp = Vec::with_capacity(pending.len());
+        for (journal, _scheduled_at) in pending {
+            let row = LockedExecution {
                 execution_id: journal.execution_id().clone(),
                 metadata: journal.metadata().clone(),
-                version: journal.version(), // updated later
+                next_version: journal.version(), // updated later
                 ffqn: journal.ffqn().clone(),
                 params: journal.params(),
                 event_history: Vec::default(), // updated later
                 responses: journal.responses.clone(),
-                scheduled_at,
                 retry_exp_backoff: journal.retry_exp_backoff(),
                 max_retries: journal.max_retries(),
                 run_id,
                 parent: journal.parent(),
-                temporary_event_count: journal.temporary_event_count(),
+                intermittent_event_count: journal.temporary_event_count(),
             };
-            payload.push(item);
+            resp.push(row);
         }
         // Lock, update the version and event history.
-        for row in &mut payload {
-            let (new_event_history, new_version) = self
+        for row in &mut resp {
+            let (next_version, new_event_history) = self
                 .lock(
                     created_at,
                     component_id.clone(),
                     &row.execution_id,
                     row.run_id,
-                    row.version.clone(),
+                    row.next_version.clone(),
                     executor_id,
                     lock_expires_at,
                 )
                 .expect("must be lockable within the same transaction");
-            row.version = new_version;
+            row.next_version = next_version;
             row.event_history.extend(new_event_history);
         }
-        payload
+        resp
     }
 
     fn create(&mut self, req: CreateRequest) -> Result<AppendResponse, SpecificError> {
@@ -620,7 +639,7 @@ impl DbHolder {
         version: Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockResponse, SpecificError> {
+    ) -> Result<(Version /* next version */, Vec<HistoryEvent>), SpecificError> {
         let event = ExecutionEventInner::Locked {
             component_id,
             executor_id,
@@ -628,9 +647,9 @@ impl DbHolder {
             run_id,
         };
         self.append(created_at, execution_id, version, event)
-            .map(|_| {
+            .map(|next_version| {
                 let journal = self.journals.get(execution_id).unwrap();
-                (journal.event_history().collect(), journal.version())
+                (next_version, journal.event_history().collect())
             })
     }
 
@@ -656,14 +675,14 @@ impl DbHolder {
                 expected_version,
             });
         }
-        let new_version = journal.append(created_at, event)?;
+        let next_version = journal.append(created_at, event)?;
         self.index.update(journal);
         if matches!(journal.pending_state, PendingState::PendingAt { .. })
             && let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn())
         {
             let _ = subscription.try_send(());
         }
-        Ok(new_version)
+        Ok(next_version)
     }
 
     fn get(&mut self, execution_id: &ExecutionId) -> Result<ExecutionLog, SpecificError> {
@@ -697,7 +716,7 @@ impl DbHolder {
                         .expect("must have been locked"),
                     next_version: journal.version(),
                     max_retries: journal.max_retries(),
-                    temporary_event_count: journal.temporary_event_count(),
+                    intermittent_event_count: journal.temporary_event_count(),
                     retry_exp_backoff: journal.retry_exp_backoff(),
                     parent: journal.parent(),
                 },
