@@ -112,9 +112,7 @@ enum NonBlockingCache {
         batch: Vec<AppendRequest>,
         version: Version,
         child_req: CreateRequest,
-    },
-    WasmBacktrace {
-        append_backtrace: BacktraceInfo,
+        backtrace: Option<BacktraceInfo>,
     },
 }
 
@@ -990,23 +988,23 @@ impl EventHistory {
             let mut first_version = None;
             let mut wasm_backtraces = Vec::with_capacity(non_blocking_event_batch.len());
             for non_blocking in non_blocking_event_batch.drain(..) {
-                match non_blocking {
-                    NonBlockingCache::StartAsync {
-                        batch,
-                        version,
-                        child_req,
-                    } => {
-                        if first_version.is_none() {
-                            first_version.replace(version);
-                        }
-                        childs.push(child_req);
-                        batches.extend(batch);
-                    }
-                    NonBlockingCache::WasmBacktrace { append_backtrace } => {
-                        wasm_backtraces.push(append_backtrace);
-                    }
+                let NonBlockingCache::StartAsync {
+                    batch,
+                    version,
+                    child_req,
+                    backtrace,
+                } = non_blocking;
+                if first_version.is_none() {
+                    first_version.replace(version);
+                }
+                childs.push(child_req);
+                assert!(!batch.is_empty());
+                batches.extend(batch);
+                if let Some(backtrace) = backtrace {
+                    wasm_backtraces.push(backtrace);
                 }
             }
+            assert!(!batches.is_empty());
             db_connection
                 .append_batch_create_new_execution(
                     current_time,
@@ -1140,23 +1138,19 @@ impl EventHistory {
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
+                        let next_version = Version::new(version.0 + 1);
                         non_blocking_event_batch.push(NonBlockingCache::StartAsync {
                             batch: vec![child_exec_req],
                             version: version.clone(),
                             child_req,
+                            backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
+                                execution_id: self.execution_id.clone(),
+                                component_id: self.component_id.clone(),
+                                wasm_backtrace,
+                                version_min_including: version.clone(),
+                                version_max_excluding: next_version.clone(),
+                            }),
                         });
-                        let next_version = Version::new(version.0 + 1);
-                        if let Some(wasm_backtrace) = wasm_backtrace {
-                            non_blocking_event_batch.push(NonBlockingCache::WasmBacktrace {
-                                append_backtrace: BacktraceInfo {
-                                    execution_id: self.execution_id.clone(),
-                                    component_id: self.component_id.clone(),
-                                    wasm_backtrace,
-                                    version_min_including: version.clone(),
-                                    version_max_excluding: next_version.clone(),
-                                },
-                            });
-                        }
                         self.flush_non_blocking_event_cache_if_full(db_connection, called_at)
                             .await?;
                         next_version
@@ -1272,23 +1266,19 @@ impl EventHistory {
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
+                        let next_version = Version::new(version.0 + 1);
                         non_blocking_event_batch.push(NonBlockingCache::StartAsync {
                             batch: vec![child_exec_req],
                             version: version.clone(),
                             child_req,
+                            backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
+                                execution_id: self.execution_id.clone(),
+                                component_id: self.component_id.clone(),
+                                wasm_backtrace,
+                                version_min_including: version.clone(),
+                                version_max_excluding: next_version.clone(),
+                            }),
                         });
-                        let next_version = Version::new(version.0 + 1);
-                        if let Some(wasm_backtrace) = wasm_backtrace {
-                            non_blocking_event_batch.push(NonBlockingCache::WasmBacktrace {
-                                append_backtrace: BacktraceInfo {
-                                    execution_id: self.execution_id.clone(),
-                                    component_id: self.component_id.clone(),
-                                    wasm_backtrace,
-                                    version_min_including: version.clone(),
-                                    version_max_excluding: next_version.clone(),
-                                },
-                            });
-                        }
                         self.flush_non_blocking_event_cache_if_full(db_connection, called_at)
                             .await?;
                         next_version
