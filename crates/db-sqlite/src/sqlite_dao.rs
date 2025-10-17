@@ -222,10 +222,16 @@ WHERE rn = 1;
 
 // TODO: partial indexes
 const IDX_T_STATE_LOCK_PENDING: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (state, pending_expires_finished, ffqn);
+CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (ffqn, state, pending_expires_finished);
 ";
 const IDX_T_STATE_EXPIRED_TIMERS: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_expired_timers ON t_state (pending_expires_finished) WHERE executor_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_t_state_expired_timers ON t_state (
+execution_id,
+corresponding_version DESC,
+corresponding_response_idx DESC,
+state,
+pending_expires_finished
+)
 ";
 const IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_execution_id_is_root ON t_state (execution_id, is_top_level);
