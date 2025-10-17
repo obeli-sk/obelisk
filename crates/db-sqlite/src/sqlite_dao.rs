@@ -669,7 +669,9 @@ impl<S: Sleep> SqlitePool<S> {
                         processed += 1;
                         // update hdr metrics
                         if let Ok(value) = u32::try_from(sent_latency.as_micros()) {
-                            send_hist.record(value as u64).expect("already cast to u32")
+                            send_hist
+                                .record(u64::from(value))
+                                .expect("already cast to u32");
                         }
                         if let Ok(value) = u32::try_from(func_duration.as_micros()) {
                             func_histograms
@@ -677,7 +679,7 @@ impl<S: Sleep> SqlitePool<S> {
                                 .or_insert_with(|| {
                                     Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap()
                                 })
-                                .record(value as u64)
+                                .record(u64::from(value))
                                 .expect("already cast to u32");
                         }
                     }

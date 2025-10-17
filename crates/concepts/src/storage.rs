@@ -623,6 +623,7 @@ pub trait DbConnection: Send + Sync {
     ) -> Result<LockPendingResponse, DbError>;
 
     /// Specialized locking for e.g. extending the lock by the original executor and run.
+    #[expect(clippy::too_many_arguments)]
     async fn lock_one(
         &self,
         created_at: DateTime<Utc>,

@@ -420,12 +420,12 @@ async fn lock_and_attept_to_extend(
     let exec_pending = ExecutorId::generate();
     let run_pending = RunId::generate();
     let exec_extend = if same_executor_id {
-        exec_pending.clone()
+        exec_pending
     } else {
         ExecutorId::generate()
     };
     let run_extend = if same_run_id {
-        run_pending.clone()
+        run_pending
     } else {
         RunId::generate()
     };
@@ -1251,8 +1251,8 @@ async fn lock(
     assert_eq!(1, lock_pending_res.len());
     let lock_pending_res = lock_pending_res.into_iter().next().unwrap();
     assert_eq!(*execution_id, lock_pending_res.execution_id);
-    let version = lock_pending_res.next_version;
-    version
+
+    lock_pending_res.next_version
 }
 
 pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
