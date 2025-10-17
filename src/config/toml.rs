@@ -87,6 +87,8 @@ pub(crate) struct SqliteConfigToml {
     low_prio_threshold: usize,
     #[serde(default)]
     pragma: std::collections::HashMap<String, String>, // hashbrown is not supported by schemars
+    #[serde(default)]
+    metrics_threshold: Option<usize>,
 }
 impl Default for SqliteConfigToml {
     fn default() -> Self {
@@ -95,6 +97,7 @@ impl Default for SqliteConfigToml {
             queue_capacity: default_sqlite_queue_capacity(),
             low_prio_threshold: default_sqlite_low_prio_threshold(),
             pragma: std::collections::HashMap::default(),
+            metrics_threshold: Option::default(),
         }
     }
 }
@@ -118,6 +121,7 @@ impl SqliteConfigToml {
             queue_capacity: self.queue_capacity,
             low_prio_threshold: self.low_prio_threshold,
             pragma_override: Some(self.pragma.clone().into_iter().collect()),
+            metrics_threshold: self.metrics_threshold,
         }
     }
 }

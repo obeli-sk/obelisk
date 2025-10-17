@@ -612,6 +612,15 @@
           "default": 100,
           "minimum": 0
         },
+        "metrics_threshold": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "default": null,
+          "minimum": 0
+        },
         "pragma": {
           "type": "object",
           "additionalProperties": {

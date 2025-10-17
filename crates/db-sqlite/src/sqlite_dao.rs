@@ -559,6 +559,7 @@ pub struct SqliteConfig {
     pub queue_capacity: usize,
     pub low_prio_threshold: usize,
     pub pragma_override: Option<hashbrown::HashMap<String, String>>,
+    pub metrics_threshold: Option<usize>,
 }
 impl Default for SqliteConfig {
     fn default() -> Self {
@@ -566,6 +567,7 @@ impl Default for SqliteConfig {
             queue_capacity: 100,
             low_prio_threshold: 100,
             pragma_override: None,
+            metrics_threshold: None,
         }
     }
 }
@@ -678,8 +680,9 @@ impl<S: Sleep> SqlitePool<S> {
         mut command_rx: mpsc::Receiver<ThreadCommand>,
         queue_capacity: usize,
         low_prio_threshold: usize,
+        metrics_threshold: Option<usize>,
     ) {
-        const METRIC_DUMPING_TRESHOLD: usize = 0; // 0 to disable histogram dumping
+        let metrics_threshold = metrics_threshold.unwrap_or_default(); // 0 to disable histogram dumping
         let mut vec: Vec<ThreadCommand> = Vec::with_capacity(queue_capacity);
         // measure how long it takes to receive the `ThreadCommand`. 1us-1s
         let mut send_hist = Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap();
@@ -722,22 +725,24 @@ impl<S: Sleep> SqlitePool<S> {
                     {
                         let item = std::mem::replace(item, ThreadCommand::Dummy); // get owned item
                         let (func, sent_at, name) = assert_matches!(item, ThreadCommand::Func{func, sent_at, name, ..} => (func, sent_at, name));
-                        let sent_at = sent_at.elapsed();
+                        let sent_latency = sent_at.elapsed();
                         let started_at = Instant::now();
                         func(&mut conn);
-                        let started_at = started_at.elapsed();
+                        let func_duration = started_at.elapsed();
                         processed += 1;
                         // update hdr metrics
-                        send_hist
-                            .record(u64::from(sent_at.subsec_micros()))
-                            .unwrap();
-                        func_histograms
-                            .entry(name)
-                            .or_insert_with(|| {
-                                Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap()
-                            })
-                            .record(u64::from(started_at.subsec_micros()))
-                            .unwrap();
+                        if let Ok(value) = u32::try_from(sent_latency.as_micros()) {
+                            send_hist.record(value as u64).expect("already cast to u32")
+                        }
+                        if let Ok(value) = u32::try_from(func_duration.as_micros()) {
+                            func_histograms
+                                .entry(name)
+                                .or_insert_with(|| {
+                                    Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap()
+                                })
+                                .record(value as u64)
+                                .expect("already cast to u32");
+                        }
                     }
                     if shutdown_requested.load(Ordering::Acquire) {
                         // recheck after every function
@@ -752,14 +757,14 @@ impl<S: Sleep> SqlitePool<S> {
                 execute(CommandPriority::Low);
             }
 
-            if metric_dumping_counter == METRIC_DUMPING_TRESHOLD {
+            if metric_dumping_counter == metrics_threshold {
                 print!("{{");
                 metric_dumping_counter = 0;
                 func_histograms.iter_mut().for_each(|(name, h)| {
                     print_histogram(*name, h, true);
                     h.clear();
                 });
-                print_histogram("send", &send_hist, false);
+                print_histogram("send_latency", &send_hist, false);
                 send_hist.clear();
                 println!("}}");
             }
@@ -809,6 +814,7 @@ impl<S: Sleep> SqlitePool<S> {
                     command_rx,
                     config.queue_capacity,
                     config.low_prio_threshold,
+                    config.metrics_threshold,
                 );
             })
         };
