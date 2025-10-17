@@ -11,8 +11,8 @@ use concepts::{
         ExecutionListPagination, ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetRequest,
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
         LockedExecution, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, ResponseCursorType, ResponseWithCursor, SpecificError,
-        SubscribeError, Version, VersionType,
+        PendingStateFinishedResultKind, ResponseWithCursor, SpecificError, SubscribeError, Version,
+        VersionType,
     },
     time::Sleep,
 };
@@ -138,11 +138,11 @@ CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
     is_top_level INTEGER NOT NULL,
     corresponding_version INTEGER NOT NULL,
-    corresponding_response_idx INTEGER NOT NULL,
     pending_expires_finished TEXT NOT NULL,
     ffqn TEXT NOT NULL,
     state TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     scheduled_at TEXT NOT NULL,
     intermittent_event_count INTEGER NOT NULL,
     max_retries INTEGER NOT NULL,
@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS t_state (
 
     result_kind TEXT,
 
-    PRIMARY KEY (execution_id, corresponding_version, corresponding_response_idx)
+    PRIMARY KEY (execution_id)
 ) STRICT
 ";
 const STATE_PENDING_AT: &str = "PendingAt";
@@ -164,61 +164,6 @@ const STATE_BLOCKED_BY_JOIN_SET: &str = "BlockedByJoinSet";
 const STATE_LOCKED: &str = "Locked";
 const STATE_FINISHED: &str = "Finished";
 const HISTORY_EVENT_TYPE_JOIN_NEXT: &str = "JoinNext";
-
-const CREATE_VIEW_V_CURRENT_STATE: &str = r"
-CREATE VIEW IF NOT EXISTS v_current_state AS
-SELECT
-    execution_id,
-    is_top_level,
-    corresponding_version,
-    corresponding_response_idx,
-    pending_expires_finished,
-    ffqn,
-    state,
-    created_at,
-    scheduled_at,
-    intermittent_event_count,
-    max_retries,
-    retry_exp_backoff_millis,
-
-    join_set_id,
-    join_set_closing,
-
-    executor_id,
-    run_id,
-
-    result_kind
-FROM (
-    SELECT
-        execution_id,
-        is_top_level,
-        corresponding_version,
-        corresponding_response_idx,
-        pending_expires_finished,
-        ffqn,
-        state,
-        created_at,
-        scheduled_at,
-        intermittent_event_count,
-        max_retries,
-        retry_exp_backoff_millis,
-
-        join_set_id,
-        join_set_closing,
-
-        executor_id,
-        run_id,
-
-        result_kind,
-
-        ROW_NUMBER() OVER (
-            PARTITION BY execution_id
-            ORDER BY corresponding_version DESC, corresponding_response_idx DESC
-        ) AS rn
-    FROM t_state
-) sub
-WHERE rn = 1;
-";
 
 // TODO: partial indexes
 const IDX_T_STATE_LOCK_PENDING: &str = r"
@@ -363,7 +308,6 @@ struct CombinedStateDTO {
     join_set_closing: Option<bool>,
     result_kind: Option<PendingStateFinishedResultKind>,
 }
-type ResponseIdxType = ResponseCursorType;
 #[derive(Debug)]
 struct CombinedState {
     ffqn: FunctionFqn,
@@ -653,7 +597,6 @@ impl<S: Sleep> SqlitePool<S> {
         );
         // t_state
         execute(&conn, CREATE_TABLE_T_STATE, []);
-        execute(&conn, CREATE_VIEW_V_CURRENT_STATE, []);
         execute(&conn, IDX_T_STATE_LOCK_PENDING, []);
         execute(&conn, IDX_T_STATE_EXPIRED_TIMERS, []);
         execute(&conn, IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL, []);
@@ -1039,11 +982,11 @@ impl<S: Sleep> SqlitePool<S> {
                     execution_id,
                     is_top_level,
                     corresponding_version,
-                    corresponding_response_idx,
                     pending_expires_finished,
                     ffqn,
                     state,
                     created_at,
+                    updated_at,
                     scheduled_at,
                     intermittent_event_count,
                     max_retries,
@@ -1053,11 +996,11 @@ impl<S: Sleep> SqlitePool<S> {
                     :execution_id,
                     :is_top_level,
                     :corresponding_version,
-                    :corresponding_response_idx,
                     :pending_expires_finished,
                     :ffqn,
                     :state,
                     :created_at,
+                    CURRENT_TIMESTAMP,
                     :scheduled_at,
                     0,
                     :max_retries,
@@ -1070,7 +1013,6 @@ impl<S: Sleep> SqlitePool<S> {
                 ":execution_id": execution_id.to_string(),
                 ":is_top_level": execution_id.is_top_level(),
                 ":corresponding_version": version.0,
-                ":corresponding_response_idx": 0,
                 ":pending_expires_finished": scheduled_at,
                 ":ffqn": ffqn.to_string(),
                 ":state": STATE_PENDING_AT,
@@ -1086,81 +1028,45 @@ impl<S: Sleep> SqlitePool<S> {
         Ok((next_version, pending_at))
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %scheduled_at, %corresponding_version,
-        corresponding_response_idx))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %scheduled_at, %corresponding_version))]
     fn update_state_pending_after_response_appended(
         tx: &Transaction,
         execution_id: &ExecutionId,
         scheduled_at: DateTime<Utc>,     // Changing to state PendingAt
         corresponding_version: &Version, // t_execution_log is not be changed
-        corresponding_response_idx: ResponseIdxType, // Newly arrived response's idx that is unblocking the state.
     ) -> Result<PendingAt, DbError> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after response appended");
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx
             .prepare_cached(
                 r"
-                INSERT INTO t_state (
-                    execution_id,
-                    is_top_level,
-                    corresponding_version,
-                    corresponding_response_idx,
-                    pending_expires_finished,
-                    ffqn,
-                    state,
-                    created_at,
-                    scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis,
+                UPDATE t_state
+                SET
+                    corresponding_version = :corresponding_version,
+                    pending_expires_finished = :pending_expires_finished,
+                    state = :state,
+                    updated_at = CURRENT_TIMESTAMP,
 
-                    join_set_id,
-                    join_set_closing,
+                    join_set_id = NULL,
+                    join_set_closing = NULL,
 
-                    executor_id,
-                    run_id,
+                    executor_id = NULL,
+                    run_id = NULL,
 
-                    result_kind
-                )
-                SELECT
-                    execution_id,
-                    is_top_level,
-                    corresponding_version,         -- version remains the same
-                    :corresponding_response_idx,   -- new response's index
-                    :pending_expires_finished,
-                    ffqn,
-                    :state,
-                    CURRENT_TIMESTAMP,
-                    scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis,
-
-                    NULL,
-                    NULL,
-
-                    NULL,
-                    NULL,
-
-                    NULL
-                FROM t_state
+                    result_kind = NULL
                 WHERE execution_id = :execution_id
-                AND corresponding_version = :corresponding_version  -- select the same version
-                ORDER BY corresponding_response_idx DESC
-                LIMIT 1;
             ",
             )
             .map_err(convert_err)?;
-        let inserted = stmt
+        let updated = stmt
             .execute(named_params! {
                 ":execution_id": execution_id_str,
                 ":corresponding_version": corresponding_version.0,
-                ":corresponding_response_idx": corresponding_response_idx,
                 ":pending_expires_finished": scheduled_at,
                 ":state": STATE_PENDING_AT,
             })
             .map_err(convert_err)?;
-        if inserted != 1 {
+        if updated != 1 {
             return Err(DbError::Specific(SpecificError::NotFound));
         }
         Ok(PendingAt {
@@ -1169,85 +1075,49 @@ impl<S: Sleep> SqlitePool<S> {
         })
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %scheduled_at, %appending_version,
-        ?corresponding_response_idx))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %scheduled_at, %appending_version))]
     fn update_state_pending_after_event_appended(
         tx: &Transaction,
         execution_id: &ExecutionId,
         appending_version: &Version,
-        corresponding_response_idx: Option<ResponseIdxType>,
         scheduled_at: DateTime<Utc>, // Changing to state PendingAt
         intermittent_failure: bool,
     ) -> Result<(AppendResponse, PendingAt), DbError> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
         // If response idx is unknown, use 0. This distinguishs the two paths.
         // JoinNext will always send an actual idx.
-        let corresponding_response_idx = corresponding_response_idx.unwrap_or_default();
         let mut stmt = tx
             .prepare_cached(
                 r"
-                INSERT INTO t_state (
-                    execution_id,
-                    is_top_level,
-                    corresponding_version,
-                    corresponding_response_idx,
-                    pending_expires_finished,
-                    ffqn,
-                    state,
-                    created_at,
-                    scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis,
+                UPDATE t_state
+                SET
+                    corresponding_version = :appending_version,
+                    pending_expires_finished = :pending_expires_finished,
+                    state = :state,
+                    updated_at = CURRENT_TIMESTAMP,
+                    intermittent_event_count = intermittent_event_count + :intermittent_delta,
 
-                    join_set_id,
-                    join_set_closing,
+                    join_set_id = NULL,
+                    join_set_closing = NULL,
 
-                    executor_id,
-                    run_id,
+                    executor_id = NULL,
+                    run_id = NULL,
 
-                    result_kind
-                )
-                SELECT
-                    execution_id,
-                    is_top_level,
-                    :corresponding_version,         -- appending_version
-                    :corresponding_response_idx,    -- overridden
-                    :pending_expires_finished,
-                    ffqn,
-                    :state,
-                    CURRENT_TIMESTAMP,
-                    scheduled_at,
-                    intermittent_event_count + :intermittent_delta,
-                    max_retries,
-                    retry_exp_backoff_millis,
-
-                    NULL,
-                    NULL,
-
-                    NULL,
-                    NULL,
-
-                    NULL
-                FROM t_state
-                WHERE execution_id = :execution_id
-                AND corresponding_version = :corresponding_version - 1  -- select the previous row
-                ORDER BY corresponding_response_idx DESC
-                LIMIT 1;
+                    result_kind = NULL
+                WHERE execution_id = :execution_id;
             ",
             )
             .map_err(convert_err)?;
-        let inserted = stmt
+        let updated = stmt
             .execute(named_params! {
                 ":execution_id": execution_id.to_string(),
-                ":corresponding_version": appending_version.0,
-                ":corresponding_response_idx": corresponding_response_idx,
+                ":appending_version": appending_version.0,
                 ":pending_expires_finished": scheduled_at,
                 ":state": STATE_PENDING_AT,
                 ":intermittent_delta": i32::from(intermittent_failure) // 0 or 1
             })
             .map_err(convert_err)?;
-        if inserted != 1 {
+        if updated != 1 {
             return Err(DbError::Specific(SpecificError::NotFound));
         }
         Ok((
@@ -1266,93 +1136,54 @@ impl<S: Sleep> SqlitePool<S> {
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
         appending_version: &Version,
-        corresponding_response_idx: ResponseIdxType, // last resp id sent in Locked response or 0 if no responses
     ) -> Result<u32, DbError> {
         debug!("Setting t_state to Locked(`{lock_expires_at:?}`)");
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx
             .prepare_cached(
                 r"
-                INSERT INTO t_state (
-                    execution_id,
-                    is_top_level,
-                    corresponding_version,
-                    corresponding_response_idx,
-                    pending_expires_finished,
-                    ffqn,
-                    state,
-                    created_at,
-                    scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis,
+                UPDATE t_state
+                SET
+                    corresponding_version = :appending_version,
+                    pending_expires_finished = :pending_expires_finished,
+                    state = :state,
+                    updated_at = CURRENT_TIMESTAMP,
 
-                    join_set_id,
-                    join_set_closing,
 
-                    executor_id,
-                    run_id,
+                    join_set_id = NULL,
+                    join_set_closing = NULL,
 
-                    result_kind
-                )
-                SELECT
-                    execution_id,
-                    is_top_level,
-                    :corresponding_version,         -- appending_version
-                    :corresponding_response_idx,    -- new response's index
-                    :pending_expires_finished,
-                    ffqn,
-                    :state,
-                    CURRENT_TIMESTAMP,
-                    scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis,
+                    executor_id = :executor_id,
+                    run_id = :run_id,
 
-                    NULL,
-                    NULL,
-
-                    :executor_id,
-                    :run_id,
-
-                    NULL
-                FROM t_state
+                    result_kind = NULL
                 WHERE execution_id = :execution_id
-                AND corresponding_version = :corresponding_version - 1  -- select the previous row
-                ORDER BY corresponding_response_idx DESC
-                LIMIT 1;
             ",
             )
             .map_err(convert_err)?;
-        let inserted = stmt
+        let updated = stmt
             .execute(named_params! {
                 ":execution_id": execution_id_str,
-                ":corresponding_version": appending_version.0,
-                ":corresponding_response_idx": corresponding_response_idx,
+                ":appending_version": appending_version.0,
                 ":pending_expires_finished": lock_expires_at,
                 ":state": STATE_LOCKED,
                 ":executor_id": executor_id.to_string(),
                 ":run_id": run_id.to_string(),
             })
             .map_err(convert_err)?;
-        if inserted != 1 {
+        if updated != 1 {
             return Err(DbError::Specific(SpecificError::NotFound));
         }
 
         // fetch intermittent event count from the just-inserted row.
         let intermittent_event_count = tx
             .prepare(
-                "SELECT intermittent_event_count FROM t_state WHERE \
-                    execution_id = :execution_id \
-                    AND corresponding_version = :corresponding_version \
-                    AND corresponding_response_idx = :corresponding_response_idx",
+                "SELECT intermittent_event_count FROM t_state WHERE execution_id = :execution_id",
             )
             .map_err(convert_err)?
             .query_row(
                 named_params! {
                     ":execution_id": execution_id_str,
-                    ":corresponding_version": appending_version.0,
-                    ":corresponding_response_idx": corresponding_response_idx,
                 },
                 |row| {
                     let intermittent_event_count = row.get("intermittent_event_count")?;
@@ -1376,74 +1207,40 @@ impl<S: Sleep> SqlitePool<S> {
         AppendResponse, // next version
         DbError,
     > {
-        // corresponding_response_idx is unknown, copy from previous state
         debug!("Setting t_state to BlockedByJoinSet(`{join_set_id}`)");
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx
             .prepare_cached(
                 r"
-                INSERT INTO t_state (
-                    execution_id,
-                    is_top_level,
-                    corresponding_version,
-                    corresponding_response_idx,
-                    pending_expires_finished,
-                    ffqn,
-                    state,
-                    created_at,
-                    scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis,
+                UPDATE t_state
+                SET
+                    corresponding_version = :appending_version,
+                    pending_expires_finished = :pending_expires_finished,
+                    state = :state,
+                    updated_at = CURRENT_TIMESTAMP,
 
-                    join_set_id,
-                    join_set_closing,
+                    join_set_id = :join_set_id,
+                    join_set_closing = :join_set_closing,
 
-                    executor_id,
-                    run_id,
+                    executor_id = NULL,
+                    run_id = NULL,
 
-                    result_kind
-                )
-                SELECT
-                    execution_id,
-                    is_top_level,
-                    :corresponding_version,         -- appending_version
-                    corresponding_response_idx,     -- copy response's index
-                    :pending_expires_finished,
-                    ffqn,
-                    :state,
-                    CURRENT_TIMESTAMP,
-                    scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis,
-
-                    :join_set_id,
-                    :join_set_closing,
-
-                    NULL,
-                    NULL,
-
-                    NULL
-                FROM t_state
+                    result_kind = NULL
                 WHERE execution_id = :execution_id
-                AND corresponding_version = :corresponding_version - 1  -- select the previous row
-                ORDER BY corresponding_response_idx DESC
-                LIMIT 1;
             ",
             )
             .map_err(convert_err)?;
-        let inserted = stmt
+        let updated = stmt
             .execute(named_params! {
                 ":execution_id": execution_id_str,
-                ":corresponding_version": appending_version.0,
+                ":appending_version": appending_version.0,
                 ":pending_expires_finished": lock_expires_at,
                 ":state": STATE_BLOCKED_BY_JOIN_SET,
                 ":join_set_id": join_set_id,
                 ":join_set_closing": join_set_closing,
             })
             .map_err(convert_err)?;
-        if inserted != 1 {
+        if updated != 1 {
             return Err(DbError::Specific(SpecificError::NotFound));
         }
         Ok(appending_version.increment())
@@ -1457,73 +1254,39 @@ impl<S: Sleep> SqlitePool<S> {
         finished_at: DateTime<Utc>,
         result_kind: PendingStateFinishedResultKind,
     ) -> Result<(), DbError> {
-        // corresponding_response_idx is unknown, copy from previous state
         debug!("Setting t_state to Finished");
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx
             .prepare_cached(
                 r"
-                INSERT INTO t_state (
-                    execution_id,
-                    is_top_level,
-                    corresponding_version,
-                    corresponding_response_idx,
-                    pending_expires_finished,
-                    ffqn,
-                    state,
-                    created_at,
-                    scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis,
+                UPDATE t_state
+                SET
+                    corresponding_version = :appending_version,
+                    pending_expires_finished = :pending_expires_finished,
+                    state = :state,
+                    updated_at = CURRENT_TIMESTAMP,
 
-                    join_set_id,
-                    join_set_closing,
+                    join_set_id = NULL,
+                    join_set_closing = NULL,
 
-                    executor_id,
-                    run_id,
+                    executor_id = NULL,
+                    run_id = NULL,
 
-                    result_kind
-                )
-                SELECT
-                    execution_id,
-                    is_top_level,
-                    :corresponding_version,         -- appending_version
-                    corresponding_response_idx,     -- copy response's index
-                    :pending_expires_finished,
-                    ffqn,
-                    :state,
-                    CURRENT_TIMESTAMP,
-                    scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis,
-
-                    NULL,
-                    NULL,
-
-                    NULL,
-                    NULL,
-
-                    :result_kind
-                FROM t_state
+                    result_kind = :result_kind
                 WHERE execution_id = :execution_id
-                AND corresponding_version = :corresponding_version - 1  -- select the previous row
-                ORDER BY corresponding_response_idx DESC
-                LIMIT 1;
             ",
             )
             .map_err(convert_err)?;
-        let inserted = stmt
+        let updated = stmt
             .execute(named_params! {
                 ":execution_id": execution_id_str,
-                ":corresponding_version": appending_version.0,
+                ":appending_version": appending_version.0,
                 ":pending_expires_finished": finished_at,
                 ":state": STATE_FINISHED,
                 ":result_kind": result_kind.to_string(),
             })
             .map_err(convert_err)?;
-        if inserted != 1 {
+        if updated != 1 {
             return Err(DbError::Specific(SpecificError::NotFound));
         }
         Ok(())
@@ -1542,64 +1305,21 @@ impl<S: Sleep> SqlitePool<S> {
         let mut stmt = tx
             .prepare_cached(
                 r"
-                INSERT INTO t_state (
-                    execution_id,
-                    is_top_level,
-                    corresponding_version,
-                    corresponding_response_idx,
-                    pending_expires_finished,
-                    ffqn,
-                    state,
-                    created_at,
-                    scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis,
-
-                    join_set_id,
-                    join_set_closing,
-
-                    executor_id,
-                    run_id,
-
-                    result_kind
-                )
-                SELECT
-                    execution_id,
-                    is_top_level,
-                    corresponding_version + 1,    -- old row's version + 1 = appending_version
-                    corresponding_response_idx,   -- copy response index
-                    pending_expires_finished,
-                    ffqn,
-                    state,
-                    CURRENT_TIMESTAMP,
-                    scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis,
-
-                    join_set_id,
-                    join_set_closing,
-
-                    executor_id,
-                    run_id,
-
-                    result_kind
-                FROM t_state
+                UPDATE t_state
+                SET
+                    corresponding_version = :appending_version,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE execution_id = :execution_id
-                AND corresponding_version = :appending_version - 1 -- select the previous version
-                ORDER BY corresponding_response_idx DESC
-                LIMIT 1;
             ",
             )
             .map_err(convert_err)?;
-        let inserted = stmt
+        let updated = stmt
             .execute(named_params! {
                 ":execution_id": execution_id_str,
                 ":appending_version": appending_version.0,
             })
             .map_err(convert_err)?;
-        if inserted != 1 {
+        if updated != 1 {
             return Err(DbError::Specific(SpecificError::NotFound));
         }
         if let Some(DelayReq {
@@ -1631,13 +1351,17 @@ impl<S: Sleep> SqlitePool<S> {
         tx: &Transaction,
         execution_id: &ExecutionId,
     ) -> Result<CombinedState, DbError> {
-        let mut stmt = tx.prepare(r"
-            SELECT
-            state, ffqn, corresponding_version, corresponding_response_idx, pending_expires_finished, executor_id, run_id,
-            join_set_id, join_set_closing, result_kind FROM t_state WHERE
-            execution_id = :execution_id ORDER BY corresponding_version DESC, corresponding_response_idx DESC LIMIT 1
-            ",
-        ).map_err(convert_err)?;
+        let mut stmt = tx
+            .prepare(
+                r"
+                SELECT
+                    state, ffqn, corresponding_version, pending_expires_finished, executor_id, run_id,
+                    join_set_id, join_set_closing, result_kind FROM t_state
+                WHERE
+                    execution_id = :execution_id
+                ",
+            )
+            .map_err(convert_err)?;
         stmt.query_row(
             named_params! {
                 ":execution_id": execution_id.to_string(),
@@ -1736,9 +1460,9 @@ impl<S: Sleep> SqlitePool<S> {
             format!("WHERE {}", statement_mod.where_vec.join(" AND "))
         };
         let sql = format!(
-            "SELECT created_at, scheduled_at, state, execution_id, ffqn, corresponding_version, corresponding_response_idx, \
+            "SELECT created_at, scheduled_at, state, execution_id, ffqn, corresponding_version, \
             pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
-            FROM v_current_state {where_str} ORDER BY created_at {desc} LIMIT {limit}",
+            FROM t_state {where_str} ORDER BY created_at {desc} LIMIT {limit}",
             desc = if statement_mod.limit_desc { "DESC" } else { "" },
             limit = statement_mod.limit
         );
@@ -1856,7 +1580,6 @@ impl<S: Sleep> SqlitePool<S> {
 
         // Update `t_state`
         let responses = Self::list_responses(tx, execution_id, None)?;
-        let last_response_idx = responses.last().map(|resp| resp.cursor).unwrap_or_default();
         let responses = responses.into_iter().map(|resp| resp.event).collect();
         trace!("Responses: {responses:?}");
 
@@ -1867,7 +1590,6 @@ impl<S: Sleep> SqlitePool<S> {
             run_id,
             lock_expires_at,
             appending_version,
-            last_response_idx,
         )?;
         // Fetch event_history and `Created` event to construct the response.
         let mut events = tx
@@ -2054,7 +1776,6 @@ impl<S: Sleep> SqlitePool<S> {
                     tx,
                     execution_id,
                     &appending_version,
-                    None, // response idx is unknown.
                     *backoff_expires_at,
                     true, // an intermittent failure
                 )?;
@@ -2067,7 +1788,6 @@ impl<S: Sleep> SqlitePool<S> {
                     tx,
                     execution_id,
                     &appending_version,
-                    None, // response idx is unknown.
                     *backoff_expires_at,
                     false, // not an intermittent failure
                 )?;
@@ -2147,12 +1867,12 @@ impl<S: Sleep> SqlitePool<S> {
                 trace!("join_next_count: {join_next_count}, nth_response: {nth_response:?}");
                 assert!(join_next_count > 0);
                 if let Some(ResponseWithCursor {
-                    cursor: corresponding_response_idx,
                     event:
                         JoinSetResponseEventOuter {
                             created_at: nth_created_at,
                             ..
                         },
+                    cursor: _,
                 }) = nth_response
                 {
                     let scheduled_at = max(*run_expires_at, nth_created_at); // No need to block
@@ -2161,7 +1881,6 @@ impl<S: Sleep> SqlitePool<S> {
                             tx,
                             execution_id,
                             &appending_version,
-                            Some(corresponding_response_idx), // Decision is made based on this response Id
                             scheduled_at,
                             false, // not an intermittent failure
                         )?;
@@ -2224,9 +1943,6 @@ impl<S: Sleep> SqlitePool<S> {
             ":finished_version": finished_version,
         })
         .map_err(convert_err)?;
-        // Get the autogenerated ID
-        let current_response_idx =
-            ResponseIdxType::try_from(tx.last_insert_rowid()).expect("response index overflow");
 
         // if the execution is going to be unblocked by this response...
         let combined_state = Self::get_combined_state(tx, execution_id)?;
@@ -2248,7 +1964,6 @@ impl<S: Sleep> SqlitePool<S> {
                 execution_id,
                 scheduled_at,
                 &combined_state.corresponding_version, // not changing the version
-                current_response_idx,
             )?;
             Some(pending_at)
         } else {
@@ -2639,7 +2354,7 @@ impl<S: Sleep> SqlitePool<S> {
             let mut stmt = conn
                 .prepare(&format!(
                     r#"
-                    SELECT execution_id, corresponding_version FROM v_current_state WHERE
+                    SELECT execution_id, corresponding_version FROM t_state WHERE
                     state = "{STATE_PENDING_AT}" AND
                     pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
                     ORDER BY pending_expires_finished LIMIT :batch_size
@@ -3208,7 +2923,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                     // Extend with expired locks
                     expired_timers.extend(conn.prepare(&format!(r#"
                         SELECT execution_id, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis
-                        FROM v_current_state
+                        FROM t_state
                         WHERE pending_expires_finished <= :at AND state = "{STATE_LOCKED}"
                         "#
                     )
