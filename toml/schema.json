@@ -613,13 +613,14 @@
           "minimum": 0
         },
         "metrics_threshold": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint",
-          "default": null,
-          "minimum": 0
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "pragma": {
           "type": "object",

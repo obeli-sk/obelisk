@@ -497,7 +497,7 @@ pub struct SqliteConfig {
     pub queue_capacity: usize,
     pub low_prio_threshold: usize,
     pub pragma_override: Option<hashbrown::HashMap<String, String>>,
-    pub metrics_threshold: Option<usize>,
+    pub metrics_threshold: Option<Duration>,
 }
 impl Default for SqliteConfig {
     fn default() -> Self {
@@ -617,14 +617,12 @@ impl<S: Sleep> SqlitePool<S> {
         mut command_rx: mpsc::Receiver<ThreadCommand>,
         queue_capacity: usize,
         low_prio_threshold: usize,
-        metrics_threshold: Option<usize>,
+        metrics_threshold: Option<Duration>,
     ) {
-        let metrics_threshold = metrics_threshold.unwrap_or_default(); // 0 to disable histogram dumping
         let mut vec: Vec<ThreadCommand> = Vec::with_capacity(queue_capacity);
         // measure how long it takes to receive the `ThreadCommand`. 1us-1s
         let mut send_hist = Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap();
         let mut func_histograms = hashbrown::HashMap::new();
-        let mut metric_dumping_counter = 0;
         let print_histogram = |name, histogram: &Histogram<u32>, trailing_coma| {
             print!(
                 "\"{name}\": {mean}, \"{name}_len\": {len}, \"{name}_meanlen\": {meanlen} {coma}",
@@ -634,9 +632,9 @@ impl<S: Sleep> SqlitePool<S> {
                 coma = if trailing_coma { "," } else { "" }
             );
         };
+        let mut metrics_instant = std::time::Instant::now();
         loop {
             vec.clear();
-            metric_dumping_counter += 1;
             if let Some(item) = command_rx.blocking_recv() {
                 vec.push(item);
             } else {
@@ -696,9 +694,10 @@ impl<S: Sleep> SqlitePool<S> {
                 execute(CommandPriority::Low);
             }
 
-            if metric_dumping_counter == metrics_threshold {
+            if let Some(metrics_threshold) = metrics_threshold
+                && metrics_instant.elapsed() > metrics_threshold
+            {
                 print!("{{");
-                metric_dumping_counter = 0;
                 func_histograms.iter_mut().for_each(|(name, h)| {
                     print_histogram(*name, h, true);
                     h.clear();
@@ -706,6 +705,7 @@ impl<S: Sleep> SqlitePool<S> {
                 print_histogram("send_latency", &send_hist, false);
                 send_hist.clear();
                 println!("}}");
+                metrics_instant = std::time::Instant::now();
             }
         } // Loop until shutdown is set to true.
         debug!("Closing command thread");
