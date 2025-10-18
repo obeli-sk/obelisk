@@ -3,7 +3,7 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::{
-    AppendRequest, DbPool, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
+    AppendRequest, DbExecutor, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
     LockedExecution,
 };
 use concepts::time::ClockFn;
@@ -11,7 +11,7 @@ use concepts::{ComponentId, FunctionMetadata, StrVariant, SupportedFunctionRetur
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use concepts::{
     FinishedExecutionError,
-    storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
+    storage::{DbError, ExecutionEventInner, JoinSetResponse, Version},
 };
 use concepts::{JoinSetId, PermanentFailureKind};
 use std::fmt::Display;
@@ -39,7 +39,7 @@ pub struct ExecTask<C: ClockFn> {
     worker: Arc<dyn Worker>,
     config: ExecConfig,
     clock_fn: C, // Used for obtaining current time when the execution finishes.
-    db_pool: Arc<dyn DbPool>,
+    db_exec: Arc<dyn DbExecutor>,
     ffqns: Arc<[FunctionFqn]>,
 }
 
@@ -113,14 +113,14 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         worker: Arc<dyn Worker>,
         config: ExecConfig,
         clock_fn: C,
-        db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
         ffqns: Arc<[FunctionFqn]>,
     ) -> Self {
         Self {
             worker,
             config,
             clock_fn,
-            db_pool,
+            db_exec,
             ffqns,
         }
     }
@@ -130,7 +130,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         worker: Arc<dyn Worker>,
         config: ExecConfig,
         clock_fn: C,
-        db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
     ) -> Self {
         let ffqns = worker
             .exported_functions()
@@ -141,7 +141,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             worker,
             config,
             clock_fn,
-            db_pool,
+            db_exec,
             ffqns,
         }
     }
@@ -150,7 +150,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         worker: Arc<dyn Worker>,
         config: ExecConfig,
         clock_fn: C,
-        db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
     ) -> ExecutorTaskHandle {
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
@@ -162,15 +162,14 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             let task = ExecTask {
                 worker,
                 config,
-                db_pool,
+                db_exec,
                 ffqns: ffqns.clone(),
                 clock_fn: clock_fn.clone(),
             };
             while !is_closing_inner.load(Ordering::Relaxed) {
                 let _ = task.tick(clock_fn.now(), RunId::generate()).await;
 
-                task.db_pool
-                    .connection()
+                task.db_exec
                     .wait_for_pending(clock_fn.now(), ffqns.clone(), task.config.tick_sleep)
                     .await;
             }
@@ -224,9 +223,9 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             if permits.is_empty() {
                 return Ok(ExecutionProgress::default());
             }
-            let db_connection = self.db_pool.connection();
             let lock_expires_at = executed_at + self.config.lock_expiry;
-            let locked_executions = db_connection
+            let locked_executions = self
+                .db_exec
                 .lock_pending(
                     permits.len(), // batch size
                     executed_at,   // fetch expiring before now
@@ -255,7 +254,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             let execution_id = locked_execution.execution_id.clone();
             let join_handle = {
                 let worker = self.worker.clone();
-                let db_pool = self.db_pool.clone();
+                let db = self.db_exec.clone();
                 let clock_fn = self.clock_fn.clone();
                 let run_id = locked_execution.run_id;
                 let worker_span = info_span!(parent: None, "worker",
@@ -268,7 +267,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         let _permit = permit;
                         let res = Self::run_worker(
                             worker,
-                            db_pool.as_ref(),
+                            db.as_ref(),
                             execution_deadline,
                             clock_fn,
                             locked_execution,
@@ -289,7 +288,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
 
     async fn run_worker(
         worker: Arc<dyn Worker>,
-        db_pool: &dyn DbPool,
+        db_exec: &dyn DbExecutor,
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
         locked_execution: LockedExecution,
@@ -341,9 +340,8 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             unlock_expiry_on_limit_reached,
         )? {
             Some(append) => {
-                let db_connection = db_pool.connection();
                 trace!("Appending {append:?}");
-                append.append(db_connection.as_ref()).await
+                append.append(db_exec).await
             }
             None => Ok(()),
         }
@@ -619,7 +617,7 @@ pub(crate) struct Append {
 }
 
 impl Append {
-    pub(crate) async fn append(self, db_connection: &dyn DbConnection) -> Result<(), DbError> {
+    pub(crate) async fn append(self, db_exec: &dyn DbExecutor) -> Result<(), DbError> {
         if let Some(child_finished) = self.child_finished {
             assert_matches!(
                 &self.primary_event,
@@ -629,7 +627,7 @@ impl Append {
                 }
             );
             let derived = assert_matches!(self.execution_id.clone(), ExecutionId::Derived(derived) => derived);
-            db_connection
+            db_exec
                 .append_batch_respond_to_parent(
                     derived.clone(),
                     self.created_at,
@@ -651,7 +649,7 @@ impl Append {
                 )
                 .await?;
         } else {
-            db_connection
+            db_exec
                 .append(self.execution_id, self.version, self.primary_event)
                 .await?;
         }
@@ -746,7 +744,7 @@ mod tests {
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::storage::{CreateRequest, JoinSetRequest};
+    use concepts::storage::{CreateRequest, DbConnection, JoinSetRequest};
     use concepts::storage::{ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState};
     use concepts::time::Now;
     use concepts::{
@@ -765,13 +763,13 @@ mod tests {
     async fn tick_fn<W: Worker + Debug, C: ClockFn + 'static>(
         config: ExecConfig,
         clock_fn: C,
-        db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
         worker: Arc<W>,
         executed_at: DateTime<Utc>,
     ) -> ExecutionProgress {
         trace!("Ticking with {worker:?}");
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
-        let executor = ExecTask::new(worker, config, clock_fn, db_pool, ffqns);
+        let executor = ExecTask::new(worker, config, clock_fn, db_exec, ffqns);
         let mut execution_progress = executor.tick(executed_at, RunId::generate()).await.unwrap();
         loop {
             execution_progress
@@ -787,21 +785,32 @@ mod tests {
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based_mem() {
         let created_at = Now.now();
-        let (_guard, db_pool) = Database::Memory.set_up().await;
-        execute_simple_lifecycle_tick_based(db_pool.clone(), ConstClock(created_at)).await;
+        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+        execute_simple_lifecycle_tick_based(
+            db_pool.connection().as_ref(),
+            db_exec.clone(),
+            ConstClock(created_at),
+        )
+        .await;
         db_pool.close().await.unwrap();
     }
 
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based_sqlite() {
         let created_at = Now.now();
-        let (_guard, db_pool) = Database::Sqlite.set_up().await;
-        execute_simple_lifecycle_tick_based(db_pool.clone(), ConstClock(created_at)).await;
+        let (_guard, db_pool, db_exec) = Database::Sqlite.set_up().await;
+        execute_simple_lifecycle_tick_based(
+            db_pool.connection().as_ref(),
+            db_exec.clone(),
+            ConstClock(created_at),
+        )
+        .await;
         db_pool.close().await.unwrap();
     }
 
     async fn execute_simple_lifecycle_tick_based<C: ClockFn + 'static>(
-        pool: Arc<dyn DbPool>,
+        db_connection: &dyn DbConnection,
+        db_exec: Arc<dyn DbExecutor>,
         clock_fn: C,
     ) {
         set_up();
@@ -824,7 +833,8 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
             },
             clock_fn,
-            pool,
+            db_connection,
+            db_exec,
             exec_config,
             Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
                 SUPPORTED_RETURN_VALUE_OK_EMPTY,
@@ -852,7 +862,7 @@ mod tests {
         set_up();
         let created_at = Now.now();
         let clock_fn = ConstClock(created_at);
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -871,7 +881,7 @@ mod tests {
             worker.clone(),
             exec_config.clone(),
             clock_fn,
-            db_pool.clone(),
+            db_exec.clone(),
         );
 
         let execution_log = create_and_tick(
@@ -883,7 +893,8 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
             },
             clock_fn,
-            db_pool.clone(),
+            db_pool.connection().as_ref(),
+            db_exec,
             exec_config,
             worker,
             |_, _, _, _, _| async {
@@ -918,18 +929,18 @@ mod tests {
     async fn create_and_tick<
         W: Worker,
         C: ClockFn,
-        T: FnMut(ExecConfig, C, Arc<dyn DbPool>, Arc<W>, DateTime<Utc>) -> F,
+        T: FnMut(ExecConfig, C, Arc<dyn DbExecutor>, Arc<W>, DateTime<Utc>) -> F,
         F: Future<Output = ExecutionProgress>,
     >(
         config: CreateAndTickConfig,
         clock_fn: C,
-        db_pool: Arc<dyn DbPool>,
+        db_connection: &dyn DbConnection,
+        db_exec: Arc<dyn DbExecutor>,
         exec_config: ExecConfig,
         worker: Arc<W>,
         mut tick: T,
     ) -> ExecutionLog {
         // Create an execution
-        let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
                 created_at: config.created_at,
@@ -947,7 +958,7 @@ mod tests {
             .await
             .unwrap();
         // execute!
-        tick(exec_config, clock_fn, db_pool, worker, config.executed_at).await;
+        tick(exec_config, clock_fn, db_exec, worker, config.executed_at).await;
         let execution_log = db_connection.get(&config.execution_id).await.unwrap();
         debug!("Execution history after tick: {execution_log:?}");
         // check that DB contains Created and Locked events.
@@ -981,7 +992,7 @@ mod tests {
     async fn activity_trap_should_trigger_an_execution_retry() {
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -1012,7 +1023,8 @@ mod tests {
                 retry_exp_backoff,
             },
             sim_clock.clone(),
-            db_pool.clone(),
+            db_pool.connection().as_ref(),
+            db_exec.clone(),
             exec_config.clone(),
             worker,
             tick_fn,
@@ -1058,7 +1070,7 @@ mod tests {
             tick_fn(
                 exec_config.clone(),
                 sim_clock.clone(),
-                db_pool.clone(),
+                db_exec.clone(),
                 worker.clone(),
                 sim_clock.now(),
             )
@@ -1071,7 +1083,7 @@ mod tests {
         tick_fn(
             exec_config,
             sim_clock.clone(),
-            db_pool.clone(),
+            db_exec.clone(),
             worker,
             sim_clock.now(),
         )
@@ -1111,7 +1123,7 @@ mod tests {
         set_up();
         let created_at = Now.now();
         let clock_fn = ConstClock(created_at);
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -1141,7 +1153,8 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
             },
             clock_fn,
-            db_pool.clone(),
+            db_pool.connection().as_ref(),
+            db_exec,
             exec_config.clone(),
             worker,
             tick_fn,
@@ -1210,7 +1223,7 @@ mod tests {
 
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
 
         let parent_worker = Arc::new(SimpleWorker::with_single_result(
             WorkerResult::DbUpdatedByWorkerOrWatcher,
@@ -1243,7 +1256,7 @@ mod tests {
                 executor_id: ExecutorId::generate(),
             },
             sim_clock.clone(),
-            db_pool.clone(),
+            db_exec.clone(),
             parent_worker,
             sim_clock.now(),
         )
@@ -1325,7 +1338,7 @@ mod tests {
                 executor_id: ExecutorId::generate(),
             },
             sim_clock.clone(),
-            db_pool.clone(),
+            db_exec.clone(),
             child_worker,
             sim_clock.now(),
         )
@@ -1417,7 +1430,7 @@ mod tests {
     async fn hanging_lock_should_be_cleaned_and_execution_retried() {
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
         let lock_expiry = Duration::from_millis(100);
         let exec_config = ExecConfig {
             batch_size: 1,
@@ -1465,7 +1478,7 @@ mod tests {
             worker,
             exec_config,
             sim_clock.clone(),
-            db_pool.clone(),
+            db_exec.clone(),
             ffqns,
         );
         let mut first_execution_progress = executor

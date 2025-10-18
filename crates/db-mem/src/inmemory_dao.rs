@@ -522,6 +522,10 @@ impl InMemoryPool {
             Arc::new(AtomicBool::default()),
         )
     }
+
+    pub fn db_executor(&self) -> Arc<dyn DbExecutor> {
+        Arc::new(InMemoryDbConnection(self.0.clone()))
+    }
 }
 
 #[async_trait]

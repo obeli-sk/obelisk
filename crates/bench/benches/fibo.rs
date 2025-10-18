@@ -6,7 +6,7 @@ fn main() {
 
 mod bench {
     use assert_matches::assert_matches;
-    use concepts::storage::DbPool;
+    use concepts::storage::{DbExecutor, DbPool};
     use concepts::time::{ClockFn, Now, Sleep, TokioSleep};
     use concepts::{
         ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params, StrVariant,
@@ -59,14 +59,14 @@ mod bench {
     }
 
     pub(crate) fn spawn_activity(
-        db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
         activity_engine: Arc<Engine>,
     ) -> ExecutorTaskHandle {
         spawn_activity_with_config(
-            db_pool,
+            db_exec,
             wasm_path,
             clock_fn,
             sleep,
@@ -76,7 +76,7 @@ mod bench {
     }
 
     pub(crate) fn spawn_activity_with_config(
-        db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
@@ -98,7 +98,7 @@ mod bench {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec)
     }
 
     fn new_activity_worker_with_config(
@@ -125,13 +125,13 @@ mod bench {
     }
 
     pub(crate) fn spawn_activity_fibo(
-        db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
         activity_engine: Arc<Engine>,
     ) -> ExecutorTaskHandle {
         spawn_activity(
-            db_pool,
+            db_exec,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             clock_fn,
             sleep,
@@ -153,6 +153,7 @@ mod bench {
 
     fn spawn_workflow(
         db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -178,7 +179,7 @@ mod bench {
             .unwrap()
             .link(fn_registry.clone())
             .unwrap()
-            .into_worker(db_pool.clone()),
+            .into_worker(db_pool),
         );
         let exec_config = ExecConfig {
             batch_size: 1,
@@ -188,11 +189,12 @@ mod bench {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec)
     }
 
     pub(crate) fn spawn_workflow_fibo(
         db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
@@ -200,6 +202,7 @@ mod bench {
     ) -> ExecutorTaskHandle {
         spawn_workflow(
             db_pool,
+            db_exec,
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
             clock_fn,
             join_next_blocking_strategy,
@@ -255,10 +258,11 @@ mod bench {
             ),
         ]);
 
-        let (_guard, db_pool) = tokio.block_on(async move { database.set_up().await });
+        let (_guard, db_pool, db_exec) = tokio.block_on(async move { database.set_up().await });
 
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
+            db_exec.clone(),
             Now,
             JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
@@ -267,12 +271,8 @@ mod bench {
             engines.workflow_engine.clone(),
         );
 
-        let activity_exec_task = spawn_activity_fibo(
-            db_pool.clone(),
-            Now,
-            TokioSleep,
-            engines.activity_engine.clone(),
-        );
+        let activity_exec_task =
+            spawn_activity_fibo(db_exec, Now, TokioSleep, engines.activity_engine.clone());
 
         bencher.bench(|| {
             let db_pool = db_pool.clone();

@@ -50,6 +50,7 @@ use concepts::SupportedFunctionReturnValue;
 use concepts::storage::AppendRequest;
 use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
+use concepts::storage::DbExecutor;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionListPagination;
@@ -1424,11 +1425,12 @@ impl ServerInit {
             server_compiled_linked.engines.weak_refs(),
             Duration::from_millis(EPOCH_MILLIS),
         );
-        let db_pool = Arc::new(
-            SqlitePool::new(sqlite_file, sqlite_config, TokioSleep)
+        let (db_pool, db_executor) = {
+            let sqlite = SqlitePool::new(sqlite_file, sqlite_config, TokioSleep)
                 .await
-                .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
-        );
+                .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?;
+            (Arc::new(sqlite.clone()), Arc::new(sqlite))
+        };
 
         let timers_watcher = if timers_watcher.enabled {
             Some(expired_timers_watcher::spawn_new(
@@ -1485,7 +1487,7 @@ impl ServerInit {
             .compiled_components
             .workers_linked
             .into_iter()
-            .map(|pre_spawn| pre_spawn.spawn(db_pool.clone()))
+            .map(|pre_spawn| pre_spawn.spawn(db_pool.clone(), db_executor.clone()))
             .collect();
 
         // Start webhook HTTP servers
@@ -2176,14 +2178,18 @@ struct WorkerLinked {
     exec_config: ExecConfig,
 }
 impl WorkerLinked {
-    fn spawn(self, db_pool: Arc<dyn DbPool>) -> ExecutorTaskHandle {
+    fn spawn(
+        self,
+        db_pool: Arc<dyn DbPool>,
+        db_executor: Arc<dyn DbExecutor>,
+    ) -> ExecutorTaskHandle {
         let worker = match self.worker {
             Either::Left(activity) => activity,
             Either::Right(workflow_linked) => {
                 Arc::from(workflow_linked.into_worker(db_pool.clone()))
             }
         };
-        ExecTask::spawn_new(worker, self.exec_config, Now, db_pool)
+        ExecTask::spawn_new(worker, self.exec_config, Now, db_executor)
     }
 }
 

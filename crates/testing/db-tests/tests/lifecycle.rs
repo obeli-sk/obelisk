@@ -24,7 +24,7 @@ use tracing::{debug, info};
 async fn test_expired_lock_should_be_found_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -35,7 +35,7 @@ async fn test_expired_lock_should_be_found_mem() {
 async fn test_expired_lock_should_be_found_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -46,7 +46,7 @@ async fn test_expired_lock_should_be_found_sqlite() {
 async fn test_append_batch_respond_to_parent_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -57,7 +57,7 @@ async fn test_append_batch_respond_to_parent_mem() {
 async fn test_append_batch_respond_to_parent_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -68,7 +68,7 @@ async fn test_append_batch_respond_to_parent_sqlite() {
 async fn test_lock_pending_should_sort_by_scheduled_at_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -79,7 +79,7 @@ async fn test_lock_pending_should_sort_by_scheduled_at_mem() {
 async fn test_lock_pending_should_sort_by_scheduled_at_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -90,7 +90,7 @@ async fn test_lock_pending_should_sort_by_scheduled_at_sqlite() {
 async fn test_lock_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     test_lock(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -101,7 +101,7 @@ async fn test_lock_mem() {
 async fn test_lock_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     test_lock(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -112,7 +112,7 @@ async fn test_lock_sqlite() {
 async fn test_get_expired_lock_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_lock(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -123,7 +123,7 @@ async fn test_get_expired_lock_mem() {
 async fn test_get_expired_lock_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_lock(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -134,7 +134,7 @@ async fn test_get_expired_lock_sqlite() {
 async fn test_get_expired_delay_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_delay(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -145,7 +145,7 @@ async fn test_get_expired_delay_mem() {
 async fn test_get_expired_delay_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_delay(db_connection.as_ref(), sim_clock).await;
     drop(db_connection);
@@ -158,7 +158,7 @@ async fn append_after_finish_should_not_be_possible(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool) = database.set_up().await;
+    let (_guard, db_pool, _db_exec) = database.set_up().await;
     let db_connection = db_pool.connection();
     let sim_clock = SimClock::default();
 
@@ -275,7 +275,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool) = database.set_up().await;
+    let (_guard, db_pool, _db_exec) = database.set_up().await;
     let db_connection = db_pool.connection();
     let sim_clock = SimClock::default();
 
@@ -379,7 +379,7 @@ async fn lock_extended_with_the_same_executor_should_work(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool) = database.set_up().await;
+    let (_guard, db_pool, _db_exec) = database.set_up().await;
     {
         let db_connection = db_pool.connection();
         let lock_resp = lock_and_attept_to_extend(true, true, db_connection.as_ref())
@@ -395,7 +395,7 @@ async fn lock_extended_with_another_executor_should_fail(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool) = database.set_up().await;
+    let (_guard, db_pool, _db_exec) = database.set_up().await;
     {
         let db_connection = db_pool.connection();
         lock_and_attept_to_extend(false, true, db_connection.as_ref())
@@ -499,7 +499,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool) = database.set_up().await;
+    let (_guard, db_pool, _db_exec) = database.set_up().await;
     let db_connection = db_pool.connection();
     let sim_clock = SimClock::default();
 
@@ -597,7 +597,7 @@ async fn lock_pending_while_nothing_is_stored_should_work(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool) = database.set_up().await;
+    let (_guard, db_pool, _db_exec) = database.set_up().await;
     let db_connection = db_pool.connection();
     let sim_clock = SimClock::default();
 
@@ -630,7 +630,7 @@ async fn creating_execution_twice_should_fail(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool) = database.set_up().await;
+    let (_guard, db_pool, _db_exec) = database.set_up().await;
     let db_connection = db_pool.connection();
     let sim_clock = SimClock::default();
 
@@ -701,7 +701,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing(
 ) {
     set_up();
 
-    let (_guard, db_pool) = database.set_up().await;
+    let (_guard, db_pool, _db_exec) = database.set_up().await;
     let db_connection = db_pool.connection();
     lock_pending_while_expired_lock_should_return_nothing_inner(db_connection.as_ref()).await;
     drop(db_connection);

@@ -697,8 +697,8 @@ pub(crate) mod tests {
     use assert_matches::assert_matches;
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::{
-        AppendRequest, DbConnection, ExecutionEventInner, JoinSetResponse, JoinSetResponseEvent,
-        JoinSetResponseEventOuter,
+        AppendRequest, DbConnection, DbExecutor, ExecutionEventInner, JoinSetResponse,
+        JoinSetResponseEvent, JoinSetResponseEventOuter,
     };
     use concepts::time::TokioSleep;
     use concepts::{
@@ -765,6 +765,7 @@ pub(crate) mod tests {
 
     fn spawn_workflow(
         db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -802,17 +803,19 @@ pub(crate) mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec)
     }
 
     pub(crate) fn spawn_workflow_fibo(
         db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         spawn_workflow(
             db_pool,
+            db_exec,
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
             clock_fn,
             join_next_blocking_strategy,
@@ -827,9 +830,10 @@ pub(crate) mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
         fibo_workflow_should_submit_fibo_activity(
             db_pool.clone(),
+            db_exec,
             sim_clock,
             join_next_blocking_strategy,
         )
@@ -844,9 +848,10 @@ pub(crate) mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Sqlite.set_up().await;
+        let (_guard, db_pool, db_exec) = Database::Sqlite.set_up().await;
         fibo_workflow_should_submit_fibo_activity(
             db_pool.clone(),
+            db_exec,
             sim_clock,
             join_next_blocking_strategy,
         )
@@ -856,6 +861,7 @@ pub(crate) mod tests {
 
     async fn fibo_workflow_should_submit_fibo_activity(
         db_pool: Arc<dyn DbPool>,
+        db_exec: Arc<dyn DbExecutor>,
         sim_clock: SimClock,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
@@ -867,6 +873,7 @@ pub(crate) mod tests {
         ]);
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
+            db_exec.clone(),
             sim_clock.clone(),
             join_next_blocking_strategy,
             &fn_registry,
@@ -911,7 +918,7 @@ pub(crate) mod tests {
 
         info!("Execution should call the activity and finish");
         let activity_exec_task =
-            spawn_activity_fibo(db_pool.clone(), sim_clock.clone(), TokioSleep);
+            spawn_activity_fibo(db_exec.clone(), sim_clock.clone(), TokioSleep);
 
         let res = db_connection
             .wait_for_finished_result(&execution_id, None)
@@ -930,11 +937,12 @@ pub(crate) mod tests {
     #[should_panic(expected = "LinkingError { context: preinstantiation error")]
     async fn fibo_workflow_with_missing_imports_should_fail() {
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
         test_utils::set_up();
         let fn_registry = fn_registry_dummy(&[]);
         spawn_workflow_fibo(
             db_pool.clone(),
+            db_exec,
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
@@ -977,7 +985,7 @@ pub(crate) mod tests {
         const SLEEP_MILLIS: u32 = 100;
         test_utils::set_up();
 
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
 
         let sim_clock = SimClock::epoch();
         let worker = compile_workflow_worker(
@@ -1021,7 +1029,7 @@ pub(crate) mod tests {
         let join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt;
 
         test_utils::set_up();
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
         let sim_clock = SimClock::epoch();
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
@@ -1070,13 +1078,7 @@ pub(crate) mod tests {
                 executor_id: ExecutorId::generate(),
             };
             let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
-            ExecTask::new(
-                worker,
-                exec_config,
-                sim_clock.clone(),
-                db_pool.clone(),
-                ffqns,
-            )
+            ExecTask::new(worker, exec_config, sim_clock.clone(), db_exec, ffqns)
         };
         {
             let worker_tasks = sleep_exec
@@ -1144,7 +1146,7 @@ pub(crate) mod tests {
         const LOCK_DURATION: Duration = Duration::from_secs(1);
         test_utils::set_up();
         let sim_clock = SimClock::epoch();
-        let (_guard, db_pool) = database.set_up().await;
+        let (_guard, db_pool, db_exec) = database.set_up().await;
 
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY), // not used here
@@ -1187,13 +1189,7 @@ pub(crate) mod tests {
                 executor_id: ExecutorId::generate(),
             };
             let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
-            ExecTask::new(
-                worker,
-                exec_config,
-                sim_clock.clone(),
-                db_pool.clone(),
-                ffqns,
-            )
+            ExecTask::new(worker, exec_config, sim_clock.clone(), db_exec, ffqns)
         };
         {
             let worker_tasks = sleep_exec
@@ -1301,7 +1297,7 @@ pub(crate) mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool) = db.set_up().await;
+        let (_guard, db_pool, db_exec) = db.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
@@ -1313,7 +1309,7 @@ pub(crate) mod tests {
             ),
         ]);
         let activity_exec_task = spawn_activity(
-            db_pool.clone(),
+            db_exec.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
@@ -1321,6 +1317,7 @@ pub(crate) mod tests {
 
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
+            db_exec,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
@@ -1380,7 +1377,7 @@ pub(crate) mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool) = db.set_up().await;
+        let (_guard, db_pool, db_exec) = db.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
@@ -1392,7 +1389,7 @@ pub(crate) mod tests {
             ),
         ]);
         let activity_exec_task = spawn_activity(
-            db_pool.clone(),
+            db_exec.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
@@ -1400,6 +1397,7 @@ pub(crate) mod tests {
 
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
+            db_exec,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
             join_next_blocking_strategy,
@@ -1477,7 +1475,7 @@ pub(crate) mod tests {
             .unwrap_or(5);
         let sim_clock = SimClock::new(DateTime::default());
         let created_at = sim_clock.now();
-        let (_guard, db_pool) = db.set_up().await;
+        let (_guard, db_pool, db_exec) = db.set_up().await;
         let db_connection = db_pool.connection();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
@@ -1489,13 +1487,14 @@ pub(crate) mod tests {
         ]);
 
         let activity_exec_task = spawn_activity(
-            db_pool.clone(),
+            db_exec.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
         );
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
+            db_exec,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
             join_next_strategy,
@@ -1565,7 +1564,7 @@ pub(crate) mod tests {
         );
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = db.set_up().await;
+        let (_guard, db_pool, db_exec) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY),
             compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW),
@@ -1609,7 +1608,7 @@ pub(crate) mod tests {
                 executor_id: ExecutorId::generate(),
             },
             sim_clock.clone(),
-            db_pool.clone(),
+            db_exec,
             Arc::new([FFQN_WORKFLOW_SLEEP_SCHEDULE_NOOP_FFQN]),
         );
         {
@@ -1665,7 +1664,7 @@ pub(crate) mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool) = database.set_up().await;
+        let (_guard, db_pool, db_exec) = database.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
@@ -1677,7 +1676,7 @@ pub(crate) mod tests {
             ),
         ]);
         let activity_exec_task = spawn_activity(
-            db_pool.clone(),
+            db_exec.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
@@ -1685,6 +1684,7 @@ pub(crate) mod tests {
 
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
+            db_exec,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
             JoinNextBlockingStrategy::Await {
@@ -1756,7 +1756,7 @@ pub(crate) mod tests {
         const INPUT_PARAM: &str = "bar";
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = db.set_up().await;
+        let (_guard, db_pool, db_exec) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
             compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW),
@@ -1801,7 +1801,7 @@ pub(crate) mod tests {
                 executor_id: ExecutorId::generate(),
             },
             sim_clock.clone(),
-            db_pool.clone(),
+            db_exec,
             Arc::new([FFQN_WORKFLOW_STUB]),
         );
 
@@ -1892,7 +1892,7 @@ pub(crate) mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::epoch();
-        let (_guard, db_pool) = db.set_up().await;
+        let (_guard, db_pool, db_exec) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY),
             compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
@@ -1917,7 +1917,7 @@ pub(crate) mod tests {
                 executor_id: ExecutorId::from_parts(0, 0),
             },
             sim_clock.clone(),
-            db_pool.clone(),
+            db_exec,
             Arc::new([ffqn.clone()]),
         );
 
@@ -2089,7 +2089,7 @@ pub(crate) mod tests {
         );
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = db.set_up().await;
+        let (_guard, db_pool, db_exec) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
             compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW),
@@ -2132,7 +2132,7 @@ pub(crate) mod tests {
                 executor_id: ExecutorId::generate(),
             },
             sim_clock.clone(),
-            db_pool.clone(),
+            db_exec,
             Arc::new([FFQN_WORKFLOW_STUB]),
         );
 
@@ -2229,7 +2229,7 @@ pub(crate) mod tests {
         );
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = db.set_up().await;
+        let (_guard, db_pool, db_exec) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity_stub(
                 test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
@@ -2275,7 +2275,7 @@ pub(crate) mod tests {
                 executor_id: ExecutorId::generate(),
             },
             sim_clock.clone(),
-            db_pool.clone(),
+            db_exec.clone(),
             Arc::new([FFQN_WORKFLOW]),
         );
 
@@ -2323,7 +2323,7 @@ pub(crate) mod tests {
                     executor_id: ExecutorId::generate(),
                 },
                 sim_clock.clone(),
-                db_pool.clone(),
+                db_exec.clone(),
             );
             {
                 let task_count = exec_activity
