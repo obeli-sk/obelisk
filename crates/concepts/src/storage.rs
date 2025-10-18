@@ -608,7 +608,7 @@ pub enum ClientError {
 }
 
 #[async_trait]
-pub trait DbConnection: Send + Sync {
+pub trait DbExecutor: Send + Sync {
     #[expect(clippy::too_many_arguments)]
     async fn lock_pending(
         &self,
@@ -622,6 +622,39 @@ pub trait DbConnection: Send + Sync {
         run_id: RunId,
     ) -> Result<LockPendingResponse, DbError>;
 
+    /// Append a single event to an existing execution log
+    async fn append(
+        &self,
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
+    ) -> Result<AppendResponse, DbError>;
+
+    async fn append_batch_respond_to_parent(
+        &self,
+        execution_id: ExecutionIdDerived,
+        current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
+        batch: Vec<AppendRequest>,
+        version: Version,
+        parent_execution_id: ExecutionId,
+        parent_response_event: JoinSetResponseEventOuter,
+    ) -> Result<AppendBatchResponse, DbError>;
+
+    /// Best effort for blocking while there are no pending executions.
+    /// Return immediately if there are pending notifications at `pending_at_or_sooner`.
+    /// Implementation must return not later than at expiry date, which is: `pending_at_or_sooner` + `max_wait`.
+    /// Timers that expire until the expiry date can be disregarded.
+    /// Databases that do not support subscriptions should wait for `max_wait`.
+    async fn wait_for_pending(
+        &self,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: Arc<[FunctionFqn]>,
+        max_wait: Duration,
+    );
+}
+
+#[async_trait]
+pub trait DbConnection: DbExecutor + Send + Sync {
     /// Specialized locking for e.g. extending the lock by the original executor and run.
     #[expect(clippy::too_many_arguments)]
     async fn lock_one(
@@ -634,14 +667,6 @@ pub trait DbConnection: Send + Sync {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockedExecution, DbError>;
-
-    /// Append a single event to an existing execution log
-    async fn append(
-        &self,
-        execution_id: ExecutionId,
-        version: Version,
-        req: AppendRequest,
-    ) -> Result<AppendResponse, DbError>;
 
     async fn append_response(
         &self,
@@ -667,16 +692,6 @@ pub trait DbConnection: Send + Sync {
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
-    ) -> Result<AppendBatchResponse, DbError>;
-
-    async fn append_batch_respond_to_parent(
-        &self,
-        execution_id: ExecutionIdDerived,
-        current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
-        batch: Vec<AppendRequest>,
-        version: Version,
-        parent_execution_id: ExecutionId,
-        parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<AppendBatchResponse, DbError>;
 
     #[cfg(feature = "test")]
@@ -776,18 +791,6 @@ pub trait DbConnection: Send + Sync {
         execution_id: &ExecutionId,
         timeout: Option<Duration>,
     ) -> Result<SupportedFunctionReturnValue, ClientError>;
-
-    /// Best effort for blocking while there are no pending executions.
-    /// Return immediately if there are pending notifications at `pending_at_or_sooner`.
-    /// Implementation must return not later than at expiry date, which is: `pending_at_or_sooner` + `max_wait`.
-    /// Timers that expire until the expiry date can be disregarded.
-    /// Databases that do not support subscriptions should wait for `max_wait`.
-    async fn wait_for_pending(
-        &self,
-        pending_at_or_sooner: DateTime<Utc>,
-        ffqns: Arc<[FunctionFqn]>,
-        max_wait: Duration,
-    );
 
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbError>;
 

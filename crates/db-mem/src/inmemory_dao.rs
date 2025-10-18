@@ -10,10 +10,10 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
-    ClientError, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
-    ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
-    HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution, Pagination,
-    ResponseWithCursor, SpecificError, SubscribeError, Version, VersionType,
+    ClientError, CreateRequest, DbConnection, DbConnectionError, DbError, DbExecutor, DbPool,
+    ExecutionEvent, ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState,
+    ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution,
+    Pagination, ResponseWithCursor, SpecificError, SubscribeError, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ExecutionId, FunctionFqn, StrVariant};
@@ -32,16 +32,7 @@ use tracing::instrument;
 pub struct InMemoryDbConnection(Arc<std::sync::Mutex<DbHolder>>);
 
 #[async_trait]
-impl DbConnection for InMemoryDbConnection {
-    #[instrument(skip_all, fields(execution_id = %req.execution_id))]
-    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-        self.0
-            .lock()
-            .unwrap()
-            .create(req)
-            .map_err(DbError::Specific)
-    }
-
+impl DbExecutor for InMemoryDbConnection {
     #[instrument(skip_all)]
     async fn lock_pending(
         &self,
@@ -64,6 +55,77 @@ impl DbConnection for InMemoryDbConnection {
             lock_expires_at,
             run_id,
         ))
+    }
+
+    #[instrument(skip_all, %execution_id)]
+    async fn append(
+        &self,
+        execution_id: ExecutionId,
+        appending_version: Version,
+        req: AppendRequest,
+    ) -> Result<AppendResponse, DbError> {
+        self.0
+            .lock()
+            .unwrap()
+            .append(req.created_at, &execution_id, appending_version, req.event)
+            .map_err(DbError::Specific)
+    }
+
+    #[instrument(skip_all, %execution_id)]
+    async fn append_batch_respond_to_parent(
+        &self,
+        execution_id: ExecutionIdDerived,
+        _created_at: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        version: Version,
+        parent_execution_id: ExecutionId,
+        parent_response_event: JoinSetResponseEventOuter,
+    ) -> Result<AppendBatchResponse, DbError> {
+        self.0
+            .lock()
+            .unwrap()
+            .append_batch_respond_to_parent(
+                &execution_id,
+                batch,
+                version,
+                &parent_execution_id,
+                parent_response_event,
+            )
+            .map_err(DbError::Specific)
+    }
+
+    async fn wait_for_pending(
+        &self,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: Arc<[FunctionFqn]>,
+        max_wait: Duration,
+    ) {
+        let either = {
+            let mut guard = self.0.lock().unwrap();
+            guard.subscribe_to_pending(pending_at_or_sooner, &ffqns)
+        };
+        // unlocked now
+        match either {
+            Either::Left(()) => {} // Got results immediately
+            Either::Right(mut receiver) => {
+                tokio::select! { // future's liveness: Dropping the loser immediately.
+                    _ = receiver.recv() => {} // Got results eventually
+                    () = tokio::time::sleep(max_wait) => {} // Timeout
+                }
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl DbConnection for InMemoryDbConnection {
+    #[instrument(skip_all, fields(execution_id = %req.execution_id))]
+    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
+        self.0
+            .lock()
+            .unwrap()
+            .create(req)
+            .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all)]
@@ -118,20 +180,6 @@ impl DbConnection for InMemoryDbConnection {
     }
 
     #[instrument(skip_all, %execution_id)]
-    async fn append(
-        &self,
-        execution_id: ExecutionId,
-        appending_version: Version,
-        req: AppendRequest,
-    ) -> Result<AppendResponse, DbError> {
-        self.0
-            .lock()
-            .unwrap()
-            .append(req.created_at, &execution_id, appending_version, req.event)
-            .map_err(DbError::Specific)
-    }
-
-    #[instrument(skip_all, %execution_id)]
     async fn append_batch(
         &self,
         _created_at: DateTime<Utc>,
@@ -159,29 +207,6 @@ impl DbConnection for InMemoryDbConnection {
             .lock()
             .unwrap()
             .append_batch_create_child(batch, &execution_id, version, child_req)
-            .map_err(DbError::Specific)
-    }
-
-    #[instrument(skip_all, %execution_id)]
-    async fn append_batch_respond_to_parent(
-        &self,
-        execution_id: ExecutionIdDerived,
-        _created_at: DateTime<Utc>,
-        batch: Vec<AppendRequest>,
-        version: Version,
-        parent_execution_id: ExecutionId,
-        parent_response_event: JoinSetResponseEventOuter,
-    ) -> Result<AppendBatchResponse, DbError> {
-        self.0
-            .lock()
-            .unwrap()
-            .append_batch_respond_to_parent(
-                &execution_id,
-                batch,
-                version,
-                &parent_execution_id,
-                parent_response_event,
-            )
             .map_err(DbError::Specific)
     }
 
@@ -253,28 +278,6 @@ impl DbConnection for InMemoryDbConnection {
                 },
             )
             .map_err(DbError::Specific)
-    }
-
-    async fn wait_for_pending(
-        &self,
-        pending_at_or_sooner: DateTime<Utc>,
-        ffqns: Arc<[FunctionFqn]>,
-        max_wait: Duration,
-    ) {
-        let either = {
-            let mut guard = self.0.lock().unwrap();
-            guard.subscribe_to_pending(pending_at_or_sooner, &ffqns)
-        };
-        // unlocked now
-        match either {
-            Either::Left(()) => {} // Got results immediately
-            Either::Right(mut receiver) => {
-                tokio::select! { // future's liveness: Dropping the loser immediately.
-                    _ = receiver.recv() => {} // Got results eventually
-                    () = tokio::time::sleep(max_wait) => {} // Timeout
-                }
-            }
-        }
     }
 
     async fn wait_for_finished_result(

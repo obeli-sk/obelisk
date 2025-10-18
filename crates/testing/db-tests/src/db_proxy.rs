@@ -1,5 +1,3 @@
-use std::{pin::Pin, sync::Arc, time::Duration};
-
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -7,7 +5,7 @@ use concepts::{
     prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
-        ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEvent,
+        ClientError, CreateRequest, DbConnection, DbError, DbExecutor, DbPool, ExecutionEvent,
         ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
         JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution,
         Pagination, PendingState, ResponseWithCursor, SubscribeError, Version, VersionType,
@@ -16,6 +14,7 @@ use concepts::{
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use db_sqlite::sqlite_dao::SqlitePool;
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub enum DbPoolEnum {
@@ -49,12 +48,9 @@ impl DbPool for DbPoolEnum {
 }
 
 pub struct DbConnectionProxy(Box<dyn DbConnection>);
-#[async_trait]
-impl DbConnection for DbConnectionProxy {
-    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-        self.0.create(req).await
-    }
 
+#[async_trait]
+impl DbExecutor for DbConnectionProxy {
     async fn lock_pending(
         &self,
         batch_size: usize,
@@ -79,6 +75,55 @@ impl DbConnection for DbConnectionProxy {
             )
             .await
     }
+
+    async fn append(
+        &self,
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
+    ) -> Result<AppendResponse, DbError> {
+        self.0.append(execution_id, version, req).await
+    }
+
+    async fn append_batch_respond_to_parent(
+        &self,
+        execution_id: ExecutionIdDerived,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        version: Version,
+        parent_execution_id: ExecutionId,
+        parent_response_event: JoinSetResponseEventOuter,
+    ) -> Result<AppendBatchResponse, DbError> {
+        self.0
+            .append_batch_respond_to_parent(
+                execution_id,
+                current_time,
+                batch,
+                version,
+                parent_execution_id,
+                parent_response_event,
+            )
+            .await
+    }
+
+    async fn wait_for_pending(
+        &self,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: Arc<[FunctionFqn]>,
+        max_wait: Duration,
+    ) {
+        self.0
+            .wait_for_pending(pending_at_or_sooner, ffqns, max_wait)
+            .await;
+    }
+}
+
+#[async_trait]
+impl DbConnection for DbConnectionProxy {
+    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
+        self.0.create(req).await
+    }
+
     async fn lock_one(
         &self,
         created_at: DateTime<Utc>,
@@ -104,15 +149,6 @@ impl DbConnection for DbConnectionProxy {
 
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
         self.0.get_expired_timers(at).await
-    }
-
-    async fn append(
-        &self,
-        execution_id: ExecutionId,
-        version: Version,
-        req: AppendRequest,
-    ) -> Result<AppendResponse, DbError> {
-        self.0.append(execution_id, version, req).await
     }
 
     async fn append_batch(
@@ -146,27 +182,6 @@ impl DbConnection for DbConnectionProxy {
             .await
     }
 
-    async fn append_batch_respond_to_parent(
-        &self,
-        execution_id: ExecutionIdDerived,
-        current_time: DateTime<Utc>,
-        batch: Vec<AppendRequest>,
-        version: Version,
-        parent_execution_id: ExecutionId,
-        parent_response_event: JoinSetResponseEventOuter,
-    ) -> Result<AppendBatchResponse, DbError> {
-        self.0
-            .append_batch_respond_to_parent(
-                execution_id,
-                current_time,
-                batch,
-                version,
-                parent_execution_id,
-                parent_response_event,
-            )
-            .await
-    }
-
     async fn append_response(
         &self,
         created_at: DateTime<Utc>,
@@ -193,16 +208,6 @@ impl DbConnection for DbConnectionProxy {
             .await
     }
 
-    async fn wait_for_pending(
-        &self,
-        pending_at_or_sooner: DateTime<Utc>,
-        ffqns: Arc<[FunctionFqn]>,
-        max_wait: Duration,
-    ) {
-        self.0
-            .wait_for_pending(pending_at_or_sooner, ffqns, max_wait)
-            .await;
-    }
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,

@@ -7,7 +7,7 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
         ClientError, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
-        DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
+        DbConnectionError, DbError, DbExecutor, DbPool, ExecutionEvent, ExecutionEventInner,
         ExecutionListPagination, ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetRequest,
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
         LockedExecution, Pagination, PendingState, PendingStateFinished,
@@ -2458,19 +2458,7 @@ impl<S: Sleep> SqlitePool<S> {
 }
 
 #[async_trait]
-impl<S: Sleep> DbConnection for SqlitePool<S> {
-    #[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
-    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-        debug!("create");
-        trace!(?req, "create");
-        let created_at = req.created_at;
-        let (version, pending_at) = self
-            .transaction_write(move |tx| Self::create_inner(tx, req), "create")
-            .await?;
-        self.notify_pending(pending_at, created_at);
-        Ok(version)
-    }
-
+impl<S: Sleep> DbExecutor for SqlitePool<S> {
     #[instrument(level = Level::TRACE, skip(self))]
     async fn lock_pending(
         &self,
@@ -2522,6 +2510,161 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
         }
     }
 
+    #[instrument(level = Level::DEBUG, skip(self, req))]
+    async fn append(
+        &self,
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
+    ) -> Result<AppendResponse, DbError> {
+        debug!(%req, "append");
+        trace!(?req, "append");
+        // Disallow `Created` event
+        let created_at = req.created_at;
+        if let ExecutionEventInner::Created { .. } = req.event {
+            panic!("cannot append `Created` event - use `create` instead");
+        }
+        let (version, pending_at) = self
+            .transaction_write(
+                move |tx| Self::append(tx, &execution_id, &req, version),
+                "append",
+            )
+            .await?;
+        if let Some(pending_at) = pending_at {
+            self.notify_pending(pending_at, created_at);
+        }
+        Ok(version)
+    }
+
+    #[instrument(level = Level::DEBUG, skip(self, batch, parent_response_event))]
+    async fn append_batch_respond_to_parent(
+        &self,
+        execution_id: ExecutionIdDerived,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        version: Version,
+        parent_execution_id: ExecutionId,
+        parent_response_event: JoinSetResponseEventOuter,
+    ) -> Result<AppendBatchResponse, DbError> {
+        debug!("append_batch_respond_to_parent");
+        let execution_id = ExecutionId::Derived(execution_id);
+        if execution_id == parent_execution_id {
+            // Pending state would be wrong.
+            // This is not a panic because it depends on DB state.
+            return Err(DbError::Specific(SpecificError::ValidationFailed(
+                StrVariant::Static(
+                    "Parameters `execution_id` and `parent_execution_id` cannot be the same",
+                ),
+            )));
+        }
+        trace!(
+            ?batch,
+            ?parent_response_event,
+            "append_batch_respond_to_parent"
+        );
+        assert!(!batch.is_empty(), "Empty batch request");
+        if batch.iter().any(|append_request| {
+            matches!(append_request.event, ExecutionEventInner::Created { .. })
+        }) {
+            panic!("cannot append `Created` event - use `create` instead");
+        }
+        let response_subscribers = self.0.response_subscribers.clone();
+        let (version, response_subscriber, pending_ats) = {
+            let event = parent_response_event.clone();
+            self.transaction_write(
+                move |tx| {
+                    let mut version = version;
+                    let mut pending_at_child = None;
+                    for append_request in batch {
+                        (version, pending_at_child) =
+                            Self::append(tx, &execution_id, &append_request, version)?;
+                    }
+
+                    let (response_subscriber, pending_at_parent) = Self::append_response(
+                        tx,
+                        &parent_execution_id,
+                        &event,
+                        &response_subscribers,
+                    )?;
+                    Ok((
+                        version,
+                        response_subscriber,
+                        vec![pending_at_child, pending_at_parent],
+                    ))
+                },
+                "append_batch_respond_to_parent",
+            )
+            .await?
+        };
+        if let Some(response_subscriber) = response_subscriber {
+            let notified = response_subscriber.send(parent_response_event);
+            debug!("Notifying response subscriber: {notified:?}");
+        }
+        self.notify_pending_all(pending_ats.into_iter().flatten(), current_time);
+        Ok(version)
+    }
+
+    #[instrument(level = Level::TRACE, skip(self))]
+    async fn wait_for_pending(
+        &self,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: Arc<[FunctionFqn]>,
+        max_wait: Duration,
+    ) {
+        let sleep_fut = self.0.sleep.sleep(max_wait);
+        let (sender, mut receiver) = mpsc::channel(1);
+        {
+            let mut ffqn_to_pending_subscription =
+                self.0.ffqn_to_pending_subscription.lock().unwrap();
+            for ffqn in ffqns.as_ref() {
+                ffqn_to_pending_subscription.insert(ffqn.clone(), sender.clone());
+            }
+        }
+        let execution_ids_versions = match self
+            .conn_low_prio(
+                {
+                    let ffqns = ffqns.clone();
+                    move |conn| Self::get_pending(conn, 1, pending_at_or_sooner, ffqns.as_ref())
+                },
+                "subscribe_to_pending",
+            )
+            .await
+        {
+            Ok(ok) => ok,
+            Err(err) => {
+                trace!("Ignoring error and waiting in for timeout - {err:?}");
+                sleep_fut.await;
+                return;
+            }
+        };
+        if !execution_ids_versions.is_empty() {
+            trace!("Not waiting, database already contains new pending executions");
+            return;
+        }
+        tokio::select! { // future's liveness: Dropping the loser immediately.
+            _ = receiver.recv() => {
+                trace!("Received a notification");
+            }
+            () = sleep_fut => {
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl<S: Sleep> DbConnection for SqlitePool<S> {
+    #[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
+    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
+        debug!("create");
+        trace!(?req, "create");
+        let created_at = req.created_at;
+        let (version, pending_at) = self
+            .transaction_write(move |tx| Self::create_inner(tx, req), "create")
+            .await?;
+        self.notify_pending(pending_at, created_at);
+        Ok(version)
+    }
+
     #[instrument(level = Level::DEBUG, skip(self))]
     async fn lock_one(
         &self,
@@ -2551,32 +2694,6 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
             "lock_inner",
         )
         .await
-    }
-
-    #[instrument(level = Level::DEBUG, skip(self, req))]
-    async fn append(
-        &self,
-        execution_id: ExecutionId,
-        version: Version,
-        req: AppendRequest,
-    ) -> Result<AppendResponse, DbError> {
-        debug!(%req, "append");
-        trace!(?req, "append");
-        // Disallow `Created` event
-        let created_at = req.created_at;
-        if let ExecutionEventInner::Created { .. } = req.event {
-            panic!("cannot append `Created` event - use `create` instead");
-        }
-        let (version, pending_at) = self
-            .transaction_write(
-                move |tx| Self::append(tx, &execution_id, &req, version),
-                "append",
-            )
-            .await?;
-        if let Some(pending_at) = pending_at {
-            self.notify_pending(pending_at, created_at);
-        }
-        Ok(version)
     }
 
     #[instrument(level = Level::DEBUG, skip(self, batch))]
@@ -2648,74 +2765,6 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
             )
             .await?;
         self.notify_pending_all(pending_ats.into_iter(), current_time);
-        Ok(version)
-    }
-
-    #[instrument(level = Level::DEBUG, skip(self, batch, parent_response_event))]
-    async fn append_batch_respond_to_parent(
-        &self,
-        execution_id: ExecutionIdDerived,
-        current_time: DateTime<Utc>,
-        batch: Vec<AppendRequest>,
-        version: Version,
-        parent_execution_id: ExecutionId,
-        parent_response_event: JoinSetResponseEventOuter,
-    ) -> Result<AppendBatchResponse, DbError> {
-        debug!("append_batch_respond_to_parent");
-        let execution_id = ExecutionId::Derived(execution_id);
-        if execution_id == parent_execution_id {
-            // Pending state would be wrong.
-            // This is not a panic because it depends on DB state.
-            return Err(DbError::Specific(SpecificError::ValidationFailed(
-                StrVariant::Static(
-                    "Parameters `execution_id` and `parent_execution_id` cannot be the same",
-                ),
-            )));
-        }
-        trace!(
-            ?batch,
-            ?parent_response_event,
-            "append_batch_respond_to_parent"
-        );
-        assert!(!batch.is_empty(), "Empty batch request");
-        if batch.iter().any(|append_request| {
-            matches!(append_request.event, ExecutionEventInner::Created { .. })
-        }) {
-            panic!("cannot append `Created` event - use `create` instead");
-        }
-        let response_subscribers = self.0.response_subscribers.clone();
-        let (version, response_subscriber, pending_ats) = {
-            let event = parent_response_event.clone();
-            self.transaction_write(
-                move |tx| {
-                    let mut version = version;
-                    let mut pending_at_child = None;
-                    for append_request in batch {
-                        (version, pending_at_child) =
-                            Self::append(tx, &execution_id, &append_request, version)?;
-                    }
-
-                    let (response_subscriber, pending_at_parent) = Self::append_response(
-                        tx,
-                        &parent_execution_id,
-                        &event,
-                        &response_subscribers,
-                    )?;
-                    Ok((
-                        version,
-                        response_subscriber,
-                        vec![pending_at_child, pending_at_parent],
-                    ))
-                },
-                "append_batch_respond_to_parent",
-            )
-            .await?
-        };
-        if let Some(response_subscriber) = response_subscriber {
-            let notified = response_subscriber.send(parent_response_event);
-            debug!("Notifying response subscriber: {notified:?}");
-        }
-        self.notify_pending_all(pending_ats.into_iter().flatten(), current_time);
         Ok(version)
     }
 
@@ -2964,52 +3013,6 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
             }, "get_expired_timers"
         )
         .await
-    }
-
-    #[instrument(level = Level::TRACE, skip(self))]
-    async fn wait_for_pending(
-        &self,
-        pending_at_or_sooner: DateTime<Utc>,
-        ffqns: Arc<[FunctionFqn]>,
-        max_wait: Duration,
-    ) {
-        let sleep_fut = self.0.sleep.sleep(max_wait);
-        let (sender, mut receiver) = mpsc::channel(1);
-        {
-            let mut ffqn_to_pending_subscription =
-                self.0.ffqn_to_pending_subscription.lock().unwrap();
-            for ffqn in ffqns.as_ref() {
-                ffqn_to_pending_subscription.insert(ffqn.clone(), sender.clone());
-            }
-        }
-        let execution_ids_versions = match self
-            .conn_low_prio(
-                {
-                    let ffqns = ffqns.clone();
-                    move |conn| Self::get_pending(conn, 1, pending_at_or_sooner, ffqns.as_ref())
-                },
-                "subscribe_to_pending",
-            )
-            .await
-        {
-            Ok(ok) => ok,
-            Err(err) => {
-                trace!("Ignoring error and waiting in for timeout - {err:?}");
-                sleep_fut.await;
-                return;
-            }
-        };
-        if !execution_ids_versions.is_empty() {
-            trace!("Not waiting, database already contains new pending executions");
-            return;
-        }
-        tokio::select! { // future's liveness: Dropping the loser immediately.
-            _ = receiver.recv() => {
-                trace!("Received a notification");
-            }
-            () = sleep_fut => {
-            }
-        }
     }
 
     async fn wait_for_finished_result(

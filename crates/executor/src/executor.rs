@@ -166,16 +166,13 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 ffqns: ffqns.clone(),
                 clock_fn: clock_fn.clone(),
             };
-            loop {
+            while !is_closing_inner.load(Ordering::Relaxed) {
                 let _ = task.tick(clock_fn.now(), RunId::generate()).await;
-                let executed_at = clock_fn.now();
+
                 task.db_pool
                     .connection()
-                    .wait_for_pending(executed_at, ffqns.clone(), task.config.tick_sleep)
+                    .wait_for_pending(clock_fn.now(), ffqns.clone(), task.config.tick_sleep)
                     .await;
-                if is_closing_inner.load(Ordering::Relaxed) {
-                    return;
-                }
             }
         })
         .abort_handle();
@@ -655,12 +652,7 @@ impl Append {
                 .await?;
         } else {
             db_connection
-                .append_batch(
-                    self.created_at,
-                    vec![self.primary_event],
-                    self.execution_id,
-                    self.version,
-                )
+                .append(self.execution_id, self.version, self.primary_event)
                 .await?;
         }
         Ok(())
