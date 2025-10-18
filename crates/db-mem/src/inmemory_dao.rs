@@ -523,6 +523,7 @@ impl InMemoryPool {
         )
     }
 
+    #[must_use]
     pub fn db_executor(&self) -> Arc<dyn DbExecutor> {
         Arc::new(InMemoryDbConnection(self.0.clone()))
     }

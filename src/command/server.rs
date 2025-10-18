@@ -1425,7 +1425,7 @@ impl ServerInit {
             server_compiled_linked.engines.weak_refs(),
             Duration::from_millis(EPOCH_MILLIS),
         );
-        let (db_pool, db_executor) = {
+        let (db_pool, db_executor): (Arc<dyn DbPool>, _) = {
             let sqlite = SqlitePool::new(sqlite_file, sqlite_config, TokioSleep)
                 .await
                 .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?;
@@ -1487,7 +1487,7 @@ impl ServerInit {
             .compiled_components
             .workers_linked
             .into_iter()
-            .map(|pre_spawn| pre_spawn.spawn(db_pool.clone(), db_executor.clone()))
+            .map(|pre_spawn| pre_spawn.spawn(&db_pool, db_executor.clone()))
             .collect();
 
         // Start webhook HTTP servers
@@ -2180,7 +2180,7 @@ struct WorkerLinked {
 impl WorkerLinked {
     fn spawn(
         self,
-        db_pool: Arc<dyn DbPool>,
+        db_pool: &Arc<dyn DbPool>,
         db_executor: Arc<dyn DbExecutor>,
     ) -> ExecutorTaskHandle {
         let worker = match self.worker {
