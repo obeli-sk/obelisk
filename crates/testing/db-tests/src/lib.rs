@@ -1,13 +1,9 @@
-use std::sync::Arc;
-
 use concepts::FunctionFqn;
 use concepts::storage::DbExecutor;
 use concepts::storage::DbPool;
 use db_mem::inmemory_dao::InMemoryPool;
+use std::sync::Arc;
 use tempfile::NamedTempFile;
-
-// pub mod db_proxy;
-// pub use db_proxy::DbConnectionProxy;
 
 pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
 
