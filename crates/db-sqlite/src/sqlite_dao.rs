@@ -6,7 +6,7 @@ use concepts::{
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, PrefixedUlid, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
-        ClientError, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
+        ClientError, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbCloseable, DbConnection,
         DbConnectionError, DbError, DbExecutor, DbPool, ExecutionEvent, ExecutionEventInner,
         ExecutionListPagination, ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetRequest,
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
@@ -452,11 +452,7 @@ struct SqlitePoolInner<S: Sleep> {
 }
 
 #[async_trait]
-impl<S: Sleep + 'static> DbPool for SqlitePool<S> {
-    fn connection(&self) -> Box<dyn DbConnection> {
-        Box::new(self.clone())
-    }
-
+impl<S: Sleep + 'static> DbCloseable for SqlitePool<S> {
     async fn close(&self) -> Result<(), DbError> {
         self.0.shutdown_requested.store(true, Ordering::Release);
         let _ = self.0.command_tx.send(ThreadCommand::Shutdown).await;
@@ -464,6 +460,12 @@ impl<S: Sleep + 'static> DbPool for SqlitePool<S> {
             self.0.sleep.sleep(Duration::from_millis(1)).await;
         }
         Ok(())
+    }
+}
+#[async_trait]
+impl<S: Sleep + 'static> DbPool for SqlitePool<S> {
+    fn connection(&self) -> Box<dyn DbConnection> {
+        Box::new(self.clone())
     }
 }
 impl<S: Sleep> Drop for SqlitePool<S> {

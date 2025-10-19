@@ -593,9 +593,13 @@ impl From<CreateRequest> for ExecutionEventInner {
 }
 
 #[async_trait]
-pub trait DbPool: Send + Sync {
-    fn connection(&self) -> Box<dyn DbConnection>;
+pub trait DbCloseable: Send + Sync {
     async fn close(&self) -> Result<(), DbError>;
+}
+
+#[async_trait]
+pub trait DbPool: DbCloseable {
+    fn connection(&self) -> Box<dyn DbConnection>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -653,7 +657,7 @@ pub trait DbExecutor: Send + Sync {
 }
 
 #[async_trait]
-pub trait DbConnection: DbExecutor + Send + Sync {
+pub trait DbConnection: DbExecutor {
     /// Specialized locking for e.g. extending the lock by the original executor and run.
     #[expect(clippy::too_many_arguments)]
     async fn lock_one(

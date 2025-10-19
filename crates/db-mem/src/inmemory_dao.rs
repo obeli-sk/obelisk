@@ -10,10 +10,11 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
-    ClientError, CreateRequest, DbConnection, DbConnectionError, DbError, DbExecutor, DbPool,
-    ExecutionEvent, ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState,
-    ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution,
-    Pagination, ResponseWithCursor, SpecificError, SubscribeError, Version, VersionType,
+    ClientError, CreateRequest, DbCloseable, DbConnection, DbConnectionError, DbError, DbExecutor,
+    DbPool, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, ExecutionLog,
+    ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse,
+    LockedExecution, Pagination, ResponseWithCursor, SpecificError, SubscribeError, Version,
+    VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ExecutionId, FunctionFqn, StrVariant};
@@ -530,11 +531,7 @@ impl InMemoryPool {
 }
 
 #[async_trait]
-impl DbPool for InMemoryPool {
-    fn connection(&self) -> Box<dyn DbConnection> {
-        Box::new(InMemoryDbConnection(self.0.clone()))
-    }
-
+impl DbCloseable for InMemoryPool {
     async fn close(&self) -> Result<(), DbError> {
         let res = self
             .1
@@ -545,6 +542,13 @@ impl DbPool for InMemoryPool {
             )));
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+impl DbPool for InMemoryPool {
+    fn connection(&self) -> Box<dyn DbConnection> {
+        Box::new(InMemoryDbConnection(self.0.clone()))
     }
 }
 
