@@ -59,6 +59,52 @@ impl DbExecutor for InMemoryDbConnection {
     }
 
     #[instrument(skip_all, %execution_id)]
+    async fn lock_one(
+        &self,
+        created_at: DateTime<Utc>,
+        component_id: ComponentId,
+        execution_id: &ExecutionId,
+        run_id: RunId,
+        version: Version,
+        executor_id: ExecutorId,
+        lock_expires_at: DateTime<Utc>,
+    ) -> Result<LockedExecution, DbError> {
+        let (next_version, event_history) = self
+            .0
+            .lock()
+            .unwrap()
+            .lock(
+                created_at,
+                component_id,
+                execution_id,
+                run_id,
+                version,
+                executor_id,
+                lock_expires_at,
+            )
+            .map_err(DbError::Specific)?;
+        let db_holder_guard = self.0.lock().unwrap();
+        let journal = db_holder_guard
+            .journals
+            .get(execution_id)
+            .expect("must exist as already locked");
+        Ok(LockedExecution {
+            execution_id: journal.execution_id().clone(),
+            metadata: journal.metadata().clone(),
+            next_version,
+            ffqn: journal.ffqn().clone(),
+            params: journal.params(),
+            event_history,
+            responses: journal.responses.clone(),
+            retry_exp_backoff: journal.retry_exp_backoff(),
+            max_retries: journal.max_retries(),
+            run_id,
+            parent: journal.parent(),
+            intermittent_event_count: journal.temporary_event_count(),
+        })
+    }
+
+    #[instrument(skip_all, %execution_id)]
     async fn append(
         &self,
         execution_id: ExecutionId,
@@ -132,52 +178,6 @@ impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all)]
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
         Ok(self.0.lock().unwrap().get_expired_timers(at))
-    }
-
-    #[instrument(skip_all, %execution_id)]
-    async fn lock_one(
-        &self,
-        created_at: DateTime<Utc>,
-        component_id: ComponentId,
-        execution_id: &ExecutionId,
-        run_id: RunId,
-        version: Version,
-        executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockedExecution, DbError> {
-        let (next_version, event_history) = self
-            .0
-            .lock()
-            .unwrap()
-            .lock(
-                created_at,
-                component_id,
-                execution_id,
-                run_id,
-                version,
-                executor_id,
-                lock_expires_at,
-            )
-            .map_err(DbError::Specific)?;
-        let db_holder_guard = self.0.lock().unwrap();
-        let journal = db_holder_guard
-            .journals
-            .get(execution_id)
-            .expect("must exist as already locked");
-        Ok(LockedExecution {
-            execution_id: journal.execution_id().clone(),
-            metadata: journal.metadata().clone(),
-            next_version,
-            ffqn: journal.ffqn().clone(),
-            params: journal.params(),
-            event_history,
-            responses: journal.responses.clone(),
-            retry_exp_backoff: journal.retry_exp_backoff(),
-            max_retries: journal.max_retries(),
-            run_id,
-            parent: journal.parent(),
-            intermittent_event_count: journal.temporary_event_count(),
-        })
     }
 
     #[instrument(skip_all, %execution_id)]

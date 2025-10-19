@@ -625,6 +625,19 @@ pub trait DbExecutor: Send + Sync {
         run_id: RunId,
     ) -> Result<LockPendingResponse, DbError>;
 
+    /// Specialized locking for e.g. extending the lock by the original executor and run.
+    #[expect(clippy::too_many_arguments)]
+    async fn lock_one(
+        &self,
+        created_at: DateTime<Utc>,
+        component_id: ComponentId,
+        execution_id: &ExecutionId,
+        run_id: RunId,
+        version: Version,
+        executor_id: ExecutorId,
+        lock_expires_at: DateTime<Utc>,
+    ) -> Result<LockedExecution, DbError>;
+
     /// Append a single event to an existing execution log
     async fn append(
         &self,
@@ -658,19 +671,6 @@ pub trait DbExecutor: Send + Sync {
 
 #[async_trait]
 pub trait DbConnection: DbExecutor {
-    /// Specialized locking for e.g. extending the lock by the original executor and run.
-    #[expect(clippy::too_many_arguments)]
-    async fn lock_one(
-        &self,
-        created_at: DateTime<Utc>,
-        component_id: ComponentId,
-        execution_id: &ExecutionId,
-        run_id: RunId,
-        version: Version,
-        executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockedExecution, DbError>;
-
     async fn append_response(
         &self,
         created_at: DateTime<Utc>,

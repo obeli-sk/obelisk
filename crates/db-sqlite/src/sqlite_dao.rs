@@ -2508,6 +2508,37 @@ impl<S: Sleep> DbExecutor for SqlitePool<S> {
         }
     }
 
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn lock_one(
+        &self,
+        created_at: DateTime<Utc>,
+        component_id: ComponentId,
+        execution_id: &ExecutionId,
+        run_id: RunId,
+        version: Version,
+        executor_id: ExecutorId,
+        lock_expires_at: DateTime<Utc>,
+    ) -> Result<LockedExecution, DbError> {
+        debug!(%execution_id, "lock_extend");
+        let execution_id = execution_id.clone();
+        self.transaction_write(
+            move |tx| {
+                Self::lock_inner(
+                    tx,
+                    created_at,
+                    component_id,
+                    &execution_id,
+                    run_id,
+                    &version,
+                    executor_id,
+                    lock_expires_at,
+                )
+            },
+            "lock_inner",
+        )
+        .await
+    }
+
     #[instrument(level = Level::DEBUG, skip(self, req))]
     async fn append(
         &self,
@@ -2661,37 +2692,6 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
             .await?;
         self.notify_pending(pending_at, created_at);
         Ok(version)
-    }
-
-    #[instrument(level = Level::DEBUG, skip(self))]
-    async fn lock_one(
-        &self,
-        created_at: DateTime<Utc>,
-        component_id: ComponentId,
-        execution_id: &ExecutionId,
-        run_id: RunId,
-        version: Version,
-        executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockedExecution, DbError> {
-        debug!(%execution_id, "lock_extend");
-        let execution_id = execution_id.clone();
-        self.transaction_write(
-            move |tx| {
-                Self::lock_inner(
-                    tx,
-                    created_at,
-                    component_id,
-                    &execution_id,
-                    run_id,
-                    &version,
-                    executor_id,
-                    lock_expires_at,
-                )
-            },
-            "lock_inner",
-        )
-        .await
     }
 
     #[instrument(level = Level::DEBUG, skip(self, batch))]
