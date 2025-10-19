@@ -2715,7 +2715,9 @@ mod tests {
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::{CreateRequest, HistoryEventScheduleAt};
-    use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
+    use concepts::storage::{
+        DbConnection, DbPoolCloseable, JoinSetResponse, JoinSetResponseEvent, Version,
+    };
     use concepts::time::ClockFn;
     use concepts::{
         ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn,
@@ -2743,7 +2745,7 @@ mod tests {
     ) {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
 
         // Create an execution.
@@ -2819,7 +2821,7 @@ mod tests {
         .expect("should finish successfuly");
 
         drop(db_connection);
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest]
@@ -2836,7 +2838,7 @@ mod tests {
         };
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
         // Create an execution.
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
@@ -2927,8 +2929,7 @@ mod tests {
         let res = assert_matches!(res, ChildReturnValue::WastVal(res) => res);
         assert_eq!(child_resp_wrapped, res);
 
-        drop(db_connection);
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest]
@@ -2963,7 +2964,7 @@ mod tests {
         };
 
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
 
         // Create an execution.
@@ -3108,15 +3109,14 @@ mod tests {
             let res = assert_matches!(res, ChildReturnValue::WastVal(res) => res);
             assert_eq!(kid_b, res);
         }
-        drop(db_connection);
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[tokio::test]
     async fn schedule_event_should_be_processed() {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
         let db_connection = db_connection.as_ref();
 
@@ -3168,14 +3168,14 @@ mod tests {
             .await
             .unwrap();
 
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[tokio::test]
     async fn submit_stub_await() {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
         let db_connection = db_connection.as_ref();
 
@@ -3246,7 +3246,7 @@ mod tests {
             );
         }
 
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -3254,7 +3254,7 @@ mod tests {
     async fn submit_stub_stub_with_same_value_should_be_ok() {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
         let db_connection = db_connection.as_ref();
 
@@ -3321,7 +3321,7 @@ mod tests {
                 .unwrap();
         }
 
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     // TODO: Check -await-next for fn without return type

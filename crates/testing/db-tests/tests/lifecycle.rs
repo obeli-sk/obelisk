@@ -1,6 +1,7 @@
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, RunId};
+use concepts::storage::DbPoolCloseable;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, ExpiredTimer, JoinSetRequest,
     JoinSetResponse, JoinSetResponseEventOuter, LockedExecution, PendingState, Version,
@@ -24,132 +25,120 @@ use tracing::{debug, info};
 async fn test_expired_lock_should_be_found_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_expired_lock_should_be_found_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_append_batch_respond_to_parent_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_append_batch_respond_to_parent_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_lock_pending_should_sort_by_scheduled_at_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_lock_pending_should_sort_by_scheduled_at_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_lock_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     test_lock(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_lock_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     test_lock(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_get_expired_lock_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_lock(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_get_expired_lock_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_lock(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_get_expired_delay_mem() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_delay(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_get_expired_delay_sqlite() {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_delay(db_connection.as_ref(), sim_clock).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -158,7 +147,7 @@ async fn append_after_finish_should_not_be_possible(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool, _db_exec) = database.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
     let sim_clock = SimClock::default();
 
@@ -235,6 +224,7 @@ async fn append_after_finish_should_not_be_possible(
             "Message `{msg}` must contain text `already finished`"
         );
     }
+    db_close.close().await.unwrap();
 }
 
 async fn lock_pending(
@@ -275,7 +265,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool, _db_exec) = database.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
     let sim_clock = SimClock::default();
 
@@ -371,6 +361,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
             .unwrap();
         assert_eq!(1, locked_executions.len());
     }
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -379,7 +370,7 @@ async fn lock_extended_with_the_same_executor_should_work(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool, _db_exec) = database.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     {
         let db_connection = db_pool.connection();
         let lock_resp = lock_and_attept_to_extend(true, true, db_connection.as_ref())
@@ -387,7 +378,7 @@ async fn lock_extended_with_the_same_executor_should_work(
             .unwrap();
         assert_eq!(Version::new(3), lock_resp.next_version);
     }
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 #[tokio::test]
 #[rstest::rstest]
@@ -395,7 +386,7 @@ async fn lock_extended_with_another_executor_should_fail(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool, _db_exec) = database.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     {
         let db_connection = db_pool.connection();
         lock_and_attept_to_extend(false, true, db_connection.as_ref())
@@ -408,7 +399,7 @@ async fn lock_extended_with_another_executor_should_fail(
             .await
             .unwrap_err();
     }
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 async fn lock_and_attept_to_extend(
     same_executor_id: bool,
@@ -499,7 +490,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool, _db_exec) = database.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
     let sim_clock = SimClock::default();
 
@@ -589,6 +580,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
             .unwrap();
         assert!(locked_executions.is_empty());
     }
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -597,7 +589,7 @@ async fn lock_pending_while_nothing_is_stored_should_work(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool, _db_exec) = database.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
     let sim_clock = SimClock::default();
 
@@ -620,8 +612,7 @@ async fn lock_pending_while_nothing_is_stored_should_work(
             .unwrap()
             .is_empty()
     );
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -630,7 +621,7 @@ async fn creating_execution_twice_should_fail(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool, _db_exec) = database.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
     let sim_clock = SimClock::default();
 
@@ -690,8 +681,7 @@ async fn creating_execution_twice_should_fail(
         })
         .await
         .unwrap_err();
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -701,11 +691,10 @@ async fn lock_pending_while_expired_lock_should_return_nothing(
 ) {
     set_up();
 
-    let (_guard, db_pool, _db_exec) = database.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
     lock_pending_while_expired_lock_should_return_nothing_inner(db_connection.as_ref()).await;
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 async fn lock_pending_while_expired_lock_should_return_nothing_inner(

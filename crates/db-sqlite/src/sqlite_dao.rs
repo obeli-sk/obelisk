@@ -6,13 +6,13 @@ use concepts::{
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, PrefixedUlid, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
-        ClientError, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbCloseable, DbConnection,
-        DbConnectionError, DbError, DbExecutor, DbPool, ExecutionEvent, ExecutionEventInner,
-        ExecutionListPagination, ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
-        LockedExecution, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, ResponseWithCursor, SpecificError, SubscribeError, Version,
-        VersionType,
+        ClientError, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
+        DbConnectionError, DbError, DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent,
+        ExecutionEventInner, ExecutionListPagination, ExecutionWithState, ExpiredTimer,
+        HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+        JoinSetResponseEventOuter, LockPendingResponse, LockedExecution, Pagination, PendingState,
+        PendingStateFinished, PendingStateFinishedResultKind, ResponseWithCursor, SpecificError,
+        SubscribeError, Version, VersionType,
     },
     time::Sleep,
 };
@@ -452,8 +452,8 @@ struct SqlitePoolInner<S: Sleep> {
 }
 
 #[async_trait]
-impl<S: Sleep + 'static> DbCloseable for SqlitePool<S> {
-    async fn close(&self) -> Result<(), DbError> {
+impl<S: Sleep + 'static> DbPoolCloseable for SqlitePool<S> {
+    async fn close(self) -> Result<(), DbError> {
         self.0.shutdown_requested.store(true, Ordering::Release);
         let _ = self.0.command_tx.send(ThreadCommand::Shutdown).await;
         while !self.0.shutdown_finished.load(Ordering::Acquire) {

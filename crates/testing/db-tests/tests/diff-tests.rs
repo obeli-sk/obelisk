@@ -5,6 +5,7 @@ use concepts::SupportedFunctionReturnValue;
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::DbConnection;
+use concepts::storage::DbPoolCloseable;
 use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
 use concepts::storage::Version;
@@ -70,7 +71,7 @@ async fn diff_proptest_inner(seed: u64) {
     for (idx, step) in append_requests.iter().enumerate() {
         println!("{idx}: {step:?}");
     }
-    let (_mem_guard, db_mem_pool, _db_exec) = Database::Memory.set_up().await;
+    let (_mem_guard, db_mem_pool, _db_exec, db_mem_close) = Database::Memory.set_up().await;
     let mem_conn = db_mem_pool.connection();
     let mem_log = create_and_append(
         mem_conn.as_ref(),
@@ -79,8 +80,8 @@ async fn diff_proptest_inner(seed: u64) {
         &append_requests,
     )
     .await;
-    db_mem_pool.close().await.unwrap();
-    let (_sqlite_guard, sqlite_pool, _db_exec) = Database::Sqlite.set_up().await;
+    db_mem_close.close().await.unwrap();
+    let (_sqlite_guard, sqlite_pool, _db_exec, db_sqlite_close) = Database::Sqlite.set_up().await;
     let sqlite_conn = sqlite_pool.connection();
     let sqlite_log = create_and_append(
         sqlite_conn.as_ref(),
@@ -89,7 +90,7 @@ async fn diff_proptest_inner(seed: u64) {
         &append_requests,
     )
     .await;
-    sqlite_pool.close().await.unwrap();
+    db_sqlite_close.close().await.unwrap();
     println!(
         "Expected (mem):\n{expected}\nActual (sqlite):\n{actual}",
         expected = serde_json::to_string(&mem_log).unwrap(),
@@ -224,7 +225,7 @@ async fn get_execution_event_should_not_break_json_order(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool, _db_exec) = database.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
 
     let (execution_id, version, expected_inner) =
@@ -236,8 +237,7 @@ async fn get_execution_event_should_not_break_json_order(
         .event;
     assert_eq!(expected_inner, found_inner);
 
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }
 
 // Test that the sqlite database no longer uses serde_json::Value during deserialization as it
@@ -245,7 +245,7 @@ async fn get_execution_event_should_not_break_json_order(
 #[tokio::test]
 async fn list_execution_events_should_not_break_json_order() {
     set_up();
-    let (_guard, db_pool, _db_exec) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
 
     let (execution_id, version, expected_inner) =
@@ -258,6 +258,5 @@ async fn list_execution_events_should_not_break_json_order() {
     let found_inner = &found_inner[0].event;
     assert_eq!(expected_inner, *found_inner);
 
-    drop(db_connection);
-    db_pool.close().await.unwrap();
+    db_close.close().await.unwrap();
 }

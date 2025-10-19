@@ -6,7 +6,7 @@ fn main() {
 
 mod bench {
     use assert_matches::assert_matches;
-    use concepts::storage::{DbExecutor, DbPool};
+    use concepts::storage::{DbExecutor, DbPool, DbPoolCloseable};
     use concepts::time::{ClockFn, Now, Sleep, TokioSleep};
     use concepts::{
         ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params, StrVariant,
@@ -258,7 +258,8 @@ mod bench {
             ),
         ]);
 
-        let (_guard, db_pool, db_exec) = tokio.block_on(async move { database.set_up().await });
+        let (_guard, db_pool, db_exec, db_close) =
+            tokio.block_on(async move { database.set_up().await });
 
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
@@ -282,7 +283,7 @@ mod bench {
         tokio.block_on(async move { workflow_exec_task.close().await });
         tokio.block_on(async move { activity_exec_task.close().await });
 
-        tokio.block_on(async move { db_pool.close().await.unwrap() });
+        tokio.block_on(async move { db_close.close().await.unwrap() });
     }
 
     const FIBO_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(

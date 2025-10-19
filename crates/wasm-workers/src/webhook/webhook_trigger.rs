@@ -1064,10 +1064,11 @@ pub(crate) mod tests {
             workflow::workflow_worker::{JoinNextBlockingStrategy, tests::spawn_workflow_fibo},
         };
         use assert_matches::assert_matches;
+        use concepts::storage::DbPoolCloseable;
         use concepts::time::TokioSleep;
         use concepts::{ComponentId, ComponentType, StrVariant, SupportedFunctionReturnValue};
         use concepts::{ExecutionId, storage::DbPool};
-        use db_tests::{Database, DbGuard};
+        use db_tests::{Database, DbGuard, DbPoolCloseableWrapper};
         use executor::executor::ExecutorTaskHandle;
         use std::net::SocketAddr;
         use std::str::FromStr;
@@ -1098,13 +1099,14 @@ pub(crate) mod tests {
             server_addr: SocketAddr,
             activity_exec_task: ExecutorTaskHandle,
             workflow_exec_task: ExecutorTaskHandle,
+            db_close: DbPoolCloseableWrapper,
         }
 
         impl SetUpFiboWebhook {
-            async fn new() -> Self {
+            async fn new() -> SetUpFiboWebhook {
                 let addr = SocketAddr::from(([127, 0, 0, 1], 0));
                 let sim_clock = SimClock::default();
-                let (guard, db_pool, db_exec) = Database::Memory.set_up().await;
+                let (guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
                 let activity_exec_task =
                     spawn_activity_fibo(db_exec.clone(), sim_clock.clone(), TokioSleep);
                 let fn_registry = TestingFnRegistry::new_from_components(vec![
@@ -1171,6 +1173,7 @@ pub(crate) mod tests {
                     workflow_exec_task,
                     guard,
                     db_pool,
+                    db_close,
                 }
             }
 
@@ -1188,6 +1191,7 @@ pub(crate) mod tests {
             async fn close(self) {
                 self.activity_exec_task.close().await;
                 self.workflow_exec_task.close().await;
+                self.db_close.close().await.unwrap();
             }
         }
 

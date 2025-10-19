@@ -593,13 +593,13 @@ impl From<CreateRequest> for ExecutionEventInner {
 }
 
 #[async_trait]
-pub trait DbCloseable: Send + Sync {
-    async fn close(&self) -> Result<(), DbError>;
+pub trait DbPool: Send + Sync {
+    fn connection(&self) -> Box<dyn DbConnection>;
 }
 
 #[async_trait]
-pub trait DbPool: DbCloseable {
-    fn connection(&self) -> Box<dyn DbConnection>;
+pub trait DbPoolCloseable {
+    async fn close(self) -> Result<(), DbError>;
 }
 
 #[derive(Debug, thiserror::Error)]

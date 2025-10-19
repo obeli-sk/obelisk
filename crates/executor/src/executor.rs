@@ -744,6 +744,7 @@ mod tests {
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
+    use concepts::storage::DbPoolCloseable;
     use concepts::storage::{CreateRequest, DbConnection, JoinSetRequest};
     use concepts::storage::{ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState};
     use concepts::time::Now;
@@ -785,27 +786,27 @@ mod tests {
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based_mem() {
         let created_at = Now.now();
-        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         execute_simple_lifecycle_tick_based(
             db_pool.connection().as_ref(),
             db_exec.clone(),
             ConstClock(created_at),
         )
         .await;
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based_sqlite() {
         let created_at = Now.now();
-        let (_guard, db_pool, db_exec) = Database::Sqlite.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Sqlite.set_up().await;
         execute_simple_lifecycle_tick_based(
             db_pool.connection().as_ref(),
             db_exec.clone(),
             ConstClock(created_at),
         )
         .await;
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     async fn execute_simple_lifecycle_tick_based<C: ClockFn + 'static>(
@@ -862,7 +863,7 @@ mod tests {
         set_up();
         let created_at = Now.now();
         let clock_fn = ConstClock(created_at);
-        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -903,8 +904,6 @@ mod tests {
             },
         )
         .await;
-        exec_task.close().await;
-        db_pool.close().await.unwrap();
         assert_matches!(
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
@@ -916,6 +915,8 @@ mod tests {
                 backtrace_id: None,
             }
         );
+        exec_task.close().await;
+        db_close.close().await.unwrap();
     }
 
     struct CreateAndTickConfig {
@@ -992,7 +993,7 @@ mod tests {
     async fn activity_trap_should_trigger_an_execution_retry() {
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -1115,7 +1116,7 @@ mod tests {
                 backtrace_id: None,
             } if *finished_at == sim_clock.now()
         );
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -1123,7 +1124,7 @@ mod tests {
         set_up();
         let created_at = Now.now();
         let clock_fn = ConstClock(created_at);
-        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -1177,7 +1178,7 @@ mod tests {
         assert_eq!(Some(expected_detail), detail.as_deref());
         assert_eq!(PermanentFailureKind::ActivityTrap, *kind);
 
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -1223,7 +1224,7 @@ mod tests {
 
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
 
         let parent_worker = Arc::new(SimpleWorker::with_single_result(
             WorkerResult::DbUpdatedByWorkerOrWatcher,
@@ -1404,7 +1405,7 @@ mod tests {
             SupportedFunctionReturnValue::ExecutionError(_)
         );
 
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[derive(Clone, Debug)]
@@ -1430,7 +1431,7 @@ mod tests {
     async fn hanging_lock_should_be_cleaned_and_execution_retried() {
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         let lock_expiry = Duration::from_millis(100);
         let exec_config = ExecConfig {
             batch_size: 1,
@@ -1576,6 +1577,6 @@ mod tests {
 
         drop(db_connection);
         drop(executor);
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 }

@@ -705,8 +705,8 @@ pub(crate) mod tests {
         ComponentType,
         prefixed_ulid::{ExecutorId, RunId},
         storage::{
-            CreateRequest, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
-            Version, wait_for_pending_state_fn,
+            CreateRequest, DbPoolCloseable, PendingState, PendingStateFinished,
+            PendingStateFinishedResultKind, Version, wait_for_pending_state_fn,
         },
     };
     use concepts::{ExecutionId, Params, SupportedFunctionReturnValue};
@@ -830,7 +830,7 @@ pub(crate) mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         fibo_workflow_should_submit_fibo_activity(
             db_pool.clone(),
             db_exec,
@@ -838,7 +838,7 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
         )
         .await;
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest]
@@ -848,7 +848,7 @@ pub(crate) mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec) = Database::Sqlite.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Sqlite.set_up().await;
         fibo_workflow_should_submit_fibo_activity(
             db_pool.clone(),
             db_exec,
@@ -856,7 +856,7 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
         )
         .await;
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     async fn fibo_workflow_should_submit_fibo_activity(
@@ -937,7 +937,7 @@ pub(crate) mod tests {
     #[should_panic(expected = "LinkingError { context: preinstantiation error")]
     async fn fibo_workflow_with_missing_imports_should_fail() {
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         test_utils::set_up();
         let fn_registry = fn_registry_dummy(&[]);
         spawn_workflow_fibo(
@@ -947,7 +947,7 @@ pub(crate) mod tests {
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
         );
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     pub(crate) fn compile_workflow_worker<C: ClockFn>(
@@ -985,7 +985,7 @@ pub(crate) mod tests {
         const SLEEP_MILLIS: u32 = 100;
         test_utils::set_up();
 
-        let (_guard, db_pool, _db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
 
         let sim_clock = SimClock::epoch();
         let worker = compile_workflow_worker(
@@ -1021,6 +1021,7 @@ pub(crate) mod tests {
         };
         let worker_result = worker.run(ctx).await;
         assert_matches!(worker_result, WorkerResult::DbUpdatedByWorkerOrWatcher); // Do not write anything, let the watcher mark execution as timed out.
+        db_close.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -1029,7 +1030,7 @@ pub(crate) mod tests {
         let join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt;
 
         test_utils::set_up();
-        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         let sim_clock = SimClock::epoch();
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
@@ -1130,8 +1131,7 @@ pub(crate) mod tests {
             }
         );
 
-        drop(db_connection);
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest]
@@ -1146,7 +1146,7 @@ pub(crate) mod tests {
         const LOCK_DURATION: Duration = Duration::from_secs(1);
         test_utils::set_up();
         let sim_clock = SimClock::epoch();
-        let (_guard, db_pool, db_exec) = database.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = database.set_up().await;
 
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY), // not used here
@@ -1284,8 +1284,7 @@ pub(crate) mod tests {
             }
         );
 
-        drop(db_connection);
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest]
@@ -1297,7 +1296,7 @@ pub(crate) mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_exec) = db.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
@@ -1349,7 +1348,7 @@ pub(crate) mod tests {
         drop(db_connection);
         activity_exec_task.close().await;
         workflow_exec_task.close().await;
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest]
@@ -1377,7 +1376,7 @@ pub(crate) mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_exec) = db.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
@@ -1440,10 +1439,9 @@ pub(crate) mod tests {
             assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val.value);
         let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
-        drop(db_connection);
         activity_exec_task.close().await;
         workflow_exec_task.close().await;
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest::rstest]
@@ -1475,7 +1473,7 @@ pub(crate) mod tests {
             .unwrap_or(5);
         let sim_clock = SimClock::new(DateTime::default());
         let created_at = sim_clock.now();
-        let (_guard, db_pool, db_exec) = db.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
         let db_connection = db_pool.connection();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
@@ -1543,8 +1541,7 @@ pub(crate) mod tests {
         }
         activity_exec_task.close().await;
         workflow_exec_task.close().await;
-        drop(db_connection);
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest::rstest]
@@ -1564,7 +1561,7 @@ pub(crate) mod tests {
         );
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec) = db.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY),
             compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW),
@@ -1647,8 +1644,7 @@ pub(crate) mod tests {
         assert!(next_pending.parent.is_none());
         let params = serde_json::to_string(&Params::empty()).unwrap();
         assert_eq!(params, serde_json::to_string(&next_pending.params).unwrap());
-        drop(exec_task);
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest]
@@ -1664,7 +1660,7 @@ pub(crate) mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_exec) = database.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = database.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
@@ -1739,10 +1735,9 @@ pub(crate) mod tests {
             }
         );
 
-        drop(db_connection);
         activity_exec_task.close().await;
         workflow_exec_task.close().await;
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest::rstest]
@@ -1756,7 +1751,7 @@ pub(crate) mod tests {
         const INPUT_PARAM: &str = "bar";
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec) = db.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
             compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW),
@@ -1844,8 +1839,7 @@ pub(crate) mod tests {
         );
         assert_eq!(WastVal::String(format!("stubbing {INPUT_PARAM}")), value);
 
-        drop(exec_task);
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest::rstest]
@@ -1892,7 +1886,7 @@ pub(crate) mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::epoch();
-        let (_guard, db_pool, db_exec) = db.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY),
             compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
@@ -2014,8 +2008,7 @@ pub(crate) mod tests {
             Some(SupportedFunctionReturnValue::Ok { ok: None })
         );
 
-        drop(exec_task);
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     #[rstest::rstest]
@@ -2089,7 +2082,7 @@ pub(crate) mod tests {
         );
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec) = db.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
             compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW),
@@ -2177,8 +2170,7 @@ pub(crate) mod tests {
             res.into_finished_result().unwrap(),
             SupportedFunctionReturnValue::Ok { ok: None }
         );
-        drop(exec_task);
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     async fn write_stub_response(
@@ -2229,7 +2221,7 @@ pub(crate) mod tests {
         );
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec) = db.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity_stub(
                 test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
@@ -2362,5 +2354,6 @@ pub(crate) mod tests {
                 }
             }
         );
+        db_close.close().await.unwrap();
     }
 }

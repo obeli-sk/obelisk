@@ -392,7 +392,7 @@ pub(crate) mod tests {
     use concepts::time::TokioSleep;
     use concepts::{
         ComponentType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
-        prefixed_ulid::ExecutorId, storage::CreateRequest,
+        prefixed_ulid::ExecutorId, storage::CreateRequest, storage::DbPoolCloseable,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -531,7 +531,7 @@ pub(crate) mod tests {
     async fn fibo_once() {
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
         let exec_task = spawn_activity_fibo(db_exec, sim_clock.clone(), TokioSleep);
         // Create an execution.
@@ -566,7 +566,7 @@ pub(crate) mod tests {
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
         exec_task.close().await;
-        db_pool.close().await.unwrap();
+        db_close.close().await.unwrap();
     }
 
     pub mod wasmtime_nosim {
@@ -686,7 +686,7 @@ pub(crate) mod tests {
             const LOCK_EXPIRY: Duration = Duration::from_millis(500);
             const TICK_SLEEP: Duration = Duration::from_millis(10);
             test_utils::set_up();
-            let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let timers_watcher_task = executor::expired_timers_watcher::spawn_new(
                 db_pool.clone(),
                 executor::expired_timers_watcher::TimersWatcherConfig {
@@ -763,7 +763,7 @@ pub(crate) mod tests {
             drop(db_connection);
             drop(timers_watcher_task);
             exec_task.close().await;
-            db_pool.close().await.unwrap();
+            db_close.close().await.unwrap();
         }
 
         #[rstest::rstest]
@@ -885,7 +885,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             info!("All set up");
             let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let engine =
                 Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let (worker, _) = new_activity_worker(
@@ -984,7 +984,7 @@ pub(crate) mod tests {
             assert_eq!(uri, *uri_actual);
             drop(db_connection);
             drop(exec_task);
-            db_pool.close().await.unwrap();
+            db_close.close().await.unwrap();
         }
 
         #[tokio::test]
@@ -998,7 +998,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             info!("All set up");
             let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let engine =
                 Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let (worker, _) = new_activity_worker(
@@ -1104,7 +1104,7 @@ pub(crate) mod tests {
             assert_eq!(uri, *uri_actual);
             drop(db_connection);
             drop(exec_task);
-            db_pool.close().await.unwrap();
+            db_close.close().await.unwrap();
         }
 
         #[rstest::rstest(
@@ -1121,7 +1121,7 @@ pub(crate) mod tests {
             const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
             test_utils::set_up();
             let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let engine =
                 Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let (worker, _) = new_activity_worker(
@@ -1281,14 +1281,14 @@ pub(crate) mod tests {
             assert_matches!(wast_val_with_type.r#type, TypeWrapper::String); // in both cases
             drop(db_connection);
             drop(exec_task);
-            db_pool.close().await.unwrap();
+            db_close.close().await.unwrap();
         }
 
         #[tokio::test]
         async fn preopened_dir_sanity() {
             test_utils::set_up();
             let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let db_connection = db_pool.connection();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
             let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
@@ -1340,7 +1340,7 @@ pub(crate) mod tests {
             assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
             drop(db_connection);
             exec_task.close().await;
-            db_pool.close().await.unwrap();
+            db_close.close().await.unwrap();
         }
 
         #[rstest::rstest(
@@ -1357,7 +1357,7 @@ pub(crate) mod tests {
         async fn process_sanity(ffqn: FunctionFqn) {
             test_utils::set_up();
             let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let db_connection = db_pool.connection();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
             let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
@@ -1407,7 +1407,7 @@ pub(crate) mod tests {
             assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
             drop(db_connection);
             exec_task.close().await;
-            db_pool.close().await.unwrap();
+            db_close.close().await.unwrap();
         }
 
         #[cfg(unix)]
@@ -1430,7 +1430,7 @@ pub(crate) mod tests {
         async fn process_group_cleanup() {
             test_utils::set_up();
             let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let db_connection = db_pool.connection();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
             let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
@@ -1498,7 +1498,7 @@ pub(crate) mod tests {
 
             drop(db_connection);
             exec_task.close().await;
-            db_pool.close().await.unwrap();
+            db_close.close().await.unwrap();
         }
 
         #[rstest::rstest(
@@ -1510,7 +1510,7 @@ pub(crate) mod tests {
         async fn record_field_ordering(param: &str) {
             test_utils::set_up();
             let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let db_connection = db_pool.connection();
             let exec_task = spawn_activity_with_config(
                 db_exec,
@@ -1559,14 +1559,14 @@ pub(crate) mod tests {
             assert_debug_snapshot!(record);
             drop(db_connection);
             exec_task.close().await;
-            db_pool.close().await.unwrap();
+            db_close.close().await.unwrap();
         }
 
         #[tokio::test]
         async fn variant_with_optional_none() {
             test_utils::set_up();
             let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_exec) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let db_connection = db_pool.connection();
             let exec_task = spawn_activity_with_config(
                 db_exec,
@@ -1615,7 +1615,7 @@ pub(crate) mod tests {
             assert_debug_snapshot!(variant);
             drop(db_connection);
             exec_task.close().await;
-            db_pool.close().await.unwrap();
+            db_close.close().await.unwrap();
         }
     }
 }

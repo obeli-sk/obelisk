@@ -10,8 +10,8 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
-    ClientError, CreateRequest, DbCloseable, DbConnection, DbConnectionError, DbError, DbExecutor,
-    DbPool, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, ExecutionLog,
+    ClientError, CreateRequest, DbConnection, DbConnectionError, DbError, DbExecutor, DbPool,
+    DbPoolCloseable, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, ExecutionLog,
     ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse,
     LockedExecution, Pagination, ResponseWithCursor, SpecificError, SubscribeError, Version,
     VersionType,
@@ -531,8 +531,8 @@ impl InMemoryPool {
 }
 
 #[async_trait]
-impl DbCloseable for InMemoryPool {
-    async fn close(&self) -> Result<(), DbError> {
+impl DbPoolCloseable for InMemoryPool {
+    async fn close(self) -> Result<(), DbError> {
         let res = self
             .1
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);

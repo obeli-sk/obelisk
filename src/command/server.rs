@@ -53,6 +53,7 @@ use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbExecutor;
 use concepts::storage::DbPool;
+use concepts::storage::DbPoolCloseable;
 use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionWithState;
@@ -1187,7 +1188,7 @@ async fn run_internal(
     .instrument(span.clone())
     .await?;
 
-    let (init, component_registry_ro) = ServerInit::spawn_tasks_and_threads(
+    let (init, component_registry_ro) = spawn_tasks_and_threads(
         compiled_and_linked,
         &sqlite_file,
         sqlite_config,
@@ -1418,8 +1419,9 @@ impl ServerCompiledLinked {
     }
 }
 
-struct ServerInit {
+struct ServerInit<C: DbPoolCloseable> {
     db_pool: Arc<dyn DbPool>,
+    db_closeable: C,
     shutdown: (watch::Sender<bool>, watch::Receiver<bool>),
     exec_join_handles: Vec<ExecutorTaskHandle>,
     #[expect(dead_code)]
@@ -1432,113 +1434,118 @@ struct ServerInit {
     preopens_cleaner: Option<AbortOnDropHandle>,
 }
 
-impl ServerInit {
-    #[instrument(skip_all)]
-    async fn spawn_tasks_and_threads(
-        mut server_compiled_linked: ServerCompiledLinked,
-        sqlite_file: &Path,
-        sqlite_config: SqliteConfig,
-        global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
-        timers_watcher: TimersWatcherTomlConfig,
-    ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
-        // Start components requiring a database
-        let epoch_ticker = EpochTicker::spawn_new(
-            server_compiled_linked.engines.weak_refs(),
-            Duration::from_millis(EPOCH_MILLIS),
-        );
-        let (db_pool, db_executor): (Arc<dyn DbPool>, _) = {
-            let sqlite = SqlitePool::new(sqlite_file, sqlite_config, TokioSleep)
-                .await
-                .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?;
-            (Arc::new(sqlite.clone()), Arc::new(sqlite))
-        };
+#[instrument(skip_all)]
+async fn spawn_tasks_and_threads(
+    mut server_compiled_linked: ServerCompiledLinked,
+    sqlite_file: &Path,
+    sqlite_config: SqliteConfig,
+    global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    timers_watcher: TimersWatcherTomlConfig,
+) -> Result<
+    (
+        ServerInit<SqlitePool<TokioSleep>>,
+        ComponentConfigRegistryRO,
+    ),
+    anyhow::Error,
+> {
+    // Start components requiring a database
+    let epoch_ticker = EpochTicker::spawn_new(
+        server_compiled_linked.engines.weak_refs(),
+        Duration::from_millis(EPOCH_MILLIS),
+    );
+    let db = SqlitePool::new(sqlite_file, sqlite_config, TokioSleep)
+        .await
+        .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?;
+    let db_pool: Arc<dyn DbPool> = Arc::new(db.clone());
 
-        let timers_watcher = if timers_watcher.enabled {
-            Some(expired_timers_watcher::spawn_new(
-                db_pool.clone(),
-                TimersWatcherConfig {
-                    tick_sleep: timers_watcher.tick_sleep.into(),
-                    clock_fn: Now,
-                    leeway: timers_watcher.leeway.into(),
-                },
-            ))
-        } else {
-            None
-        };
-
-        let preopens_cleaner = if let (Some(parent_preopen_dir), Some(activities_cleanup)) = (
-            server_compiled_linked.parent_preopen_dir,
-            server_compiled_linked.activities_cleanup,
-        ) {
-            Some(PreopensCleaner::spawn_task(
-                activities_cleanup.older_than.into(),
-                parent_preopen_dir,
-                activities_cleanup.run_every.into(),
-                TokioSleep,
-                Now,
-                db_pool.clone(),
-            ))
-        } else {
-            None
-        };
-
-        // Associate webhooks with http servers
-        let http_servers_to_webhooks = {
-            server_compiled_linked
-                .http_servers_to_webhook_names
-                .into_iter()
-                .map(|(http_server, webhook_names)| {
-                    let instances_and_routes = webhook_names
-                        .into_iter()
-                        .map(|name| {
-                            server_compiled_linked
-                                .compiled_components
-                                .webhooks_by_names
-                                .remove(&name)
-                                .expect("all webhooks must be verified")
-                        })
-                        .collect::<Vec<_>>();
-                    (http_server, instances_and_routes)
-                })
-                .collect()
-        };
-
-        // Spawn executors
-        let exec_join_handles = server_compiled_linked
-            .compiled_components
-            .workers_linked
-            .into_iter()
-            .map(|pre_spawn| pre_spawn.spawn(&db_pool, db_executor.clone()))
-            .collect();
-
-        // Start webhook HTTP servers
-        let http_servers_handles: Vec<AbortOnDropHandle> = start_http_servers(
-            http_servers_to_webhooks,
-            &server_compiled_linked.engines,
+    let timers_watcher = if timers_watcher.enabled {
+        Some(expired_timers_watcher::spawn_new(
             db_pool.clone(),
-            Arc::from(server_compiled_linked.component_registry_ro.clone()),
-            global_webhook_instance_limiter.clone(),
-        )
-        .await?;
-        Ok((
-            ServerInit {
-                db_pool,
-                shutdown: watch::channel(false),
-                exec_join_handles,
-                timers_watcher,
-                http_servers_handles,
-                epoch_ticker,
-                preopens_cleaner,
+            TimersWatcherConfig {
+                tick_sleep: timers_watcher.tick_sleep.into(),
+                clock_fn: Now,
+                leeway: timers_watcher.leeway.into(),
             },
-            server_compiled_linked.component_registry_ro,
         ))
-    }
+    } else {
+        None
+    };
 
+    let preopens_cleaner = if let (Some(parent_preopen_dir), Some(activities_cleanup)) = (
+        server_compiled_linked.parent_preopen_dir,
+        server_compiled_linked.activities_cleanup,
+    ) {
+        Some(PreopensCleaner::spawn_task(
+            activities_cleanup.older_than.into(),
+            parent_preopen_dir,
+            activities_cleanup.run_every.into(),
+            TokioSleep,
+            Now,
+            db_pool.clone(),
+        ))
+    } else {
+        None
+    };
+
+    // Associate webhooks with http servers
+    let http_servers_to_webhooks = {
+        server_compiled_linked
+            .http_servers_to_webhook_names
+            .into_iter()
+            .map(|(http_server, webhook_names)| {
+                let instances_and_routes = webhook_names
+                    .into_iter()
+                    .map(|name| {
+                        server_compiled_linked
+                            .compiled_components
+                            .webhooks_by_names
+                            .remove(&name)
+                            .expect("all webhooks must be verified")
+                    })
+                    .collect::<Vec<_>>();
+                (http_server, instances_and_routes)
+            })
+            .collect()
+    };
+    let db_executor = Arc::new(db.clone());
+    // Spawn executors
+    let exec_join_handles = server_compiled_linked
+        .compiled_components
+        .workers_linked
+        .into_iter()
+        .map(|pre_spawn| pre_spawn.spawn(&db_pool, db_executor.clone()))
+        .collect();
+
+    // Start webhook HTTP servers
+    let http_servers_handles: Vec<AbortOnDropHandle> = start_http_servers(
+        http_servers_to_webhooks,
+        &server_compiled_linked.engines,
+        db_pool.clone(),
+        Arc::from(server_compiled_linked.component_registry_ro.clone()),
+        global_webhook_instance_limiter.clone(),
+    )
+    .await?;
+    Ok((
+        ServerInit {
+            db_pool,
+            db_closeable: db,
+            shutdown: watch::channel(false),
+            exec_join_handles,
+            timers_watcher,
+            http_servers_handles,
+            epoch_ticker,
+            preopens_cleaner,
+        },
+        server_compiled_linked.component_registry_ro,
+    ))
+}
+impl<C: DbPoolCloseable> ServerInit<C> {
     async fn close(self) {
         info!("Server is shutting down");
-        let (db_pool, exec_join_handles) = {
+        let (db_closeable, exec_join_handles) = {
             let ServerInit {
-                db_pool,
+                db_pool: _,
+                db_closeable,
                 shutdown: _, // Dropping notifies follower tasks.
                 exec_join_handles,
                 timers_watcher: _,
@@ -1547,13 +1554,13 @@ impl ServerInit {
                 preopens_cleaner: _,
             } = self;
             // drop AbortOnDropHandles
-            (db_pool, exec_join_handles)
+            (db_closeable, exec_join_handles)
         };
         // Close most of the services. Worker tasks might still be running.
         for exec_join_handle in exec_join_handles {
             exec_join_handle.close().await;
         }
-        let res = db_pool.close().await;
+        let res = db_closeable.close().await;
         if let Err(err) = res {
             error!("Cannot close the database - {err:?}");
         }
