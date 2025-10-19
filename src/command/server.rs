@@ -50,6 +50,7 @@ use concepts::SupportedFunctionReturnValue;
 use concepts::storage::AppendRequest;
 use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
+use concepts::storage::DbConnection;
 use concepts::storage::DbExecutor;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionEventInner;
@@ -64,7 +65,6 @@ use concepts::storage::VersionType;
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::time::TokioSleep;
-use concepts::time::now_tokio_instant;
 use db_sqlite::sqlite_dao::SqliteConfig;
 use db_sqlite::sqlite_dao::SqlitePool;
 use directories::BaseDirs;
@@ -98,11 +98,11 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::select;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::codec::CompressionEncoding;
 use tonic_web::GrpcWebLayer;
@@ -144,7 +144,7 @@ type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
 struct GrpcServer {
     #[debug(skip)]
     db_pool: Arc<dyn DbPool>,
-    shutdown_requested: Arc<AtomicBool>,
+    shutdown_requested: watch::Receiver<bool>,
     component_registry_ro: ComponentConfigRegistryRO,
     component_source_map: ComponentSourceMap,
 }
@@ -152,7 +152,7 @@ struct GrpcServer {
 impl GrpcServer {
     fn new(
         db_pool: Arc<dyn DbPool>,
-        shutdown_requested: Arc<AtomicBool>,
+        shutdown_requested: watch::Receiver<bool>,
         component_registry_ro: ComponentConfigRegistryRO,
         component_source_map: ComponentSourceMap,
     ) -> Self {
@@ -829,18 +829,28 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
 async fn poll_status(
     db_pool: Arc<dyn DbPool>,
-    shutdown_requested: Arc<AtomicBool>,
+    mut shutdown_requested: watch::Receiver<bool>,
     execution_id: ExecutionId,
-    tx: tokio::sync::mpsc::Sender<TonicResult<GetStatusResponse>>,
-    mut current_pending_state: PendingState,
+    tx: mpsc::Sender<TonicResult<GetStatusResponse>>,
+    mut old_pending_state: PendingState,
     create_request: CreateRequest,
     send_finished_status: bool,
 ) {
+    let conn = db_pool.connection();
     loop {
-        let sleep_until = now_tokio_instant() + GET_STATUS_POLLING_SLEEP;
-        loop {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            if shutdown_requested.load(Ordering::Acquire) {
+        select! {
+            res = async {
+                tokio::time::sleep(GET_STATUS_POLLING_SLEEP).await;
+                notify_status(conn.as_ref(), &execution_id, &tx, old_pending_state, &create_request, send_finished_status).await
+            } => {
+                match res {
+                    Ok(new_state) => {
+                        old_pending_state = new_state;
+                    }
+                    Err(()) => return
+                }
+            }
+            _ = shutdown_requested.changed() => {
                 debug!("Exitting get_status early, database is closing");
                 let _ = tx
                     .send(TonicResult::Err(tonic::Status::aborted(
@@ -849,65 +859,65 @@ async fn poll_status(
                     .await;
                 return;
             }
-            if now_tokio_instant() >= sleep_until {
-                break;
-            }
         }
-        let conn = db_pool.connection();
-        match conn.get_pending_state(&execution_id).await {
-            Ok(pending_state) => {
-                if pending_state != current_pending_state {
-                    let grpc_pending_status =
-                        grpc_gen::ExecutionStatus::from(pending_state.clone());
+    }
+}
+async fn notify_status(
+    conn: &dyn DbConnection,
+    execution_id: &ExecutionId,
+    tx: &mpsc::Sender<TonicResult<GetStatusResponse>>,
+    old_pending_state: PendingState,
+    create_request: &CreateRequest,
+    send_finished_status: bool,
+) -> Result<PendingState, ()> {
+    match conn.get_pending_state(execution_id).await {
+        Ok(pending_state) => {
+            if pending_state != old_pending_state {
+                let grpc_pending_status = grpc_gen::ExecutionStatus::from(pending_state.clone());
 
-                    let message = grpc_gen::GetStatusResponse {
-                        message: Some(Message::CurrentStatus(grpc_pending_status)),
-                    };
-                    let send_res = tx.send(TonicResult::Ok(message)).await;
-                    if let Err(err) = send_res {
-                        info!("Cannot send the message - {err:?}");
-                        return;
-                    }
-                    if let PendingState::Finished {
-                        finished: pending_state_finished,
-                    } = pending_state
-                    {
-                        if send_finished_status {
-                            // Send the last message and close the RPC.
-                            let finished_result = match conn
-                                            .get_finished_result(&execution_id, pending_state_finished)
-                                            .await
-                                        {
-                                            Ok(ok) => ok.expect("checked using `if let PendingState::Finished` that the execution is finished"),
-                                            Err(db_err) => {
-                                                error!("Cannot obtain finished result: {db_err:?}");
-                                                let _ =
-                                                    tx.send(Err(db_error_to_status(&db_err))).await;
-                                                return;
-                                            }
-                                        };
-                            let message = grpc_gen::GetStatusResponse {
-                                message: Some(Message::FinishedStatus(to_finished_status(
-                                    finished_result,
-                                    &create_request,
-                                    pending_state_finished.finished_at,
-                                ))),
+                let message = grpc_gen::GetStatusResponse {
+                    message: Some(Message::CurrentStatus(grpc_pending_status)),
+                };
+                let send_res = tx.send(TonicResult::Ok(message)).await;
+                if let Err(err) = send_res {
+                    info!("Cannot send the message - {err:?}");
+                    return Err(());
+                }
+                if let PendingState::Finished {
+                    finished: pending_state_finished,
+                } = pending_state
+                {
+                    if send_finished_status {
+                        // Send the last message and close the RPC.
+                        let finished_result = match conn.get_finished_result(execution_id, pending_state_finished).await {
+                                Ok(ok) => ok.expect("checked using `if let PendingState::Finished` that the execution is finished"),
+                                Err(db_err) => {
+                                    error!("Cannot obtain finished result: {db_err:?}");
+                                    let _ = tx.send(Err(db_error_to_status(&db_err))).await;
+                                    return Err(());
+                                }
                             };
-                            let send_res = tx.send(TonicResult::Ok(message)).await;
-                            if let Err(err) = send_res {
-                                error!("Cannot send the final message - {err:?}");
-                            }
+                        let message = grpc_gen::GetStatusResponse {
+                            message: Some(Message::FinishedStatus(to_finished_status(
+                                finished_result,
+                                create_request,
+                                pending_state_finished.finished_at,
+                            ))),
+                        };
+                        let send_res = tx.send(TonicResult::Ok(message)).await;
+                        if let Err(err) = send_res {
+                            error!("Cannot send the final message - {err:?}");
                         }
-                        return;
                     }
-                    current_pending_state = pending_state;
+                    return Err(());
                 }
             }
-            Err(db_err) => {
-                error!("Database error while streaming status - {db_err:?}");
-                let _ = tx.send(Err(db_error_to_status(&db_err))).await;
-                return;
-            }
+            Ok(pending_state)
+        }
+        Err(db_err) => {
+            error!("Database error while streaming status - {db_err:?}");
+            let _ = tx.send(Err(db_error_to_status(&db_err))).await;
+            Err(())
         }
     }
 }
@@ -1189,7 +1199,7 @@ async fn run_internal(
 
     let grpc_server = Arc::new(GrpcServer::new(
         init.db_pool.clone(),
-        init.shutdown_requested.clone(),
+        init.shutdown.1.clone(),
         component_registry_ro,
         component_source_map,
     ));
@@ -1410,7 +1420,7 @@ impl ServerCompiledLinked {
 
 struct ServerInit {
     db_pool: Arc<dyn DbPool>,
-    shutdown_requested: Arc<AtomicBool>,
+    shutdown: (watch::Sender<bool>, watch::Receiver<bool>),
     exec_join_handles: Vec<ExecutorTaskHandle>,
     #[expect(dead_code)]
     timers_watcher: Option<AbortOnDropHandle>,
@@ -1513,7 +1523,7 @@ impl ServerInit {
         Ok((
             ServerInit {
                 db_pool,
-                shutdown_requested: Arc::default(),
+                shutdown: watch::channel(false),
                 exec_join_handles,
                 timers_watcher,
                 http_servers_handles,
@@ -1529,14 +1539,13 @@ impl ServerInit {
         let (db_pool, exec_join_handles) = {
             let ServerInit {
                 db_pool,
-                shutdown_requested,
+                shutdown: _, // Dropping notifies follower tasks.
                 exec_join_handles,
                 timers_watcher: _,
                 http_servers_handles: _,
                 epoch_ticker: _,
                 preopens_cleaner: _,
             } = self;
-            shutdown_requested.store(true, Ordering::Release); // Task responding to --follow might be still running.
             // drop AbortOnDropHandles
             (db_pool, exec_join_handles)
         };
