@@ -457,10 +457,6 @@ impl<S: Sleep + 'static> DbPool for SqlitePool<S> {
         Box::new(self.clone())
     }
 
-    fn is_closing(&self) -> bool {
-        self.0.shutdown_requested.load(Ordering::Acquire)
-    }
-
     async fn close(&self) -> Result<(), DbError> {
         self.0.shutdown_requested.store(true, Ordering::Release);
         let _ = self.0.command_tx.send(ThreadCommand::Shutdown).await;

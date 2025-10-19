@@ -595,7 +595,6 @@ impl From<CreateRequest> for ExecutionEventInner {
 #[async_trait]
 pub trait DbPool: Send + Sync {
     fn connection(&self) -> Box<dyn DbConnection>;
-    fn is_closing(&self) -> bool; // TODO: Remove
     async fn close(&self) -> Result<(), DbError>;
 }
 

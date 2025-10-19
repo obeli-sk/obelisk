@@ -535,10 +535,6 @@ impl DbPool for InMemoryPool {
         Box::new(InMemoryDbConnection(self.0.clone()))
     }
 
-    fn is_closing(&self) -> bool {
-        self.1.load(Ordering::Relaxed)
-    }
-
     async fn close(&self) -> Result<(), DbError> {
         let res = self
             .1

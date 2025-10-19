@@ -98,6 +98,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -142,6 +144,7 @@ type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
 struct GrpcServer {
     #[debug(skip)]
     db_pool: Arc<dyn DbPool>,
+    shutdown_requested: Arc<AtomicBool>,
     component_registry_ro: ComponentConfigRegistryRO,
     component_source_map: ComponentSourceMap,
 }
@@ -149,11 +152,13 @@ struct GrpcServer {
 impl GrpcServer {
     fn new(
         db_pool: Arc<dyn DbPool>,
+        shutdown_requested: Arc<AtomicBool>,
         component_registry_ro: ComponentConfigRegistryRO,
         component_source_map: ComponentSourceMap,
     ) -> Self {
         Self {
             db_pool,
+            shutdown_requested,
             component_registry_ro,
             component_source_map,
         }
@@ -543,10 +548,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .await
                 .expect("mpsc bounded channel requires buffer > 0");
             let db_pool = self.db_pool.clone();
+            let shutdown_requested = self.shutdown_requested.clone();
 
             tokio::spawn(
                 poll_status(
                     db_pool,
+                    shutdown_requested,
                     execution_id,
                     tx,
                     current_pending_state,
@@ -822,6 +829,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
 async fn poll_status(
     db_pool: Arc<dyn DbPool>,
+    shutdown_requested: Arc<AtomicBool>,
     execution_id: ExecutionId,
     tx: tokio::sync::mpsc::Sender<TonicResult<GetStatusResponse>>,
     mut current_pending_state: PendingState,
@@ -832,7 +840,7 @@ async fn poll_status(
         let sleep_until = now_tokio_instant() + GET_STATUS_POLLING_SLEEP;
         loop {
             tokio::time::sleep(Duration::from_millis(10)).await;
-            if db_pool.is_closing() {
+            if shutdown_requested.load(Ordering::Acquire) {
                 debug!("Exitting get_status early, database is closing");
                 let _ = tx
                     .send(TonicResult::Err(tonic::Status::aborted(
@@ -1178,8 +1186,10 @@ async fn run_internal(
     )
     .instrument(span)
     .await?;
+
     let grpc_server = Arc::new(GrpcServer::new(
         init.db_pool.clone(),
+        init.shutdown_requested.clone(),
         component_registry_ro,
         component_source_map,
     ));
@@ -1400,6 +1410,7 @@ impl ServerCompiledLinked {
 
 struct ServerInit {
     db_pool: Arc<dyn DbPool>,
+    shutdown_requested: Arc<AtomicBool>,
     exec_join_handles: Vec<ExecutorTaskHandle>,
     #[expect(dead_code)]
     timers_watcher: Option<AbortOnDropHandle>,
@@ -1502,6 +1513,7 @@ impl ServerInit {
         Ok((
             ServerInit {
                 db_pool,
+                shutdown_requested: Arc::default(),
                 exec_join_handles,
                 timers_watcher,
                 http_servers_handles,
@@ -1517,19 +1529,21 @@ impl ServerInit {
         let (db_pool, exec_join_handles) = {
             let ServerInit {
                 db_pool,
+                shutdown_requested,
                 exec_join_handles,
                 timers_watcher: _,
                 http_servers_handles: _,
                 epoch_ticker: _,
                 preopens_cleaner: _,
             } = self;
+            shutdown_requested.store(true, Ordering::Release); // Task responding to --follow might be still running.
             // drop AbortOnDropHandles
             (db_pool, exec_join_handles)
         };
+        // Close most of the services. Worker tasks might still be running.
         for exec_join_handle in exec_join_handles {
             exec_join_handle.close().await;
         }
-        // Close most of the services. Note that a task responding to --follow might be still running.
         let res = db_pool.close().await;
         if let Err(err) = res {
             error!("Cannot close the database - {err:?}");
