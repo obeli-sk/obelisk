@@ -74,7 +74,7 @@ cargo binstall obelisk
 
 ### Docker
 ```sh
-docker run --net=host getobelisk/obelisk
+docker run -p 8080 getobelisk/obelisk
 ```
 
 ### From Source
