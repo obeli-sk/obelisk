@@ -946,10 +946,8 @@ pub(crate) mod tests {
                 exec_task
                     .tick_test(sim_clock.now(), RunId::generate())
                     .await
-                    .unwrap()
                     .wait_for_tasks()
                     .await
-                    .unwrap()
                     .len()
             );
             let exec_log = db_connection.get(&execution_id).await.unwrap();
@@ -1060,10 +1058,8 @@ pub(crate) mod tests {
                 exec_task
                     .tick_test(sim_clock.now(), RunId::generate())
                     .await
-                    .unwrap()
                     .wait_for_tasks()
                     .await
-                    .unwrap()
                     .len()
             );
             let exec_log = db_connection.get(&execution_id).await.unwrap();
@@ -1185,10 +1181,8 @@ pub(crate) mod tests {
                     exec_task
                         .tick_test(sim_clock.now(), RunId::generate())
                         .await
-                        .unwrap()
                         .wait_for_tasks()
                         .await
-                        .unwrap()
                         .len()
                 );
                 let exec_log = db_connection.get(&execution_id).await.unwrap();
@@ -1239,10 +1233,8 @@ pub(crate) mod tests {
                 exec_task
                     .tick_test(sim_clock.now(), RunId::generate())
                     .await
-                    .unwrap()
                     .wait_for_tasks()
                     .await
-                    .unwrap()
                     .len()
             );
             sim_clock.move_time_forward(RETRY_EXP_BACKOFF);
@@ -1263,10 +1255,8 @@ pub(crate) mod tests {
                 exec_task
                     .tick_test(sim_clock.now(), RunId::generate())
                     .await
-                    .unwrap()
                     .wait_for_tasks()
                     .await
-                    .unwrap()
                     .len()
             );
             let exec_log = db_connection.get(&execution_id).await.unwrap();

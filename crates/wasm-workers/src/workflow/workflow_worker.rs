@@ -922,12 +922,11 @@ pub(crate) mod tests {
 
         let executed_workflows = workflow_exec
             .tick_test(sim_clock.now(), RunId::generate())
-            .await
-            .unwrap();
+            .await;
 
         let executed_workflows =
             if join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
-                assert_eq!(1, executed_workflows.wait_for_tasks().await.unwrap().len());
+                assert_eq!(1, executed_workflows.wait_for_tasks().await.len());
                 None
             } else {
                 // TODO: Make test more deterministic by waiting for deadline tracker to be called here.
@@ -960,7 +959,7 @@ pub(crate) mod tests {
 
         let executed_workflows = if let Some(executed_workflows) = executed_workflows {
             // Await strategy still runs
-            executed_workflows.wait_for_tasks().await.unwrap()
+            executed_workflows.wait_for_tasks().await
         } else {
             workflow_exec
                 .tick_test_await(sim_clock.now(), RunId::generate())
@@ -1130,10 +1129,8 @@ pub(crate) mod tests {
             let worker_tasks = sleep_exec
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             assert_eq!(1, worker_tasks);
         }
@@ -1157,10 +1154,8 @@ pub(crate) mod tests {
             let worker_tasks = sleep_exec
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             assert_eq!(1, worker_tasks);
         }
@@ -1242,10 +1237,8 @@ pub(crate) mod tests {
             let worker_tasks = sleep_exec
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             assert_eq!(1, worker_tasks);
         }
@@ -1269,10 +1262,8 @@ pub(crate) mod tests {
             let worker_tasks = sleep_exec
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             assert_eq!(0, worker_tasks);
         }
@@ -1313,10 +1304,8 @@ pub(crate) mod tests {
             let worker_tasks = sleep_exec
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             assert_eq!(1, worker_tasks);
         }
@@ -1686,10 +1675,8 @@ pub(crate) mod tests {
             let task_count = exec_task
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             assert_eq!(1, task_count);
         }
@@ -1885,10 +1872,8 @@ pub(crate) mod tests {
             let task_count = exec_task
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             assert_eq!(1, task_count);
         }
@@ -1906,10 +1891,8 @@ pub(crate) mod tests {
             exec_task
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len()
         );
 
@@ -2029,10 +2012,8 @@ pub(crate) mod tests {
             let task_count = exec_task
                 .tick_test(sim_clock.now(), run_id())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             assert_eq!(1, task_count);
         }
@@ -2062,10 +2043,8 @@ pub(crate) mod tests {
             let executed = exec_task
                 .tick_test(sim_clock.now(), run)
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             if executed == 0 {
                 break;
@@ -2218,10 +2197,8 @@ pub(crate) mod tests {
             let task_count = exec_task
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             assert_eq!(1, task_count);
         }
@@ -2246,10 +2223,8 @@ pub(crate) mod tests {
             exec_task
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len()
         );
         let res = db_connection.get(&execution_id).await.unwrap();
@@ -2363,10 +2338,8 @@ pub(crate) mod tests {
             let task_count = exec_workflow
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             assert_eq!(1, task_count);
         }
@@ -2409,10 +2382,8 @@ pub(crate) mod tests {
                 let task_count = exec_activity
                     .tick_test(sim_clock.now(), RunId::generate())
                     .await
-                    .unwrap()
                     .wait_for_tasks()
                     .await
-                    .unwrap()
                     .len();
                 assert_eq!(1, task_count);
             }
@@ -2423,10 +2394,8 @@ pub(crate) mod tests {
             let task_count = exec_workflow
                 .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap()
                 .len();
             assert_eq!(1, task_count);
         }

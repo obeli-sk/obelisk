@@ -2055,10 +2055,8 @@ pub(crate) mod tests {
                         ),
                     )
                     .await
-                    .unwrap()
                     .wait_for_tasks()
                     .await
-                    .unwrap()
                     .len();
                 assert!(executed > 0);
                 let pending_state = db_connection
@@ -2508,10 +2506,8 @@ pub(crate) mod tests {
                     ),
                 )
                 .await
-                .unwrap()
                 .wait_for_tasks()
-                .await
-                .unwrap();
+                .await;
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await

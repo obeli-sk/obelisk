@@ -52,13 +52,13 @@ pub struct ExecutionProgress {
 
 impl ExecutionProgress {
     #[cfg(feature = "test")]
-    pub async fn wait_for_tasks(self) -> Result<Vec<ExecutionId>, tokio::task::JoinError> {
+    pub async fn wait_for_tasks(self) -> Vec<ExecutionId> {
         let mut vec = Vec::new();
         for (exe, join_handle) in self.executions {
             vec.push(exe);
-            join_handle.await?;
+            join_handle.await.unwrap();
         }
-        Ok(vec)
+        vec
     }
 }
 
@@ -204,12 +204,8 @@ impl<C: ClockFn + 'static> ExecTask<C> {
     }
 
     #[cfg(feature = "test")]
-    pub async fn tick_test(
-        &self,
-        executed_at: DateTime<Utc>,
-        run_id: RunId,
-    ) -> Result<ExecutionProgress, DbErrorGeneric> {
-        self.tick(executed_at, run_id).await
+    pub async fn tick_test(&self, executed_at: DateTime<Utc>, run_id: RunId) -> ExecutionProgress {
+        self.tick(executed_at, run_id).await.unwrap()
     }
 
     #[cfg(feature = "test")]
@@ -223,7 +219,6 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             .unwrap()
             .wait_for_tasks()
             .await
-            .unwrap()
     }
 
     #[instrument(level = Level::TRACE, name = "executor.tick" skip_all, fields(executor_id = %self.config.executor_id, component_id = %self.config.component_id))]
