@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use concepts::FunctionFqn;
-use concepts::storage::DbError;
 use concepts::storage::DbExecutor;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
@@ -61,7 +60,7 @@ pub enum DbPoolCloseableWrapper {
 
 #[async_trait]
 impl DbPoolCloseable for DbPoolCloseableWrapper {
-    async fn close(self) -> Result<(), DbError> {
+    async fn close(self) -> Result<(), ()> {
         match self {
             DbPoolCloseableWrapper::Memory(db) => db.close().await,
             DbPoolCloseableWrapper::Sqlite(db) => db.close().await,

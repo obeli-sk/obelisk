@@ -1,12 +1,12 @@
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, RunId};
-use concepts::storage::DbPoolCloseable;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, ExpiredTimer, JoinSetRequest,
     JoinSetResponse, JoinSetResponseEventOuter, LockedExecution, PendingState, Version,
 };
-use concepts::storage::{DbError, HistoryEvent, SpecificError};
+use concepts::storage::{DbErrorWrite, DbPoolCloseable};
+use concepts::storage::{DbErrorWritePermanent, HistoryEvent};
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
@@ -214,15 +214,10 @@ async fn append_after_finish_should_not_be_possible(
 
         let msg = assert_matches!(
             err,
-            DbError::Specific(SpecificError::ValidationFailed(StrVariant::Static(
-                msg
-            )))
-            => msg
+            DbErrorWrite::Permanent(DbErrorWritePermanent::CannotWrite{reason, ..})
+            => reason
         );
-        assert!(
-            msg.contains("already finished"),
-            "Message `{msg}` must contain text `already finished`"
-        );
+        assert_eq!("already finished", msg.as_ref());
     }
     db_close.close().await.unwrap();
 }
@@ -405,7 +400,7 @@ async fn lock_and_attept_to_extend(
     same_executor_id: bool,
     same_run_id: bool,
     db_connection: &dyn DbConnection,
-) -> Result<LockedExecution, DbError> {
+) -> Result<LockedExecution, DbErrorWrite> {
     let sim_clock = SimClock::epoch();
     let execution_id = ExecutionId::generate();
     let exec_pending = ExecutorId::generate();

@@ -86,7 +86,7 @@ use grpc::grpc_gen::GetStatusResponse;
 use grpc::grpc_gen::get_status_response::Message;
 use grpc::grpc_mapping::TonicServerOptionExt;
 use grpc::grpc_mapping::TonicServerResultExt;
-use grpc::grpc_mapping::db_error_to_status;
+use grpc::grpc_mapping::db_error_read_to_status;
 use grpc::grpc_mapping::from_execution_event_to_grpc;
 use grpc_gen::ExecutionSummary;
 use hashbrown::HashMap;
@@ -893,8 +893,7 @@ async fn notify_status(
                         let finished_result = match conn.get_finished_result(execution_id, pending_state_finished).await {
                                 Ok(ok) => ok.expect("checked using `if let PendingState::Finished` that the execution is finished"),
                                 Err(db_err) => {
-                                    error!("Cannot obtain finished result: {db_err:?}");
-                                    let _ = tx.send(Err(db_error_to_status(&db_err))).await;
+                                    let _ = tx.send(Err(db_error_read_to_status(&db_err))).await;
                                     return Err(());
                                 }
                             };
@@ -916,8 +915,7 @@ async fn notify_status(
             Ok(pending_state)
         }
         Err(db_err) => {
-            error!("Database error while streaming status - {db_err:?}");
-            let _ = tx.send(Err(db_error_to_status(&db_err))).await;
+            let _ = tx.send(Err(db_error_read_to_status(&db_err))).await;
             Err(())
         }
     }

@@ -10,14 +10,14 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
-    ClientError, CreateRequest, DbConnection, DbConnectionError, DbError, DbExecutor, DbPool,
-    DbPoolCloseable, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, ExecutionLog,
-    ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse,
-    LockedExecution, Pagination, ResponseWithCursor, SpecificError, SubscribeError, Version,
-    VersionType,
+    CreateRequest, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
+    DbErrorWritePermanent, DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent,
+    ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
+    HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution, Pagination,
+    ResponseWithCursor, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
-use concepts::{ComponentId, ExecutionId, FunctionFqn, StrVariant};
+use concepts::{ComponentId, ExecutionId, FunctionFqn};
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
@@ -45,7 +45,7 @@ impl DbExecutor for InMemoryDbConnection {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
-    ) -> Result<LockPendingResponse, DbError> {
+    ) -> Result<LockPendingResponse, DbErrorGeneric> {
         Ok(self.0.lock().unwrap().lock_pending(
             batch_size,
             pending_at_or_sooner,
@@ -68,21 +68,16 @@ impl DbExecutor for InMemoryDbConnection {
         version: Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockedExecution, DbError> {
-        let (next_version, event_history) = self
-            .0
-            .lock()
-            .unwrap()
-            .lock(
-                created_at,
-                component_id,
-                execution_id,
-                run_id,
-                version,
-                executor_id,
-                lock_expires_at,
-            )
-            .map_err(DbError::Specific)?;
+    ) -> Result<LockedExecution, DbErrorWrite> {
+        let (next_version, event_history) = self.0.lock().unwrap().lock(
+            created_at,
+            component_id,
+            execution_id,
+            run_id,
+            version,
+            executor_id,
+            lock_expires_at,
+        )?;
         let db_holder_guard = self.0.lock().unwrap();
         let journal = db_holder_guard
             .journals
@@ -110,12 +105,11 @@ impl DbExecutor for InMemoryDbConnection {
         execution_id: ExecutionId,
         appending_version: Version,
         req: AppendRequest,
-    ) -> Result<AppendResponse, DbError> {
+    ) -> Result<AppendResponse, DbErrorWrite> {
         self.0
             .lock()
             .unwrap()
             .append(req.created_at, &execution_id, appending_version, req.event)
-            .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -127,18 +121,14 @@ impl DbExecutor for InMemoryDbConnection {
         version: Version,
         parent_execution_id: ExecutionId,
         parent_response_event: JoinSetResponseEventOuter,
-    ) -> Result<AppendBatchResponse, DbError> {
-        self.0
-            .lock()
-            .unwrap()
-            .append_batch_respond_to_parent(
-                &execution_id,
-                batch,
-                version,
-                &parent_execution_id,
-                parent_response_event,
-            )
-            .map_err(DbError::Specific)
+    ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        self.0.lock().unwrap().append_batch_respond_to_parent(
+            &execution_id,
+            batch,
+            version,
+            &parent_execution_id,
+            parent_response_event,
+        )
     }
 
     async fn wait_for_pending(
@@ -167,16 +157,15 @@ impl DbExecutor for InMemoryDbConnection {
 #[async_trait]
 impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
-    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-        self.0
-            .lock()
-            .unwrap()
-            .create(req)
-            .map_err(DbError::Specific)
+    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
+        self.0.lock().unwrap().create(req)
     }
 
     #[instrument(skip_all)]
-    async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
+    async fn get_expired_timers(
+        &self,
+        at: DateTime<Utc>,
+    ) -> Result<Vec<ExpiredTimer>, DbErrorGeneric> {
         Ok(self.0.lock().unwrap().get_expired_timers(at))
     }
 
@@ -187,12 +176,11 @@ impl DbConnection for InMemoryDbConnection {
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         appending_version: Version,
-    ) -> Result<AppendBatchResponse, DbError> {
+    ) -> Result<AppendBatchResponse, DbErrorWrite> {
         self.0
             .lock()
             .unwrap()
             .append_batch(batch, &execution_id, appending_version)
-            .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -203,35 +191,30 @@ impl DbConnection for InMemoryDbConnection {
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
-    ) -> Result<AppendBatchResponse, DbError> {
+    ) -> Result<AppendBatchResponse, DbErrorWrite> {
         self.0
             .lock()
             .unwrap()
             .append_batch_create_child(batch, &execution_id, version, child_req)
-            .map_err(DbError::Specific)
     }
 
     #[cfg(feature = "test")]
     #[instrument(skip_all, %execution_id)]
-    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbError> {
-        self.0
-            .lock()
-            .unwrap()
-            .get(execution_id)
-            .map_err(DbError::Specific)
+    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead> {
+        self.0.lock().unwrap().get(execution_id)
     }
 
     async fn get_execution_event(
         &self,
         execution_id: &ExecutionId,
         version: &Version,
-    ) -> Result<ExecutionEvent, DbError> {
+    ) -> Result<ExecutionEvent, DbErrorRead> {
         let execution_log = self.0.lock().unwrap().get(execution_id)?;
         Ok(execution_log
             .events
             .get(usize::try_from(version.0).unwrap())
             .cloned()
-            .ok_or(SpecificError::NotFound)?)
+            .ok_or(DbErrorRead::NotFound)?)
     }
 
     async fn subscribe_to_next_responses(
@@ -239,12 +222,10 @@ impl DbConnection for InMemoryDbConnection {
         execution_id: &ExecutionId,
         start_idx: usize,
         interrupt_after: Pin<Box<dyn Future<Output = ()> + Send>>,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, SubscribeError> {
+    ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
         let either = {
             let mut guard = self.0.lock().unwrap();
-            guard
-                .subscribe_to_next_responses(execution_id, start_idx)
-                .map_err(SubscribeError::DbError)?
+            guard.subscribe_to_next_responses(execution_id, start_idx)?
         };
         // unlocked now
         match either {
@@ -253,9 +234,9 @@ impl DbConnection for InMemoryDbConnection {
                 tokio::select! {
                     res = receiver => res
                     .map(|it| vec![it])
-                    .map_err(|_| SubscribeError::DbError(DbError::Connection(DbConnectionError::RecvError))),
+                    .map_err(|_| DbErrorReadWithTimeout::from(DbErrorGeneric::Close)),
 
-                    () = interrupt_after => Err(SubscribeError::Interrupted),
+                    () = interrupt_after => Err(DbErrorReadWithTimeout::Timeout),
                 }
             }
         }
@@ -267,31 +248,27 @@ impl DbConnection for InMemoryDbConnection {
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
         response_event: JoinSetResponseEvent,
-    ) -> Result<(), DbError> {
-        self.0
-            .lock()
-            .unwrap()
-            .append_response(
-                &execution_id,
-                JoinSetResponseEventOuter {
-                    created_at,
-                    event: response_event,
-                },
-            )
-            .map_err(DbError::Specific)
+    ) -> Result<(), DbErrorWrite> {
+        self.0.lock().unwrap().append_response(
+            &execution_id,
+            JoinSetResponseEventOuter {
+                created_at,
+                event: response_event,
+            },
+        )
     }
 
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,
         timeout: Option<Duration>,
-    ) -> Result<SupportedFunctionReturnValue, ClientError> {
+    ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
         let execution_log = {
             let fut = async move {
                 loop {
                     let execution_log = {
                         let mut guard = self.0.lock().unwrap();
-                        guard.get(execution_id).map_err(DbError::Specific)?
+                        guard.get(execution_id)?
                     };
                     if execution_log.pending_state.is_finished() {
                         return Ok(execution_log);
@@ -303,7 +280,7 @@ impl DbConnection for InMemoryDbConnection {
             if let Some(timeout) = timeout {
                 tokio::select! { // future's liveness: Dropping the loser immediately.
                     res = fut => res,
-                    () = tokio::time::sleep(timeout) => Err(ClientError::Timeout)
+                    () = tokio::time::sleep(timeout) => Err(DbErrorReadWithTimeout::Timeout)
                 }
             } else {
                 fut.await
@@ -314,22 +291,19 @@ impl DbConnection for InMemoryDbConnection {
             .expect("pending state was checked"))
     }
 
-    async fn get_pending_state(&self, execution_id: &ExecutionId) -> Result<PendingState, DbError> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap()
-            .get(execution_id)
-            .map_err(DbError::Specific)?
-            .pending_state)
+    async fn get_pending_state(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<PendingState, DbErrorRead> {
+        Ok(self.0.lock().unwrap().get(execution_id)?.pending_state)
     }
 
-    async fn append_backtrace(&self, _append: BacktraceInfo) -> Result<(), DbError> {
+    async fn append_backtrace(&self, _append: BacktraceInfo) -> Result<(), DbErrorWrite> {
         // noop, backtrace functionality is for reporting only and its absence should not affect the system.
         Ok(())
     }
 
-    async fn append_backtrace_batch(&self, _batch: Vec<BacktraceInfo>) -> Result<(), DbError> {
+    async fn append_backtrace_batch(&self, _batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite> {
         // noop, backtrace functionality is for reporting only and its absence should not affect the system.
         Ok(())
     }
@@ -338,7 +312,7 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         _execution_id: &ExecutionId,
         _filter: BacktraceFilter,
-    ) -> Result<BacktraceInfo, DbError> {
+    ) -> Result<BacktraceInfo, DbErrorRead> {
         unimplemented!("only needed for gRPC")
     }
 
@@ -347,7 +321,7 @@ impl DbConnection for InMemoryDbConnection {
         _ffqn: Option<FunctionFqn>,
         _top_level_only: bool,
         _pagination: ExecutionListPagination,
-    ) -> Result<Vec<ExecutionWithState>, DbError> {
+    ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
         unimplemented!("only needed for gRPC")
     }
 
@@ -357,7 +331,7 @@ impl DbConnection for InMemoryDbConnection {
         _since: &Version,
         _max_length: VersionType,
         _include_backtrace_id: bool,
-    ) -> Result<Vec<ExecutionEvent>, DbError> {
+    ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
         unimplemented!("only needed for gRPC")
     }
 
@@ -365,7 +339,7 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         _execution_id: &ExecutionId,
         _pagination: Pagination<u32>,
-    ) -> Result<Vec<ResponseWithCursor>, DbError> {
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
         unimplemented!("only needed for gRPC")
     }
 }
@@ -532,15 +506,10 @@ impl InMemoryPool {
 
 #[async_trait]
 impl DbPoolCloseable for InMemoryPool {
-    async fn close(self) -> Result<(), DbError> {
-        let res = self
-            .1
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
-        if res.is_err() {
-            return Err(DbError::Specific(SpecificError::GenericError(
-                StrVariant::Static("already closed"),
-            )));
-        }
+    async fn close(self) -> Result<(), ()> {
+        self.1
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .expect("impossible to close the db twice");
         Ok(())
     }
 }
@@ -612,11 +581,14 @@ impl DbHolder {
         resp
     }
 
-    fn create(&mut self, req: CreateRequest) -> Result<AppendResponse, SpecificError> {
+    fn create(&mut self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         if self.journals.contains_key(&req.execution_id) {
-            return Err(SpecificError::ValidationFailed(StrVariant::Static(
-                "execution already exists with the same id",
-            )));
+            return Err(DbErrorWrite::Permanent(
+                DbErrorWritePermanent::CannotWrite {
+                    reason: "execution already exists with the same id".into(),
+                    expected_version: None,
+                },
+            ));
         }
         let subscription = self.ffqn_to_pending_subscription.get(&req.ffqn);
         let scheduled_at = req.scheduled_at;
@@ -647,7 +619,7 @@ impl DbHolder {
         version: Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<(Version /* next version */, Vec<HistoryEvent>), SpecificError> {
+    ) -> Result<(Version /* next version */, Vec<HistoryEvent>), DbErrorWrite> {
         let event = ExecutionEventInner::Locked {
             component_id,
             executor_id,
@@ -667,21 +639,23 @@ impl DbHolder {
         execution_id: &ExecutionId,
         appending_version: Version,
         event: ExecutionEventInner,
-    ) -> Result<AppendResponse, SpecificError> {
+    ) -> Result<AppendResponse, DbErrorWrite> {
         // Disallow `Created` event
         if let ExecutionEventInner::Created { .. } = event {
             panic!("Cannot append `Created` event - use `create` instead");
         }
         // Check version
         let Some(journal) = self.journals.get_mut(execution_id) else {
-            return Err(SpecificError::NotFound);
+            return Err(DbErrorWrite::NotFound);
         };
         let expected_version = journal.version();
         if appending_version != expected_version {
-            return Err(SpecificError::VersionMismatch {
-                appending_version,
-                expected_version,
-            });
+            return Err(DbErrorWrite::Permanent(
+                DbErrorWritePermanent::CannotWrite {
+                    reason: "version conflict".into(),
+                    expected_version: Some(expected_version),
+                },
+            ));
         }
         let next_version = journal.append(created_at, event)?;
         self.index.update(journal);
@@ -693,9 +667,9 @@ impl DbHolder {
         Ok(next_version)
     }
 
-    fn get(&mut self, execution_id: &ExecutionId) -> Result<ExecutionLog, SpecificError> {
+    fn get(&mut self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead> {
         let Some(journal) = self.journals.get_mut(execution_id) else {
-            return Err(SpecificError::NotFound);
+            return Err(DbErrorRead::NotFound);
         };
         Ok(journal.as_execution_log())
     }
@@ -738,7 +712,7 @@ impl DbHolder {
         batch: Vec<AppendRequest>,
         execution_id: &ExecutionId,
         mut appending_version: Version,
-    ) -> Result<AppendBatchResponse, SpecificError> {
+    ) -> Result<AppendBatchResponse, DbErrorWrite> {
         assert!(!batch.is_empty(), "Empty batch request");
         if batch.iter().any(|append_request| {
             matches!(append_request.event, ExecutionEventInner::Created { .. })
@@ -746,7 +720,7 @@ impl DbHolder {
             panic!("Cannot append `Created` event - use `create` instead");
         }
         let Some(journal) = self.journals.get_mut(execution_id) else {
-            return Err(SpecificError::NotFound);
+            return Err(DbErrorWrite::NotFound);
         };
         let truncate_len = journal.len();
         for append_request in batch {
@@ -755,10 +729,12 @@ impl DbHolder {
                 // Rollback
                 journal.truncate_and_update_pending_state(truncate_len);
                 self.index.update(journal);
-                return Err(SpecificError::VersionMismatch {
-                    appending_version,
-                    expected_version,
-                });
+                return Err(DbErrorWrite::Permanent(
+                    DbErrorWritePermanent::CannotWrite {
+                        reason: "version conflict".into(),
+                        expected_version: Some(expected_version),
+                    },
+                ));
             }
             match journal.append(append_request.created_at, append_request.event) {
                 Ok(new_version) => {
@@ -788,7 +764,7 @@ impl DbHolder {
         execution_id: &ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
-    ) -> Result<AppendBatchResponse, SpecificError> {
+    ) -> Result<AppendBatchResponse, DbErrorWrite> {
         let parent_version = self.append_batch(batch, execution_id, version)?;
         for child_req in child_req {
             self.create(child_req)?;
@@ -803,7 +779,7 @@ impl DbHolder {
         version: Version,
         parent_execution_id: &ExecutionId,
         parent_response_event: JoinSetResponseEventOuter,
-    ) -> Result<Version, SpecificError> {
+    ) -> Result<Version, DbErrorWrite> {
         let child_version =
             self.append_batch(batch, &ExecutionId::Derived(execution_id.clone()), version)?;
         self.append_response(parent_execution_id, parent_response_event)?;
@@ -814,9 +790,9 @@ impl DbHolder {
         &mut self,
         execution_id: &ExecutionId,
         response_event: JoinSetResponseEventOuter,
-    ) -> Result<(), SpecificError> {
+    ) -> Result<(), DbErrorWrite> {
         let Some(journal) = self.journals.get_mut(execution_id) else {
-            return Err(SpecificError::NotFound);
+            return Err(DbErrorWrite::NotFound);
         };
         journal.append_response(response_event.created_at, response_event.event);
         self.index.update(journal);
@@ -835,11 +811,11 @@ impl DbHolder {
         start_idx: usize,
     ) -> Result<
         Either<Vec<JoinSetResponseEventOuter>, oneshot::Receiver<JoinSetResponseEventOuter>>,
-        DbError,
+        DbErrorReadWithTimeout,
     > {
         debug!("next_response");
         let Some(journal) = self.journals.get_mut(execution_id) else {
-            return Err(DbError::Specific(SpecificError::NotFound));
+            return Err(DbErrorReadWithTimeout::DbErrorRead(DbErrorRead::NotFound));
         };
         let res_len = journal.responses.len();
         if res_len > start_idx {

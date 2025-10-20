@@ -2,13 +2,13 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::JoinSetId;
 use concepts::storage::{
-    CreateRequest, ExecutionEvent, ExecutionEventInner, HistoryEvent, JoinSetRequest,
-    JoinSetResponseEvent, JoinSetResponseEventOuter, PendingStateFinished,
-    PendingStateFinishedResultKind, VersionType,
+    CreateRequest, DbErrorWrite, DbErrorWritePermanent, ExecutionEvent, ExecutionEventInner,
+    HistoryEvent, JoinSetRequest, JoinSetResponseEvent, JoinSetResponseEventOuter,
+    PendingStateFinished, PendingStateFinishedResultKind, VersionType,
 };
-use concepts::storage::{ExecutionLog, PendingState, SpecificError, Version};
+use concepts::storage::{ExecutionLog, PendingState, Version};
 use concepts::{ExecutionId, ExecutionMetadata};
-use concepts::{FunctionFqn, Params, StrVariant};
+use concepts::{FunctionFqn, Params};
 use std::cmp::max;
 use std::{collections::VecDeque, time::Duration};
 use tokio::sync::oneshot;
@@ -94,11 +94,14 @@ impl ExecutionJournal {
         &mut self,
         created_at: DateTime<Utc>,
         event: ExecutionEventInner,
-    ) -> Result<Version, SpecificError> {
+    ) -> Result<Version, DbErrorWrite> {
         if self.pending_state.is_finished() {
-            return Err(SpecificError::ValidationFailed(StrVariant::Static(
-                "already finished",
-            )));
+            return Err(DbErrorWrite::Permanent(
+                DbErrorWritePermanent::CannotWrite {
+                    reason: "already finished".into(),
+                    expected_version: None,
+                },
+            ));
         }
 
         if let ExecutionEventInner::Locked {

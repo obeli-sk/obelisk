@@ -1,6 +1,6 @@
 use concepts::{
     ExecutionId,
-    storage::{DbError, DbPool, PendingState, PendingStateFinished, SpecificError},
+    storage::{DbErrorRead, DbPool, PendingState, PendingStateFinished},
     time::{ClockFn, Sleep},
 };
 use executor::AbortOnDropHandle;
@@ -77,7 +77,7 @@ impl<S: Sleep + 'static, C: ClockFn + 'static> PreopensCleaner<S, C> {
                         // finished => delete after specified time
                         self.delete(&subfolder, "finished").await;
                     }
-                    Err(DbError::Specific(SpecificError::NotFound)) => {
+                    Err(DbErrorRead::NotFound) => {
                         // not found => delete
                         self.delete(&subfolder, "not found").await;
                     }

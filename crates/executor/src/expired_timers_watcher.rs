@@ -6,7 +6,7 @@ use concepts::StrVariant;
 use concepts::SupportedFunctionReturnValue;
 use concepts::storage::AppendRequest;
 use concepts::storage::DbConnection;
-use concepts::storage::DbError;
+use concepts::storage::DbErrorWrite;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionLog;
 use concepts::storage::JoinSetResponseEvent;
@@ -67,7 +67,7 @@ pub fn spawn_new<C: ClockFn + 'static>(
     )
 }
 
-fn log_err_if_new(res: Result<TickProgress, DbError>, old_err: &mut Option<DbError>) {
+fn log_err_if_new(res: Result<TickProgress, DbErrorWrite>, old_err: &mut Option<DbErrorWrite>) {
     match (res, &old_err) {
         (Ok(_), _) => {
             *old_err = None;
@@ -84,7 +84,7 @@ fn log_err_if_new(res: Result<TickProgress, DbError>, old_err: &mut Option<DbErr
 pub async fn tick_test(
     db_connection: &dyn DbConnection,
     executed_at: DateTime<Utc>,
-) -> Result<TickProgress, DbError> {
+) -> Result<TickProgress, DbErrorWrite> {
     tick(db_connection, executed_at).await
 }
 
@@ -92,7 +92,7 @@ pub async fn tick_test(
 pub(crate) async fn tick(
     db_connection: &dyn DbConnection,
     executed_at: DateTime<Utc>,
-) -> Result<TickProgress, DbError> {
+) -> Result<TickProgress, DbErrorWrite> {
     let mut expired_locks = 0;
     let mut expired_async_timers = 0;
     for expired_timer in db_connection.get_expired_timers(executed_at).await? {

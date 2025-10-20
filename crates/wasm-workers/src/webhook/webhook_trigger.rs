@@ -6,8 +6,8 @@ use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
-    AppendRequest, BacktraceInfo, ClientError, CreateRequest, DbError, DbPool, ExecutionEventInner,
-    HistoryEvent, JoinSetRequest, Version,
+    AppendRequest, BacktraceInfo, CreateRequest, DbErrorReadWithTimeout, DbErrorWrite, DbPool,
+    ExecutionEventInner, HistoryEvent, JoinSetRequest, Version,
 };
 use concepts::time::ClockFn;
 use concepts::{
@@ -378,7 +378,7 @@ impl<C: ClockFn> ExecutionHost for WebhookEndpointCtx<C> {}
 #[expect(clippy::enum_variant_names)]
 enum WebhookEndpointFunctionError {
     #[error(transparent)]
-    DbError(#[from] DbError),
+    DbError(#[from] DbErrorWrite),
     #[error(transparent)]
     FinishedExecutionError(#[from] FinishedExecutionError),
     #[error("uncategorized error: {0}")]
@@ -391,7 +391,7 @@ impl<C: ClockFn> wasmtime::component::HasData for WebhookEndpointCtx<C> {
 
 impl<C: ClockFn> WebhookEndpointCtx<C> {
     // Create new execution if this is the first call of the request/response cycle
-    async fn get_version(&mut self) -> Result<Version, DbError> {
+    async fn get_version_or_create(&mut self) -> Result<Version, DbErrorWrite> {
         if let Some(found) = &self.version {
             return Ok(found.clone());
         }
@@ -474,7 +474,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     }
                 };
                 // Write to db
-                let version = self.get_version().await?;
+                let version = self.get_version_or_create().await?;
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let new_execution_id = ExecutionId::generate();
@@ -531,7 +531,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             }
         } else {
             // direct call
-            let version = self.get_version().await?;
+            let version = self.get_version_or_create().await?;
             let span = Span::current();
             span.record("version", tracing::field::display(&version));
             let join_set_id_direct = JoinSetId::new(
@@ -623,10 +623,10 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
 
             let res = match res {
                 Ok(res) => res,
-                Err(ClientError::DbError(err)) => {
-                    return Err(WebhookEndpointFunctionError::DbError(err));
+                Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {
+                    return Err(WebhookEndpointFunctionError::from(DbErrorWrite::from(err)));
                 }
-                Err(ClientError::Timeout) => unreachable!("timeout was not set"),
+                Err(DbErrorReadWithTimeout::Timeout) => unreachable!("timeout was not set"),
             };
 
             results[0] = res.into_wast_val(move || return_type_tl).as_val();

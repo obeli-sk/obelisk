@@ -1,6 +1,6 @@
 use crate::{
     ExecutionId, JoinSetId,
-    prefixed_ulid::{DelayId, ExecutionIdDerived},
+    prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
 };
 use rusqlite::{
     ToSql,
@@ -70,10 +70,46 @@ impl ToSql for DelayId {
 impl FromSql for DelayId {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         let str = value.as_str()?;
-        str.parse::<DelayId>().map_err(|err| {
+        str.parse::<Self>().map_err(|err| {
             error!(
                 backtrace = %std::backtrace::Backtrace::capture(),
-                "Cannot convert to DelayId value:`{str}` - {err:?}"
+                "Cannot convert to {} value:`{str}` - {err:?}", std::any::type_name::<Self>()
+            );
+            FromSqlError::InvalidType
+        })
+    }
+}
+
+impl ToSql for RunId {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
+    }
+}
+impl FromSql for RunId {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let str = value.as_str()?;
+        str.parse::<Self>().map_err(|err| {
+            error!(
+                backtrace = %std::backtrace::Backtrace::capture(),
+                "Cannot convert to {} value:`{str}` - {err:?}", std::any::type_name::<Self>()
+            );
+            FromSqlError::InvalidType
+        })
+    }
+}
+
+impl ToSql for ExecutorId {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
+    }
+}
+impl FromSql for ExecutorId {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let str = value.as_str()?;
+        str.parse::<Self>().map_err(|err| {
+            error!(
+                backtrace = %std::backtrace::Backtrace::capture(),
+                "Cannot convert to {} value:`{str}` - {err:?}", std::any::type_name::<Self>()
             );
             FromSqlError::InvalidType
         })

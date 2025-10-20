@@ -487,47 +487,68 @@ pub enum JoinSetRequest {
     },
 }
 
-#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-pub enum DbConnectionError {
-    #[error("send error")]
-    SendError,
-    #[error("receive error")]
-    RecvError,
+/// Error that is not specific to an execution.
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
+pub enum DbErrorGeneric {
+    #[error("database error: {0}")]
+    Uncategorized(StrVariant), // Previously GenericError
+    #[error("database was closed")]
+    Close,
 }
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-pub enum SpecificError {
+pub enum DbErrorWritePermanent {
+    /// Parameter error.
     #[error("validation failed: {0}")]
     ValidationFailed(StrVariant),
-    #[error("version mismatch")]
-    VersionMismatch {
-        appending_version: Version,
-        expected_version: Version,
+    #[error("cannot write: {reason}")]
+    CannotWrite {
+        reason: StrVariant,
+        expected_version: Option<Version>,
     },
-    #[error("version missing")]
-    VersionMissing,
-    #[error("not found")]
+}
+
+/// Write error tied to an execution
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
+pub enum DbErrorWrite {
+    #[error("cannot write - row not found")]
     NotFound,
-    #[error("consistency error: `{0}`")]
-    ConsistencyError(StrVariant),
-    #[error("{0}")]
-    GenericError(StrVariant),
+    /// Retrying will not resolve the error, the execution is in an incorrect state.
+    #[error("permanent error: {0}")]
+    Permanent(#[from] DbErrorWritePermanent),
+    #[error(transparent)]
+    DbErrorGeneric(#[from] DbErrorGeneric),
 }
 
-#[derive(thiserror::Error, Debug, PartialEq, Eq, Clone)]
-pub enum DbError {
+/// Read error tied to an execution
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
+pub enum DbErrorRead {
+    #[error("cannot read - row not found")]
+    NotFound,
     #[error(transparent)]
-    Connection(#[from] DbConnectionError),
-    #[error(transparent)]
-    Specific(#[from] SpecificError),
+    DbErrorGeneric(#[from] DbErrorGeneric),
 }
 
-#[derive(thiserror::Error, Debug, PartialEq, Eq, Clone)]
-pub enum SubscribeError {
-    #[error("interrupted")]
-    Interrupted,
+impl From<DbErrorRead> for DbErrorWrite {
+    fn from(value: DbErrorRead) -> DbErrorWrite {
+        match value {
+            DbErrorRead::NotFound => DbErrorWrite::NotFound,
+            DbErrorRead::DbErrorGeneric(err) => DbErrorWrite::DbErrorGeneric(err),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum DbErrorReadWithTimeout {
+    #[error("timeout")]
+    Timeout,
     #[error(transparent)]
-    DbError(DbError),
+    DbErrorRead(#[from] DbErrorRead),
+}
+impl From<DbErrorGeneric> for DbErrorReadWithTimeout {
+    fn from(value: DbErrorGeneric) -> DbErrorReadWithTimeout {
+        Self::from(DbErrorRead::from(value))
+    }
 }
 
 // Represents next version after successfuly appended to execution log.
@@ -599,15 +620,7 @@ pub trait DbPool: Send + Sync {
 
 #[async_trait]
 pub trait DbPoolCloseable {
-    async fn close(self) -> Result<(), DbError>;
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ClientError {
-    #[error("client timeout")]
-    Timeout,
-    #[error(transparent)]
-    DbError(#[from] DbError),
+    async fn close(self) -> Result<(), ()>; // FIXME: do not return anything
 }
 
 #[async_trait]
@@ -623,7 +636,7 @@ pub trait DbExecutor: Send + Sync {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
-    ) -> Result<LockPendingResponse, DbError>;
+    ) -> Result<LockPendingResponse, DbErrorGeneric>;
 
     /// Specialized locking for e.g. extending the lock by the original executor and run.
     #[expect(clippy::too_many_arguments)]
@@ -636,16 +649,19 @@ pub trait DbExecutor: Send + Sync {
         version: Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockedExecution, DbError>;
+    ) -> Result<LockedExecution, DbErrorWrite>;
 
-    /// Append a single event to an existing execution log
+    /// Append a single event to an existing execution log.
+    /// The request cannot contain `ExecutionEventInner::Created` and `ExecutionEventInner::Locked`.
     async fn append(
         &self,
         execution_id: ExecutionId,
         version: Version,
         req: AppendRequest,
-    ) -> Result<AppendResponse, DbError>;
+    ) -> Result<AppendResponse, DbErrorWrite>;
 
+    /// Append a batch of events to an existing execution log, and append a response to a parent execution.
+    /// The batch cannot contain `ExecutionEventInner::Created` and `ExecutionEventInner::Locked`.
     async fn append_batch_respond_to_parent(
         &self,
         execution_id: ExecutionIdDerived,
@@ -654,7 +670,7 @@ pub trait DbExecutor: Send + Sync {
         version: Version,
         parent_execution_id: ExecutionId,
         parent_response_event: JoinSetResponseEventOuter,
-    ) -> Result<AppendBatchResponse, DbError>;
+    ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
     /// Best effort for blocking while there are no pending executions.
     /// Return immediately if there are pending notifications at `pending_at_or_sooner`.
@@ -676,18 +692,20 @@ pub trait DbConnection: DbExecutor {
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
         response_event: JoinSetResponseEvent,
-    ) -> Result<(), DbError>;
+    ) -> Result<(), DbErrorWrite>;
 
-    /// Append one or more events to an existing execution log
+    /// Append a batch of events to an existing execution log, and append a response to a parent execution.
+    /// The batch cannot contain `ExecutionEventInner::Created` and `ExecutionEventInner::Locked`.
     async fn append_batch(
         &self,
         current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
-    ) -> Result<AppendBatchResponse, DbError>;
+    ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
     /// Append one or more events to the parent execution log, and create zero or more child execution logs.
+    /// The batch cannot contain `ExecutionEventInner::Created` and `ExecutionEventInner::Locked`.
     async fn append_batch_create_new_execution(
         &self,
         current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
@@ -695,11 +713,11 @@ pub trait DbConnection: DbExecutor {
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
-    ) -> Result<AppendBatchResponse, DbError>;
+    ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
     #[cfg(feature = "test")]
     /// Get execution log.
-    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbError>;
+    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead>;
 
     async fn list_execution_events(
         &self,
@@ -707,19 +725,19 @@ pub trait DbConnection: DbExecutor {
         since: &Version,
         max_length: VersionType,
         include_backtrace_id: bool,
-    ) -> Result<Vec<ExecutionEvent>, DbError>;
+    ) -> Result<Vec<ExecutionEvent>, DbErrorRead>;
 
     /// Get a single event without `backtrace_id`
     async fn get_execution_event(
         &self,
         execution_id: &ExecutionId,
         version: &Version,
-    ) -> Result<ExecutionEvent, DbError>;
+    ) -> Result<ExecutionEvent, DbErrorRead>;
 
     async fn get_create_request(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<CreateRequest, DbError> {
+    ) -> Result<CreateRequest, DbErrorRead> {
         let execution_event = self
             .get_execution_event(execution_id, &Version::new(0))
             .await?;
@@ -750,8 +768,8 @@ pub trait DbConnection: DbExecutor {
             })
         } else {
             error!(%execution_id, "Execution log must start with creation");
-            Err(DbError::Specific(SpecificError::ConsistencyError(
-                StrVariant::Static("execution log must start with creation"),
+            Err(DbErrorRead::DbErrorGeneric(DbErrorGeneric::Uncategorized(
+                "execution log must start with creation".into(),
             )))
         }
     }
@@ -760,7 +778,7 @@ pub trait DbConnection: DbExecutor {
         &self,
         execution_id: &ExecutionId,
         finished: PendingStateFinished,
-    ) -> Result<Option<SupportedFunctionReturnValue>, DbError> {
+    ) -> Result<Option<SupportedFunctionReturnValue>, DbErrorRead> {
         let last_event = self
             .get_execution_event(execution_id, &Version::new(finished.version))
             .await?;
@@ -771,13 +789,19 @@ pub trait DbConnection: DbExecutor {
         }
     }
 
-    async fn get_pending_state(&self, execution_id: &ExecutionId) -> Result<PendingState, DbError>;
+    async fn get_pending_state(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<PendingState, DbErrorRead>;
 
     /// Get currently expired locks and async timers (delay requests)
-    async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError>;
+    async fn get_expired_timers(
+        &self,
+        at: DateTime<Utc>,
+    ) -> Result<Vec<ExpiredTimer>, DbErrorGeneric>;
 
     /// Create a new execution log
-    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError>;
+    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite>;
 
     /// Get notified when a new response arrives.
     /// Parameter `start_idx` must be at most be equal to current size of responses in the execution log.
@@ -786,18 +810,18 @@ pub trait DbConnection: DbExecutor {
         &self,
         execution_id: &ExecutionId,
         start_idx: usize,
-        interrupt_after: Pin<Box<dyn Future<Output = ()> + Send>>,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, SubscribeError>;
+        timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
+    ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout>;
 
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,
         timeout: Option<Duration>,
-    ) -> Result<SupportedFunctionReturnValue, ClientError>;
+    ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout>;
 
-    async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbError>;
+    async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite>;
 
-    async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbError>;
+    async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite>;
 
     /// Used by gRPC only.
     /// Get the latest backtrace if version is not set.
@@ -805,7 +829,7 @@ pub trait DbConnection: DbExecutor {
         &self,
         execution_id: &ExecutionId,
         filter: BacktraceFilter,
-    ) -> Result<BacktraceInfo, DbError>;
+    ) -> Result<BacktraceInfo, DbErrorRead>;
 
     /// Returns executions sorted in descending order.
     /// Used by gRPC only.
@@ -814,7 +838,7 @@ pub trait DbConnection: DbExecutor {
         ffqn: Option<FunctionFqn>,
         top_level_only: bool,
         pagination: ExecutionListPagination,
-    ) -> Result<Vec<ExecutionWithState>, DbError>;
+    ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric>;
 
     /// Returns responses of an execution ordered as they arrived,
     /// enabling matching each `JoinNext` to its corresponding response.
@@ -823,7 +847,7 @@ pub trait DbConnection: DbExecutor {
         &self,
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
-    ) -> Result<Vec<ResponseWithCursor>, DbError>;
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead>;
 }
 
 #[derive(Clone)]
@@ -925,6 +949,7 @@ pub struct ResponseWithCursor {
     pub cursor: ResponseCursorType,
 }
 
+#[derive(Debug)]
 pub struct ExecutionWithState {
     pub execution_id: ExecutionId,
     pub ffqn: FunctionFqn,
@@ -988,7 +1013,7 @@ pub async fn wait_for_pending_state_fn<T: Debug>(
     execution_id: &ExecutionId,
     predicate: impl Fn(ExecutionLog) -> Option<T> + Send,
     timeout: Option<Duration>,
-) -> Result<T, ClientError> {
+) -> Result<T, DbErrorReadWithTimeout> {
     tracing::trace!(%execution_id, "Waiting for predicate");
     let fut = async move {
         loop {
@@ -1004,7 +1029,7 @@ pub async fn wait_for_pending_state_fn<T: Debug>(
     if let Some(timeout) = timeout {
         tokio::select! { // future's liveness: Dropping the loser immediately.
             res = fut => res,
-            () = tokio::time::sleep(timeout) => Err(ClientError::Timeout)
+            () = tokio::time::sleep(timeout) => Err(DbErrorReadWithTimeout::Timeout)
         }
     } else {
         fut.await
@@ -1112,11 +1137,11 @@ impl PendingState {
         executor_id: ExecutorId,
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockKind, SpecificError> {
+    ) -> Result<LockKind, DbErrorWritePermanent> {
         if lock_expires_at <= created_at {
-            return Err(SpecificError::ValidationFailed(StrVariant::Static(
-                "invalid expiry date",
-            )));
+            return Err(DbErrorWritePermanent::ValidationFailed(
+                "invalid expiry date".into(),
+            ));
         }
         match self {
             PendingState::PendingAt { scheduled_at } => {
@@ -1124,9 +1149,9 @@ impl PendingState {
                     // pending now, ok to lock
                     Ok(LockKind::CreatingNewLock)
                 } else {
-                    Err(SpecificError::ValidationFailed(StrVariant::Static(
-                        "cannot lock, not yet pending",
-                    )))
+                    Err(DbErrorWritePermanent::ValidationFailed(
+                        "cannot lock, not yet pending".into(),
+                    ))
                 }
             }
             PendingState::Locked {
@@ -1134,23 +1159,26 @@ impl PendingState {
                 run_id: current_pending_state_run_id,
                 ..
             } => {
-                if executor_id == *current_pending_state_executor_id // if the executor_id is same, component_id must be same as well
+                if executor_id == *current_pending_state_executor_id
                     && run_id == *current_pending_state_run_id
                 {
                     // Original executor is extending the lock.
                     Ok(LockKind::Extending)
                 } else {
-                    Err(SpecificError::ValidationFailed(StrVariant::Static(
-                        "cannot lock, already locked",
-                    )))
+                    Err(DbErrorWritePermanent::CannotWrite {
+                        reason: "cannot lock, already locked".into(),
+                        expected_version: None,
+                    })
                 }
             }
-            PendingState::BlockedByJoinSet { .. } => Err(SpecificError::ValidationFailed(
-                StrVariant::Static("cannot append Locked event when in BlockedByJoinSet state"),
-            )),
-            PendingState::Finished { .. } => Err(SpecificError::ValidationFailed(
-                StrVariant::Static("already finished"),
-            )),
+            PendingState::BlockedByJoinSet { .. } => Err(DbErrorWritePermanent::CannotWrite {
+                reason: "cannot append Locked event when in BlockedByJoinSet state".into(),
+                expected_version: None,
+            }),
+            PendingState::Finished { .. } => Err(DbErrorWritePermanent::CannotWrite {
+                reason: "already finished".into(),
+                expected_version: None,
+            }),
         }
     }
 

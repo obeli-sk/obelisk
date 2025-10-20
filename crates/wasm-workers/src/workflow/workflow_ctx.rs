@@ -15,7 +15,9 @@ use crate::workflow::event_history::JoinSetCreate;
 use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_STUB};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
-use concepts::storage::{self, DbError, DbPool, HistoryEventScheduleAt, Version, WasmBacktrace};
+use concepts::storage::{
+    self, DbErrorWrite, DbPool, HistoryEventScheduleAt, Version, WasmBacktrace,
+};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
@@ -55,7 +57,7 @@ pub(crate) enum WorkflowFunctionError {
     #[error("interrupt, db updated")]
     InterruptDbUpdated,
     #[error(transparent)]
-    DbError(DbError),
+    DbError(DbErrorWrite),
 }
 
 #[derive(Debug)]
@@ -63,7 +65,7 @@ pub(crate) enum WorkerPartialResult {
     FatalError(FatalError, Version),
     // retriable:
     InterruptDbUpdated,
-    DbError(DbError),
+    DbError(DbErrorWrite),
 }
 
 impl WorkflowFunctionError {
@@ -955,7 +957,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         }
     }
 
-    pub(crate) async fn flush(&mut self) -> Result<(), DbError> {
+    pub(crate) async fn flush(&mut self) -> Result<(), DbErrorWrite> {
         self.event_history
             .flush(self.db_pool.connection().as_ref(), self.clock_fn.now())
             .await

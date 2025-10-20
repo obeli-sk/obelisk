@@ -6,13 +6,11 @@ use concepts::FunctionMetadata;
 use concepts::PermanentFailureKind;
 use concepts::TrapKind;
 use concepts::prefixed_ulid::RunId;
+use concepts::storage::DbErrorWrite;
 use concepts::storage::HistoryEvent;
 use concepts::storage::Version;
 use concepts::storage::http_client_trace::HttpClientTrace;
-use concepts::{
-    FinishedExecutionError, StrVariant,
-    storage::{DbError, JoinSetResponseEvent},
-};
+use concepts::{FinishedExecutionError, StrVariant, storage::JoinSetResponseEvent};
 use concepts::{FunctionFqn, ParamsParsingError, ResultParsingError};
 use concepts::{Params, SupportedFunctionReturnValue};
 use tracing::Span;
@@ -90,7 +88,7 @@ pub enum WorkerError {
         version: Version,
     },
     #[error(transparent)]
-    DbError(DbError),
+    DbError(DbErrorWrite),
     // non-retriable errors
     #[error("fatal error: {0}")]
     FatalError(FatalError, Version),

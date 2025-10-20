@@ -3,15 +3,15 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::{
-    AppendRequest, DbExecutor, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
-    LockedExecution,
+    AppendRequest, DbErrorGeneric, DbErrorWrite, DbExecutor, ExecutionLog, JoinSetResponseEvent,
+    JoinSetResponseEventOuter, LockedExecution,
 };
 use concepts::time::ClockFn;
 use concepts::{ComponentId, FunctionMetadata, StrVariant, SupportedFunctionReturnValue};
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use concepts::{
     FinishedExecutionError,
-    storage::{DbError, ExecutionEventInner, JoinSetResponse, Version},
+    storage::{ExecutionEventInner, JoinSetResponse, Version},
 };
 use concepts::{JoinSetId, PermanentFailureKind};
 use std::fmt::Display;
@@ -208,7 +208,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         &self,
         executed_at: DateTime<Utc>,
         run_id: RunId,
-    ) -> Result<ExecutionProgress, ()> {
+    ) -> Result<ExecutionProgress, DbErrorGeneric> {
         self.tick(executed_at, run_id).await
     }
 
@@ -217,7 +217,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         &self,
         executed_at: DateTime<Utc>,
         run_id: RunId,
-    ) -> Result<ExecutionProgress, ()> {
+    ) -> Result<ExecutionProgress, DbErrorGeneric> {
         let locked_executions = {
             let mut permits = self.acquire_task_permits();
             if permits.is_empty() {
@@ -236,10 +236,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                     lock_expires_at,
                     run_id,
                 )
-                .await
-                .map_err(|err| {
-                    warn!("lock_pending error {err:?}");
-                })?;
+                .await?;
             // Drop permits if too many were allocated.
             while permits.len() > locked_executions.len() {
                 permits.pop();
@@ -275,7 +272,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         )
                         .await;
                         if let Err(db_error) = res {
-                            error!("Got DbError `{db_error:?}`, expecting watcher to mark execution as timed out");
+                            error!("Got db error `{db_error:?}`, expecting watcher to mark execution as timed out");
                         }
                     }
                     .instrument(worker_span)
@@ -293,7 +290,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         clock_fn: C,
         locked_execution: LockedExecution,
         worker_span: Span,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), DbErrorWrite> {
         debug!("Worker::run starting");
         trace!(
             version = %locked_execution.next_version,
@@ -355,7 +352,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         parent: Option<(ExecutionId, JoinSetId)>,
         can_be_retried: Option<Duration>,
         unlock_expiry_on_limit_reached: Duration,
-    ) -> Result<Option<Append>, DbError> {
+    ) -> Result<Option<Append>, DbErrorWrite> {
         Ok(match worker_result {
             WorkerResult::Ok(result, new_version, http_client_traces) => {
                 info!(
@@ -617,7 +614,7 @@ pub(crate) struct Append {
 }
 
 impl Append {
-    pub(crate) async fn append(self, db_exec: &dyn DbExecutor) -> Result<(), DbError> {
+    pub(crate) async fn append(self, db_exec: &dyn DbExecutor) -> Result<(), DbErrorWrite> {
         if let Some(child_finished) = self.child_finished {
             assert_matches!(
                 &self.primary_event,

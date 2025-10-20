@@ -4,10 +4,10 @@ use concepts::{
     SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, RunId},
     storage::{
-        DbError, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, HistoryEvent,
-        HistoryEventScheduleAt, JoinSetRequest, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedError, PendingStateFinishedResultKind, SpecificError, VersionType,
-        http_client_trace::HttpClientTrace,
+        DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent, ExecutionEventInner,
+        ExecutionListPagination, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, Pagination,
+        PendingState, PendingStateFinished, PendingStateFinishedError,
+        PendingStateFinishedResultKind, VersionType, http_client_trace::HttpClientTrace,
     },
 };
 use concepts::{JoinSetId, JoinSetKind};
@@ -118,14 +118,37 @@ pub trait TonicServerResultExt<T> {
     fn to_status(self) -> Result<T, tonic::Status>;
 }
 
-impl<T> TonicServerResultExt<T> for Result<T, DbError> {
+impl<T> TonicServerResultExt<T> for Result<T, DbErrorWrite> {
     fn to_status(self) -> Result<T, tonic::Status> {
-        self.map_err(|err| db_error_to_status(&err))
+        self.map_err(|err| db_error_write_to_status(&err))
     }
 }
 
-pub fn db_error_to_status(db_err: &DbError) -> tonic::Status {
-    if matches!(db_err, DbError::Specific(SpecificError::NotFound)) {
+impl<T> TonicServerResultExt<T> for Result<T, DbErrorRead> {
+    fn to_status(self) -> Result<T, tonic::Status> {
+        self.map_err(|err| db_error_read_to_status(&err))
+    }
+}
+impl<T> TonicServerResultExt<T> for Result<T, DbErrorGeneric> {
+    fn to_status(self) -> Result<T, tonic::Status> {
+        self.map_err(|db_err| {
+            error!("Got db error {db_err:?}");
+            tonic::Status::internal(format!("database error: {db_err}"))
+        })
+    }
+}
+
+pub fn db_error_write_to_status(db_err: &DbErrorWrite) -> tonic::Status {
+    if *db_err == DbErrorWrite::NotFound {
+        tonic::Status::not_found("entity not found")
+    } else {
+        error!("Got db error {db_err:?}");
+        tonic::Status::internal(format!("database error: {db_err}"))
+    }
+}
+
+pub fn db_error_read_to_status(db_err: &DbErrorRead) -> tonic::Status {
+    if *db_err == DbErrorRead::NotFound {
         tonic::Status::not_found("entity not found")
     } else {
         error!("Got db error {db_err:?}");

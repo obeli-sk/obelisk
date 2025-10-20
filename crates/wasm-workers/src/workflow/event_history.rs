@@ -24,13 +24,15 @@ use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage;
 use concepts::storage::BacktraceInfo;
+use concepts::storage::DbErrorGeneric;
+use concepts::storage::DbErrorReadWithTimeout;
+use concepts::storage::DbErrorWrite;
+use concepts::storage::DbErrorWritePermanent;
 use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::JoinSetResponseEventOuter;
 use concepts::storage::PersistKind;
-use concepts::storage::SpecificError;
-use concepts::storage::SubscribeError;
 use concepts::storage::{
-    AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse,
+    AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, JoinSetResponse,
     JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
@@ -79,7 +81,7 @@ pub(crate) enum ApplyError {
     #[error("interrupt, db updated")]
     InterruptDbUpdated,
     #[error(transparent)]
-    DbError(DbError),
+    DbError(DbErrorWrite),
 }
 
 #[expect(clippy::struct_field_names)]
@@ -359,8 +361,12 @@ impl EventHistory {
                     .await
                 {
                     Ok(ok) => ok,
-                    Err(SubscribeError::DbError(err)) => return Err(ApplyError::DbError(err)),
-                    Err(SubscribeError::Interrupted) => return Err(ApplyError::InterruptDbUpdated),
+                    Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {
+                        return Err(ApplyError::DbError(DbErrorWrite::from(err)));
+                    }
+                    Err(DbErrorReadWithTimeout::Timeout) => {
+                        return Err(ApplyError::InterruptDbUpdated);
+                    }
                 };
                 debug!("Got next responses {next_responses:?}");
                 self.responses.extend(
@@ -634,19 +640,20 @@ impl EventHistory {
                     match kind {
                         PersistKind::RandomString { .. } => {
                             WastVal::String(String::from_utf8(value.clone()).map_err(|err| {
-                                ApplyError::DbError(DbError::Specific(
-                                    SpecificError::ConsistencyError(StrVariant::from(format!(
-                                        "string must be UTF-8 - {err:?}"
+                                error!("Persisted string must be UTF-8 - {err:?}");
+                                ApplyError::DbError(DbErrorWrite::from(
+                                    DbErrorGeneric::Uncategorized(StrVariant::from(format!(
+                                        "persisted string must be UTF-8 - {err:?}"
                                     ))),
                                 ))
                             })?)
                         }
                         PersistKind::RandomU64 { .. } => {
                             if value.len() != 8 {
-                                return Err(ApplyError::DbError(DbError::Specific(
-                                    SpecificError::ConsistencyError(StrVariant::Static(
-                                        "value cannot be deserialized to u64",
-                                    )),
+                                return Err(ApplyError::DbError(DbErrorWrite::from(
+                                    DbErrorGeneric::Uncategorized(
+                                        "value cannot be deserialized to u64".into(),
+                                    ),
                                 )));
                             }
                             let value: [u8; 8] = value[..8].try_into().expect("size checked above");
@@ -954,7 +961,7 @@ impl EventHistory {
         &mut self,
         db_connection: &dyn DbConnection,
         called_at: DateTime<Utc>,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), DbErrorWrite> {
         self.flush_non_blocking_event_cache(db_connection, called_at)
             .await
     }
@@ -963,7 +970,7 @@ impl EventHistory {
         &mut self,
         db_connection: &dyn DbConnection,
         current_time: DateTime<Utc>,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), DbErrorWrite> {
         match &self.non_blocking_event_batch {
             Some(vec) if vec.len() >= self.non_blocking_event_batch_size => {
                 self.flush_non_blocking_event_cache(db_connection, current_time)
@@ -978,7 +985,7 @@ impl EventHistory {
         &mut self,
         db_connection: &dyn DbConnection,
         current_time: DateTime<Utc>,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), DbErrorWrite> {
         if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch
             && !non_blocking_event_batch.is_empty()
         {
@@ -1031,7 +1038,7 @@ impl EventHistory {
         called_at: DateTime<Utc>,
         lock_expires_at: DateTime<Utc>,
         version: &mut Version,
-    ) -> Result<Vec<HistoryEvent>, DbError> {
+    ) -> Result<Vec<HistoryEvent>, DbErrorWrite> {
         // NB: Flush the cache before writing to the DB.
         trace!(%version, "append_to_db");
         match event_call {
@@ -1567,9 +1574,9 @@ impl EventHistory {
                         .await?
                         .ffqn
                 {
-                    return Err(DbError::Specific(SpecificError::ValidationFailed(
-                        "ffqn mismatch".into(),
-                    )));
+                    return Err(DbErrorWrite::Permanent(
+                        DbErrorWritePermanent::ValidationFailed("ffqn mismatch".into()),
+                    ));
                 }
                 let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
                 // Attempt to write to target_execution_id and its parent, ignoring the possible conflict error on this tx
