@@ -229,15 +229,17 @@ mod conversions {
     use std::{fmt::Debug, str::FromStr};
     use tracing::error;
 
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn prepare_err_generic(err: rusqlite::Error) -> DbErrorGeneric {
         error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
         DbErrorGeneric::Uncategorized(err.to_string().into())
     }
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn intermittent_err_generic(err: rusqlite::Error) -> DbErrorGeneric {
         error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
         DbErrorGeneric::Uncategorized(err.to_string().into())
     }
-
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn result_err_generic(err: rusqlite::Error) -> DbErrorGeneric {
         error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
         DbErrorGeneric::Uncategorized(err.to_string().into())
@@ -2396,18 +2398,15 @@ impl<S: Sleep> SqlitePool<S> {
         )
         .map_err(|err| {
             warn!("Ignoring consistency error {err:?}");
-            ();
         })?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| {
             warn!("Ignoring consistency error {err:?}");
-            ();
         })?
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| {
             warn!("Ignoring consistency error {err:?}");
-            ();
         })
     }
 
