@@ -469,7 +469,8 @@ struct SqlitePoolInner<S: Sleep> {
 impl<S: Sleep + 'static> DbPoolCloseable for SqlitePool<S> {
     async fn close(self) -> Result<(), ()> {
         self.0.shutdown_requested.store(true, Ordering::Release);
-        let _ = self.0.command_tx.send(ThreadCommand::Shutdown).await;
+        // Unblock the thread's blocking_recv. If the capacity is reached, the next processed message will trigger shutdown.
+        let _ = self.0.command_tx.try_send(ThreadCommand::Shutdown);
         while !self.0.shutdown_finished.load(Ordering::Acquire) {
             self.0.sleep.sleep(Duration::from_millis(1)).await;
         }
@@ -493,11 +494,12 @@ impl<S: Sleep> Drop for SqlitePool<S> {
                     let backtrace = std::backtrace::Backtrace::capture();
                     warn!("SqlitePool was not closed properly - {backtrace}");
                     self.0.shutdown_requested.store(true, Ordering::Release);
+                    // Unblock the thread's blocking_recv. If the capacity is reached, the next processed message will trigger shutdown.
                     let _ = self.0.command_tx.try_send(ThreadCommand::Shutdown);
                     // Not joining the thread, drop might be called from async context.
                     // We are shutting down the server anyway.
                 } else {
-                    // The thread set `shutdown_finished`, it does not matter if it is still alive.
+                    // The thread set `shutdown_finished` as its last operation.
                 }
             }
         }
