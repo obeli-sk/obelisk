@@ -26,6 +26,7 @@ mod bench {
     use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorker};
     use wasm_workers::engines::{EngineConfig, Engines, PoolingConfig};
     use wasm_workers::testing_fn_registry::TestingFnRegistry;
+    use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
     use wasm_workers::workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
         WorkflowWorkerCompiled,
@@ -179,7 +180,7 @@ mod bench {
             .unwrap()
             .link(fn_registry.clone())
             .unwrap()
-            .into_worker(db_pool),
+            .into_worker(db_pool, Arc::new(DeadlineTrackerFactoryTokio)),
         );
         let exec_config = ExecConfig {
             batch_size: 1,

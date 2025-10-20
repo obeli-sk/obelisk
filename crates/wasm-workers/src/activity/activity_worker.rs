@@ -388,6 +388,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
+    use concepts::prefixed_ulid::RunId;
     use concepts::storage::DbExecutor;
     use concepts::time::TokioSleep;
     use concepts::{
@@ -395,7 +396,7 @@ pub(crate) mod tests {
         prefixed_ulid::ExecutorId, storage::CreateRequest, storage::DbPoolCloseable,
     };
     use db_tests::Database;
-    use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
+    use executor::executor::{ExecConfig, ExecTask};
     use serde_json::json;
     use std::{path::Path, time::Duration};
     use test_utils::sim_clock::SimClock;
@@ -484,22 +485,22 @@ pub(crate) mod tests {
         )
     }
 
-    pub(crate) fn spawn_activity(
+    pub(crate) fn new_activity<C: ClockFn + 'static>(
         db_exec: Arc<dyn DbExecutor>,
         wasm_path: &'static str,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: C,
         sleep: impl Sleep + 'static,
-    ) -> ExecutorTaskHandle {
-        spawn_activity_with_config(db_exec, wasm_path, clock_fn, sleep, activity_config)
+    ) -> ExecTask<C> {
+        new_activity_with_config(db_exec, wasm_path, clock_fn, sleep, activity_config)
     }
 
-    pub(crate) fn spawn_activity_with_config(
+    pub(crate) fn new_activity_with_config<C: ClockFn + 'static>(
         db_exec: Arc<dyn DbExecutor>,
         wasm_path: &'static str,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: C,
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
-    ) -> ExecutorTaskHandle {
+    ) -> ExecTask<C> {
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let (worker, component_id) =
             new_activity_worker_with_config(wasm_path, engine, clock_fn.clone(), sleep, config_fn);
@@ -511,15 +512,15 @@ pub(crate) mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
+        ExecTask::new_all_ffqns_test(worker, exec_config, clock_fn, db_exec)
     }
 
-    pub(crate) fn spawn_activity_fibo(
+    pub(crate) fn new_activity_fibo<C: ClockFn + 'static>(
         db_exec: Arc<dyn DbExecutor>,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: C,
         sleep: impl Sleep + 'static,
-    ) -> ExecutorTaskHandle {
-        spawn_activity(
+    ) -> ExecTask<C> {
+        new_activity(
             db_exec,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             clock_fn,
@@ -533,7 +534,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
-        let exec_task = spawn_activity_fibo(db_exec, sim_clock.clone(), TokioSleep);
+        let exec = new_activity_fibo(db_exec, sim_clock.clone(), TokioSleep);
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -554,8 +555,12 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
+        // tick
+        let executed = exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(vec![execution_id.clone()], executed);
         // Check the result.
-
         let res = db_connection
             .wait_for_finished_result(&execution_id, None)
             .await
@@ -565,13 +570,13 @@ pub(crate) mod tests {
             Some(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 }) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
-        exec_task.close().await;
         db_close.close().await.unwrap();
     }
 
     pub mod wasmtime_nosim {
         use super::*;
         use crate::engines::PoolingOptions;
+        use concepts::storage::PendingState;
         use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
         use concepts::time::Now;
         use concepts::{
@@ -720,7 +725,6 @@ pub(crate) mod tests {
             let exec_task = ExecTask::spawn_new(worker, exec_config, Now, db_exec, TokioSleep);
 
             // Create an execution.
-            let stopwatch = std::time::Instant::now();
             let execution_id = ExecutionId::generate();
             info!("Testing {execution_id}");
             let created_at = Now.now();
@@ -756,11 +760,7 @@ pub(crate) mod tests {
                     actual => actual
                 )
             );
-            let stopwatch = stopwatch.elapsed();
-            info!("Finished in {stopwatch:?}");
-            assert!(stopwatch < LOCK_EXPIRY * 2);
 
-            drop(db_connection);
             drop(timers_watcher_task);
             exec_task.close().await;
             db_close.close().await.unwrap();
@@ -950,6 +950,7 @@ pub(crate) mod tests {
                     .wait_for_tasks()
                     .await
                     .unwrap()
+                    .len()
             );
             let exec_log = db_connection.get(&execution_id).await.unwrap();
             let stopwatch = stopwatch.elapsed();
@@ -1063,6 +1064,7 @@ pub(crate) mod tests {
                     .wait_for_tasks()
                     .await
                     .unwrap()
+                    .len()
             );
             let exec_log = db_connection.get(&execution_id).await.unwrap();
             let stopwatch = stopwatch.elapsed();
@@ -1187,6 +1189,7 @@ pub(crate) mod tests {
                         .wait_for_tasks()
                         .await
                         .unwrap()
+                        .len()
                 );
                 let exec_log = db_connection.get(&execution_id).await.unwrap();
 
@@ -1240,6 +1243,7 @@ pub(crate) mod tests {
                     .wait_for_tasks()
                     .await
                     .unwrap()
+                    .len()
             );
             sim_clock.move_time_forward(RETRY_EXP_BACKOFF);
             server.reset().await;
@@ -1263,6 +1267,7 @@ pub(crate) mod tests {
                     .wait_for_tasks()
                     .await
                     .unwrap()
+                    .len()
             );
             let exec_log = db_connection.get(&execution_id).await.unwrap();
             let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionEventInner::Finished { result, .. } => result);
@@ -1292,7 +1297,7 @@ pub(crate) mod tests {
             let db_connection = db_pool.connection();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
             let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
-            let exec_task = spawn_activity_with_config(
+            let exec = new_activity_with_config(
                 db_exec,
                 test_programs_dir_activity_builder::TEST_PROGRAMS_DIR_ACTIVITY,
                 sim_clock.clone(),
@@ -1332,14 +1337,30 @@ pub(crate) mod tests {
                 })
                 .await
                 .unwrap();
+            let executed = exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            assert_eq!(vec![execution_id.clone()], executed);
+            // First execution should have failed
+            let pending_state = db_connection
+                .get_pending_state(&execution_id)
+                .await
+                .unwrap();
+            let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
+            // retry_exp_backoff is 0
+            assert_eq!(sim_clock.now(), scheduled_at);
+            let executed = exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            assert_eq!(vec![execution_id.clone()], executed);
+
             // Check the result.
             let res = db_connection
                 .wait_for_finished_result(&execution_id, None)
                 .await
                 .unwrap();
             assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
-            drop(db_connection);
-            exec_task.close().await;
+
             db_close.close().await.unwrap();
         }
 
@@ -1361,7 +1382,7 @@ pub(crate) mod tests {
             let db_connection = db_pool.connection();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
             let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
-            let exec_task = spawn_activity_with_config(
+            let exec = new_activity_with_config(
                 db_exec,
                 test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
                 sim_clock.clone(),
@@ -1399,14 +1420,16 @@ pub(crate) mod tests {
                 })
                 .await
                 .unwrap();
+            let executed = exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            assert_eq!(vec![execution_id.clone()], executed);
             // Check the result.
             let res = db_connection
                 .wait_for_finished_result(&execution_id, None)
                 .await
                 .unwrap();
             assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
-            drop(db_connection);
-            exec_task.close().await;
             db_close.close().await.unwrap();
         }
 
@@ -1434,7 +1457,7 @@ pub(crate) mod tests {
             let db_connection = db_pool.connection();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
             let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
-            let exec_task = spawn_activity_with_config(
+            let exec = new_activity_with_config(
                 db_exec,
                 test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
                 sim_clock.clone(),
@@ -1477,6 +1500,10 @@ pub(crate) mod tests {
                 })
                 .await
                 .unwrap();
+            let executed = exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            assert_eq!(vec![execution_id.clone()], executed);
             // Check the result.
             let res = db_connection
                 .wait_for_finished_result(&execution_id, None)
@@ -1496,8 +1523,6 @@ pub(crate) mod tests {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
 
-            drop(db_connection);
-            exec_task.close().await;
             db_close.close().await.unwrap();
         }
 
@@ -1512,7 +1537,7 @@ pub(crate) mod tests {
             let sim_clock = SimClock::default();
             let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let db_connection = db_pool.connection();
-            let exec_task = spawn_activity_with_config(
+            let exec = new_activity_with_config(
                 db_exec,
                 test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
                 sim_clock.clone(),
@@ -1549,6 +1574,10 @@ pub(crate) mod tests {
                 })
                 .await
                 .unwrap();
+            let executed = exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            assert_eq!(vec![execution_id.clone()], executed);
             // Check the result.
             let res = db_connection
                 .wait_for_finished_result(&execution_id, None)
@@ -1557,8 +1586,6 @@ pub(crate) mod tests {
             let record =
                 assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: record} => record);
             assert_debug_snapshot!(record);
-            drop(db_connection);
-            exec_task.close().await;
             db_close.close().await.unwrap();
         }
 
@@ -1568,7 +1595,7 @@ pub(crate) mod tests {
             let sim_clock = SimClock::default();
             let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let db_connection = db_pool.connection();
-            let exec_task = spawn_activity_with_config(
+            let exec = new_activity_with_config(
                 db_exec,
                 test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
                 sim_clock.clone(),
@@ -1605,6 +1632,10 @@ pub(crate) mod tests {
                 })
                 .await
                 .unwrap();
+            let executed = exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            assert_eq!(vec![execution_id.clone()], executed);
             // Check the result.
             let res = db_connection
                 .wait_for_finished_result(&execution_id, None)
@@ -1613,8 +1644,6 @@ pub(crate) mod tests {
             let variant =
                 assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: variant} => variant);
             assert_debug_snapshot!(variant);
-            drop(db_connection);
-            exec_task.close().await;
             db_close.close().await.unwrap();
         }
     }

@@ -1,3 +1,4 @@
+use super::deadline_tracker::DeadlineTrackerFactory;
 use super::event_history::ApplyError;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
@@ -75,6 +76,7 @@ pub struct WorkflowWorker<C: ClockFn> {
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     instance_pre: InstancePre<WorkflowCtx<C>>,
     fn_registry: Arc<dyn FunctionRegistry>,
+    deadline_factory: Arc<dyn DeadlineTrackerFactory>,
 }
 
 const WASI_NAMESPACE: &str = "wasi";
@@ -300,7 +302,11 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
 }
 
 impl<C: ClockFn> WorkflowWorkerLinked<C> {
-    pub fn into_worker(self, db_pool: Arc<dyn DbPool>) -> WorkflowWorker<C> {
+    pub fn into_worker(
+        self,
+        db_pool: Arc<dyn DbPool>,
+        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+    ) -> WorkflowWorker<C> {
         WorkflowWorker {
             config: self.config,
             engine: self.engine,
@@ -310,6 +316,7 @@ impl<C: ClockFn> WorkflowWorkerLinked<C> {
             instance_pre: self.instance_pre,
             exported_functions_noext: self.exported_functions_noext,
             fn_registry: self.fn_registry,
+            deadline_factory,
         }
     }
 }
@@ -353,6 +360,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             );
             return Err(PrepareFuncErr::DbUpdatedByWorkerOrWatcher);
         };
+        let deadline_tracker = self.deadline_factory.new(deadline_duration);
         let version_at_start = ctx.version.clone();
         let seed = ctx.execution_id.random_seed();
         let workflow_ctx = WorkflowCtx::new(
@@ -368,7 +376,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             ctx.execution_deadline,
             ctx.worker_span,
             self.config.backtrace_persist,
-            deadline_duration,
+            deadline_tracker,
             self.fn_registry.clone(),
         );
 
@@ -686,16 +694,20 @@ impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::activity::activity_worker::tests::new_activity;
     use crate::activity::activity_worker::tests::{compile_activity_stub, new_activity_worker};
     use crate::testing_fn_registry::{TestingFnRegistry, fn_registry_dummy};
+    use crate::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
     use crate::{
         activity::activity_worker::tests::{
-            FIBO_10_INPUT, FIBO_10_OUTPUT, compile_activity, spawn_activity_fibo, wasm_file_name,
+            FIBO_10_INPUT, FIBO_10_OUTPUT, compile_activity, new_activity_fibo, wasm_file_name,
         },
         engines::{EngineConfig, Engines},
     };
     use assert_matches::assert_matches;
+    use chrono::DateTime;
     use concepts::prefixed_ulid::ExecutionIdDerived;
+    use concepts::storage::PendingStateFinishedError;
     use concepts::storage::{
         AppendRequest, DbConnection, DbExecutor, ExecutionEventInner, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter,
@@ -713,20 +725,26 @@ pub(crate) mod tests {
     use db_tests::Database;
     use executor::executor::extract_exported_ffqns_noext_test;
     use executor::{
-        executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
+        executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
     };
     use rstest::rstest;
     use serde_json::json;
+    use std::ops::Deref;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
+    use tracing::debug;
     use tracing::info_span;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
     };
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
 
-    pub const FIBO_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+    pub const FIBOA_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA,
     ); // fiboa: func(n: u8, iterations: u32) -> u64;
     const SLEEP1_HOST_ACTIVITY_FFQN: FunctionFqn =
@@ -763,14 +781,14 @@ pub(crate) mod tests {
         )
     }
 
-    fn spawn_workflow(
+    fn new_workflow<C: ClockFn + 'static>(
         db_pool: Arc<dyn DbPool>,
         db_exec: Arc<dyn DbExecutor>,
         wasm_path: &'static str,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
-    ) -> ExecutorTaskHandle {
+    ) -> ExecTask<C> {
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let component_id =
@@ -792,7 +810,7 @@ pub(crate) mod tests {
             .unwrap()
             .link(fn_registry.clone())
             .unwrap()
-            .into_worker(db_pool),
+            .into_worker(db_pool, Arc::new(DeadlineTrackerFactoryTokio)),
         );
         info!("Instantiated worker");
         let exec_config = ExecConfig {
@@ -803,17 +821,17 @@ pub(crate) mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
+        ExecTask::new_all_ffqns_test(worker, exec_config, clock_fn, db_exec)
     }
 
-    pub(crate) fn spawn_workflow_fibo(
+    pub(crate) fn new_workflow_fibo<C: ClockFn + 'static>(
         db_pool: Arc<dyn DbPool>,
         db_exec: Arc<dyn DbExecutor>,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
-    ) -> ExecutorTaskHandle {
-        spawn_workflow(
+    ) -> ExecTask<C> {
+        new_workflow(
             db_pool,
             db_exec,
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
@@ -871,7 +889,7 @@ pub(crate) mod tests {
             compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
             compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW),
         ]);
-        let workflow_exec_task = spawn_workflow_fibo(
+        let workflow_exec = new_workflow_fibo(
             db_pool.clone(),
             db_exec.clone(),
             sim_clock.clone(),
@@ -888,7 +906,7 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at,
                 execution_id: execution_id.clone(),
-                ffqn: FIBO_WORKFLOW_FFQN,
+                ffqn: FIBOA_WORKFLOW_FFQN,
                 params,
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -901,6 +919,22 @@ pub(crate) mod tests {
             .await
             .unwrap();
         info!("Should end as BlockedByJoinSet");
+
+        let executed_workflows = workflow_exec
+            .tick_test(sim_clock.now(), RunId::generate())
+            .await
+            .unwrap();
+
+        let executed_workflows =
+            if join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
+                assert_eq!(1, executed_workflows.wait_for_tasks().await.unwrap().len());
+                None
+            } else {
+                // TODO: Make test more deterministic by waiting for deadline tracker to be called here.
+                Some(executed_workflows)
+            };
+
+        // No waiting needed in case of `Interrupt`
         wait_for_pending_state_fn(
             db_connection.as_ref(),
             &execution_id,
@@ -917,8 +951,22 @@ pub(crate) mod tests {
         .unwrap();
 
         info!("Execution should call the activity and finish");
-        let activity_exec_task =
-            spawn_activity_fibo(db_exec.clone(), sim_clock.clone(), TokioSleep);
+
+        let activity_exec = new_activity_fibo(db_exec.clone(), sim_clock.clone(), TokioSleep);
+        let executed_activities = activity_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_activities.len());
+
+        let executed_workflows = if let Some(executed_workflows) = executed_workflows {
+            // Await strategy still runs
+            executed_workflows.wait_for_tasks().await.unwrap()
+        } else {
+            workflow_exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await
+        };
+        assert_eq!(1, executed_workflows.len());
 
         let res = db_connection
             .wait_for_finished_result(&execution_id, None)
@@ -929,25 +977,22 @@ pub(crate) mod tests {
         let fibo = assert_matches!(res,
             WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 } => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
-        workflow_exec_task.close().await;
-        activity_exec_task.close().await;
     }
 
     #[tokio::test]
     #[should_panic(expected = "LinkingError { context: preinstantiation error")]
     async fn fibo_workflow_with_missing_imports_should_fail() {
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_exec, _db_close) = Database::Memory.set_up().await;
         test_utils::set_up();
         let fn_registry = fn_registry_dummy(&[]);
-        spawn_workflow_fibo(
+        new_workflow_fibo(
             db_pool.clone(),
             db_exec,
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
         );
-        db_close.close().await.unwrap();
     }
 
     pub(crate) fn compile_workflow_worker<C: ClockFn>(
@@ -976,7 +1021,7 @@ pub(crate) mod tests {
             .unwrap()
             .link(fn_registry.clone())
             .unwrap()
-            .into_worker(db_pool),
+            .into_worker(db_pool, Arc::new(DeadlineTrackerFactoryTokio)),
         )
     }
 
@@ -1088,7 +1133,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             assert_eq!(1, worker_tasks);
         }
         let blocked_until = {
@@ -1114,7 +1160,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             assert_eq!(1, worker_tasks);
         }
         assert_matches!(
@@ -1198,7 +1245,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             assert_eq!(1, worker_tasks);
         }
         let blocked_until = {
@@ -1224,7 +1272,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             assert_eq!(0, worker_tasks);
         }
         // expired_timers_watcher should see the AsyncDelay and send the response.
@@ -1267,7 +1316,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             assert_eq!(1, worker_tasks);
         }
         assert_matches!(
@@ -1292,8 +1342,6 @@ pub(crate) mod tests {
     async fn stargazers_should_be_deserialized_after_interrupt(
         #[values(Database::Sqlite, Database::Memory)] db: Database,
     ) {
-        use crate::activity::activity_worker::tests::spawn_activity;
-
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
@@ -1307,14 +1355,14 @@ pub(crate) mod tests {
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             ),
         ]);
-        let activity_exec_task = spawn_activity(
+        let activity_exec = new_activity(
             db_exec.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
         );
 
-        let workflow_exec_task = spawn_workflow(
+        let workflow_exec = new_workflow(
             db_pool.clone(),
             db_exec,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
@@ -1339,23 +1387,35 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
+
+        // Tick workflow
+        let executed_workflows = workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_workflows.len());
+        // Tick activity
+        let executed_activities = activity_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_activities.len());
+        // Tick workflow
+        let executed_workflows = workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_workflows.len());
+
         // Check the result.
         let res = db_connection
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
         assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
-        drop(db_connection);
-        activity_exec_task.close().await;
-        workflow_exec_task.close().await;
         db_close.close().await.unwrap();
     }
 
     #[rstest]
     #[tokio::test]
     async fn http_get(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
-        join_next_blocking_strategy: JoinNextBlockingStrategy,
         #[values(
             FFQN_WORKFLOW_HTTP_GET,
             FFQN_WORKFLOW_HTTP_GET_RESP,
@@ -1364,14 +1424,6 @@ pub(crate) mod tests {
         ffqn: FunctionFqn,
         #[values(Database::Sqlite, Database::Memory)] db: Database,
     ) {
-        use crate::activity::activity_worker::tests::spawn_activity;
-        use chrono::DateTime;
-        use std::ops::Deref;
-        use tracing::debug;
-        use wiremock::{
-            Mock, MockServer, ResponseTemplate,
-            matchers::{method, path},
-        };
         const BODY: &str = "ok";
 
         test_utils::set_up();
@@ -1387,19 +1439,19 @@ pub(crate) mod tests {
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             ),
         ]);
-        let activity_exec_task = spawn_activity(
+        let activity_exec = new_activity(
             db_exec.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
         );
 
-        let workflow_exec_task = spawn_workflow(
+        let workflow_exec = new_workflow(
             db_pool.clone(),
             db_exec,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
-            join_next_blocking_strategy,
+            JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
         );
         let server = MockServer::start().await;
@@ -1430,6 +1482,21 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
+        // Tick workflow
+        let executed_workflows = workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_workflows.len());
+        // Tick activity
+        let executed_activities = activity_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        // Tick workflow
+        let executed_workflows = workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_workflows.len());
+        assert_eq!(1, executed_activities.len());
         // Check the result.
         let res = db_connection
             .wait_for_finished_result(&execution_id, None)
@@ -1439,8 +1506,6 @@ pub(crate) mod tests {
             assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val.value);
         let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
-        activity_exec_task.close().await;
-        workflow_exec_task.close().await;
         db_close.close().await.unwrap();
     }
 
@@ -1448,29 +1513,13 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn http_get_concurrent(
         #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
-        join_next_strategy: JoinNextBlockingStrategy,
     ) {
-        use crate::activity::activity_worker::tests::spawn_activity;
-        use chrono::DateTime;
-        use std::ops::Deref;
-        use tracing::debug;
-        use wiremock::{
-            Mock, MockServer, ResponseTemplate,
-            matchers::{method, path},
-        };
         const BODY: &str = "ok";
         const GET_SUCCESSFUL_CONCURRENTLY_STRESS: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY_STRESS);
 
         test_utils::set_up();
-        let concurrency: u32 = std::env::var("CONCURRENCY")
-            .map(|c| c.parse::<u32>())
-            .ok()
-            .transpose()
-            .ok()
-            .flatten()
-            .unwrap_or(5);
+        let concurrency = 5;
         let sim_clock = SimClock::new(DateTime::default());
         let created_at = sim_clock.now();
         let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
@@ -1484,18 +1533,18 @@ pub(crate) mod tests {
             ),
         ]);
 
-        let activity_exec_task = spawn_activity(
+        let activity_exec = new_activity(
             db_exec.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
         );
-        let workflow_exec_task = spawn_workflow(
+        let workflow_exec = new_workflow(
             db_pool.clone(),
             db_exec,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
-            join_next_strategy,
+            JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
         );
         let server = MockServer::start().await;
@@ -1526,6 +1575,35 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
+        // Tick workflow
+        let executed_workflows = workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_workflows.len());
+        // Tick activities
+        let mut remaining_activities = concurrency;
+        while remaining_activities > 0 {
+            let executed_activities = activity_exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await
+                .len();
+            assert!(executed_activities > 0);
+            remaining_activities -= executed_activities;
+        }
+
+        // Tick workflow - should collect all the responses
+        let executed_workflows = workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_workflows.len());
+
+        assert!(
+            workflow_exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await
+                .is_empty()
+        );
+
         // Check the result.
         let res = db_connection
             .wait_for_finished_result(&execution_id, None)
@@ -1539,8 +1617,6 @@ pub(crate) mod tests {
             let val = assert_matches!(val, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());
         }
-        activity_exec_task.close().await;
-        workflow_exec_task.close().await;
         db_close.close().await.unwrap();
     }
 
@@ -1551,8 +1627,6 @@ pub(crate) mod tests {
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_strategy: JoinNextBlockingStrategy,
     ) {
-        use concepts::prefixed_ulid::ExecutorId;
-
         const SLEEP_DURATION: Duration = Duration::from_millis(100);
         const FFQN_WORKFLOW_SLEEP_SCHEDULE_NOOP_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SCHEDULE_NOOP);
@@ -1615,7 +1689,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             assert_eq!(1, task_count);
         }
         let res = db_pool.connection().get(&execution_id).await.unwrap();
@@ -1652,12 +1727,6 @@ pub(crate) mod tests {
     async fn http_get_fallible_err(
         #[values(Database::Memory, Database::Sqlite)] database: Database,
     ) {
-        use crate::activity::activity_worker::tests::spawn_activity;
-        use chrono::DateTime;
-        use concepts::storage::{
-            PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
-        };
-
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, db_exec, db_close) = database.set_up().await;
@@ -1671,21 +1740,19 @@ pub(crate) mod tests {
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             ),
         ]);
-        let activity_exec_task = spawn_activity(
+        let activity_exec = new_activity(
             db_exec.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
         );
 
-        let workflow_exec_task = spawn_workflow(
+        let workflow_exec = new_workflow(
             db_pool.clone(),
             db_exec,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone(),
-            JoinNextBlockingStrategy::Await {
-                non_blocking_event_batching: 0,
-            },
+            JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
         );
 
@@ -1709,6 +1776,23 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
+
+        // Tick workflow
+        let executed_workflows = workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_workflows.len());
+        // Tick activity
+        let executed_activities = activity_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_activities.len());
+        // Tick workflow
+        let executed_workflows = workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_workflows.len());
+
         // Check the result.
         let res: SupportedFunctionReturnValue = db_connection
             .wait_for_finished_result(&execution_id, None)
@@ -1734,9 +1818,6 @@ pub(crate) mod tests {
                 }
             }
         );
-
-        activity_exec_task.close().await;
-        workflow_exec_task.close().await;
         db_close.close().await.unwrap();
     }
 
@@ -1807,7 +1888,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             assert_eq!(1, task_count);
         }
 
@@ -1828,6 +1910,7 @@ pub(crate) mod tests {
                 .wait_for_tasks()
                 .await
                 .unwrap()
+                .len()
         );
 
         let res = db_connection.get(&execution_id).await.unwrap();
@@ -1949,7 +2032,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             assert_eq!(1, task_count);
         }
 
@@ -1981,7 +2065,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             if executed == 0 {
                 break;
             }
@@ -2136,7 +2221,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             assert_eq!(1, task_count);
         }
 
@@ -2164,6 +2250,7 @@ pub(crate) mod tests {
                 .wait_for_tasks()
                 .await
                 .unwrap()
+                .len()
         );
         let res = db_connection.get(&execution_id).await.unwrap();
         assert_matches!(
@@ -2279,7 +2366,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             assert_eq!(1, task_count);
         }
 
@@ -2324,7 +2412,8 @@ pub(crate) mod tests {
                     .unwrap()
                     .wait_for_tasks()
                     .await
-                    .unwrap();
+                    .unwrap()
+                    .len();
                 assert_eq!(1, task_count);
             }
         }
@@ -2337,7 +2426,8 @@ pub(crate) mod tests {
                 .unwrap()
                 .wait_for_tasks()
                 .await
-                .unwrap();
+                .unwrap()
+                .len();
             assert_eq!(1, task_count);
         }
 

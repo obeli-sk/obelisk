@@ -1,3 +1,4 @@
+pub mod deadline_tracker;
 pub(crate) mod event_history;
 pub mod host_exports;
 pub(crate) mod wasi;

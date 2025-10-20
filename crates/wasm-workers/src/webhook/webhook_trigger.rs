@@ -1052,32 +1052,32 @@ pub(crate) mod tests {
     pub(crate) mod nosim {
         use super::*;
         use crate::RunnableComponent;
-        use crate::activity::activity_worker::tests::{FIBO_10_OUTPUT, compile_activity};
+        use crate::activity::activity_worker::tests::{compile_activity, new_activity_fibo};
         use crate::engines::{EngineConfig, Engines};
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
             self, WebhookEndpointCompiled, WebhookEndpointConfig,
         };
-        use crate::workflow::workflow_worker::tests::compile_workflow;
-        use crate::{
-            activity::activity_worker::tests::spawn_activity_fibo,
-            workflow::workflow_worker::{JoinNextBlockingStrategy, tests::spawn_workflow_fibo},
+        use crate::workflow::workflow_worker::JoinNextBlockingStrategy;
+        use crate::workflow::workflow_worker::tests::{
+            FIBOA_WORKFLOW_FFQN, compile_workflow, new_workflow_fibo,
         };
-        use assert_matches::assert_matches;
+        use concepts::prefixed_ulid::RunId;
         use concepts::storage::DbPoolCloseable;
+        use concepts::time::ClockFn;
         use concepts::time::TokioSleep;
-        use concepts::{ComponentId, ComponentType, StrVariant, SupportedFunctionReturnValue};
+        use concepts::{ComponentId, ComponentType, Params, StrVariant};
         use concepts::{ExecutionId, storage::DbPool};
         use db_tests::{Database, DbGuard, DbPoolCloseableWrapper};
-        use executor::executor::ExecutorTaskHandle;
+        use executor::executor::ExecTask;
+        use serde_json::json;
         use std::net::SocketAddr;
         use std::str::FromStr;
         use std::sync::Arc;
+        use std::time::Duration;
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
         use tracing::info;
-        use val_json::type_wrapper::TypeWrapper;
-        use val_json::wast_val::{WastVal, WastValWithType};
 
         struct AbortOnDrop(tokio::task::AbortHandle);
         impl Drop for AbortOnDrop {
@@ -1097,8 +1097,9 @@ pub(crate) mod tests {
             guard: DbGuard,
             db_pool: Arc<dyn DbPool>,
             server_addr: SocketAddr,
-            activity_exec_task: ExecutorTaskHandle,
-            workflow_exec_task: ExecutorTaskHandle,
+            activity_exec: ExecTask<SimClock>,
+            workflow_exec: ExecTask<SimClock>,
+            sim_clock: SimClock,
             db_close: DbPoolCloseableWrapper,
         }
 
@@ -1107,8 +1108,8 @@ pub(crate) mod tests {
                 let addr = SocketAddr::from(([127, 0, 0, 1], 0));
                 let sim_clock = SimClock::default();
                 let (guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
-                let activity_exec_task =
-                    spawn_activity_fibo(db_exec.clone(), sim_clock.clone(), TokioSleep);
+                let activity_exec =
+                    new_activity_fibo(db_exec.clone(), sim_clock.clone(), TokioSleep);
                 let fn_registry = TestingFnRegistry::new_from_components(vec![
                     compile_activity(
                         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
@@ -1119,13 +1120,11 @@ pub(crate) mod tests {
                 ]);
                 let engine =
                     Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
-                let workflow_exec_task = spawn_workflow_fibo(
+                let workflow_exec = new_workflow_fibo(
                     db_pool.clone(),
                     db_exec,
                     sim_clock.clone(),
-                    JoinNextBlockingStrategy::Await {
-                        non_blocking_event_batching: 0,
-                    },
+                    JoinNextBlockingStrategy::Interrupt,
                     &fn_registry,
                 );
 
@@ -1169,28 +1168,29 @@ pub(crate) mod tests {
                 Self {
                     _server: server,
                     server_addr,
-                    activity_exec_task,
-                    workflow_exec_task,
+                    activity_exec,
+                    workflow_exec,
                     guard,
                     db_pool,
+                    sim_clock,
                     db_close,
                 }
             }
 
-            async fn fetch(&self, n: u8, iterations: u32, expected_status_code: u16) -> String {
-                let resp = reqwest::get(format!(
-                    "http://{}/fibo/{n}/{iterations}",
-                    &self.server_addr
-                ))
-                .await
-                .unwrap();
+            async fn fetch(
+                server_addr: &str,
+                n: u8,
+                iterations: u32,
+                expected_status_code: u16,
+            ) -> String {
+                let resp = reqwest::get(format!("http://{server_addr}/fibo/{n}/{iterations}",))
+                    .await
+                    .unwrap();
                 assert_eq!(resp.status().as_u16(), expected_status_code);
                 resp.text().await.unwrap()
             }
 
             async fn close(self) {
-                self.activity_exec_task.close().await;
-                self.workflow_exec_task.close().await;
                 self.db_close.close().await.unwrap();
             }
         }
@@ -1199,41 +1199,73 @@ pub(crate) mod tests {
         async fn hardcoded_result_should_work() {
             test_utils::set_up();
             let fibo_webhook_harness = SetUpFiboWebhook::new().await;
+            let server_addr = fibo_webhook_harness.server_addr.to_string();
             assert_eq!(
                 "fiboa(1, 0) = hardcoded: 1",
-                fibo_webhook_harness.fetch(1, 0, 200).await
+                SetUpFiboWebhook::fetch(&server_addr, 1, 0, 200).await
             );
         }
 
         #[tokio::test]
-        async fn direct_call_should_work() {
+        async fn direct_call_should_work_non_deterministic() {
             test_utils::set_up();
             let fibo_webhook_harness = SetUpFiboWebhook::new().await;
+            let server_addr = fibo_webhook_harness.server_addr.to_string();
+            let fetch_task =
+                tokio::spawn(async move { SetUpFiboWebhook::fetch(&server_addr, 2, 1, 200).await });
+            let now = fibo_webhook_harness.sim_clock.now();
+            while fibo_webhook_harness
+                .workflow_exec
+                .tick_test_await(now, RunId::generate())
+                .await
+                .len()
+                == 0
+            {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            // workflow must have been started
             assert_eq!(
-                "fiboa(2, 1) = direct call: 1",
-                fibo_webhook_harness.fetch(2, 1, 200).await
+                1,
+                fibo_webhook_harness
+                    .activity_exec
+                    .tick_test_await(now, RunId::generate())
+                    .await
+                    .len()
             );
+            // finish workflow
+            assert_eq!(
+                1,
+                fibo_webhook_harness
+                    .workflow_exec
+                    .tick_test_await(now, RunId::generate())
+                    .await
+                    .len()
+            );
+            let res = fetch_task.await.unwrap();
+            assert_eq!("fiboa(2, 1) = direct call: 1", res);
         }
 
         #[tokio::test]
         async fn scheduling_should_work() {
             test_utils::set_up();
             let fibo_webhook_harness = SetUpFiboWebhook::new().await;
-            let resp = fibo_webhook_harness.fetch(10, 1, 200).await;
-            let execution_id = resp.strip_prefix("fiboa(10, 1) = scheduled: ").unwrap();
+            let server_addr = fibo_webhook_harness.server_addr.to_string();
+            let n = 10;
+            let iterations = 1;
+            let resp = SetUpFiboWebhook::fetch(&server_addr, n, iterations, 200).await;
+
+            let execution_id = resp
+                .strip_prefix(&format!("fiboa({n}, {iterations}) = scheduled: "))
+                .unwrap();
             let execution_id = ExecutionId::from_str(execution_id).unwrap();
             let conn = fibo_webhook_harness.db_pool.connection();
-            let res = conn
-                .wait_for_finished_result(&execution_id, None)
-                .await
-                .unwrap();
-            let res = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val);
-            let (fibo, ok_ty) =
-                assert_matches!(res, WastValWithType {value, r#type: ok_ty } => (value, ok_ty));
-            assert_matches!(ok_ty, TypeWrapper::U64);
-            let res = assert_matches!(fibo, WastVal::U64(val) => val);
-            assert_eq!(FIBO_10_OUTPUT, res);
-            fibo_webhook_harness.close().await;
+            let create_req = conn.get_create_request(&execution_id).await.unwrap();
+            assert_eq!(FIBOA_WORKFLOW_FFQN, create_req.ffqn);
+            let expected_params = Params::from_json_values(vec![json!(10), json!(1)]);
+            assert_eq!(
+                serde_json::to_string(&expected_params).unwrap(),
+                serde_json::to_string(&create_req.params).unwrap()
+            );
         }
 
         #[tokio::test]

@@ -1,3 +1,4 @@
+use super::deadline_tracker::DeadlineTracker;
 use super::event_history::{
     ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
     OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
@@ -32,7 +33,6 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{Span, error, instrument};
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, Val};
@@ -925,7 +925,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         deadline: DateTime<Utc>,
         worker_span: Span,
         backtrace_persist: bool,
-        deadline_duration: Duration,
+        deadline_tracker: Arc<dyn DeadlineTracker>,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
@@ -943,7 +943,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 join_next_blocking_strategy,
                 deadline,
                 worker_span.clone(),
-                deadline_duration,
+                deadline_tracker,
                 fn_registry,
             ),
             rng: StdRng::seed_from_u64(seed),
@@ -1606,6 +1606,7 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::testing_fn_registry::fn_registry_dummy;
+    use crate::workflow::deadline_tracker::DeadlineTrackerTokio;
     use crate::workflow::event_history::ApplyError;
     use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
     use crate::workflow::workflow_ctx::{
@@ -1750,6 +1751,10 @@ pub(crate) mod tests {
             info!("Starting");
             let seed = ctx.execution_id.random_seed();
 
+            let deadline_duration = (ctx.execution_deadline - self.clock_fn.now())
+                .to_std()
+                .unwrap();
+
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id.clone(),
                 ComponentId::dummy_activity(),
@@ -1763,9 +1768,7 @@ pub(crate) mod tests {
                 ctx.execution_deadline,
                 tracing::info_span!("workflow-test"),
                 false,
-                (ctx.execution_deadline - self.clock_fn.now())
-                    .to_std()
-                    .unwrap(),
+                Arc::new(DeadlineTrackerTokio::new(deadline_duration)),
                 self.fn_registry.clone(),
             );
             for step in &self.steps {
@@ -2055,7 +2058,8 @@ pub(crate) mod tests {
                     .unwrap()
                     .wait_for_tasks()
                     .await
-                    .unwrap();
+                    .unwrap()
+                    .len();
                 assert!(executed > 0);
                 let pending_state = db_connection
                     .get_pending_state(&execution_id)

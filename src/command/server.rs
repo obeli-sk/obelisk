@@ -131,6 +131,7 @@ use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointCompiled;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointConfig;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstance;
+use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
@@ -2207,9 +2208,9 @@ impl WorkerLinked {
     ) -> ExecutorTaskHandle {
         let worker = match self.worker {
             Either::Left(activity) => activity,
-            Either::Right(workflow_linked) => {
-                Arc::from(workflow_linked.into_worker(db_pool.clone()))
-            }
+            Either::Right(workflow_linked) => Arc::from(
+                workflow_linked.into_worker(db_pool.clone(), Arc::new(DeadlineTrackerFactoryTokio)),
+            ),
         };
         ExecTask::spawn_new(worker, self.exec_config, Now, db_executor, TokioSleep)
     }

@@ -52,12 +52,13 @@ pub struct ExecutionProgress {
 
 impl ExecutionProgress {
     #[cfg(feature = "test")]
-    pub async fn wait_for_tasks(self) -> Result<usize, tokio::task::JoinError> {
-        let execs = self.executions.len();
-        for (_, handle) in self.executions {
-            handle.await?;
+    pub async fn wait_for_tasks(self) -> Result<Vec<ExecutionId>, tokio::task::JoinError> {
+        let mut vec = Vec::new();
+        for (exe, join_handle) in self.executions {
+            vec.push(exe);
+            join_handle.await?;
         }
-        Ok(execs)
+        Ok(vec)
     }
 }
 
@@ -132,11 +133,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         clock_fn: C,
         db_exec: Arc<dyn DbExecutor>,
     ) -> Self {
-        let ffqns = worker
-            .exported_functions()
-            .iter()
-            .map(|meta| meta.ffqn.clone())
-            .collect();
+        let ffqns = extract_exported_ffqns_noext(worker.as_ref());
         Self {
             worker,
             config,
@@ -213,6 +210,20 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         run_id: RunId,
     ) -> Result<ExecutionProgress, DbErrorGeneric> {
         self.tick(executed_at, run_id).await
+    }
+
+    #[cfg(feature = "test")]
+    pub async fn tick_test_await(
+        &self,
+        executed_at: DateTime<Utc>,
+        run_id: RunId,
+    ) -> Vec<ExecutionId> {
+        self.tick(executed_at, run_id)
+            .await
+            .unwrap()
+            .wait_for_tasks()
+            .await
+            .unwrap()
     }
 
     #[instrument(level = Level::TRACE, name = "executor.tick" skip_all, fields(executor_id = %self.config.executor_id, component_id = %self.config.component_id))]
@@ -747,7 +758,7 @@ mod tests {
     use concepts::storage::DbPoolCloseable;
     use concepts::storage::{CreateRequest, DbConnection, JoinSetRequest};
     use concepts::storage::{ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState};
-    use concepts::time::{Now, TokioSleep};
+    use concepts::time::Now;
     use concepts::{
         ClosingStrategy, FunctionMetadata, JoinSetKind, ParameterTypes, Params, RETURN_TYPE_DUMMY,
         SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant, SupportedFunctionReturnValue, TrapKind,
@@ -767,20 +778,13 @@ mod tests {
         db_exec: Arc<dyn DbExecutor>,
         worker: Arc<W>,
         executed_at: DateTime<Utc>,
-    ) -> ExecutionProgress {
+    ) -> Vec<ExecutionId> {
         trace!("Ticking with {worker:?}");
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
         let executor = ExecTask::new(worker, config, clock_fn, db_exec, ffqns);
-        let mut execution_progress = executor.tick(executed_at, RunId::generate()).await.unwrap();
-        loop {
-            execution_progress
-                .executions
-                .retain(|(_, abort_handle)| !abort_handle.is_finished());
-            if execution_progress.executions.is_empty() {
-                return execution_progress;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        executor
+            .tick_test_await(executed_at, RunId::generate())
+            .await
     }
 
     #[tokio::test]
@@ -859,7 +863,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stochastic_execute_simple_lifecycle_task_based_mem() {
+    async fn execute_simple_lifecycle_task_based_mem() {
         set_up();
         let created_at = Now.now();
         let clock_fn = ConstClock(created_at);
@@ -878,13 +882,6 @@ mod tests {
             Version::new(2),
             None,
         )));
-        let exec_task = ExecTask::spawn_new(
-            worker.clone(),
-            exec_config.clone(),
-            clock_fn,
-            db_exec.clone(),
-            TokioSleep,
-        );
 
         let execution_log = create_and_tick(
             CreateAndTickConfig {
@@ -899,10 +896,7 @@ mod tests {
             db_exec,
             exec_config,
             worker,
-            |_, _, _, _, _| async {
-                tokio::time::sleep(Duration::from_secs(1)).await; // FIXME: non determinism, possible race
-                ExecutionProgress::default()
-            },
+            tick_fn,
         )
         .await;
         assert_matches!(
@@ -916,7 +910,6 @@ mod tests {
                 backtrace_id: None,
             }
         );
-        exec_task.close().await;
         db_close.close().await.unwrap();
     }
 
@@ -932,7 +925,7 @@ mod tests {
         W: Worker,
         C: ClockFn,
         T: FnMut(ExecConfig, C, Arc<dyn DbExecutor>, Arc<W>, DateTime<Utc>) -> F,
-        F: Future<Output = ExecutionProgress>,
+        F: Future<Output = Vec<ExecutionId>>,
     >(
         config: CreateAndTickConfig,
         clock_fn: C,
@@ -1077,7 +1070,6 @@ mod tests {
                 sim_clock.now(),
             )
             .await
-            .executions
             .is_empty()
         );
         // tick again to finish the execution

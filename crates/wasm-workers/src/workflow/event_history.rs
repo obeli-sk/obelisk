@@ -1,3 +1,4 @@
+use super::deadline_tracker::DeadlineTracker;
 use super::event_history::ProcessingStatus::Processed;
 use super::event_history::ProcessingStatus::Unprocessed;
 use super::host_exports::delay_id_into_wast_val;
@@ -36,7 +37,6 @@ use concepts::storage::{
     JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
-use concepts::time::SleepFactory;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params};
 use hashbrown::HashMap;
@@ -48,7 +48,6 @@ use itertools::Itertools;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::sync::Arc;
-use std::time::Duration;
 use strum::IntoStaticStr;
 use tracing::Level;
 use tracing::Span;
@@ -104,7 +103,7 @@ pub(crate) struct EventHistory {
     non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     worker_span: Span,
-    deadline_tracker: SleepFactory,
+    deadline_tracker: Arc<dyn DeadlineTracker>,
     fn_registry: Arc<dyn FunctionRegistry>,
 }
 
@@ -134,7 +133,7 @@ impl EventHistory {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         deadline: DateTime<Utc>,
         worker_span: Span,
-        deadline_duration: Duration,
+        deadline_tracker: Arc<dyn DeadlineTracker>,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> EventHistory {
         let non_blocking_event_batch_size = match join_next_blocking_strategy {
@@ -190,7 +189,7 @@ impl EventHistory {
                 Some(Vec::with_capacity(non_blocking_event_batch_size))
             },
             worker_span,
-            deadline_tracker: SleepFactory::new(deadline_duration),
+            deadline_tracker,
             fn_registry,
         }
     }
@@ -351,12 +350,12 @@ impl EventHistory {
             let key = join_next_variant.as_key();
 
             // Subscribe to the next response.
-            while !self.deadline_tracker.deadline_reached() {
+            while let Some(timeout_fut) = self.deadline_tracker.track() {
                 let next_responses = match db_connection
                     .subscribe_to_next_responses(
                         &self.execution_id,
                         self.responses.len(),
-                        Box::pin(self.deadline_tracker.new_sleep()),
+                        timeout_fut,
                     )
                     .await
                 {
@@ -2714,6 +2713,7 @@ mod tests {
     use super::super::workflow_worker::JoinNextBlockingStrategy;
     use super::SubmitChildExecution;
     use crate::testing_fn_registry::TestingFnRegistry;
+    use crate::workflow::deadline_tracker::{DeadlineTrackerFactory, DeadlineTrackerFactoryTokio};
     use crate::workflow::event_history::{
         ApplyError, ChildReturnValue, JoinNextRequestingFfqn, JoinSetCreate, Schedule, Stub,
     };
@@ -2764,7 +2764,8 @@ mod tests {
             db_connection.as_ref(),
             execution_id.clone(),
             sim_clock.now(),
-            Duration::from_secs(1),              // execution deadline
+            Duration::from_secs(1), // execution deadline
+            Arc::new(DeadlineTrackerFactoryTokio),
             JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
             fn_registry.clone(),
         )
@@ -2811,6 +2812,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
+            Arc::new(DeadlineTrackerFactoryTokio),
             second_run_strategy,
             fn_registry,
         )
@@ -2855,6 +2857,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
+            Arc::new(DeadlineTrackerFactoryTokio),
             join_next_blocking_strategy,
             fn_registry.clone(),
         )
@@ -2899,6 +2902,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
+            Arc::new(DeadlineTrackerFactoryTokio),
             join_next_blocking_strategy,
             fn_registry,
         )
@@ -2981,7 +2985,8 @@ mod tests {
             db_connection.as_ref(),
             execution_id.clone(),
             sim_clock.now(),
-            Duration::from_secs(1),              // execution deadline
+            Duration::from_secs(1), // execution deadline
+            Arc::new(DeadlineTrackerFactoryTokio),
             JoinNextBlockingStrategy::Interrupt, // First blocking strategy is always Interrupt
             fn_registry.clone(),
         )
@@ -3057,6 +3062,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::ZERO, // deadline
+            Arc::new(DeadlineTrackerFactoryTokio),
             JoinNextBlockingStrategy::Interrupt,
             fn_registry,
         )
@@ -3134,7 +3140,8 @@ mod tests {
             db_connection,
             execution_id.clone(),
             sim_clock.now(),
-            Duration::from_secs(1),              // execution deadline
+            Duration::from_secs(1), // execution deadline
+            Arc::new(DeadlineTrackerFactoryTokio),
             JoinNextBlockingStrategy::Interrupt, // does not matter, there are no blocking events
             fn_registry,
         )
@@ -3198,6 +3205,7 @@ mod tests {
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1), // execution deadline
+                Arc::new(DeadlineTrackerFactoryTokio),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3277,6 +3285,7 @@ mod tests {
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1),
+                Arc::new(DeadlineTrackerFactoryTokio),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3366,11 +3375,14 @@ mod tests {
         execution_id: ExecutionId,
         now: DateTime<Utc>,
         deadline_duration: Duration,
+        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> (EventHistory, Version) {
-        let exec_log = db_connection.get(&execution_id).await.unwrap();
         let execution_deadline = now + deadline_duration;
+        let deadline_tracker = deadline_factory.new(deadline_duration);
+
+        let exec_log = db_connection.get(&execution_id).await.unwrap();
         let event_history = EventHistory::new(
             execution_id.clone(),
             ComponentId::dummy_activity(),
@@ -3383,7 +3395,7 @@ mod tests {
             join_next_blocking_strategy,
             execution_deadline,
             info_span!("worker-test"),
-            deadline_duration,
+            deadline_tracker,
             fn_registry,
         );
         (event_history, exec_log.next_version)
