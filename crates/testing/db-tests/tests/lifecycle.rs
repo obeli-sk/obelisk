@@ -28,7 +28,7 @@ async fn test_expired_lock_should_be_found_mem() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -38,7 +38,7 @@ async fn test_expired_lock_should_be_found_sqlite() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -48,7 +48,7 @@ async fn test_append_batch_respond_to_parent_mem() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -58,7 +58,7 @@ async fn test_append_batch_respond_to_parent_sqlite() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -68,7 +68,7 @@ async fn test_lock_pending_should_sort_by_scheduled_at_mem() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -78,7 +78,7 @@ async fn test_lock_pending_should_sort_by_scheduled_at_sqlite() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -88,7 +88,7 @@ async fn test_lock_mem() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     test_lock(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -98,7 +98,7 @@ async fn test_lock_sqlite() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     test_lock(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -108,7 +108,7 @@ async fn test_get_expired_lock_mem() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_lock(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -118,7 +118,7 @@ async fn test_get_expired_lock_sqlite() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_lock(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -128,7 +128,7 @@ async fn test_get_expired_delay_mem() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_delay(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -138,7 +138,7 @@ async fn test_get_expired_delay_sqlite() {
     let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_delay(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -219,7 +219,7 @@ async fn append_after_finish_should_not_be_possible(
         );
         assert_eq!("already finished", msg.as_ref());
     }
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 async fn lock_pending(
@@ -356,7 +356,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
             .unwrap();
         assert_eq!(1, locked_executions.len());
     }
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -373,7 +373,7 @@ async fn lock_extended_with_the_same_executor_should_work(
             .unwrap();
         assert_eq!(Version::new(3), lock_resp.next_version);
     }
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 #[tokio::test]
 #[rstest::rstest]
@@ -394,7 +394,7 @@ async fn lock_extended_with_another_executor_should_fail(
             .await
             .unwrap_err();
     }
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 async fn lock_and_attept_to_extend(
     same_executor_id: bool,
@@ -575,7 +575,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
             .unwrap();
         assert!(locked_executions.is_empty());
     }
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -607,7 +607,7 @@ async fn lock_pending_while_nothing_is_stored_should_work(
             .unwrap()
             .is_empty()
     );
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -676,7 +676,7 @@ async fn creating_execution_twice_should_fail(
         })
         .await
         .unwrap_err();
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 #[tokio::test]
@@ -689,7 +689,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing(
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
     lock_pending_while_expired_lock_should_return_nothing_inner(db_connection.as_ref()).await;
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 async fn lock_pending_while_expired_lock_should_return_nothing_inner(

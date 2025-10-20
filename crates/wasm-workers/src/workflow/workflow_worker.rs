@@ -856,7 +856,7 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
         )
         .await;
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest]
@@ -874,7 +874,7 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
         )
         .await;
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     async fn fibo_workflow_should_submit_fibo_activity(
@@ -1065,7 +1065,7 @@ pub(crate) mod tests {
         };
         let worker_result = worker.run(ctx).await;
         assert_matches!(worker_result, WorkerResult::DbUpdatedByWorkerOrWatcher); // Do not write anything, let the watcher mark execution as timed out.
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[tokio::test]
@@ -1173,7 +1173,7 @@ pub(crate) mod tests {
             }
         );
 
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest]
@@ -1323,7 +1323,7 @@ pub(crate) mod tests {
             }
         );
 
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest]
@@ -1399,7 +1399,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest]
@@ -1495,7 +1495,7 @@ pub(crate) mod tests {
             assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val.value);
         let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest::rstest]
@@ -1606,7 +1606,7 @@ pub(crate) mod tests {
             let val = assert_matches!(val, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());
         }
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest::rstest]
@@ -1706,7 +1706,7 @@ pub(crate) mod tests {
         assert!(next_pending.parent.is_none());
         let params = serde_json::to_string(&Params::empty()).unwrap();
         assert_eq!(params, serde_json::to_string(&next_pending.params).unwrap());
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest]
@@ -1805,7 +1805,7 @@ pub(crate) mod tests {
                 }
             }
         );
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest::rstest]
@@ -1905,7 +1905,7 @@ pub(crate) mod tests {
         );
         assert_eq!(WastVal::String(format!("stubbing {INPUT_PARAM}")), value);
 
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest::rstest]
@@ -2072,7 +2072,7 @@ pub(crate) mod tests {
             Some(SupportedFunctionReturnValue::Ok { ok: None })
         );
 
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest::rstest]
@@ -2232,7 +2232,7 @@ pub(crate) mod tests {
             res.into_finished_result().unwrap(),
             SupportedFunctionReturnValue::Ok { ok: None }
         );
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     async fn write_stub_response(
@@ -2413,6 +2413,6 @@ pub(crate) mod tests {
                 }
             }
         );
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 }

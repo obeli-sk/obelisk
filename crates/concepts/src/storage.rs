@@ -620,7 +620,7 @@ pub trait DbPool: Send + Sync {
 
 #[async_trait]
 pub trait DbPoolCloseable {
-    async fn close(self) -> Result<(), ()>; // FIXME: do not return anything
+    async fn close(self);
 }
 
 #[async_trait]

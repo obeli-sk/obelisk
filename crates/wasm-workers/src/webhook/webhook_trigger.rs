@@ -1191,7 +1191,7 @@ pub(crate) mod tests {
             }
 
             async fn close(self) {
-                self.db_close.close().await.unwrap();
+                self.db_close.close().await;
             }
         }
 

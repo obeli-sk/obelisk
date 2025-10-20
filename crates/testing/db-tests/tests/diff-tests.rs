@@ -80,7 +80,7 @@ async fn diff_proptest_inner(seed: u64) {
         &append_requests,
     )
     .await;
-    db_mem_close.close().await.unwrap();
+    db_mem_close.close().await;
     let (_sqlite_guard, sqlite_pool, _db_exec, db_sqlite_close) = Database::Sqlite.set_up().await;
     let sqlite_conn = sqlite_pool.connection();
     let sqlite_log = create_and_append(
@@ -90,7 +90,7 @@ async fn diff_proptest_inner(seed: u64) {
         &append_requests,
     )
     .await;
-    db_sqlite_close.close().await.unwrap();
+    db_sqlite_close.close().await;
     println!(
         "Expected (mem):\n{expected}\nActual (sqlite):\n{actual}",
         expected = serde_json::to_string(&mem_log).unwrap(),
@@ -264,7 +264,7 @@ async fn get_execution_event_should_not_break_json_order(
         .event;
     assert_eq!(expected_inner, found_inner);
 
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }
 
 // Test that the sqlite database no longer uses serde_json::Value during deserialization as it
@@ -285,5 +285,5 @@ async fn list_execution_events_should_not_break_json_order() {
     let found_inner = &found_inner[0].event;
     assert_eq!(expected_inner, *found_inner);
 
-    db_close.close().await.unwrap();
+    db_close.close().await;
 }

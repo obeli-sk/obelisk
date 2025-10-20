@@ -1553,10 +1553,7 @@ impl<C: DbPoolCloseable> ServerInit<C> {
         for exec_join_handle in exec_join_handles {
             exec_join_handle.close().await;
         }
-        let res = db_closeable.close().await;
-        if let Err(err) = res {
-            error!("Cannot close the database - {err:?}");
-        }
+        db_closeable.close().await;
     }
 }
 

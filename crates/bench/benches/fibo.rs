@@ -284,7 +284,7 @@ mod bench {
         tokio.block_on(async move { workflow_exec_task.close().await });
         tokio.block_on(async move { activity_exec_task.close().await });
 
-        tokio.block_on(async move { db_close.close().await.unwrap() });
+        tokio.block_on(async move { db_close.close().await });
     }
 
     const FIBO_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(

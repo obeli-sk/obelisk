@@ -2830,7 +2830,7 @@ mod tests {
         .expect("should finish successfuly");
 
         drop(db_connection);
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest]
@@ -2940,7 +2940,7 @@ mod tests {
         let res = assert_matches!(res, ChildReturnValue::WastVal(res) => res);
         assert_eq!(child_resp_wrapped, res);
 
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[rstest]
@@ -3122,7 +3122,7 @@ mod tests {
             let res = assert_matches!(res, ChildReturnValue::WastVal(res) => res);
             assert_eq!(kid_b, res);
         }
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[tokio::test]
@@ -3182,7 +3182,7 @@ mod tests {
             .await
             .unwrap();
 
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[tokio::test]
@@ -3261,7 +3261,7 @@ mod tests {
             );
         }
 
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[tokio::test]
@@ -3337,7 +3337,7 @@ mod tests {
                 .unwrap();
         }
 
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     // TODO: Check -await-next for fn without return type

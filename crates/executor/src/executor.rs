@@ -792,7 +792,7 @@ mod tests {
             ConstClock(created_at),
         )
         .await;
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[tokio::test]
@@ -805,7 +805,7 @@ mod tests {
             ConstClock(created_at),
         )
         .await;
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     async fn execute_simple_lifecycle_tick_based<C: ClockFn + 'static>(
@@ -905,7 +905,7 @@ mod tests {
                 backtrace_id: None,
             }
         );
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     struct CreateAndTickConfig {
@@ -1104,7 +1104,7 @@ mod tests {
                 backtrace_id: None,
             } if *finished_at == sim_clock.now()
         );
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[tokio::test]
@@ -1166,7 +1166,7 @@ mod tests {
         assert_eq!(Some(expected_detail), detail.as_deref());
         assert_eq!(PermanentFailureKind::ActivityTrap, *kind);
 
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[tokio::test]
@@ -1393,7 +1393,7 @@ mod tests {
             SupportedFunctionReturnValue::ExecutionError(_)
         );
 
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[derive(Clone, Debug)]
@@ -1565,6 +1565,6 @@ mod tests {
 
         drop(db_connection);
         drop(executor);
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 }

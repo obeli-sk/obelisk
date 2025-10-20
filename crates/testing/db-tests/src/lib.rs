@@ -59,7 +59,7 @@ pub enum DbPoolCloseableWrapper {
 
 #[async_trait]
 impl DbPoolCloseable for DbPoolCloseableWrapper {
-    async fn close(self) -> Result<(), ()> {
+    async fn close(self) {
         match self {
             DbPoolCloseableWrapper::Memory(db) => db.close().await,
             DbPoolCloseableWrapper::Sqlite(db) => db.close().await,

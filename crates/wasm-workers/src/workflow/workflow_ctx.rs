@@ -1952,7 +1952,7 @@ pub(crate) mod tests {
                 let next_u128 = || rand::Rng::r#gen(&mut seedable_rng);
                 let res =
                     execute_steps(steps, db_pool.clone(), db_exec, &mut sim_clock, next_u128).await;
-                db_close.close().await.unwrap();
+                db_close.close().await;
                 res
             };
             println!("Run 1");
@@ -1983,7 +1983,7 @@ pub(crate) mod tests {
                 )
                 .await;
                 println!("{execution_log:?}");
-                db_close.close().await.unwrap();
+                db_close.close().await;
                 (execution_id, execution_log)
             };
             println!("Run 2");
@@ -2111,7 +2111,7 @@ pub(crate) mod tests {
 
                 assert_eq!(event, event2, "mismatch at {idx}");
             }
-            db_close.close().await.unwrap();
+            db_close.close().await;
         }
     }
 
@@ -2135,7 +2135,7 @@ pub(crate) mod tests {
             || 0,
         )
         .await;
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     #[tokio::test]
@@ -2165,7 +2165,7 @@ pub(crate) mod tests {
             || 0,
         )
         .await;
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     const FFQN_CHILD_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn-child");
@@ -2383,7 +2383,7 @@ pub(crate) mod tests {
             db_connection.get(&execution_id).await.unwrap(),
             "nothing should be written when verifying determinism"
         );
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     fn generate_steps(seed: u64) -> Vec<WorkflowStep> {

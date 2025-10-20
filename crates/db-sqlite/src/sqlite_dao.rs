@@ -465,16 +465,16 @@ struct SqlitePoolInner {
 
 #[async_trait]
 impl DbPoolCloseable for SqlitePool {
-    async fn close(self) -> Result<(), ()> {
+    async fn close(self) {
         self.0.shutdown_requested.store(true, Ordering::Release);
         // Unblock the thread's blocking_recv. If the capacity is reached, the next processed message will trigger shutdown.
         let _ = self.0.command_tx.try_send(ThreadCommand::Shutdown);
         while !self.0.shutdown_finished.load(Ordering::Acquire) {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        Ok(())
     }
 }
+
 #[async_trait]
 impl DbPool for SqlitePool {
     fn connection(&self) -> Box<dyn DbConnection> {

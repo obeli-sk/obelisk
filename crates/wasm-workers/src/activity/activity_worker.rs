@@ -570,7 +570,7 @@ pub(crate) mod tests {
             Some(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 }) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
-        db_close.close().await.unwrap();
+        db_close.close().await;
     }
 
     pub mod wasmtime_nosim {
@@ -763,7 +763,7 @@ pub(crate) mod tests {
 
             drop(timers_watcher_task);
             exec_task.close().await;
-            db_close.close().await.unwrap();
+            db_close.close().await;
         }
 
         #[rstest::rstest]
@@ -983,7 +983,7 @@ pub(crate) mod tests {
             assert_eq!(uri, *uri_actual);
             drop(db_connection);
             drop(exec_task);
-            db_close.close().await.unwrap();
+            db_close.close().await;
         }
 
         #[tokio::test]
@@ -1102,7 +1102,7 @@ pub(crate) mod tests {
             assert_eq!(uri, *uri_actual);
             drop(db_connection);
             drop(exec_task);
-            db_close.close().await.unwrap();
+            db_close.close().await;
         }
 
         #[rstest::rstest(
@@ -1276,7 +1276,7 @@ pub(crate) mod tests {
             assert_matches!(wast_val_with_type.r#type, TypeWrapper::String); // in both cases
             drop(db_connection);
             drop(exec_task);
-            db_close.close().await.unwrap();
+            db_close.close().await;
         }
 
         #[tokio::test]
@@ -1351,7 +1351,7 @@ pub(crate) mod tests {
                 .unwrap();
             assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
 
-            db_close.close().await.unwrap();
+            db_close.close().await;
         }
 
         #[rstest::rstest(
@@ -1420,7 +1420,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
-            db_close.close().await.unwrap();
+            db_close.close().await;
         }
 
         #[cfg(unix)]
@@ -1513,7 +1513,7 @@ pub(crate) mod tests {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
 
-            db_close.close().await.unwrap();
+            db_close.close().await;
         }
 
         #[rstest::rstest(
@@ -1576,7 +1576,7 @@ pub(crate) mod tests {
             let record =
                 assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: record} => record);
             assert_debug_snapshot!(record);
-            db_close.close().await.unwrap();
+            db_close.close().await;
         }
 
         #[tokio::test]
@@ -1634,7 +1634,7 @@ pub(crate) mod tests {
             let variant =
                 assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: variant} => variant);
             assert_debug_snapshot!(variant);
-            db_close.close().await.unwrap();
+            db_close.close().await;
         }
     }
 }
