@@ -1439,19 +1439,13 @@ async fn spawn_tasks_and_threads(
     sqlite_config: SqliteConfig,
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     timers_watcher: TimersWatcherTomlConfig,
-) -> Result<
-    (
-        ServerInit<SqlitePool<TokioSleep>>,
-        ComponentConfigRegistryRO,
-    ),
-    anyhow::Error,
-> {
+) -> Result<(ServerInit<SqlitePool>, ComponentConfigRegistryRO), anyhow::Error> {
     // Start components requiring a database
     let epoch_ticker = EpochTicker::spawn_new(
         server_compiled_linked.engines.weak_refs(),
         Duration::from_millis(EPOCH_MILLIS),
     );
-    let db = SqlitePool::new(sqlite_file, sqlite_config, TokioSleep)
+    let db = SqlitePool::new(sqlite_file, sqlite_config)
         .await
         .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?;
     let db_pool: Arc<dyn DbPool> = Arc::new(db.clone());
@@ -2217,7 +2211,7 @@ impl WorkerLinked {
                 Arc::from(workflow_linked.into_worker(db_pool.clone()))
             }
         };
-        ExecTask::spawn_new(worker, self.exec_config, Now, db_executor)
+        ExecTask::spawn_new(worker, self.exec_config, Now, db_executor, TokioSleep)
     }
 }
 

@@ -14,7 +14,6 @@ use concepts::{
         Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
         ResponseWithCursor, Version, VersionType,
     },
-    time::Sleep,
 };
 use conversions::{FromStrWrapper, JsonWrapper, consistency_db_err, consistency_rusqlite};
 use conversions::{
@@ -452,38 +451,37 @@ enum ThreadCommand {
 }
 
 #[derive(Clone)]
-pub struct SqlitePool<S: Sleep>(SqlitePoolInner<S>); // FIXME: Remove Sleep
+pub struct SqlitePool(SqlitePoolInner);
 
 #[derive(Clone)]
-struct SqlitePoolInner<S: Sleep> {
+struct SqlitePoolInner {
     shutdown_requested: Arc<AtomicBool>,
     shutdown_finished: Arc<AtomicBool>,
     command_tx: tokio::sync::mpsc::Sender<ThreadCommand>,
     response_subscribers: ResponseSubscribers,
     ffqn_to_pending_subscription: Arc<Mutex<hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>>>,
-    sleep: S,
     join_handle: Option<Arc<std::thread::JoinHandle<()>>>, // always Some, Optional for swapping in drop.
 }
 
 #[async_trait]
-impl<S: Sleep + 'static> DbPoolCloseable for SqlitePool<S> {
+impl DbPoolCloseable for SqlitePool {
     async fn close(self) -> Result<(), ()> {
         self.0.shutdown_requested.store(true, Ordering::Release);
         // Unblock the thread's blocking_recv. If the capacity is reached, the next processed message will trigger shutdown.
         let _ = self.0.command_tx.try_send(ThreadCommand::Shutdown);
         while !self.0.shutdown_finished.load(Ordering::Acquire) {
-            self.0.sleep.sleep(Duration::from_millis(1)).await;
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
         Ok(())
     }
 }
 #[async_trait]
-impl<S: Sleep + 'static> DbPool for SqlitePool<S> {
+impl DbPool for SqlitePool {
     fn connection(&self) -> Box<dyn DbConnection> {
         Box::new(self.clone())
     }
 }
-impl<S: Sleep> Drop for SqlitePool<S> {
+impl Drop for SqlitePool {
     fn drop(&mut self) {
         let arc = self.0.join_handle.take().expect("join_handle was set");
         if let Ok(join_handle) = Arc::try_unwrap(arc) {
@@ -524,7 +522,7 @@ impl Default for SqliteConfig {
     }
 }
 
-impl<S: Sleep> SqlitePool<S> {
+impl SqlitePool {
     fn init_thread(
         path: &Path,
         mut pragma_override: hashbrown::HashMap<String, String>,
@@ -750,7 +748,6 @@ impl<S: Sleep> SqlitePool<S> {
     pub async fn new<P: AsRef<Path>>(
         path: P,
         config: SqliteConfig,
-        sleep: S,
     ) -> Result<Self, InitializationError> {
         let path = path.as_ref().to_owned();
 
@@ -795,7 +792,6 @@ impl<S: Sleep> SqlitePool<S> {
             command_tx,
             response_subscribers: Arc::default(),
             ffqn_to_pending_subscription: Arc::default(),
-            sleep,
             join_handle: Some(Arc::new(join_handle)),
         }))
     }
@@ -2514,7 +2510,7 @@ impl<S: Sleep> SqlitePool<S> {
 }
 
 #[async_trait]
-impl<S: Sleep> DbExecutor for SqlitePool<S> {
+impl DbExecutor for SqlitePool {
     #[instrument(level = Level::TRACE, skip(self))]
     async fn lock_pending(
         &self,
@@ -2691,14 +2687,13 @@ impl<S: Sleep> DbExecutor for SqlitePool<S> {
         Ok(version)
     }
 
-    #[instrument(level = Level::TRACE, skip(self))]
+    #[instrument(level = Level::TRACE, skip(self, timeout_fut))]
     async fn wait_for_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
-        max_wait: Duration,
+        timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
-        let sleep_fut = self.0.sleep.sleep(max_wait);
         let (sender, mut receiver) = mpsc::channel(1);
         {
             let mut ffqn_to_pending_subscription =
@@ -2720,7 +2715,7 @@ impl<S: Sleep> DbExecutor for SqlitePool<S> {
             Ok(ok) => ok,
             Err(err) => {
                 trace!("Ignoring error and waiting in for timeout - {err:?}");
-                sleep_fut.await;
+                timeout_fut.await;
                 return;
             }
         };
@@ -2732,14 +2727,14 @@ impl<S: Sleep> DbExecutor for SqlitePool<S> {
             _ = receiver.recv() => {
                 trace!("Received a notification");
             }
-            () = sleep_fut => {
+            () = timeout_fut => {
             }
         }
     }
 }
 
 #[async_trait]
-impl<S: Sleep> DbConnection for SqlitePool<S> {
+impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         debug!("create");
@@ -3074,7 +3069,7 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,
-        timeout: Option<Duration>,
+        timeout_fut: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
     ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
         let execution_result = {
             let fut = async move {
@@ -3108,10 +3103,10 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
                 }
             };
 
-            if let Some(timeout) = timeout {
+            if let Some(timeout_fut) = timeout_fut {
                 tokio::select! { // future's liveness: Dropping the loser immediately.
                     res = fut => res,
-                    () = tokio::time::sleep(timeout) => Err(DbErrorReadWithTimeout::Timeout)
+                    () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout)
                 }
             } else {
                 fut.await
@@ -3178,13 +3173,12 @@ impl<S: Sleep> DbConnection for SqlitePool<S> {
 #[cfg(any(test, feature = "tempfile"))]
 pub mod tempfile {
     use super::{SqliteConfig, SqlitePool};
-    use concepts::time::TokioSleep;
     use tempfile::NamedTempFile;
 
-    pub async fn sqlite_pool() -> (SqlitePool<TokioSleep>, Option<NamedTempFile>) {
+    pub async fn sqlite_pool() -> (SqlitePool, Option<NamedTempFile>) {
         if let Ok(path) = std::env::var("SQLITE_FILE") {
             (
-                SqlitePool::new(path, SqliteConfig::default(), TokioSleep)
+                SqlitePool::new(path, SqliteConfig::default())
                     .await
                     .unwrap(),
                 None,
@@ -3193,7 +3187,7 @@ pub mod tempfile {
             let file = NamedTempFile::new().unwrap();
             let path = file.path();
             (
-                SqlitePool::new(path, SqliteConfig::default(), TokioSleep)
+                SqlitePool::new(path, SqliteConfig::default())
                     .await
                     .unwrap(),
                 Some(file),

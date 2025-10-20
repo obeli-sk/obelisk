@@ -3,7 +3,6 @@ use concepts::FunctionFqn;
 use concepts::storage::DbExecutor;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
-use concepts::time::TokioSleep;
 use db_mem::inmemory_dao::InMemoryPool;
 use db_sqlite::sqlite_dao::SqlitePool;
 use std::sync::Arc;
@@ -55,7 +54,7 @@ impl Database {
 
 pub enum DbPoolCloseableWrapper {
     Memory(InMemoryPool),
-    Sqlite(SqlitePool<TokioSleep>),
+    Sqlite(SqlitePool),
 }
 
 #[async_trait]

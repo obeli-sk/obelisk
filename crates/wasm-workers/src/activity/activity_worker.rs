@@ -511,7 +511,7 @@ pub(crate) mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
     }
 
     pub(crate) fn spawn_activity_fibo(
@@ -717,7 +717,7 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
             };
-            let exec_task = ExecTask::spawn_new(worker, exec_config, Now, db_exec);
+            let exec_task = ExecTask::spawn_new(worker, exec_config, Now, db_exec, TokioSleep);
 
             // Create an execution.
             let stopwatch = std::time::Instant::now();
@@ -750,7 +750,7 @@ pub(crate) mod tests {
                 expected,
                 assert_matches!(
                     db_connection
-                        .wait_for_finished_result(&execution_id, Some(Duration::from_secs(1)))
+                        .wait_for_finished_result(&execution_id, Some(Box::pin(tokio::time::sleep(Duration::from_secs(1)))))
                         .await
                         .unwrap(),
                     actual => actual

@@ -803,7 +803,7 @@ pub(crate) mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
     }
 
     pub(crate) fn spawn_workflow_fibo(

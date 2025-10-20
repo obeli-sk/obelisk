@@ -98,7 +98,7 @@ mod bench {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
     }
 
     fn new_activity_worker_with_config(
@@ -189,7 +189,7 @@ mod bench {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
     }
 
     pub(crate) fn spawn_workflow_fibo(

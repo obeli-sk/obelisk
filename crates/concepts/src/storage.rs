@@ -672,16 +672,16 @@ pub trait DbExecutor: Send + Sync {
         parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
-    /// Best effort for blocking while there are no pending executions.
+    /// Best effort for waiting while there are no pending executions.
     /// Return immediately if there are pending notifications at `pending_at_or_sooner`.
     /// Implementation must return not later than at expiry date, which is: `pending_at_or_sooner` + `max_wait`.
     /// Timers that expire until the expiry date can be disregarded.
-    /// Databases that do not support subscriptions should wait for `max_wait`.
+    /// Databases that do not support subscriptions await `timeout_fut`.
     async fn wait_for_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
-        max_wait: Duration,
+        timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     );
 }
 
@@ -816,7 +816,7 @@ pub trait DbConnection: DbExecutor {
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,
-        timeout: Option<Duration>,
+        timeout_fut: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
     ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout>;
 
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite>;

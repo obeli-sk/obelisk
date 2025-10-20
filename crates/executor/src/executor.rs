@@ -6,7 +6,7 @@ use concepts::storage::{
     AppendRequest, DbErrorGeneric, DbErrorWrite, DbExecutor, ExecutionLog, JoinSetResponseEvent,
     JoinSetResponseEventOuter, LockedExecution,
 };
-use concepts::time::ClockFn;
+use concepts::time::{ClockFn, Sleep};
 use concepts::{ComponentId, FunctionMetadata, StrVariant, SupportedFunctionReturnValue};
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use concepts::{
@@ -151,6 +151,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         config: ExecConfig,
         clock_fn: C,
         db_exec: Arc<dyn DbExecutor>,
+        sleep: impl Sleep + Clone + 'static,
     ) -> ExecutorTaskHandle {
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
@@ -170,7 +171,9 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 let _ = task.tick(clock_fn.now(), RunId::generate()).await;
 
                 task.db_exec
-                    .wait_for_pending(clock_fn.now(), ffqns.clone(), task.config.tick_sleep)
+                    .wait_for_pending(clock_fn.now(), ffqns.clone(), {
+                        let sleep = sleep.clone();
+                        Box::pin(async move { sleep.sleep(task.config.tick_sleep).await })})
                     .await;
             }
         })
@@ -744,7 +747,7 @@ mod tests {
     use concepts::storage::DbPoolCloseable;
     use concepts::storage::{CreateRequest, DbConnection, JoinSetRequest};
     use concepts::storage::{ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState};
-    use concepts::time::Now;
+    use concepts::time::{Now, TokioSleep};
     use concepts::{
         ClosingStrategy, FunctionMetadata, JoinSetKind, ParameterTypes, Params, RETURN_TYPE_DUMMY,
         SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant, SupportedFunctionReturnValue, TrapKind,
@@ -880,6 +883,7 @@ mod tests {
             exec_config.clone(),
             clock_fn,
             db_exec.clone(),
+            TokioSleep,
         );
 
         let execution_log = create_and_tick(

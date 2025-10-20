@@ -135,7 +135,7 @@ impl DbExecutor for InMemoryDbConnection {
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
-        max_wait: Duration,
+        timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
         let either = {
             let mut guard = self.0.lock().unwrap();
@@ -147,7 +147,7 @@ impl DbExecutor for InMemoryDbConnection {
             Either::Right(mut receiver) => {
                 tokio::select! { // future's liveness: Dropping the loser immediately.
                     _ = receiver.recv() => {} // Got results eventually
-                    () = tokio::time::sleep(max_wait) => {} // Timeout
+                    () = timeout_fut => {} // Timeout
                 }
             }
         }
@@ -261,7 +261,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,
-        timeout: Option<Duration>,
+        timeout_fut: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
     ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
         let execution_log = {
             let fut = async move {
@@ -277,10 +277,10 @@ impl DbConnection for InMemoryDbConnection {
                 }
             };
 
-            if let Some(timeout) = timeout {
+            if let Some(timeout_fut) = timeout_fut {
                 tokio::select! { // future's liveness: Dropping the loser immediately.
                     res = fut => res,
-                    () = tokio::time::sleep(timeout) => Err(DbErrorReadWithTimeout::Timeout)
+                    () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout)
                 }
             } else {
                 fut.await
