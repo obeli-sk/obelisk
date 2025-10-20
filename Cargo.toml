@@ -188,7 +188,7 @@ bytes = "1.10"
 cargo_metadata = "0.23"
 cfg-if = "1.0.4"
 chrono = { version = "0.4.42", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.49", features = ["derive"] }
+clap = { version = "4.5.50", features = ["derive"] }
 config = { version = "0.15.18", default-features = false, features = [
     "toml",
     "preserve_order",
@@ -313,16 +313,16 @@ yewprint-css = "0.4.0"
 wstd = "0.5.6"
 
 # wasmtime
-wasmtime = { version = "37.0.2", features = ["memory-protection-keys"] }
-wasmtime-wasi = "37.0.2"
-wasmtime-wasi-io = "37.0.2"
-wasmtime-wasi-http = "37.0.2"
-wasmtime-environ = "37.0.2"
+wasmtime = { version = "38.0.1", features = ["memory-protection-keys"] }
+wasmtime-wasi = "38.0.1"
+wasmtime-wasi-io = "38.0.1"
+wasmtime-wasi-http = "38.0.1"
+wasmtime-environ = "38.0.1"
 # wasm-tools
-wast = "239.0.0"
-wit-parser = "0.239.0"
-wasmparser = "0.239.0"
-wit-component = "0.239.0"
+wast = "240.0.0"
+wit-parser = "0.240.0"
+wasmparser = "0.240.0"
+wit-component = "0.240.0"
 
 # testing components
 wasip2 = "1.0.1"
