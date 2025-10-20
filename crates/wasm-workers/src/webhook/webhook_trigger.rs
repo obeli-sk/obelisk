@@ -1218,8 +1218,7 @@ pub(crate) mod tests {
                 .workflow_exec
                 .tick_test_await(now, RunId::generate())
                 .await
-                .len()
-                == 0
+                .is_empty()
             {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }

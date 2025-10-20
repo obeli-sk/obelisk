@@ -360,7 +360,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             );
             return Err(PrepareFuncErr::DbUpdatedByWorkerOrWatcher);
         };
-        let deadline_tracker = self.deadline_factory.new(deadline_duration);
+        let deadline_tracker = self.deadline_factory.create(deadline_duration);
         let version_at_start = ctx.version.clone();
         let seed = ctx.execution_id.random_seed();
         let workflow_ctx = WorkflowCtx::new(
@@ -1601,7 +1601,7 @@ pub(crate) mod tests {
         let val =
             assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val.value);
         let val = assert_matches!(val, WastVal::List(vec) => vec);
-        assert_eq!(concurrency as usize, val.len());
+        assert_eq!(concurrency, val.len());
         for val in val {
             let val = assert_matches!(val, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());

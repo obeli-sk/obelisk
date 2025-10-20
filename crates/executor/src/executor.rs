@@ -148,7 +148,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         config: ExecConfig,
         clock_fn: C,
         db_exec: Arc<dyn DbExecutor>,
-        sleep: impl Sleep + Clone + 'static,
+        sleep: impl Sleep + 'static,
     ) -> ExecutorTaskHandle {
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();

@@ -5,7 +5,7 @@ pub trait DeadlineTracker: Send + Sync {
 }
 
 pub trait DeadlineTrackerFactory: Send + Sync {
-    fn new(&self, deadline_duration: Duration) -> Arc<dyn DeadlineTracker>;
+    fn create(&self, deadline_duration: Duration) -> Arc<dyn DeadlineTracker>;
 }
 
 pub(crate) struct DeadlineTrackerTokio {
@@ -31,7 +31,7 @@ impl DeadlineTracker for DeadlineTrackerTokio {
 pub struct DeadlineTrackerFactoryTokio;
 
 impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
-    fn new(&self, deadline_duration: Duration) -> Arc<dyn DeadlineTracker> {
+    fn create(&self, deadline_duration: Duration) -> Arc<dyn DeadlineTracker> {
         Arc::new(DeadlineTrackerTokio::new(deadline_duration))
     }
 }

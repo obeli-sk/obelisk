@@ -3380,7 +3380,7 @@ mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> (EventHistory, Version) {
         let execution_deadline = now + deadline_duration;
-        let deadline_tracker = deadline_factory.new(deadline_duration);
+        let deadline_tracker = deadline_factory.create(deadline_duration);
 
         let exec_log = db_connection.get(&execution_id).await.unwrap();
         let event_history = EventHistory::new(
