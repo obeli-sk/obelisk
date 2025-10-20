@@ -524,45 +524,59 @@ impl<S: Sleep> SqlitePool<S> {
     fn init_thread(
         path: &Path,
         mut pragma_override: hashbrown::HashMap<String, String>,
-    ) -> Connection {
-        // No need to log errors - propagate error messages via panic.
-        // It is OK to panic here - spawned on blocking thread pool, panic will error the initialization.
-        fn execute<P: Params>(conn: &Connection, sql: &str, params: P) {
-            conn.execute(sql, params)
-                .unwrap_or_else(|err| panic!("cannot run `{sql}` - {err:?}"));
+    ) -> Result<Connection, InitializationError> {
+        fn execute<P: Params>(
+            conn: &Connection,
+            sql: &str,
+            params: P,
+        ) -> Result<(), InitializationError> {
+            conn.execute(sql, params).map(|_| ()).map_err(|err| {
+                error!("Cannot run `{sql}` - {err:?}");
+                InitializationError
+            })
         }
-        fn pragma_update(conn: &Connection, name: &str, value: &str) {
+        fn pragma_update(
+            conn: &Connection,
+            name: &str,
+            value: &str,
+        ) -> Result<(), InitializationError> {
             if value.is_empty() {
                 debug!("Querying PRAGMA {name}");
                 conn.pragma_query(None, name, |row| {
                     debug!("{row:?}");
                     Ok(())
                 })
-                .unwrap_or_else(|err| panic!("cannot update pragma `{name}`=`{value}` - {err:?}"));
+                .map_err(|err| {
+                    error!("cannot update pragma `{name}`=`{value}` - {err:?}");
+                    InitializationError
+                })
             } else {
                 debug!("Setting PRAGMA {name}={value}");
-                conn.pragma_update(None, name, value).unwrap_or_else(|err| {
-                    panic!("cannot update pragma `{name}`=`{value}` - {err:?}")
-                });
+                conn.pragma_update(None, name, value).map_err(|err| {
+                    error!("cannot update pragma `{name}`=`{value}` - {err:?}");
+                    InitializationError
+                })
             }
         }
 
-        let conn = Connection::open_with_flags(path, OpenFlags::default())
-            .unwrap_or_else(|err| panic!("cannot open the connection - {err:?}"));
+        let conn = Connection::open_with_flags(path, OpenFlags::default()).map_err(|err| {
+            error!("cannot open the connection - {err:?}");
+            InitializationError
+        })?;
 
         for [pragma_name, default_value] in PRAGMA {
             let pragma_value = pragma_override
                 .remove(pragma_name)
                 .unwrap_or_else(|| default_value.to_string());
-            pragma_update(&conn, pragma_name, &pragma_value);
+            pragma_update(&conn, pragma_name, &pragma_value)?;
         }
         // drain the rest overrides
         for (pragma_name, pragma_value) in pragma_override.drain() {
-            pragma_update(&conn, &pragma_name, &pragma_value);
+            pragma_update(&conn, &pragma_name, &pragma_value)?;
         }
 
         // t_metadata
-        execute(&conn, CREATE_TABLE_T_METADATA, []);
+        execute(&conn, CREATE_TABLE_T_METADATA, [])?;
         // Insert row if not exists.
         execute(
             &conn,
@@ -571,53 +585,59 @@ impl<S: Sleep> SqlitePool<S> {
                     ({T_METADATA_EXPECTED_SCHEMA_VERSION}, ?) ON CONFLICT DO NOTHING"
             ),
             [Utc::now()],
-        );
+        )?;
         // Fail on unexpected `schema_version`.
         let actual_version = conn
             .prepare("SELECT schema_version FROM t_metadata ORDER BY id DESC LIMIT 1")
-            .unwrap_or_else(|err| panic!("cannot select schema version - {err:?}"))
+            .map_err(|err| {
+                error!("cannot select schema version - {err:?}");
+                InitializationError
+            })?
             .query_row([], |row| row.get::<_, u32>("schema_version"));
 
-        let actual_version = actual_version.unwrap_or_else(|err| {
-            panic!("Cannot read the schema version - {err:?}");
-        });
-        assert!(
-            actual_version == T_METADATA_EXPECTED_SCHEMA_VERSION,
-            "wrong schema version, expected {T_METADATA_EXPECTED_SCHEMA_VERSION}, got {actual_version}"
-        );
+        let actual_version = actual_version.map_err(|err| {
+            error!("Cannot read the schema version - {err:?}");
+            InitializationError
+        })?;
+        if actual_version != T_METADATA_EXPECTED_SCHEMA_VERSION {
+            error!(
+                "wrong schema version, expected {T_METADATA_EXPECTED_SCHEMA_VERSION}, got {actual_version}"
+            );
+            return Err(InitializationError);
+        }
 
         // t_execution_log
-        execute(&conn, CREATE_TABLE_T_EXECUTION_LOG, []);
+        execute(&conn, CREATE_TABLE_T_EXECUTION_LOG, [])?;
         execute(
             &conn,
             CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION,
             [],
-        );
+        )?;
         execute(
             &conn,
             CREATE_INDEX_IDX_T_EXECUTION_ID_EXECUTION_ID_VARIANT,
             [],
-        );
+        )?;
         // t_join_set_response
-        execute(&conn, CREATE_TABLE_T_JOIN_SET_RESPONSE, []);
+        execute(&conn, CREATE_TABLE_T_JOIN_SET_RESPONSE, [])?;
         execute(
             &conn,
             CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID,
             [],
-        );
+        )?;
         // t_state
-        execute(&conn, CREATE_TABLE_T_STATE, []);
-        execute(&conn, IDX_T_STATE_LOCK_PENDING, []);
-        execute(&conn, IDX_T_STATE_EXPIRED_TIMERS, []);
-        execute(&conn, IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL, []);
-        execute(&conn, IDX_T_STATE_FFQN, []);
-        execute(&conn, IDX_T_STATE_CREATED_AT, []);
+        execute(&conn, CREATE_TABLE_T_STATE, [])?;
+        execute(&conn, IDX_T_STATE_LOCK_PENDING, [])?;
+        execute(&conn, IDX_T_STATE_EXPIRED_TIMERS, [])?;
+        execute(&conn, IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL, [])?;
+        execute(&conn, IDX_T_STATE_FFQN, [])?;
+        execute(&conn, IDX_T_STATE_CREATED_AT, [])?;
         // t_delay
-        execute(&conn, CREATE_TABLE_T_DELAY, []);
+        execute(&conn, CREATE_TABLE_T_DELAY, [])?;
         // t_backtrace
-        execute(&conn, CREATE_TABLE_T_BACKTRACE, []);
-        execute(&conn, IDX_T_BACKTRACE_EXECUTION_ID_VERSION, []);
-        conn
+        execute(&conn, CREATE_TABLE_T_BACKTRACE, [])?;
+        execute(&conn, IDX_T_BACKTRACE_EXECUTION_ID_VERSION, [])?;
+        Ok(conn)
     }
 
     fn connection_rpc(
@@ -744,9 +764,9 @@ impl<S: Sleep> SqlitePool<S> {
                 .await
             };
             let conn = match init_task {
-                Ok(conn) => conn,
-                Err(err) => {
-                    error!("Initialization error - {err:?}");
+                Ok(res) => res?,
+                Err(join_err) => {
+                    error!("Initialization panic - {join_err:?}");
                     return Err(InitializationError);
                 }
             };
