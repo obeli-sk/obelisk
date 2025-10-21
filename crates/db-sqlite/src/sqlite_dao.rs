@@ -454,9 +454,9 @@ struct SqlitePoolInner {
     shutdown_requested: Arc<AtomicBool>,
     shutdown_finished: Arc<AtomicBool>,
     command_tx: tokio::sync::mpsc::Sender<ThreadCommand>,
-    ffqn_to_pending_subscription: Arc<Mutex<hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>>>,
     response_subscribers:
         Arc<Mutex<HashMap<ExecutionId, oneshot::Sender<JoinSetResponseEventOuter>>>>,
+    ffqn_to_pending_subscription: Arc<Mutex<HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>>>,
     join_handle: Option<Arc<std::thread::JoinHandle<()>>>, // always Some, Optional for swapping in drop.
 }
 
@@ -2470,12 +2470,12 @@ impl SqlitePool {
         pending_at: PendingAt,
         current_time: DateTime<Utc>,
         ffqn_to_pending_subscription: &std::sync::MutexGuard<
-            hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>,
+            HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>,
         >,
     ) {
         match pending_at {
             PendingAt { scheduled_at, ffqn } if scheduled_at <= current_time => {
-                if let Some(subscription) = ffqn_to_pending_subscription.get(&ffqn) {
+                if let Some((subscription, _)) = ffqn_to_pending_subscription.get(&ffqn) {
                     debug!("Notifying pending subscriber");
                     let _ = subscription.try_send(());
                 }
@@ -2693,40 +2693,61 @@ impl DbExecutor for SqlitePool {
         ffqns: Arc<[FunctionFqn]>,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
+        let unique_tag: u64 = rand::random();
         let (sender, mut receiver) = mpsc::channel(1);
         {
             let mut ffqn_to_pending_subscription =
                 self.0.ffqn_to_pending_subscription.lock().unwrap();
             for ffqn in ffqns.as_ref() {
-                ffqn_to_pending_subscription.insert(ffqn.clone(), sender.clone());
+                ffqn_to_pending_subscription.insert(ffqn.clone(), (sender.clone(), unique_tag));
             }
         }
-        let execution_ids_versions = match self
-            .conn_low_prio(
-                {
-                    let ffqns = ffqns.clone();
-                    move |conn| Self::get_pending(conn, 1, pending_at_or_sooner, ffqns.as_ref())
-                },
-                "subscribe_to_pending",
-            )
-            .await
-        {
-            Ok(ok) => ok,
-            Err(err) => {
-                trace!("Ignoring error and waiting in for timeout - {err:?}");
+        async {
+            let Ok(execution_ids_versions) = self
+                .conn_low_prio(
+                    {
+                        let ffqns = ffqns.clone();
+                        move |conn| Self::get_pending(conn, 1, pending_at_or_sooner, ffqns.as_ref())
+                    },
+                    "subscribe_to_pending",
+                )
+                .await
+            else {
+                trace!(
+                    "Ignoring get_pending error and waiting in for timeout to avoid executor repolling too soon"
+                );
                 timeout_fut.await;
                 return;
+            };
+            if !execution_ids_versions.is_empty() {
+                trace!("Not waiting, database already contains new pending executions");
+                return;
             }
-        };
-        if !execution_ids_versions.is_empty() {
-            trace!("Not waiting, database already contains new pending executions");
-            return;
-        }
-        tokio::select! { // future's liveness: Dropping the loser immediately.
-            _ = receiver.recv() => {
-                trace!("Received a notification");
+            tokio::select! { // future's liveness: Dropping the loser immediately.
+                _ = receiver.recv() => {
+                    trace!("Received a notification");
+                }
+                () = timeout_fut => {
+                }
             }
-            () = timeout_fut => {
+        }.await;
+        // Clean up ffqn_to_pending_subscription in any case
+        {
+            let mut ffqn_to_pending_subscription =
+                self.0.ffqn_to_pending_subscription.lock().unwrap();
+            for ffqn in ffqns.as_ref() {
+                match ffqn_to_pending_subscription.remove(ffqn) {
+                    Some((_, tag)) if tag == unique_tag => {
+                        // Cleanup OK.
+                    }
+                    Some(other) => {
+                        // Reinsert foreign sender.
+                        ffqn_to_pending_subscription.insert(ffqn.clone(), other);
+                    }
+                    None => {
+                        // Value was replaced and cleaned up already.
+                    }
+                }
             }
         }
     }
