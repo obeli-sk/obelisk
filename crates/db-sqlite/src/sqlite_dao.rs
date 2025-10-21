@@ -1769,7 +1769,7 @@ impl SqlitePool {
     fn append(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        req: &AppendRequest,
+        req: AppendRequest,
         appending_version: Version,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
         if matches!(req.event, ExecutionEventInner::Created { .. }) {
@@ -1779,12 +1779,28 @@ impl SqlitePool {
                 ),
             ));
         }
-        if matches!(req.event, ExecutionEventInner::Locked { .. }) {
-            return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::ValidationFailed(
-                    "cannot append `Locked` event - use `lock_*` instead".into(),
-                ),
-            ));
+        if let AppendRequest {
+            event:
+                ExecutionEventInner::Locked {
+                    component_id,
+                    executor_id,
+                    run_id,
+                    lock_expires_at,
+                },
+            created_at,
+        } = req
+        {
+            return Self::lock_single_execution(
+                tx,
+                created_at,
+                component_id,
+                execution_id,
+                run_id,
+                &appending_version,
+                executor_id,
+                lock_expires_at,
+            )
+            .map(|locked_execution| (locked_execution.next_version, AppendNotifier::default()));
         }
 
         let combined_state = Self::get_combined_state(tx, execution_id)?;
@@ -2635,7 +2651,7 @@ impl DbExecutor for SqlitePool {
         let created_at = req.created_at;
         let (version, notifier) = self
             .transaction_write(
-                move |tx| Self::append(tx, &execution_id, &req, version),
+                move |tx| Self::append(tx, &execution_id, req, version),
                 "append",
             )
             .await??;
@@ -2676,7 +2692,7 @@ impl DbExecutor for SqlitePool {
                     let mut version = version;
                     let mut notifier_of_child = None;
                     for append_request in batch {
-                        let (v, n) = Self::append(tx, &execution_id, &append_request, version)?;
+                        let (v, n) = Self::append(tx, &execution_id, append_request, version)?;
                         version = v;
                         notifier_of_child = Some(n);
                     }
@@ -2798,7 +2814,7 @@ impl DbConnection for SqlitePool {
                     let mut version = version;
                     let mut notifier = None;
                     for append_request in batch {
-                        let (v, n) = Self::append(tx, &execution_id, &append_request, version)?;
+                        let (v, n) = Self::append(tx, &execution_id, append_request, version)?;
                         version = v;
                         notifier = Some(n);
                     }
@@ -2834,7 +2850,7 @@ impl DbConnection for SqlitePool {
                     let mut notifier = None;
                     let mut version = version;
                     for append_request in batch {
-                        let (v, n) = Self::append(tx, &execution_id, &append_request, version)?;
+                        let (v, n) = Self::append(tx, &execution_id, append_request, version)?;
                         version = v;
                         notifier = Some(n);
                     }

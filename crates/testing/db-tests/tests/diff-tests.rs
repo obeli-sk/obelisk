@@ -120,34 +120,9 @@ async fn create_and_append(
 
     for event in append_requests {
         let event = event.clone();
-        let res = if let AppendRequest {
-            created_at,
-            event:
-                ExecutionEventInner::Locked {
-                    component_id,
-                    executor_id,
-                    run_id,
-                    lock_expires_at,
-                },
-        } = event
-        {
-            db_connection
-                .lock_one(
-                    created_at,
-                    component_id,
-                    &execution_id,
-                    run_id,
-                    version.clone(),
-                    executor_id,
-                    lock_expires_at,
-                )
-                .await
-                .map(|locked| locked.next_version)
-        } else {
-            db_connection
-                .append(execution_id.clone(), version.clone(), event)
-                .await
-        };
+        let res = db_connection
+            .append(execution_id.clone(), version.clone(), event)
+            .await;
         match res {
             Ok(new_version) => version = new_version,
             Err(err) => println!("Ignoring {err:?}"),

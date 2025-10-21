@@ -652,7 +652,7 @@ pub trait DbExecutor: Send + Sync {
     ) -> Result<LockedExecution, DbErrorWrite>;
 
     /// Append a single event to an existing execution log.
-    /// The request cannot contain `ExecutionEventInner::Created` and `ExecutionEventInner::Locked`.
+    /// The request cannot contain `ExecutionEventInner::Created`.
     async fn append(
         &self,
         execution_id: ExecutionId,
@@ -661,7 +661,7 @@ pub trait DbExecutor: Send + Sync {
     ) -> Result<AppendResponse, DbErrorWrite>;
 
     /// Append a batch of events to an existing execution log, and append a response to a parent execution.
-    /// The batch cannot contain `ExecutionEventInner::Created` and `ExecutionEventInner::Locked`.
+    /// The batch cannot contain `ExecutionEventInner::Created`.
     async fn append_batch_respond_to_parent(
         &self,
         execution_id: ExecutionIdDerived,
@@ -694,7 +694,7 @@ pub trait DbConnection: DbExecutor {
     ) -> Result<(), DbErrorWrite>;
 
     /// Append a batch of events to an existing execution log, and append a response to a parent execution.
-    /// The batch cannot contain `ExecutionEventInner::Created` and `ExecutionEventInner::Locked`.
+    /// The batch cannot contain `ExecutionEventInner::Created`.
     async fn append_batch(
         &self,
         current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
@@ -704,7 +704,7 @@ pub trait DbConnection: DbExecutor {
     ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
     /// Append one or more events to the parent execution log, and create zero or more child execution logs.
-    /// The batch cannot contain `ExecutionEventInner::Created` and `ExecutionEventInner::Locked`.
+    /// The batch cannot contain `ExecutionEventInner::Created`.
     async fn append_batch_create_new_execution(
         &self,
         current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
