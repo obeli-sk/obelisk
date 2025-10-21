@@ -455,7 +455,7 @@ struct SqlitePoolInner {
     shutdown_finished: Arc<AtomicBool>,
     command_tx: tokio::sync::mpsc::Sender<ThreadCommand>,
     response_subscribers:
-        Arc<Mutex<HashMap<ExecutionId, oneshot::Sender<JoinSetResponseEventOuter>>>>,
+        Arc<Mutex<HashMap<ExecutionId, (oneshot::Sender<JoinSetResponseEventOuter>, u64)>>>,
     ffqn_to_pending_subscription: Arc<Mutex<HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>>>,
     join_handle: Option<Arc<std::thread::JoinHandle<()>>>, // always Some, Optional for swapping in drop.
 }
@@ -1942,17 +1942,11 @@ impl SqlitePool {
     fn append_response(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        req: &JoinSetResponseEventOuter,
+        req: JoinSetResponseEventOuter,
         response_subscribers: &Arc<
-            Mutex<HashMap<ExecutionId, oneshot::Sender<JoinSetResponseEventOuter>>>,
+            Mutex<HashMap<ExecutionId, (oneshot::Sender<JoinSetResponseEventOuter>, u64)>>,
         >,
-    ) -> Result<
-        (
-            Option<oneshot::Sender<JoinSetResponseEventOuter>>,
-            Option<PendingAt>,
-        ),
-        DbErrorWrite,
-    > {
+    ) -> Result<Option<PendingAt>, DbErrorWrite> {
         let mut stmt = tx.prepare(
             "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, child_execution_id, finished_version) \
                     VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :child_execution_id, :finished_version)",
@@ -2025,10 +2019,12 @@ impl SqlitePool {
             })
             .map_err(result_err_generic)?;
         }
-        Ok((
-            response_subscribers.lock().unwrap().remove(execution_id),
-            pendnig_at,
-        ))
+        if let Some((sender, _tag)) = response_subscribers.lock().unwrap().remove(execution_id) {
+            debug!("Notifying response subscriber");
+            let _ = sender.send(req);
+        }
+
+        Ok(pendnig_at)
     }
 
     fn append_backtrace(
@@ -2651,8 +2647,7 @@ impl DbExecutor for SqlitePool {
             panic!("cannot append `Created` event - use `create` instead");
         }
         let response_subscribers = self.0.response_subscribers.clone();
-        let (version, response_subscriber, pending_ats) = {
-            let event = parent_response_event.clone();
+        let (version, pending_ats) = {
             self.transaction_write(
                 move |tx| {
                     let mut version = version;
@@ -2662,26 +2657,18 @@ impl DbExecutor for SqlitePool {
                             Self::append(tx, &execution_id, &append_request, version)?;
                     }
 
-                    let (response_subscriber, pending_at_parent) = Self::append_response(
+                    let pending_at_parent = Self::append_response(
                         tx,
                         &parent_execution_id,
-                        &event,
+                        parent_response_event,
                         &response_subscribers,
                     )?;
-                    Ok::<_, DbErrorWrite>((
-                        version,
-                        response_subscriber,
-                        vec![pending_at_child, pending_at_parent],
-                    ))
+                    Ok::<_, DbErrorWrite>((version, vec![pending_at_child, pending_at_parent]))
                 },
                 "append_batch_respond_to_parent",
             )
             .await??
         };
-        if let Some(response_subscriber) = response_subscriber {
-            let notified = response_subscriber.send(parent_response_event);
-            debug!("Notifying response subscriber: {notified:?}");
-        }
         self.notify_pending_all(pending_ats.into_iter().flatten(), current_time);
         Ok(version)
     }
@@ -2884,10 +2871,25 @@ impl DbConnection for SqlitePool {
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
         debug!("next_responses");
+        let unique_tag: u64 = rand::random();
         let execution_id = execution_id.clone();
+
+        let cleanup = || {
+            let mut guard = self.0.response_subscribers.lock().unwrap();
+            match guard.remove(&execution_id) {
+                Some((_, tag)) if tag == unique_tag => {} // Cleanup OK.
+                Some(other) => {
+                    // Reinsert foreign sender.
+                    guard.insert(execution_id.clone(), other);
+                }
+                None => {} // Value was replaced and cleaned up already, or notification was sent.
+            }
+        };
+
         let response_subscribers = self.0.response_subscribers.clone();
-        let resp_or_receiver = self
-            .transaction_write(
+        let resp_or_receiver = {
+            let execution_id = execution_id.clone();
+            self.transaction_write(
                 move |tx| {
                     let responses = Self::get_responses_with_offset(tx, &execution_id, start_idx)?;
                     if responses.is_empty() {
@@ -2896,7 +2898,7 @@ impl DbConnection for SqlitePool {
                         response_subscribers
                             .lock()
                             .unwrap()
-                            .insert(execution_id, sender);
+                            .insert(execution_id, (sender, unique_tag));
                         Ok::<_, DbErrorReadWithTimeout>(itertools::Either::Right(receiver))
                     } else {
                         Ok(itertools::Either::Left(responses))
@@ -2904,17 +2906,28 @@ impl DbConnection for SqlitePool {
                 },
                 "subscribe_to_next_responses",
             )
-            .await??;
+            .await
+        }
+        .map_err(DbErrorReadWithTimeout::from)
+        .flatten()
+        .inspect_err(|_| {
+            cleanup();
+        })?;
         match resp_or_receiver {
-            itertools::Either::Left(resp) => Ok(resp),
+            itertools::Either::Left(resp) => Ok(resp), // no added subscription
             itertools::Either::Right(receiver) => {
-                tokio::select! {
-                    resp = receiver => {
-                        let resp = resp.map_err(|_| DbErrorGeneric::Close)?;
-                        Ok(vec![resp])
+                let res = async move {
+                    tokio::select! {
+                        resp = receiver => {
+                            let resp = resp.map_err(|_| DbErrorGeneric::Close)?;
+                            Ok(vec![resp])
+                        }
+                        () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
                     }
-                    () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
                 }
+                .await;
+                cleanup();
+                res
             }
         }
     }
@@ -2932,18 +2945,12 @@ impl DbConnection for SqlitePool {
             created_at,
             event: response_event,
         };
-        let (response_subscriber, pending_at) = {
-            let event = event.clone();
-            self.transaction_write(
-                move |tx| Self::append_response(tx, &execution_id, &event, &response_subscribers),
+        let pending_at = self
+            .transaction_write(
+                move |tx| Self::append_response(tx, &execution_id, event, &response_subscribers),
                 "append_response",
             )
-            .await??
-        };
-        if let Some(response_subscriber) = response_subscriber {
-            debug!("Notifying response subscriber");
-            let _ = response_subscriber.send(event);
-        }
+            .await??;
         if let Some(pending_at) = pending_at {
             self.notify_pending(pending_at, created_at);
         }
