@@ -505,7 +505,7 @@ impl Drop for SqlitePool {
 pub struct SqliteConfig {
     pub queue_capacity: usize,
     pub low_prio_threshold: usize,
-    pub pragma_override: Option<hashbrown::HashMap<String, String>>,
+    pub pragma_override: Option<HashMap<String, String>>,
     pub metrics_threshold: Option<Duration>,
 }
 impl Default for SqliteConfig {
@@ -522,7 +522,7 @@ impl Default for SqliteConfig {
 impl SqlitePool {
     fn init_thread(
         path: &Path,
-        mut pragma_override: hashbrown::HashMap<String, String>,
+        mut pragma_override: HashMap<String, String>,
     ) -> Result<Connection, InitializationError> {
         fn execute<P: Params>(
             conn: &Connection,
@@ -651,7 +651,7 @@ impl SqlitePool {
         let mut vec: Vec<ThreadCommand> = Vec::with_capacity(queue_capacity);
         // measure how long it takes to receive the `ThreadCommand`. 1us-1s
         let mut send_hist = Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap();
-        let mut func_histograms = hashbrown::HashMap::new();
+        let mut func_histograms = HashMap::new();
         let print_histogram = |name, histogram: &Histogram<u32>, trailing_coma| {
             print!(
                 "\"{name}\": {mean}, \"{name}_len\": {len}, \"{name}_meanlen\": {meanlen} {coma}",
