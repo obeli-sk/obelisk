@@ -462,19 +462,19 @@ enum ThreadCommand {
 #[derive(Clone)]
 pub struct SqlitePool(SqlitePoolInner);
 
+type ResponseSubscribers =
+    Arc<Mutex<HashMap<ExecutionId, (oneshot::Sender<JoinSetResponseEventOuter>, u64)>>>;
+type PendingFfqnSubscribers = Arc<Mutex<HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>>>;
+type ExecutionFinishedSubscribers =
+    Mutex<HashMap<ExecutionId, HashMap<u64, oneshot::Sender<SupportedFunctionReturnValue>>>>;
 #[derive(Clone)]
 struct SqlitePoolInner {
     shutdown_requested: Arc<AtomicBool>,
     shutdown_finished: Arc<AtomicBool>,
     command_tx: tokio::sync::mpsc::Sender<ThreadCommand>,
-    response_subscribers:
-        Arc<Mutex<HashMap<ExecutionId, (oneshot::Sender<JoinSetResponseEventOuter>, u64)>>>,
-    ffqn_to_pending_subscription: Arc<Mutex<HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>>>,
-    // Subscribers are created in write tx in `wait_for_finished_result`,
-    // notified after a successful append tx.
-    execution_finished_subscription: Arc<
-        Mutex<HashMap<ExecutionId, HashMap<u64, oneshot::Sender<SupportedFunctionReturnValue>>>>,
-    >,
+    response_subscribers: ResponseSubscribers,
+    pending_ffqn_subscribers: PendingFfqnSubscribers,
+    execution_finished_subscribers: Arc<ExecutionFinishedSubscribers>,
     join_handle: Option<Arc<std::thread::JoinHandle<()>>>, // always Some, Optional for swapping in drop.
 }
 
@@ -806,9 +806,9 @@ impl SqlitePool {
             shutdown_finished,
             command_tx,
             response_subscribers: Arc::default(),
-            ffqn_to_pending_subscription: Arc::default(),
+            pending_ffqn_subscribers: Arc::default(),
             join_handle: Some(Arc::new(join_handle)),
-            execution_finished_subscription: Arc::default(),
+            execution_finished_subscribers: Arc::default(),
         }))
     }
 
@@ -2491,15 +2491,15 @@ impl SqlitePool {
 
         // Notify pending_at subscribers.
         if !pending_ats.is_empty() {
-            let guard = self.0.ffqn_to_pending_subscription.lock().unwrap();
+            let guard = self.0.pending_ffqn_subscribers.lock().unwrap();
             for pending_at in pending_ats {
-                Self::notify_pending_locked(pending_at, current_time, &guard);
+                Self::notify_pending_locked(&pending_at, current_time, &guard);
             }
         }
         // Notify execution finished subscribers.
         // Every NotifierExecutionFinished value belongs to a different execution, since only `append(Finished)` can produce `NotifierExecutionFinished`.
         if !finished_execs.is_empty() {
-            let mut guard = self.0.execution_finished_subscription.lock().unwrap();
+            let mut guard = self.0.execution_finished_subscribers.lock().unwrap();
             for finished in finished_execs {
                 if let Some(listeners_of_exe_id) = guard.remove(&finished.execution_id) {
                     for (_tag, sender) in listeners_of_exe_id {
@@ -2522,19 +2522,19 @@ impl SqlitePool {
     }
 
     fn notify_pending_locked(
-        notifier: NotifierPendingAt,
+        notifier: &NotifierPendingAt,
         current_time: DateTime<Utc>,
         ffqn_to_pending_subscription: &std::sync::MutexGuard<
             HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>,
         >,
     ) {
         // No need to remove here, cleanup is handled by the caller.
-        if notifier.scheduled_at <= current_time {
-            if let Some((subscription, _)) = ffqn_to_pending_subscription.get(&notifier.ffqn) {
-                debug!("Notifying pending subscriber");
-                // Does not block
-                let _ = subscription.try_send(());
-            }
+        if notifier.scheduled_at <= current_time
+            && let Some((subscription, _)) = ffqn_to_pending_subscription.get(&notifier.ffqn)
+        {
+            debug!("Notifying pending subscriber");
+            // Does not block
+            let _ = subscription.try_send(());
         }
     }
 }
@@ -2711,8 +2711,7 @@ impl DbExecutor for SqlitePool {
         let unique_tag: u64 = rand::random();
         let (sender, mut receiver) = mpsc::channel(1); // senders must use `try_send`
         {
-            let mut ffqn_to_pending_subscription =
-                self.0.ffqn_to_pending_subscription.lock().unwrap();
+            let mut ffqn_to_pending_subscription = self.0.pending_ffqn_subscribers.lock().unwrap();
             for ffqn in ffqns.as_ref() {
                 ffqn_to_pending_subscription.insert(ffqn.clone(), (sender.clone(), unique_tag));
             }
@@ -2748,8 +2747,7 @@ impl DbExecutor for SqlitePool {
         }.await;
         // Clean up ffqn_to_pending_subscription in any case
         {
-            let mut ffqn_to_pending_subscription =
-                self.0.ffqn_to_pending_subscription.lock().unwrap();
+            let mut ffqn_to_pending_subscription = self.0.pending_ffqn_subscribers.lock().unwrap();
             for ffqn in ffqns.as_ref() {
                 match ffqn_to_pending_subscription.remove(ffqn) {
                     Some((_, tag)) if tag == unique_tag => {
@@ -2973,10 +2971,10 @@ impl DbConnection for SqlitePool {
     ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
         let unique_tag: u64 = rand::random();
         let execution_id = execution_id.clone();
-        let execution_finished_subscription = self.0.execution_finished_subscription.clone();
+        let execution_finished_subscription = self.0.execution_finished_subscribers.clone();
 
         let cleanup = || {
-            let mut guard = self.0.execution_finished_subscription.lock().unwrap();
+            let mut guard = self.0.execution_finished_subscribers.lock().unwrap();
             if let Some(subscribers) = guard.get_mut(&execution_id) {
                 subscribers.remove(&unique_tag);
             }
