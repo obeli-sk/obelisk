@@ -1,3 +1,4 @@
+use crate::histograms::Histograms;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -20,7 +21,6 @@ use conversions::{
     intermittent_err_generic, prepare_err_generic, result_err_generic, result_err_read,
 };
 use hashbrown::HashMap;
-use hdrhistogram::{Counter, Histogram};
 use rusqlite::{
     CachedStatement, Connection, OpenFlags, OptionalExtension, Params, ToSql, Transaction,
     named_params,
@@ -666,6 +666,35 @@ impl SqlitePool {
         Ok(conn)
     }
 
+    fn execute(
+        priority_filter: CommandPriority,
+        vec: &mut Vec<ThreadCommand>,
+        conn: &mut Connection,
+        shutdown_requested: &AtomicBool,
+        histograms: &mut Histograms,
+    ) -> usize {
+        let mut processed = 0;
+        for item in vec {
+            if matches!(item, ThreadCommand::Func { priority, .. } if *priority == priority_filter )
+            {
+                let item = std::mem::replace(item, ThreadCommand::Dummy); // get owned item
+                let (func, sent_at, func_name) = assert_matches!(item, ThreadCommand::Func{func, sent_at, name, ..} => (func, sent_at, name));
+                let sent_latency = sent_at.elapsed();
+                let started_at = Instant::now();
+                func(conn);
+                let func_duration = started_at.elapsed();
+                processed += 1;
+                histograms.record(sent_latency, func_name, func_duration);
+            }
+            if shutdown_requested.load(Ordering::Acquire) {
+                // recheck after every function
+                debug!("Recveived shutdown during processing of the batch");
+                break;
+            }
+        }
+        processed
+    }
+
     fn connection_rpc(
         mut conn: Connection,
         shutdown_requested: &AtomicBool,
@@ -676,18 +705,9 @@ impl SqlitePool {
         metrics_threshold: Option<Duration>,
     ) {
         let mut vec: Vec<ThreadCommand> = Vec::with_capacity(queue_capacity);
-        // measure how long it takes to receive the `ThreadCommand`. 1us-1s
-        let mut send_hist = Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap();
-        let mut func_histograms = HashMap::new();
-        let print_histogram = |name, histogram: &Histogram<u32>, trailing_coma| {
-            print!(
-                "\"{name}\": {mean}, \"{name}_len\": {len}, \"{name}_meanlen\": {meanlen} {coma}",
-                mean = histogram.mean(),
-                len = histogram.len(),
-                meanlen = histogram.mean() * histogram.len().as_f64(),
-                coma = if trailing_coma { "," } else { "" }
-            );
-        };
+
+        let mut histograms = Histograms::new(metrics_threshold);
+
         let mut metrics_instant = std::time::Instant::now();
         loop {
             vec.clear();
@@ -709,60 +729,30 @@ impl SqlitePool {
                 break;
             }
 
-            let mut execute = |expected: CommandPriority| {
-                let mut processed = 0;
-                for item in &mut vec {
-                    if matches!(item, ThreadCommand::Func { priority, .. } if *priority == expected )
-                    {
-                        let item = std::mem::replace(item, ThreadCommand::Dummy); // get owned item
-                        let (func, sent_at, name) = assert_matches!(item, ThreadCommand::Func{func, sent_at, name, ..} => (func, sent_at, name));
-                        let sent_latency = sent_at.elapsed();
-                        let started_at = Instant::now();
-                        func(&mut conn);
-                        let func_duration = started_at.elapsed();
-                        processed += 1;
-                        // update hdr metrics
-                        if let Ok(value) = u32::try_from(sent_latency.as_micros()) {
-                            send_hist
-                                .record(u64::from(value))
-                                .expect("already cast to u32");
-                        }
-                        if let Ok(value) = u32::try_from(func_duration.as_micros()) {
-                            func_histograms
-                                .entry(name)
-                                .or_insert_with(|| {
-                                    Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap()
-                                })
-                                .record(u64::from(value))
-                                .expect("already cast to u32");
-                        }
-                    }
-                    if shutdown_requested.load(Ordering::Acquire) {
-                        // recheck after every function
-                        debug!("Recveived shutdown during processing of the batch");
-                        break;
-                    }
-                }
-                processed
-            };
-            let processed = execute(CommandPriority::High) + execute(CommandPriority::Medium);
+            let processed = Self::execute(
+                CommandPriority::High,
+                &mut vec,
+                &mut conn,
+                shutdown_requested,
+                &mut histograms,
+            ) + Self::execute(
+                CommandPriority::Medium,
+                &mut vec,
+                &mut conn,
+                shutdown_requested,
+                &mut histograms,
+            );
             if processed < low_prio_threshold {
-                execute(CommandPriority::Low);
+                Self::execute(
+                    CommandPriority::Low,
+                    &mut vec,
+                    &mut conn,
+                    shutdown_requested,
+                    &mut histograms,
+                );
             }
 
-            if let Some(metrics_threshold) = metrics_threshold
-                && metrics_instant.elapsed() > metrics_threshold
-            {
-                print!("{{");
-                func_histograms.iter_mut().for_each(|(name, h)| {
-                    print_histogram(*name, h, true);
-                    h.clear();
-                });
-                print_histogram("send_latency", &send_hist, false);
-                send_hist.clear();
-                println!("}}");
-                metrics_instant = std::time::Instant::now();
-            }
+            histograms.print_if_elapsed(&mut metrics_instant);
         } // Loop until shutdown is set to true.
         debug!("Closing command thread");
         shutdown_finished.store(true, Ordering::Release);
