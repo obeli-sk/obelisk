@@ -672,7 +672,7 @@ impl SqlitePool {
         conn: &mut Connection,
         shutdown_requested: &AtomicBool,
         histograms: &mut Histograms,
-    ) -> usize {
+    ) -> Result<usize, ()> {
         let mut processed = 0;
         for item in vec {
             if matches!(item, ThreadCommand::Func { priority, .. } if *priority == priority_filter )
@@ -689,10 +689,10 @@ impl SqlitePool {
             if shutdown_requested.load(Ordering::Acquire) {
                 // recheck after every function
                 debug!("Recveived shutdown during processing of the batch");
-                break;
+                return Err(());
             }
         }
-        processed
+        Ok(processed)
     }
 
     fn connection_rpc(
@@ -709,53 +709,76 @@ impl SqlitePool {
         let mut histograms = Histograms::new(metrics_threshold);
 
         let mut metrics_instant = std::time::Instant::now();
-        loop {
-            vec.clear();
-            if let Some(item) = command_rx.blocking_recv() {
-                vec.push(item);
-            } else {
-                debug!("command_rx was closed");
-                break;
-            }
-            while let Ok(more) = command_rx.try_recv() {
-                vec.push(more);
-            }
-            // Did we receive Shutdown in the batch?
-            let shutdown_found = vec
-                .iter()
-                .any(|item| matches!(item, ThreadCommand::Shutdown));
-            if shutdown_found || shutdown_requested.load(Ordering::Acquire) {
-                debug!("Recveived shutdown before processing the batch");
-                break;
-            }
-
-            let processed = Self::execute(
-                CommandPriority::High,
-                &mut vec,
-                &mut conn,
-                shutdown_requested,
-                &mut histograms,
-            ) + Self::execute(
-                CommandPriority::Medium,
-                &mut vec,
-                &mut conn,
-                shutdown_requested,
-                &mut histograms,
-            );
-            if processed < low_prio_threshold {
-                Self::execute(
-                    CommandPriority::Low,
-                    &mut vec,
-                    &mut conn,
-                    shutdown_requested,
-                    &mut histograms,
-                );
-            }
-
-            histograms.print_if_elapsed(&mut metrics_instant);
-        } // Loop until shutdown is set to true.
+        while Self::tick(
+            &mut vec,
+            &mut conn,
+            shutdown_requested,
+            &mut command_rx,
+            low_prio_threshold,
+            &mut histograms,
+            &mut metrics_instant,
+        )
+        .is_ok()
+        {
+            // Loop until shutdown is set to true.
+        }
         debug!("Closing command thread");
         shutdown_finished.store(true, Ordering::Release);
+    }
+
+    fn tick(
+        vec: &mut Vec<ThreadCommand>,
+        conn: &mut Connection,
+        shutdown_requested: &AtomicBool,
+        command_rx: &mut mpsc::Receiver<ThreadCommand>,
+        low_prio_threshold: usize,
+        histograms: &mut Histograms,
+        metrics_instant: &mut std::time::Instant,
+    ) -> Result<(), ()> {
+        vec.clear();
+        if let Some(item) = command_rx.blocking_recv() {
+            vec.push(item);
+        } else {
+            debug!("command_rx was closed");
+            return Err(());
+        }
+        while let Ok(more) = command_rx.try_recv() {
+            vec.push(more);
+        }
+        // Did we receive Shutdown in the batch?
+        let shutdown_found = vec
+            .iter()
+            .any(|item| matches!(item, ThreadCommand::Shutdown));
+        if shutdown_found || shutdown_requested.load(Ordering::Acquire) {
+            debug!("Recveived shutdown before processing the batch");
+            return Err(());
+        }
+
+        let processed = Self::execute(
+            CommandPriority::High,
+            vec,
+            conn,
+            shutdown_requested,
+            histograms,
+        )? + Self::execute(
+            CommandPriority::Medium,
+            vec,
+            conn,
+            shutdown_requested,
+            histograms,
+        )?;
+        if processed < low_prio_threshold {
+            Self::execute(
+                CommandPriority::Low,
+                vec,
+                conn,
+                shutdown_requested,
+                histograms,
+            )?;
+        }
+
+        histograms.print_if_elapsed(metrics_instant);
+        Ok(())
     }
 
     #[instrument(level = Level::DEBUG, skip_all, name = "sqlite_new")]
