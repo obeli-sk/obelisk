@@ -2,8 +2,9 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, RunId};
 use concepts::storage::{
-    AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, ExpiredTimer, JoinSetRequest,
-    JoinSetResponse, JoinSetResponseEventOuter, LockedExecution, PendingState, Version,
+    AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, ExpiredDelay, ExpiredLock,
+    ExpiredTimer, JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedExecution,
+    PendingState, Version,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable};
 use concepts::storage::{DbErrorWritePermanent, HistoryEvent};
@@ -821,24 +822,14 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
         let expired = db_connection.get_expired_timers(expired_at).await.unwrap();
         assert_eq!(1, expired.len());
         let expired = &expired[0];
-        let (
-            found_execution_id,
-            locked_at_version,
-            next_version,
-            already_retried_count,
-            max_retries,
-            retry_exp_backoff,
-            parent,
-        ) = assert_matches!(expired,
-            ExpiredTimer::Lock { execution_id, locked_at_version, next_version, intermittent_event_count, max_retries, retry_exp_backoff, parent } =>
-            (execution_id, locked_at_version, next_version, intermittent_event_count, max_retries, retry_exp_backoff, parent));
-        assert_eq!(execution_id, *found_execution_id);
-        assert_eq!(Version::new(1), *locked_at_version);
-        assert_eq!(Version::new(2), *next_version);
-        assert_eq!(0, *already_retried_count);
-        assert_eq!(MAX_RETRIES, *max_retries);
-        assert_eq!(RETRY_EXP_BACKOFF, *retry_exp_backoff);
-        assert_eq!(None, *parent);
+        let lock = assert_matches!(expired, ExpiredTimer::Lock(lock) => lock);
+        assert_eq!(execution_id, lock.execution_id);
+        assert_eq!(Version::new(1), lock.locked_at_version);
+        assert_eq!(Version::new(2), lock.next_version);
+        assert_eq!(0, lock.intermittent_event_count);
+        assert_eq!(MAX_RETRIES, lock.max_retries);
+        assert_eq!(RETRY_EXP_BACKOFF, lock.retry_exp_backoff);
+        assert_eq!(None, lock.parent);
     }
 }
 
@@ -1286,7 +1277,7 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
         .unwrap();
     assert_eq!(1, actual.len());
     let actual = actual.pop().unwrap();
-    let expected = ExpiredTimer::Lock {
+    let expected = ExpiredTimer::Lock(ExpiredLock {
         execution_id,
         locked_at_version: Version::new(1),
         next_version: version,
@@ -1294,7 +1285,7 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
         max_retries: 0,
         retry_exp_backoff: Duration::ZERO,
         parent: None,
-    };
+    });
     assert_eq!(expected, actual);
 }
 
@@ -1385,10 +1376,104 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
         .unwrap();
     assert_eq!(1, actual.len());
     let actual = actual.pop().unwrap();
-    let expected = ExpiredTimer::Delay {
+    let expected = ExpiredTimer::Delay(ExpiredDelay {
         execution_id: execution_id.clone(),
         join_set_id,
         delay_id,
-    };
+    });
     assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+#[rstest::rstest]
+async fn get_expired_times_with_execution_that_made_progress(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection();
+    let sim_clock = SimClock::default();
+
+    let execution_id = ExecutionId::generate();
+    let exec1 = ExecutorId::generate();
+    let lock_expiry = Duration::from_millis(500);
+
+    // Create = Version(0)
+    let component_id = ComponentId::dummy_activity();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+            component_id: component_id.clone(),
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // Lock = Version(1)
+    lock_pending(
+        &execution_id,
+        sim_clock.now() + lock_expiry,
+        exec1,
+        &component_id,
+        db_connection.as_ref(),
+        &sim_clock,
+    )
+    .await;
+
+    // Create joinset = Version(2)
+    let join_set_id = JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+    let next_version = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(2),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetCreate {
+                        join_set_id: join_set_id.clone(),
+                        closing_strategy: ClosingStrategy::Complete,
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(Version::new(3), next_version);
+
+    assert!(
+        db_connection
+            .get_expired_timers(sim_clock.now())
+            .await
+            .unwrap()
+            .is_empty(),
+    );
+    sim_clock.move_time_forward(lock_expiry);
+    let expired_timers = db_connection
+        .get_expired_timers(sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(1, expired_timers.len());
+    let expired_timer = expired_timers.into_iter().next().unwrap();
+    let expired_lock = assert_matches!(expired_timer, ExpiredTimer::Lock(lock) => lock);
+    let expected_lock = ExpiredLock {
+        execution_id,
+        locked_at_version: Version(1),
+        next_version: Version::new(3),
+        intermittent_event_count: 0,
+        max_retries: 0,
+        retry_exp_backoff: Duration::ZERO,
+        parent: None,
+    };
+    assert_eq!(expected_lock, expired_lock);
+
+    db_close.close().await;
 }

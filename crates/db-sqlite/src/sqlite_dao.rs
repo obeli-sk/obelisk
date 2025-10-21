@@ -9,10 +9,10 @@ use concepts::{
         CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric,
         DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWritePermanent, DbExecutor,
         DbPool, DbPoolCloseable, ExecutionEvent, ExecutionEventInner, ExecutionListPagination,
-        ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution,
-        Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
-        ResponseWithCursor, Version, VersionType,
+        ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
+        LockedExecution, Pagination, PendingState, PendingStateFinished,
+        PendingStateFinishedResultKind, ResponseWithCursor, Version, VersionType,
     },
 };
 use conversions::{FromStrWrapper, JsonWrapper, consistency_db_err, consistency_rusqlite};
@@ -137,8 +137,8 @@ CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_id ON t_join_set
 /// Stores executions in `PendingState`
 /// `state` to column mapping:
 /// `PendingAt`:            (nothing but required columns)
+/// `Locked`:               `last_lock_version`, `executor_id`, `run_id`
 /// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
-/// `Locked`:               `executor_id`, `run_id`
 /// `Finished` :            `result_kind`.
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
@@ -155,11 +155,12 @@ CREATE TABLE IF NOT EXISTS t_state (
     max_retries INTEGER NOT NULL,
     retry_exp_backoff_millis INTEGER NOT NULL,
 
-    join_set_id TEXT,
-    join_set_closing INTEGER,
-
+    last_lock_version INTEGER,
     executor_id TEXT,
     run_id TEXT,
+
+    join_set_id TEXT,
+    join_set_closing INTEGER,
 
     result_kind TEXT,
 
@@ -311,10 +312,14 @@ struct CombinedStateDTO {
     state: String,
     ffqn: String,
     pending_expires_finished: DateTime<Utc>,
+    // Locked:
+    last_lock_version: Option<Version>,
     executor_id: Option<ExecutorId>,
     run_id: Option<RunId>,
+    // Blocked by join set:
     join_set_id: Option<JoinSetId>,
     join_set_closing: Option<bool>,
+    // Finished:
     result_kind: Option<PendingStateFinishedResultKind>,
 }
 #[derive(Debug)]
@@ -368,6 +373,7 @@ impl CombinedState {
                 state,
                 ffqn: _,
                 pending_expires_finished: scheduled_at,
+                last_lock_version: None,
                 executor_id: None,
                 run_id: None,
                 join_set_id: None,
@@ -380,6 +386,7 @@ impl CombinedState {
                 state,
                 ffqn: _,
                 pending_expires_finished: lock_expires_at,
+                last_lock_version: Some(_),
                 executor_id: Some(executor_id),
                 run_id: Some(run_id),
                 join_set_id: None,
@@ -394,6 +401,7 @@ impl CombinedState {
                 state,
                 ffqn: _,
                 pending_expires_finished: lock_expires_at,
+                last_lock_version: None,
                 executor_id: None,
                 run_id: None,
                 join_set_id: Some(join_set_id),
@@ -408,6 +416,7 @@ impl CombinedState {
                 state,
                 ffqn: _,
                 pending_expires_finished: finished_at,
+                last_lock_version: None,
                 executor_id: None,
                 run_id: None,
                 join_set_id: None,
@@ -1117,11 +1126,12 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
 
-                    join_set_id = NULL,
-                    join_set_closing = NULL,
-
+                    last_lock_version = NULL,
                     executor_id = NULL,
                     run_id = NULL,
+
+                    join_set_id = NULL,
+                    join_set_closing = NULL,
 
                     result_kind = NULL
                 WHERE execution_id = :execution_id
@@ -1171,11 +1181,12 @@ impl SqlitePool {
                     updated_at = CURRENT_TIMESTAMP,
                     intermittent_event_count = intermittent_event_count + :intermittent_delta,
 
-                    join_set_id = NULL,
-                    join_set_closing = NULL,
-
+                    last_lock_version = NULL,
                     executor_id = NULL,
                     run_id = NULL,
+
+                    join_set_id = NULL,
+                    join_set_closing = NULL,
 
                     result_kind = NULL
                 WHERE execution_id = :execution_id;
@@ -1227,12 +1238,12 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
 
+                    last_lock_version = :appending_version,
+                    executor_id = :executor_id,
+                    run_id = :run_id,
 
                     join_set_id = NULL,
                     join_set_closing = NULL,
-
-                    executor_id = :executor_id,
-                    run_id = :run_id,
 
                     result_kind = NULL
                 WHERE execution_id = :execution_id
@@ -1297,11 +1308,12 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
 
-                    join_set_id = :join_set_id,
-                    join_set_closing = :join_set_closing,
-
+                    last_lock_version = NULL,
                     executor_id = NULL,
                     run_id = NULL,
+
+                    join_set_id = :join_set_id,
+                    join_set_closing = :join_set_closing,
 
                     result_kind = NULL
                 WHERE execution_id = :execution_id
@@ -1344,11 +1356,12 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
 
-                    join_set_id = NULL,
-                    join_set_closing = NULL,
-
+                    last_lock_version = NULL,
                     executor_id = NULL,
                     run_id = NULL,
+
+                    join_set_id = NULL,
+                    join_set_closing = NULL,
 
                     result_kind = :result_kind
                 WHERE execution_id = :execution_id
@@ -1433,8 +1446,11 @@ impl SqlitePool {
             .prepare(
                 r"
                 SELECT
-                    state, ffqn, corresponding_version, pending_expires_finished, executor_id, run_id,
-                    join_set_id, join_set_closing, result_kind FROM t_state
+                    state, ffqn, corresponding_version, pending_expires_finished,
+                    last_lock_version, executor_id, run_id,
+                    join_set_id, join_set_closing,
+                    result_kind
+                    FROM t_state
                 WHERE
                     execution_id = :execution_id
                 ",
@@ -1451,6 +1467,9 @@ impl SqlitePool {
                         ffqn: row.get("ffqn")?,
                         pending_expires_finished: row
                             .get::<_, DateTime<Utc>>("pending_expires_finished")?,
+                        last_lock_version: row
+                            .get::<_, Option<VersionType>>("last_lock_version")?
+                            .map(Version::new),
                         executor_id: row.get::<_, Option<ExecutorId>>("executor_id")?,
                         run_id: row.get::<_, Option<RunId>>("run_id")?,
                         join_set_id: row.get::<_, Option<JoinSetId>>("join_set_id")?,
@@ -1536,9 +1555,13 @@ impl SqlitePool {
             format!("WHERE {}", statement_mod.where_vec.join(" AND "))
         };
         let sql = format!(
-            "SELECT created_at, scheduled_at, state, execution_id, ffqn, corresponding_version, \
-            pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
-            FROM t_state {where_str} ORDER BY created_at {desc} LIMIT {limit}",
+            r"
+            SELECT created_at, scheduled_at, state, execution_id, ffqn, corresponding_version, pending_expires_finished,
+            last_lock_version, executor_id, run_id,
+            join_set_id, join_set_closing,
+            result_kind
+            FROM t_state {where_str} ORDER BY created_at {desc} LIMIT {limit}
+            ",
             desc = if statement_mod.limit_desc { "DESC" } else { "" },
             limit = statement_mod.limit
         );
@@ -1563,6 +1586,10 @@ impl SqlitePool {
                             pending_expires_finished: row
                                 .get::<_, DateTime<Utc>>("pending_expires_finished")?,
                             executor_id: row.get::<_, Option<ExecutorId>>("executor_id")?,
+
+                            last_lock_version: row
+                                .get::<_, Option<VersionType>>("last_lock_version")?
+                                .map(Version::new),
                             run_id: row.get::<_, Option<RunId>>("run_id")?,
                             join_set_id: row.get::<_, Option<JoinSetId>>("join_set_id")?,
                             join_set_closing: row.get::<_, Option<bool>>("join_set_closing")?,
@@ -3163,13 +3190,14 @@ impl DbConnection for SqlitePool {
                             let execution_id = row.get("execution_id")?;
                             let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
                             let delay_id = row.get::<_, DelayId>("delay_id")?;
-                            Ok(ExpiredTimer::Delay { execution_id, join_set_id, delay_id })
+                            let delay = ExpiredDelay { execution_id, join_set_id, delay_id };
+                            Ok(ExpiredTimer::Delay(delay))
                         },
                     ).map_err(result_err_generic)?
                     .collect::<Result<Vec<_>, _>>().map_err(result_err_generic)?;
                 // Extend with expired locks
                 let expired = conn.prepare(&format!(r#"
-                    SELECT execution_id, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis
+                    SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis
                     FROM t_state
                     WHERE pending_expires_finished <= :at AND state = "{STATE_LOCKED}"
                     "#
@@ -3181,8 +3209,8 @@ impl DbConnection for SqlitePool {
                         },
                         |row| {
                             let execution_id = row.get("execution_id")?;
-                            let locked_at_version = Version::new(row.get("corresponding_version")?);
-                            let next_version = locked_at_version.increment();
+                            let locked_at_version = Version::new(row.get("last_lock_version")?);
+                            let next_version = Version::new(row.get("corresponding_version")?).increment();
                             let intermittent_event_count = row.get("intermittent_event_count")?;
                             let max_retries = row.get("max_retries")?;
                             let retry_exp_backoff_millis = row.get("retry_exp_backoff_millis")?;
@@ -3191,10 +3219,16 @@ impl DbConnection for SqlitePool {
                             } else {
                                 None
                             };
-                            Ok(ExpiredTimer::Lock { execution_id, locked_at_version, next_version, intermittent_event_count,
+                            let lock = ExpiredLock {
+                                execution_id,
+                                locked_at_version,
+                                next_version,
+                                intermittent_event_count,
                                 max_retries,
                                 retry_exp_backoff: Duration::from_millis(retry_exp_backoff_millis),
-                                parent})
+                                parent
+                            };
+                            Ok(ExpiredTimer::Lock(lock))
                         }
                     ).map_err(result_err_generic)?
                     .collect::<Result<Vec<_>, _>>().map_err(result_err_generic)?;

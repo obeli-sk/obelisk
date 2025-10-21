@@ -9,6 +9,8 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionLog;
+use concepts::storage::ExpiredDelay;
+use concepts::storage::ExpiredLock;
 use concepts::storage::JoinSetResponseEvent;
 use concepts::time::ClockFn;
 use concepts::{
@@ -97,7 +99,7 @@ pub(crate) async fn tick(
     let mut expired_async_timers = 0;
     for expired_timer in db_connection.get_expired_timers(executed_at).await? {
         match expired_timer {
-            ExpiredTimer::Lock {
+            ExpiredTimer::Lock(ExpiredLock {
                 execution_id,
                 locked_at_version,
                 next_version,
@@ -105,7 +107,7 @@ pub(crate) async fn tick(
                 max_retries,
                 retry_exp_backoff,
                 parent,
-            } => {
+            }) => {
                 let append = if max_retries == u32::MAX && locked_at_version.0 + 1 < next_version.0
                 {
                     // Workflow that made progress is unlocked and immediately available for locking.
@@ -176,11 +178,11 @@ pub(crate) async fn tick(
                     expired_locks += 1;
                 }
             }
-            ExpiredTimer::Delay {
+            ExpiredTimer::Delay(ExpiredDelay {
                 execution_id,
                 join_set_id,
                 delay_id,
-            } => {
+            }) => {
                 debug!(%execution_id, %join_set_id, %delay_id, "Appending DelayFinishedAsyncResponse");
                 let event = JoinSetResponse::DelayFinished { delay_id };
                 let res = db_connection

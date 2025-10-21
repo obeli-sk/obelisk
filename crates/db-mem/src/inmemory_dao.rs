@@ -12,9 +12,9 @@ use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
     CreateRequest, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
     DbErrorWritePermanent, DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent,
-    ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
-    HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution, Pagination,
-    ResponseWithCursor, Version, VersionType,
+    ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredDelay,
+    ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse,
+    LockedExecution, Pagination, ResponseWithCursor, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ExecutionId, FunctionFqn};
@@ -679,13 +679,15 @@ impl DbHolder {
         let mut vec = Vec::new();
         for (execution_id, is_delay) in expired {
             let journal = self.journals.get(&execution_id).unwrap();
-            vec.push(match is_delay {
-                Some((join_set_id, delay_id)) => ExpiredTimer::Delay {
+            vec.push(if let Some((join_set_id, delay_id)) = is_delay {
+                let delay = ExpiredDelay {
                     execution_id,
                     join_set_id,
                     delay_id,
-                },
-                None => ExpiredTimer::Lock {
+                };
+                ExpiredTimer::Delay(delay)
+            } else {
+                let lock = ExpiredLock {
                     execution_id: journal.execution_id().clone(),
                     locked_at_version: journal
                         .execution_events
@@ -701,7 +703,8 @@ impl DbHolder {
                     intermittent_event_count: journal.temporary_event_count(),
                     retry_exp_backoff: journal.retry_exp_backoff(),
                     parent: journal.parent(),
-                },
+                };
+                ExpiredTimer::Lock(lock)
             });
         }
         vec

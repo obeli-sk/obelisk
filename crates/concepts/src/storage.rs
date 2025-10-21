@@ -1040,22 +1040,28 @@ pub async fn wait_for_pending_state_fn<T: Debug>(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpiredTimer {
-    Lock {
-        execution_id: ExecutionId,
-        locked_at_version: Version,
-        // when finished, `next_version` points to the finished version (is not bumped anymore).
-        next_version: Version, // TODO: Remove, locked_at_version.increment() is enough.
-        /// As the execution may still be running, this represents the number of intermittent failures + timeouts prior to this execution.
-        intermittent_event_count: u32,
-        max_retries: u32,
-        retry_exp_backoff: Duration,
-        parent: Option<(ExecutionId, JoinSetId)>, // TODO: Remove
-    },
-    Delay {
-        execution_id: ExecutionId,
-        join_set_id: JoinSetId,
-        delay_id: DelayId,
-    },
+    Lock(ExpiredLock),
+    Delay(ExpiredDelay),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpiredLock {
+    pub execution_id: ExecutionId,
+    // Version of last `Locked` event, used to detect whether the execution made progress.
+    pub locked_at_version: Version,
+    pub next_version: Version,
+    /// As the execution may still be running, this represents the number of intermittent failures + timeouts prior to this execution.
+    pub intermittent_event_count: u32,
+    pub max_retries: u32,
+    pub retry_exp_backoff: Duration,
+    pub parent: Option<(ExecutionId, JoinSetId)>, // TODO: Remove
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpiredDelay {
+    pub execution_id: ExecutionId,
+    pub join_set_id: JoinSetId,
+    pub delay_id: DelayId,
 }
 
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
