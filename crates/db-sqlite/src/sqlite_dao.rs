@@ -19,6 +19,7 @@ use conversions::{FromStrWrapper, JsonWrapper, consistency_db_err, consistency_r
 use conversions::{
     intermittent_err_generic, prepare_err_generic, result_err_generic, result_err_read,
 };
+use hashbrown::HashMap;
 use hdrhistogram::{Counter, Histogram};
 use rusqlite::{
     CachedStatement, Connection, OpenFlags, OptionalExtension, Params, ToSql, Transaction,
@@ -216,11 +217,6 @@ CREATE TABLE IF NOT EXISTS t_backtrace (
 const IDX_T_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_backtrace_execution_id_version ON t_backtrace (execution_id, version_min_including, version_max_excluding);
 ";
-
-type ResponseSubscribers = Arc<
-    std::sync::Mutex<hashbrown::HashMap<ExecutionId, oneshot::Sender<JoinSetResponseEventOuter>>>,
->;
-
 mod conversions {
 
     use concepts::storage::{DbErrorGeneric, DbErrorRead};
@@ -458,8 +454,9 @@ struct SqlitePoolInner {
     shutdown_requested: Arc<AtomicBool>,
     shutdown_finished: Arc<AtomicBool>,
     command_tx: tokio::sync::mpsc::Sender<ThreadCommand>,
-    response_subscribers: ResponseSubscribers,
     ffqn_to_pending_subscription: Arc<Mutex<hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>>>,
+    response_subscribers:
+        Arc<Mutex<HashMap<ExecutionId, oneshot::Sender<JoinSetResponseEventOuter>>>>,
     join_handle: Option<Arc<std::thread::JoinHandle<()>>>, // always Some, Optional for swapping in drop.
 }
 
@@ -1946,7 +1943,9 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
         req: &JoinSetResponseEventOuter,
-        response_subscribers: &ResponseSubscribers,
+        response_subscribers: &Arc<
+            Mutex<HashMap<ExecutionId, oneshot::Sender<JoinSetResponseEventOuter>>>,
+        >,
     ) -> Result<
         (
             Option<oneshot::Sender<JoinSetResponseEventOuter>>,
