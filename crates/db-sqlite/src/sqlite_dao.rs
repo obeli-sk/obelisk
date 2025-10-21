@@ -355,6 +355,7 @@ struct NotifierExecutionFinished {
 struct AppendNotifier {
     pending_at: Option<NotifierPendingAt>,
     execution_finished: Option<NotifierExecutionFinished>,
+    response: Option<(ExecutionId, JoinSetResponseEventOuter)>,
 }
 
 impl CombinedState {
@@ -469,6 +470,8 @@ struct SqlitePoolInner {
     response_subscribers:
         Arc<Mutex<HashMap<ExecutionId, (oneshot::Sender<JoinSetResponseEventOuter>, u64)>>>,
     ffqn_to_pending_subscription: Arc<Mutex<HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>>>,
+    // Subscribers are created in write tx in `wait_for_finished_result`,
+    // notified after a successful append tx.
     execution_finished_subscription: Arc<
         Mutex<HashMap<ExecutionId, HashMap<u64, oneshot::Sender<SupportedFunctionReturnValue>>>>,
     >,
@@ -1088,6 +1091,7 @@ impl SqlitePool {
             AppendNotifier {
                 pending_at: Some(NotifierPendingAt { scheduled_at, ffqn }),
                 execution_finished: None,
+                response: None,
             }
         };
         let next_version = Version::new(version.0 + 1);
@@ -1141,6 +1145,7 @@ impl SqlitePool {
                 ffqn: Self::fetch_created_event(tx, execution_id)?.ffqn,
             }),
             execution_finished: None,
+            response: None,
         })
     }
 
@@ -1197,6 +1202,7 @@ impl SqlitePool {
                     ffqn: Self::fetch_created_event(tx, execution_id)?.ffqn,
                 }),
                 execution_finished: None,
+                response: None,
             },
         ))
     }
@@ -1870,6 +1876,7 @@ impl SqlitePool {
                             execution_id: execution_id.clone(),
                             retval: result.clone(),
                         }),
+                        response: None,
                     },
                 ));
             }
@@ -1971,21 +1978,18 @@ impl SqlitePool {
     fn append_response(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        req: JoinSetResponseEventOuter,
-        response_subscribers: &Arc<
-            Mutex<HashMap<ExecutionId, (oneshot::Sender<JoinSetResponseEventOuter>, u64)>>,
-        >,
+        response_outer: JoinSetResponseEventOuter,
     ) -> Result<AppendNotifier, DbErrorWrite> {
         let mut stmt = tx.prepare(
             "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, child_execution_id, finished_version) \
                     VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :child_execution_id, :finished_version)",
         ).map_err(prepare_err_generic)?;
-        let join_set_id = &req.event.join_set_id;
-        let delay_id = match &req.event.event {
+        let join_set_id = &response_outer.event.join_set_id;
+        let delay_id = match &response_outer.event.event {
             JoinSetResponse::DelayFinished { delay_id } => Some(delay_id.to_string()),
             JoinSetResponse::ChildExecutionFinished { .. } => None,
         };
-        let (child_execution_id, finished_version) = match &req.event.event {
+        let (child_execution_id, finished_version) = match &response_outer.event.event {
             JoinSetResponse::ChildExecutionFinished {
                 child_execution_id,
                 finished_version,
@@ -1999,7 +2003,7 @@ impl SqlitePool {
 
         stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
-            ":created_at": req.created_at,
+            ":created_at": response_outer.created_at,
             ":join_set_id": join_set_id.to_string(),
             ":delay_id": delay_id,
             ":child_execution_id": child_execution_id,
@@ -2010,7 +2014,7 @@ impl SqlitePool {
         // if the execution is going to be unblocked by this response...
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         debug!("previous_pending_state: {combined_state:?}");
-        let notifier = if let PendingState::BlockedByJoinSet {
+        let mut notifier = if let PendingState::BlockedByJoinSet {
             join_set_id: found_join_set_id,
             lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
             closing: _,
@@ -2019,23 +2023,22 @@ impl SqlitePool {
         {
             // PendingAt should be set to current time if called from expired_timers_watcher,
             // or to a future time if the execution is hot.
-            let scheduled_at = max(lock_expires_at, req.created_at);
+            let scheduled_at = max(lock_expires_at, response_outer.created_at);
             // TODO: Add diff test
             // Unblock the state.
-            let pending_at = Self::update_state_pending_after_response_appended(
+            Self::update_state_pending_after_response_appended(
                 tx,
                 execution_id,
                 scheduled_at,
                 &combined_state.corresponding_version, // not changing the version
-            )?;
-            pending_at
+            )?
         } else {
             AppendNotifier::default()
         };
         if let JoinSetResponseEvent {
             join_set_id,
             event: JoinSetResponse::DelayFinished { delay_id },
-        } = &req.event
+        } = &response_outer.event
         {
             debug!(%join_set_id, %delay_id, "Deleting from `t_delay`");
             let mut stmt =
@@ -2048,10 +2051,7 @@ impl SqlitePool {
             })
             .map_err(result_err_generic)?;
         }
-        if let Some((sender, _tag)) = response_subscribers.lock().unwrap().remove(execution_id) {
-            debug!("Notifying response subscriber");
-            let _ = sender.send(req);
-        }
+        notifier.response = Some((execution_id.clone(), response_outer));
         Ok(notifier)
     }
 
@@ -2471,48 +2471,32 @@ impl SqlitePool {
 
     // Must be called after write transaction for a correct happens-before relationship.
     #[instrument(level = Level::TRACE, skip_all)]
-    fn notify(&self, notifier: AppendNotifier, current_time: DateTime<Utc>) {
-        if let Some(pending_at) = notifier.pending_at {
-            Self::notify_pending_locked(
-                pending_at,
-                current_time,
-                &self.0.ffqn_to_pending_subscription.lock().unwrap(),
-            );
-        }
-        if let Some(execution_finished) = notifier.execution_finished {
-            let subscribers = self
-                .0
-                .execution_finished_subscription
-                .lock()
-                .unwrap()
-                .remove(&execution_finished.execution_id)
-                .unwrap_or_default();
-            // It does not matter for correctness whether we hold the guard while notifying.
-            // `execution_finished_subscription` writer in `wait_for_finished_result` must have happened before
-            // the write tx containing the Finished event.
-            for (_, subscriber) in subscribers {
-                let _ = subscriber.send(execution_finished.retval.clone());
-            }
-        }
-    }
-
-    // Must be called after write transaction for a correct happens-before relationship.
-    #[instrument(level = Level::TRACE, skip_all)]
     fn notify_all(&self, notifiers: Vec<AppendNotifier>, current_time: DateTime<Utc>) {
-        let (pending_ats, finished): (Vec<_>, Vec<_>) = notifiers
-            .into_iter()
-            .map(|n| (n.pending_at, n.execution_finished))
-            .unzip();
-        let pending_ats: Vec<_> = pending_ats.into_iter().flatten().collect();
-        let finished_execs: Vec<_> = finished.into_iter().flatten().collect();
-        // Lock only once, if needed
+        let (pending_ats, finished_execs, responses) = {
+            let (mut pending_ats, mut finished_execs, mut responses) =
+                (Vec::new(), Vec::new(), Vec::new());
+            for notifier in notifiers {
+                if let Some(pending_at) = notifier.pending_at {
+                    pending_ats.push(pending_at);
+                }
+                if let Some(finished) = notifier.execution_finished {
+                    finished_execs.push(finished);
+                }
+                if let Some(response) = notifier.response {
+                    responses.push(response);
+                }
+            }
+            (pending_ats, finished_execs, responses)
+        };
+
+        // Notify pending_at subscribers.
         if !pending_ats.is_empty() {
             let guard = self.0.ffqn_to_pending_subscription.lock().unwrap();
             for pending_at in pending_ats {
                 Self::notify_pending_locked(pending_at, current_time, &guard);
             }
         }
-        // notify execution finished:
+        // Notify execution finished subscribers.
         // Every NotifierExecutionFinished value belongs to a different execution, since only `append(Finished)` can produce `NotifierExecutionFinished`.
         if !finished_execs.is_empty() {
             let mut guard = self.0.execution_finished_subscription.lock().unwrap();
@@ -2523,6 +2507,15 @@ impl SqlitePool {
                         // If `wait_for_finished_result` happens after the append, it would receive the finished value instead.
                         let _ = sender.send(finished.retval.clone());
                     }
+                }
+            }
+        }
+        // Notify response subscribers.
+        if !responses.is_empty() {
+            let mut guard = self.0.response_subscribers.lock().unwrap();
+            for (execution_id, response) in responses {
+                if let Some((sender, _)) = guard.remove(&execution_id) {
+                    let _ = sender.send(response);
                 }
             }
         }
@@ -2646,7 +2639,7 @@ impl DbExecutor for SqlitePool {
                 "append",
             )
             .await??;
-        self.notify(notifier, created_at);
+        self.notify_all(vec![notifier], created_at);
         Ok(version)
     }
 
@@ -2677,7 +2670,6 @@ impl DbExecutor for SqlitePool {
             "append_batch_respond_to_parent"
         );
         assert!(!batch.is_empty(), "Empty batch request");
-        let response_subscribers = self.0.response_subscribers.clone();
         let (version, notifiers) = {
             self.transaction_write(
                 move |tx| {
@@ -2689,12 +2681,8 @@ impl DbExecutor for SqlitePool {
                         notifier_of_child = Some(n);
                     }
 
-                    let pending_at_parent = Self::append_response(
-                        tx,
-                        &parent_execution_id,
-                        parent_response_event,
-                        &response_subscribers,
-                    )?;
+                    let pending_at_parent =
+                        Self::append_response(tx, &parent_execution_id, parent_response_event)?;
                     Ok::<_, DbErrorWrite>((
                         version,
                         vec![
@@ -2790,7 +2778,7 @@ impl DbConnection for SqlitePool {
         let (version, notifier) = self
             .transaction_write(move |tx| Self::create_inner(tx, req), "create")
             .await??;
-        self.notify(notifier, created_at);
+        self.notify_all(vec![notifier], created_at);
         Ok(version)
     }
 
@@ -2825,7 +2813,7 @@ impl DbConnection for SqlitePool {
             )
             .await??;
 
-        self.notify(notifier, current_time);
+        self.notify_all(vec![notifier], current_time);
         Ok(version)
     }
 
@@ -3056,18 +3044,17 @@ impl DbConnection for SqlitePool {
         response_event: JoinSetResponseEvent,
     ) -> Result<(), DbErrorWrite> {
         debug!("append_response");
-        let response_subscribers = self.0.response_subscribers.clone();
         let event = JoinSetResponseEventOuter {
             created_at,
             event: response_event,
         };
         let notifier = self
             .transaction_write(
-                move |tx| Self::append_response(tx, &execution_id, event, &response_subscribers),
+                move |tx| Self::append_response(tx, &execution_id, event),
                 "append_response",
             )
             .await??;
-        self.notify(notifier, created_at);
+        self.notify_all(vec![notifier], created_at);
         Ok(())
     }
 
