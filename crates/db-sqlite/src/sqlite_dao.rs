@@ -340,9 +340,21 @@ impl CombinedState {
 }
 
 #[derive(Debug)]
-struct PendingAt {
+struct NotifierPendingAt {
     scheduled_at: DateTime<Utc>,
     ffqn: FunctionFqn,
+}
+
+#[derive(Debug)]
+struct NotifierExecutionFinished {
+    execution_id: ExecutionId,
+    retval: SupportedFunctionReturnValue,
+}
+
+#[derive(Debug, Default)]
+struct AppendNotifier {
+    pending_at: Option<NotifierPendingAt>,
+    execution_finished: Option<NotifierExecutionFinished>,
 }
 
 impl CombinedState {
@@ -457,6 +469,9 @@ struct SqlitePoolInner {
     response_subscribers:
         Arc<Mutex<HashMap<ExecutionId, (oneshot::Sender<JoinSetResponseEventOuter>, u64)>>>,
     ffqn_to_pending_subscription: Arc<Mutex<HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>>>,
+    execution_finished_subscription: Arc<
+        Mutex<HashMap<ExecutionId, HashMap<u64, oneshot::Sender<SupportedFunctionReturnValue>>>>,
+    >,
     join_handle: Option<Arc<std::thread::JoinHandle<()>>>, // always Some, Optional for swapping in drop.
 }
 
@@ -790,6 +805,7 @@ impl SqlitePool {
             response_subscribers: Arc::default(),
             ffqn_to_pending_subscription: Arc::default(),
             join_handle: Some(Arc::new(join_handle)),
+            execution_finished_subscription: Arc::default(),
         }))
     }
 
@@ -989,7 +1005,7 @@ impl SqlitePool {
     fn create_inner(
         tx: &Transaction,
         req: CreateRequest,
-    ) -> Result<(AppendResponse, PendingAt), DbErrorWrite> {
+    ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
         debug!("create_inner");
 
         let version = Version::default();
@@ -1069,7 +1085,10 @@ impl SqlitePool {
                 ":retry_exp_backoff_millis": backoff_millis,
             })
             .map_err(result_err_generic)?;
-            PendingAt { scheduled_at, ffqn }
+            AppendNotifier {
+                pending_at: Some(NotifierPendingAt { scheduled_at, ffqn }),
+                execution_finished: None,
+            }
         };
         let next_version = Version::new(version.0 + 1);
         Ok((next_version, pending_at))
@@ -1081,7 +1100,7 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         scheduled_at: DateTime<Utc>,     // Changing to state PendingAt
         corresponding_version: &Version, // t_execution_log is not be changed
-    ) -> Result<PendingAt, DbErrorWrite> {
+    ) -> Result<AppendNotifier, DbErrorWrite> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after response appended");
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx
@@ -1116,9 +1135,12 @@ impl SqlitePool {
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
         }
-        Ok(PendingAt {
-            scheduled_at,
-            ffqn: Self::fetch_created_event(tx, execution_id)?.ffqn,
+        Ok(AppendNotifier {
+            pending_at: Some(NotifierPendingAt {
+                scheduled_at,
+                ffqn: Self::fetch_created_event(tx, execution_id)?.ffqn,
+            }),
+            execution_finished: None,
         })
     }
 
@@ -1129,7 +1151,7 @@ impl SqlitePool {
         appending_version: &Version,
         scheduled_at: DateTime<Utc>, // Changing to state PendingAt
         intermittent_failure: bool,
-    ) -> Result<(AppendResponse, PendingAt), DbErrorWrite> {
+    ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
         // If response idx is unknown, use 0. This distinguishs the two paths.
         // JoinNext will always send an actual idx.
@@ -1169,9 +1191,12 @@ impl SqlitePool {
         }
         Ok((
             appending_version.increment(),
-            PendingAt {
-                scheduled_at,
-                ffqn: Self::fetch_created_event(tx, execution_id)?.ffqn,
+            AppendNotifier {
+                pending_at: Some(NotifierPendingAt {
+                    scheduled_at,
+                    ffqn: Self::fetch_created_event(tx, execution_id)?.ffqn,
+                }),
+                execution_finished: None,
             },
         ))
     }
@@ -1740,13 +1765,7 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         req: &AppendRequest,
         appending_version: Version,
-    ) -> Result<
-        (
-            AppendResponse,
-            Option<PendingAt>, // Notify subscribers listening on ffqn
-        ),
-        DbErrorWrite,
-    > {
+    ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
         if matches!(req.event, ExecutionEventInner::Created { .. }) {
             return Err(DbErrorWrite::Permanent(
                 DbErrorWritePermanent::ValidationFailed(
@@ -1801,36 +1820,40 @@ impl SqlitePool {
             ExecutionEventInner::Created { .. } => {
                 unreachable!("handled in the caller")
             }
+
             ExecutionEventInner::Locked { .. } => {
                 unreachable!("handled above")
             }
+
             ExecutionEventInner::TemporarilyFailed {
                 backoff_expires_at, ..
             }
             | ExecutionEventInner::TemporarilyTimedOut {
                 backoff_expires_at, ..
             } => {
-                let (next_version, pending_at) = Self::update_state_pending_after_event_appended(
+                let (next_version, notifier) = Self::update_state_pending_after_event_appended(
                     tx,
                     execution_id,
                     &appending_version,
                     *backoff_expires_at,
                     true, // an intermittent failure
                 )?;
-                return Ok((next_version, Some(pending_at)));
+                return Ok((next_version, notifier));
             }
+
             ExecutionEventInner::Unlocked {
                 backoff_expires_at, ..
             } => {
-                let (next_version, pending_at) = Self::update_state_pending_after_event_appended(
+                let (next_version, notifier) = Self::update_state_pending_after_event_appended(
                     tx,
                     execution_id,
                     &appending_version,
                     *backoff_expires_at,
                     false, // not an intermittent failure
                 )?;
-                return Ok((next_version, Some(pending_at)));
+                return Ok((next_version, notifier));
             }
+
             ExecutionEventInner::Finished { result, .. } => {
                 Self::update_state_finished(
                     tx,
@@ -1841,9 +1864,16 @@ impl SqlitePool {
                 )?;
                 return Ok((
                     appending_version,
-                    None, // No subscriber notified, not PendingAt event.
+                    AppendNotifier {
+                        pending_at: None,
+                        execution_finished: Some(NotifierExecutionFinished {
+                            execution_id: execution_id.clone(),
+                            retval: result.clone(),
+                        }),
+                    },
                 ));
             }
+
             ExecutionEventInner::HistoryEvent {
                 event:
                     HistoryEvent::JoinSetCreate { .. }
@@ -1858,7 +1888,7 @@ impl SqlitePool {
             } => {
                 return Ok((
                     Self::bump_state_next_version(tx, execution_id, &appending_version, None)?,
-                    None, // No subscriber notified, not PendingAt event.
+                    AppendNotifier::default(),
                 ));
             }
 
@@ -1885,7 +1915,7 @@ impl SqlitePool {
                             expires_at: *expires_at,
                         }),
                     )?,
-                    None, // No subscriber notified, not PendingAt event.
+                    AppendNotifier::default(),
                 ));
             }
 
@@ -1914,15 +1944,14 @@ impl SqlitePool {
                 }) = nth_response
                 {
                     let scheduled_at = max(*run_expires_at, nth_created_at); // No need to block
-                    let (next_version, pending_at) =
-                        Self::update_state_pending_after_event_appended(
-                            tx,
-                            execution_id,
-                            &appending_version,
-                            scheduled_at,
-                            false, // not an intermittent failure
-                        )?;
-                    return Ok((next_version, Some(pending_at)));
+                    let (next_version, notifier) = Self::update_state_pending_after_event_appended(
+                        tx,
+                        execution_id,
+                        &appending_version,
+                        scheduled_at,
+                        false, // not an intermittent failure
+                    )?;
+                    return Ok((next_version, notifier));
                 }
                 return Ok((
                     Self::update_state_blocked(
@@ -1933,7 +1962,7 @@ impl SqlitePool {
                         *run_expires_at,
                         *closing,
                     )?,
-                    None, // No subscriber notified, not PendingAt event.
+                    AppendNotifier::default(),
                 ));
             }
         }
@@ -1946,7 +1975,7 @@ impl SqlitePool {
         response_subscribers: &Arc<
             Mutex<HashMap<ExecutionId, (oneshot::Sender<JoinSetResponseEventOuter>, u64)>>,
         >,
-    ) -> Result<Option<PendingAt>, DbErrorWrite> {
+    ) -> Result<AppendNotifier, DbErrorWrite> {
         let mut stmt = tx.prepare(
             "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, child_execution_id, finished_version) \
                     VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :child_execution_id, :finished_version)",
@@ -1981,7 +2010,7 @@ impl SqlitePool {
         // if the execution is going to be unblocked by this response...
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         debug!("previous_pending_state: {combined_state:?}");
-        let pendnig_at = if let PendingState::BlockedByJoinSet {
+        let notifier = if let PendingState::BlockedByJoinSet {
             join_set_id: found_join_set_id,
             lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
             closing: _,
@@ -1999,9 +2028,9 @@ impl SqlitePool {
                 scheduled_at,
                 &combined_state.corresponding_version, // not changing the version
             )?;
-            Some(pending_at)
+            pending_at
         } else {
-            None
+            AppendNotifier::default()
         };
         if let JoinSetResponseEvent {
             join_set_id,
@@ -2023,8 +2052,7 @@ impl SqlitePool {
             debug!("Notifying response subscriber");
             let _ = sender.send(req);
         }
-
-        Ok(pendnig_at)
+        Ok(notifier)
     }
 
     fn append_backtrace(
@@ -2441,66 +2469,80 @@ impl SqlitePool {
         Ok(execution_ids_versions)
     }
 
+    // Must be called after write transaction for a correct happens-before relationship.
     #[instrument(level = Level::TRACE, skip_all)]
-    fn notify_pending(&self, pending_at: PendingAt, current_time: DateTime<Utc>) {
-        Self::notify_pending_locked(
-            pending_at,
-            current_time,
-            &self.0.ffqn_to_pending_subscription.lock().unwrap(),
-        );
+    fn notify(&self, notifier: AppendNotifier, current_time: DateTime<Utc>) {
+        if let Some(pending_at) = notifier.pending_at {
+            Self::notify_pending_locked(
+                pending_at,
+                current_time,
+                &self.0.ffqn_to_pending_subscription.lock().unwrap(),
+            );
+        }
+        if let Some(execution_finished) = notifier.execution_finished {
+            let subscribers = self
+                .0
+                .execution_finished_subscription
+                .lock()
+                .unwrap()
+                .remove(&execution_finished.execution_id)
+                .unwrap_or_default();
+            // It does not matter for correctness whether we hold the guard while notifying.
+            // `execution_finished_subscription` writer in `wait_for_finished_result` must have happened before
+            // the write tx containing the Finished event.
+            for (_, subscriber) in subscribers {
+                let _ = subscriber.send(execution_finished.retval.clone());
+            }
+        }
     }
 
+    // Must be called after write transaction for a correct happens-before relationship.
     #[instrument(level = Level::TRACE, skip_all)]
-    fn notify_pending_all(
-        &self,
-        pending_ats: impl Iterator<Item = PendingAt>,
-        current_time: DateTime<Utc>,
-    ) {
-        let ffqn_to_pending_subscription = self.0.ffqn_to_pending_subscription.lock().unwrap();
-        for pending_at in pending_ats {
-            Self::notify_pending_locked(pending_at, current_time, &ffqn_to_pending_subscription);
+    fn notify_all(&self, notifiers: Vec<AppendNotifier>, current_time: DateTime<Utc>) {
+        let (pending_ats, finished): (Vec<_>, Vec<_>) = notifiers
+            .into_iter()
+            .map(|n| (n.pending_at, n.execution_finished))
+            .unzip();
+        let pending_ats: Vec<_> = pending_ats.into_iter().flatten().collect();
+        let finished_execs: Vec<_> = finished.into_iter().flatten().collect();
+        // Lock only once, if needed
+        if !pending_ats.is_empty() {
+            let guard = self.0.ffqn_to_pending_subscription.lock().unwrap();
+            for pending_at in pending_ats {
+                Self::notify_pending_locked(pending_at, current_time, &guard);
+            }
+        }
+        // notify execution finished:
+        // Every NotifierExecutionFinished value belongs to a different execution, since only `append(Finished)` can produce `NotifierExecutionFinished`.
+        if !finished_execs.is_empty() {
+            let mut guard = self.0.execution_finished_subscription.lock().unwrap();
+            for finished in finished_execs {
+                if let Some(listeners_of_exe_id) = guard.remove(&finished.execution_id) {
+                    for (_tag, sender) in listeners_of_exe_id {
+                        // Sending while holding the lock but the oneshot sender does not block.
+                        // If `wait_for_finished_result` happens after the append, it would receive the finished value instead.
+                        let _ = sender.send(finished.retval.clone());
+                    }
+                }
+            }
         }
     }
 
     fn notify_pending_locked(
-        pending_at: PendingAt,
+        notifier: NotifierPendingAt,
         current_time: DateTime<Utc>,
         ffqn_to_pending_subscription: &std::sync::MutexGuard<
             HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>,
         >,
     ) {
-        match pending_at {
-            PendingAt { scheduled_at, ffqn } if scheduled_at <= current_time => {
-                if let Some((subscription, _)) = ffqn_to_pending_subscription.get(&ffqn) {
-                    debug!("Notifying pending subscriber");
-                    let _ = subscription.try_send(());
-                }
+        // No need to remove here, cleanup is handled by the caller.
+        if notifier.scheduled_at <= current_time {
+            if let Some((subscription, _)) = ffqn_to_pending_subscription.get(&notifier.ffqn) {
+                debug!("Notifying pending subscriber");
+                // Does not block
+                let _ = subscription.try_send(());
             }
-            _ => {}
         }
-    }
-
-    #[instrument(level = Level::TRACE, skip_all)]
-    fn append_batch_create_new_execution_inner(
-        tx: &mut rusqlite::Transaction,
-        batch: Vec<AppendRequest>,
-        execution_id: &ExecutionId,
-        mut version: Version,
-        child_req: Vec<CreateRequest>,
-    ) -> Result<(Version, Vec<PendingAt>), DbErrorWrite> {
-        let mut pending_at = None;
-        for append_request in batch {
-            (version, pending_at) = Self::append(tx, execution_id, &append_request, version)?;
-        }
-        let mut pending_ats = Vec::new();
-        if let Some(pending_at) = pending_at {
-            pending_ats.push(pending_at);
-        }
-        for child_req in child_req {
-            let (_, pending_at) = Self::create_inner(tx, child_req)?;
-            pending_ats.push(pending_at);
-        }
-        Ok((version, pending_ats))
     }
 }
 
@@ -2597,20 +2639,14 @@ impl DbExecutor for SqlitePool {
     ) -> Result<AppendResponse, DbErrorWrite> {
         debug!(%req, "append");
         trace!(?req, "append");
-        // Disallow `Created` event
         let created_at = req.created_at;
-        if let ExecutionEventInner::Created { .. } = req.event {
-            panic!("cannot append `Created` event - use `create` instead");
-        }
-        let (version, pending_at) = self
+        let (version, notifier) = self
             .transaction_write(
                 move |tx| Self::append(tx, &execution_id, &req, version),
                 "append",
             )
             .await??;
-        if let Some(pending_at) = pending_at {
-            self.notify_pending(pending_at, created_at);
-        }
+        self.notify(notifier, created_at);
         Ok(version)
     }
 
@@ -2641,20 +2677,16 @@ impl DbExecutor for SqlitePool {
             "append_batch_respond_to_parent"
         );
         assert!(!batch.is_empty(), "Empty batch request");
-        if batch.iter().any(|append_request| {
-            matches!(append_request.event, ExecutionEventInner::Created { .. })
-        }) {
-            panic!("cannot append `Created` event - use `create` instead");
-        }
         let response_subscribers = self.0.response_subscribers.clone();
-        let (version, pending_ats) = {
+        let (version, notifiers) = {
             self.transaction_write(
                 move |tx| {
                     let mut version = version;
-                    let mut pending_at_child = None;
+                    let mut notifier_of_child = None;
                     for append_request in batch {
-                        (version, pending_at_child) =
-                            Self::append(tx, &execution_id, &append_request, version)?;
+                        let (v, n) = Self::append(tx, &execution_id, &append_request, version)?;
+                        version = v;
+                        notifier_of_child = Some(n);
                     }
 
                     let pending_at_parent = Self::append_response(
@@ -2663,16 +2695,24 @@ impl DbExecutor for SqlitePool {
                         parent_response_event,
                         &response_subscribers,
                     )?;
-                    Ok::<_, DbErrorWrite>((version, vec![pending_at_child, pending_at_parent]))
+                    Ok::<_, DbErrorWrite>((
+                        version,
+                        vec![
+                            notifier_of_child.expect("checked that the batch is not empty"),
+                            pending_at_parent,
+                        ],
+                    ))
                 },
                 "append_batch_respond_to_parent",
             )
             .await??
         };
-        self.notify_pending_all(pending_ats.into_iter().flatten(), current_time);
+        self.notify_all(notifiers, current_time);
         Ok(version)
     }
 
+    // Supports only one subscriber per ffqn.
+    // A new subscriber replaces the old one, which will eventually time out, which is fine.
     #[instrument(level = Level::TRACE, skip(self, timeout_fut))]
     async fn wait_for_pending(
         &self,
@@ -2681,7 +2721,7 @@ impl DbExecutor for SqlitePool {
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
         let unique_tag: u64 = rand::random();
-        let (sender, mut receiver) = mpsc::channel(1);
+        let (sender, mut receiver) = mpsc::channel(1); // senders must use `try_send`
         {
             let mut ffqn_to_pending_subscription =
                 self.0.ffqn_to_pending_subscription.lock().unwrap();
@@ -2747,10 +2787,10 @@ impl DbConnection for SqlitePool {
         debug!("create");
         trace!(?req, "create");
         let created_at = req.created_at;
-        let (version, pending_at) = self
+        let (version, notifier) = self
             .transaction_write(move |tx| Self::create_inner(tx, req), "create")
             .await??;
-        self.notify_pending(pending_at, created_at);
+        self.notify(notifier, created_at);
         Ok(version)
     }
 
@@ -2765,28 +2805,27 @@ impl DbConnection for SqlitePool {
         debug!("append_batch");
         trace!(?batch, "append_batch");
         assert!(!batch.is_empty(), "Empty batch request");
-        if batch.iter().any(|append_request| {
-            matches!(append_request.event, ExecutionEventInner::Created { .. })
-        }) {
-            panic!("cannot append `Created` event - use `create` instead");
-        }
-        let (version, pending_at) = self
+
+        let (version, notifier) = self
             .transaction_write(
                 move |tx| {
                     let mut version = version;
-                    let mut pending_at = None;
+                    let mut notifier = None;
                     for append_request in batch {
-                        (version, pending_at) =
-                            Self::append(tx, &execution_id, &append_request, version)?;
+                        let (v, n) = Self::append(tx, &execution_id, &append_request, version)?;
+                        version = v;
+                        notifier = Some(n);
                     }
-                    Ok::<_, DbErrorWrite>((version, pending_at))
+                    Ok::<_, DbErrorWrite>((
+                        version,
+                        notifier.expect("checked that the batch is not empty"),
+                    ))
                 },
                 "append_batch",
             )
             .await??;
-        if let Some(pending_at) = pending_at {
-            self.notify_pending(pending_at, current_time);
-        }
+
+        self.notify(notifier, current_time);
         Ok(version)
     }
 
@@ -2802,27 +2841,30 @@ impl DbConnection for SqlitePool {
         debug!("append_batch_create_new_execution");
         trace!(?batch, ?child_req, "append_batch_create_new_execution");
         assert!(!batch.is_empty(), "Empty batch request");
-        if batch.iter().any(|append_request| {
-            matches!(append_request.event, ExecutionEventInner::Created { .. })
-        }) {
-            panic!("cannot append `Created` event - use `create` instead");
-        }
 
-        let (version, pending_ats) = self
+        let (version, notifiers) = self
             .transaction_write(
                 move |tx| {
-                    Self::append_batch_create_new_execution_inner(
-                        tx,
-                        batch,
-                        &execution_id,
-                        version,
-                        child_req,
-                    )
+                    let mut notifier = None;
+                    let mut version = version;
+                    for append_request in batch {
+                        let (v, n) = Self::append(tx, &execution_id, &append_request, version)?;
+                        version = v;
+                        notifier = Some(n);
+                    }
+                    let mut notifiers = Vec::new();
+                    notifiers.push(notifier.expect("checked that the batch is not empty"));
+
+                    for child_req in child_req {
+                        let (_, notifier) = Self::create_inner(tx, child_req)?;
+                        notifiers.push(notifier);
+                    }
+                    Ok::<_, DbErrorWrite>((version, notifiers))
                 },
                 "append_batch_create_new_execution_inner",
             )
             .await??;
-        self.notify_pending_all(pending_ats.into_iter(), current_time);
+        self.notify_all(notifiers, current_time);
         Ok(version)
     }
 
@@ -2863,6 +2905,9 @@ impl DbConnection for SqlitePool {
         .await?
     }
 
+    // Supports only one subscriber per execution id.
+    // A new call will overwrite the old subscriber, the old one will end
+    // with a timeout, which is fine.
     #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
     async fn subscribe_to_next_responses(
         &self,
@@ -2914,13 +2959,84 @@ impl DbConnection for SqlitePool {
             cleanup();
         })?;
         match resp_or_receiver {
-            itertools::Either::Left(resp) => Ok(resp), // no added subscription
+            itertools::Either::Left(resp) => Ok(resp), // no need for cleanup
             itertools::Either::Right(receiver) => {
                 let res = async move {
                     tokio::select! {
                         resp = receiver => {
                             let resp = resp.map_err(|_| DbErrorGeneric::Close)?;
                             Ok(vec![resp])
+                        }
+                        () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
+                    }
+                }
+                .await;
+                cleanup();
+                res
+            }
+        }
+    }
+
+    // Supports multiple subscribers.
+    async fn wait_for_finished_result(
+        &self,
+        execution_id: &ExecutionId,
+        timeout_fut: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+    ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
+        let unique_tag: u64 = rand::random();
+        let execution_id = execution_id.clone();
+        let execution_finished_subscription = self.0.execution_finished_subscription.clone();
+
+        let cleanup = || {
+            let mut guard = self.0.execution_finished_subscription.lock().unwrap();
+            if let Some(subscribers) = guard.get_mut(&execution_id) {
+                subscribers.remove(&unique_tag);
+            }
+        };
+
+        let resp_or_receiver = {
+            let execution_id = execution_id.clone();
+            self.transaction_read(move |tx| {
+                let pending_state =
+                    Self::get_combined_state(tx, &execution_id)?.pending_state;
+                if let PendingState::Finished { finished } = pending_state {
+                    let event =
+                        Self::get_execution_event(tx, &execution_id, finished.version)?;
+                    if let ExecutionEventInner::Finished { result, ..} = event.event {
+                        Ok(itertools::Either::Left(result))
+                    } else {
+                        error!("Mismatch, expected Finished row: {event:?} based on t_state {finished}");
+                        Err(DbErrorReadWithTimeout::from(consistency_db_err(
+                            "cannot get finished event based on t_state version"
+                        )))
+                    }
+                } else {
+                    // Cannot race with the notifier as we have the transaction write lock:
+                    // Either the finished event was appended previously, thus `itertools::Either::Left` was selected,
+                    // or we end up here. If this tx fails, the cleanup will remove this entry.
+                    let (sender, receiver) = oneshot::channel();
+                    let mut guard = execution_finished_subscription.lock().unwrap();
+                    guard.entry(execution_id).or_default().insert(unique_tag, sender);
+                    Ok(itertools::Either::Right(receiver))
+                }
+            }, "wait_for_finished_result")
+            .await
+        }.map_err(DbErrorReadWithTimeout::from)
+        .flatten()
+        .inspect_err(|_| {
+            // This cleanup can race with the notification sender. If the
+            // sender already
+            cleanup();
+        })?;
+
+        let timeout_fut = timeout_fut.unwrap_or_else(|| Box::pin(std::future::pending()));
+        match resp_or_receiver {
+            itertools::Either::Left(resp) => Ok(resp), // no need for cleanup
+            itertools::Either::Right(receiver) => {
+                let res = async move {
+                    tokio::select! {
+                        resp = receiver => {
+                            Ok(resp.expect("the notifier sends to all listeners, cannot race with cleanup"))
                         }
                         () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
                     }
@@ -2945,15 +3061,13 @@ impl DbConnection for SqlitePool {
             created_at,
             event: response_event,
         };
-        let pending_at = self
+        let notifier = self
             .transaction_write(
                 move |tx| Self::append_response(tx, &execution_id, event, &response_subscribers),
                 "append_response",
             )
             .await??;
-        if let Some(pending_at) = pending_at {
-            self.notify_pending(pending_at, created_at);
-        }
+        self.notify(notifier, created_at);
         Ok(())
     }
 
@@ -3091,55 +3205,6 @@ impl DbConnection for SqlitePool {
             }, "get_expired_timers"
         )
         .await
-    }
-
-    async fn wait_for_finished_result(
-        &self,
-        execution_id: &ExecutionId,
-        timeout_fut: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
-    ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
-        let execution_result = {
-            let fut = async move {
-                loop {
-                    let execution_id = execution_id.clone();
-                    if let Some(execution_result) = self
-                        .transaction_read(move |tx| {
-                            let pending_state =
-                                Self::get_combined_state(tx, &execution_id)?.pending_state;
-                            if let PendingState::Finished { finished } = pending_state {
-                                let event =
-                                    Self::get_execution_event(tx, &execution_id, finished.version)?;
-                                if let ExecutionEventInner::Finished { result, ..} = event.event {
-                                    Ok(Some(result))
-                                } else {
-                                    error!("Mismatch, expected Finished row: {event:?} based on t_state {finished}");
-                                    Err(DbErrorReadWithTimeout::from(consistency_db_err(
-                                        "cannot get finished event based on t_state version"
-                                    )))
-                                }
-                            } else {
-                                Ok(None)
-                            }
-                        }, "wait_for_finished_result")
-                        .await??
-                    {
-                        return Ok(execution_result);
-                    }
-                    // TODO: change to subscription based approach
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            };
-
-            if let Some(timeout_fut) = timeout_fut {
-                tokio::select! { // future's liveness: Dropping the loser immediately.
-                    res = fut => res,
-                    () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout)
-                }
-            } else {
-                fut.await
-            }
-        }?;
-        Ok(execution_result)
     }
 
     async fn get_execution_event(

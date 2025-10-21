@@ -672,11 +672,10 @@ pub trait DbExecutor: Send + Sync {
         parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
-    /// Best effort for waiting while there are no pending executions.
+    /// Notification mechainism with no strict guarantees for waiting while there are no pending executions.
     /// Return immediately if there are pending notifications at `pending_at_or_sooner`.
-    /// Implementation must return not later than at expiry date, which is: `pending_at_or_sooner` + `max_wait`.
-    /// Timers that expire until the expiry date can be disregarded.
-    /// Databases that do not support subscriptions await `timeout_fut`.
+    /// Otherwise wait until `timeout_fut` resolves.
+    /// Timers that expire between `pending_at_or_sooner` and timeout can be disregarded.
     async fn wait_for_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
@@ -803,9 +802,10 @@ pub trait DbConnection: DbExecutor {
     /// Create a new execution log
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite>;
 
-    /// Get notified when a new response arrives.
+    /// Notification mechainism with no strict guarantees for getting notified when a new response arrives.
     /// Parameter `start_idx` must be at most be equal to current size of responses in the execution log.
-    /// If no response arrives immediately and `interrupt_after` resolves, return an interrupt.
+    /// If no response arrives immediately and `interrupt_after` resolves, `DbErrorReadWithTimeout::Timeout` is returned.
+    /// Implementations with no pubsub support should use polling.
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
@@ -813,6 +813,8 @@ pub trait DbConnection: DbExecutor {
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout>;
 
+    /// Notification mechainism with no strict guarantees for getting the finished result.
+    /// Implementations with no pubsub support should use polling.
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,

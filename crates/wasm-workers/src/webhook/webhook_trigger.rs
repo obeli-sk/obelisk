@@ -1104,10 +1104,10 @@ pub(crate) mod tests {
         }
 
         impl SetUpFiboWebhook {
-            async fn new() -> SetUpFiboWebhook {
+            async fn new(db: db_tests::Database) -> SetUpFiboWebhook {
                 let addr = SocketAddr::from(([127, 0, 0, 1], 0));
                 let sim_clock = SimClock::default();
-                let (guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+                let (guard, db_pool, db_exec, db_close) = db.set_up().await;
                 let activity_exec =
                     new_activity_fibo(db_exec.clone(), sim_clock.clone(), TokioSleep);
                 let fn_registry = TestingFnRegistry::new_from_components(vec![
@@ -1198,7 +1198,7 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn hardcoded_result_should_work() {
             test_utils::set_up();
-            let fibo_webhook_harness = SetUpFiboWebhook::new().await;
+            let fibo_webhook_harness = SetUpFiboWebhook::new(Database::Memory).await;
             let server_addr = fibo_webhook_harness.server_addr.to_string();
             assert_eq!(
                 "fiboa(1, 0) = hardcoded: 1",
@@ -1206,13 +1206,20 @@ pub(crate) mod tests {
             );
         }
 
+        #[rstest::rstest]
         #[tokio::test]
-        async fn direct_call_should_work_non_deterministic() {
+        async fn direct_call_should_work_non_deterministic(
+            #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)]
+            db: db_tests::Database,
+        ) {
             test_utils::set_up();
-            let fibo_webhook_harness = SetUpFiboWebhook::new().await;
+            let fibo_webhook_harness = SetUpFiboWebhook::new(db).await;
             let server_addr = fibo_webhook_harness.server_addr.to_string();
             let fetch_task =
                 tokio::spawn(async move { SetUpFiboWebhook::fetch(&server_addr, 2, 1, 200).await });
+
+            // TODO: Non determinism: wait_for_finished_result can either have the result or subscribe and await.
+
             let now = fibo_webhook_harness.sim_clock.now();
             while fibo_webhook_harness
                 .workflow_exec
@@ -1222,7 +1229,7 @@ pub(crate) mod tests {
             {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
-            // workflow must have been started
+            // At this point the workflow was started successfuly.
             assert_eq!(
                 1,
                 fibo_webhook_harness
@@ -1244,10 +1251,14 @@ pub(crate) mod tests {
             assert_eq!("fiboa(2, 1) = direct call: 1", res);
         }
 
+        #[rstest::rstest]
         #[tokio::test]
-        async fn scheduling_should_work() {
+        async fn scheduling_should_work(
+            #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)]
+            db: db_tests::Database,
+        ) {
             test_utils::set_up();
-            let fibo_webhook_harness = SetUpFiboWebhook::new().await;
+            let fibo_webhook_harness = SetUpFiboWebhook::new(db).await;
             let server_addr = fibo_webhook_harness.server_addr.to_string();
             let n = 10;
             let iterations = 1;
@@ -1270,7 +1281,7 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn test_routing_error_handling() {
             test_utils::set_up();
-            let fibo_webhook_harness = SetUpFiboWebhook::new().await;
+            let fibo_webhook_harness = SetUpFiboWebhook::new(Database::Memory).await;
             // Check wrong URL
             let resp = reqwest::get(format!(
                 "http://{}/unknown",
