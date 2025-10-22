@@ -1418,9 +1418,9 @@ impl ServerCompiledLinked {
     }
 }
 
-struct ServerInit<C: DbPoolCloseable> {
+struct ServerInit {
     db_pool: Arc<dyn DbPool>,
-    db_closeable: C,
+    db_close: Pin<Box<dyn Future<Output = ()>>>,
     shutdown: (watch::Sender<bool>, watch::Receiver<bool>),
     exec_join_handles: Vec<ExecutorTaskHandle>,
     #[expect(dead_code)]
@@ -1440,7 +1440,7 @@ async fn spawn_tasks_and_threads(
     sqlite_config: SqliteConfig,
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     timers_watcher: TimersWatcherTomlConfig,
-) -> Result<(ServerInit<SqlitePool>, ComponentConfigRegistryRO), anyhow::Error> {
+) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
     // Start components requiring a database
     let epoch_ticker = EpochTicker::spawn_new(
         server_compiled_linked.engines.weak_refs(),
@@ -1521,7 +1521,9 @@ async fn spawn_tasks_and_threads(
     Ok((
         ServerInit {
             db_pool,
-            db_closeable: db,
+            db_close: Box::pin(async move {
+                db.close().await;
+            }),
             shutdown: watch::channel(false),
             exec_join_handles,
             timers_watcher,
@@ -1532,13 +1534,13 @@ async fn spawn_tasks_and_threads(
         server_compiled_linked.component_registry_ro,
     ))
 }
-impl<C: DbPoolCloseable> ServerInit<C> {
+impl ServerInit {
     async fn close(self) {
         info!("Server is shutting down");
-        let (db_closeable, exec_join_handles) = {
+        let (db_close, exec_join_handles) = {
             let ServerInit {
                 db_pool: _,
-                db_closeable,
+                db_close,
                 shutdown: _, // Dropping notifies follower tasks.
                 exec_join_handles,
                 timers_watcher: _,
@@ -1547,13 +1549,13 @@ impl<C: DbPoolCloseable> ServerInit<C> {
                 preopens_cleaner: _,
             } = self;
             // drop AbortOnDropHandles
-            (db_closeable, exec_join_handles)
+            (db_close, exec_join_handles)
         };
         // Close most of the services. Worker tasks might still be running.
         for exec_join_handle in exec_join_handles {
             exec_join_handle.close().await;
         }
-        db_closeable.close().await;
+        db_close.await;
     }
 }
 
