@@ -3,7 +3,7 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ExecutionId, FunctionFqn, JoinSetId, SupportedFunctionReturnValue,
+    ComponentId, ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendEventsToExecution, AppendRequest, AppendResponse,
@@ -18,13 +18,10 @@ use concepts::{
     },
 };
 use conversions::{FromStrWrapper, JsonWrapper, consistency_db_err, consistency_rusqlite};
-use conversions::{
-    intermittent_err_generic, prepare_err_generic, result_err_generic, result_err_read,
-};
 use hashbrown::HashMap;
 use rusqlite::{
     CachedStatement, Connection, OpenFlags, OptionalExtension, Params, ToSql, Transaction,
-    named_params,
+    TransactionBehavior, named_params,
 };
 use std::{
     cmp::max,
@@ -43,7 +40,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
 };
-use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
+use tracing::{Level, Span, debug, error, info, instrument, trace, warn};
 
 #[derive(Debug, thiserror::Error)]
 #[error("initialization error")]
@@ -219,33 +216,63 @@ CREATE TABLE IF NOT EXISTS t_backtrace (
 const IDX_T_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_backtrace_execution_id_version ON t_backtrace (execution_id, version_min_including, version_max_excluding);
 ";
+
+#[derive(Debug, thiserror::Error, Clone)]
+enum RusqliteError {
+    #[error("not found")]
+    NotFound,
+    #[error("generic: {0}")]
+    Generic(StrVariant),
+}
+
 mod conversions {
 
-    use concepts::storage::{DbErrorGeneric, DbErrorRead};
+    use super::RusqliteError;
+    use concepts::storage::{DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite};
     use rusqlite::types::{FromSql, FromSqlError};
     use std::{fmt::Debug, str::FromStr};
     use tracing::error;
 
-    #[expect(clippy::needless_pass_by_value)]
-    pub(crate) fn prepare_err_generic(err: rusqlite::Error) -> DbErrorGeneric {
-        error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
-        DbErrorGeneric::Uncategorized(err.to_string().into())
+    impl From<rusqlite::Error> for RusqliteError {
+        fn from(err: rusqlite::Error) -> Self {
+            if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
+                RusqliteError::NotFound
+            } else {
+                error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
+                RusqliteError::Generic(err.to_string().into())
+            }
+        }
     }
-    #[expect(clippy::needless_pass_by_value)]
-    pub(crate) fn intermittent_err_generic(err: rusqlite::Error) -> DbErrorGeneric {
-        error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
-        DbErrorGeneric::Uncategorized(err.to_string().into())
+
+    impl From<RusqliteError> for DbErrorGeneric {
+        fn from(err: RusqliteError) -> DbErrorGeneric {
+            match err {
+                RusqliteError::NotFound => DbErrorGeneric::Uncategorized("not found".into()),
+                RusqliteError::Generic(str) => DbErrorGeneric::Uncategorized(str),
+            }
+        }
     }
-    #[expect(clippy::needless_pass_by_value)]
-    pub(crate) fn result_err_generic(err: rusqlite::Error) -> DbErrorGeneric {
-        error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
-        DbErrorGeneric::Uncategorized(err.to_string().into())
+    impl From<RusqliteError> for DbErrorRead {
+        fn from(err: RusqliteError) -> Self {
+            if matches!(err, RusqliteError::NotFound) {
+                Self::NotFound
+            } else {
+                Self::from(DbErrorGeneric::from(err))
+            }
+        }
     }
-    pub(crate) fn result_err_read(err: rusqlite::Error) -> DbErrorRead {
-        if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
-            DbErrorRead::NotFound
-        } else {
-            result_err_generic(err).into()
+    impl From<RusqliteError> for DbErrorReadWithTimeout {
+        fn from(err: RusqliteError) -> Self {
+            Self::from(DbErrorRead::from(err))
+        }
+    }
+    impl From<RusqliteError> for DbErrorWrite {
+        fn from(err: RusqliteError) -> Self {
+            if matches!(err, RusqliteError::NotFound) {
+                Self::NotFound
+            } else {
+                Self::from(DbErrorGeneric::from(err))
+            }
         }
     }
 
@@ -308,6 +335,7 @@ mod conversions {
         DbErrorGeneric::Uncategorized(input.into())
     }
 }
+
 #[derive(Debug)]
 struct CombinedStateDTO {
     state: String,
@@ -446,24 +474,17 @@ impl CombinedState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CommandPriority {
-    // Write, Shutdown
-    High,
-    // Read
-    Medium,
-    // Lock scan
-    Low,
-}
-
 #[derive(derive_more::Debug)]
 enum ThreadCommand {
     Func {
         #[debug(skip)]
-        func: Box<dyn FnOnce(&mut Connection) + Send>,
-        priority: CommandPriority,
+        func: Box<dyn FnOnce(&mut Transaction) + Send>,
         sent_at: Instant,
-        name: &'static str,
+        func_name: &'static str,
+        #[debug(skip)]
+        parent_span: Span,
+        #[debug(skip)]
+        commit_ack_sender: oneshot::Sender<Result<(), RusqliteError>>,
     },
     Shutdown,
     Dummy,
@@ -534,7 +555,6 @@ impl Drop for SqlitePool {
 #[derive(Debug, Clone)]
 pub struct SqliteConfig {
     pub queue_capacity: usize,
-    pub low_prio_threshold: usize,
     pub pragma_override: Option<HashMap<String, String>>,
     pub metrics_threshold: Option<Duration>,
 }
@@ -542,7 +562,6 @@ impl Default for SqliteConfig {
     fn default() -> Self {
         Self {
             queue_capacity: 100,
-            low_prio_threshold: 100,
             pragma_override: None,
             metrics_threshold: None,
         }
@@ -670,32 +689,59 @@ impl SqlitePool {
     }
 
     fn execute(
-        priority_filter: CommandPriority,
         vec: &mut Vec<ThreadCommand>,
         conn: &mut Connection,
         shutdown_requested: &AtomicBool,
         histograms: &mut Histograms,
-    ) -> Result<usize, ()> {
-        let mut processed = 0;
+    ) -> Result<(), ()> {
+        let all_fns_start = std::time::Instant::now();
+
+        let mut tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .expect("not sure what to do");
+        let mut commit_ack_senders = Vec::with_capacity(vec.len());
         for item in vec {
-            if matches!(item, ThreadCommand::Func { priority, .. } if *priority == priority_filter )
-            {
-                let item = std::mem::replace(item, ThreadCommand::Dummy); // get owned item
-                let (func, sent_at, func_name) = assert_matches!(item, ThreadCommand::Func{func, sent_at, name, ..} => (func, sent_at, name));
-                let sent_latency = sent_at.elapsed();
-                let started_at = Instant::now();
-                func(conn);
-                let func_duration = started_at.elapsed();
-                processed += 1;
-                histograms.record(sent_latency, func_name, func_duration);
-            }
-            if shutdown_requested.load(Ordering::Acquire) {
-                // recheck after every function
-                debug!("Recveived shutdown during processing of the batch");
-                return Err(());
+            match std::mem::replace(item, ThreadCommand::Dummy) {
+                ThreadCommand::Func {
+                    func,
+                    sent_at,
+                    func_name,
+                    parent_span: _,
+                    commit_ack_sender,
+                } => {
+                    let sent_latency = sent_at.elapsed();
+                    let started_at = Instant::now();
+                    func(&mut tx);
+                    commit_ack_senders.push(commit_ack_sender);
+                    histograms.record_command(sent_latency, func_name, started_at.elapsed());
+                }
+                ThreadCommand::Shutdown => {
+                    unreachable!("already checked in `tick`")
+                }
+                ThreadCommand::Dummy => unreachable!(
+                    "only set in `execute`, which runs only once per `tick`, which clears it"
+                ),
             }
         }
-        Ok(processed)
+
+        histograms.record_all_fns(all_fns_start.elapsed());
+
+        // Check for shutdown before the exensive commit call
+        if shutdown_requested.load(Ordering::Relaxed) {
+            debug!("Recveived shutdown during processing of the batch");
+            return Err(());
+        }
+        let tx_commit = {
+            let now = std::time::Instant::now();
+            let tx_commit = tx.commit().map_err(|err| RusqliteError::from(err));
+            histograms.record_commit(now.elapsed());
+            tx_commit
+        };
+        for commit_ack_sender in commit_ack_senders {
+            let _ = commit_ack_sender.send(tx_commit.clone()); // Command caller errored in its function or timed out before awaiting the ack.
+        }
+
+        Ok(())
     }
 
     fn connection_rpc(
@@ -704,22 +750,17 @@ impl SqlitePool {
         shutdown_finished: &AtomicBool,
         mut command_rx: mpsc::Receiver<ThreadCommand>,
         queue_capacity: usize,
-        low_prio_threshold: usize,
         metrics_threshold: Option<Duration>,
     ) {
         let mut vec: Vec<ThreadCommand> = Vec::with_capacity(queue_capacity);
-
         let mut histograms = Histograms::new(metrics_threshold);
 
-        let mut metrics_instant = std::time::Instant::now();
         while Self::tick(
             &mut vec,
             &mut conn,
             shutdown_requested,
             &mut command_rx,
-            low_prio_threshold,
             &mut histograms,
-            &mut metrics_instant,
         )
         .is_ok()
         {
@@ -734,9 +775,7 @@ impl SqlitePool {
         conn: &mut Connection,
         shutdown_requested: &AtomicBool,
         command_rx: &mut mpsc::Receiver<ThreadCommand>,
-        low_prio_threshold: usize,
         histograms: &mut Histograms,
-        metrics_instant: &mut std::time::Instant,
     ) -> Result<(), ()> {
         vec.clear();
         if let Some(item) = command_rx.blocking_recv() {
@@ -757,30 +796,9 @@ impl SqlitePool {
             return Err(());
         }
 
-        let processed = Self::execute(
-            CommandPriority::High,
-            vec,
-            conn,
-            shutdown_requested,
-            histograms,
-        )? + Self::execute(
-            CommandPriority::Medium,
-            vec,
-            conn,
-            shutdown_requested,
-            histograms,
-        )?;
-        if processed < low_prio_threshold {
-            Self::execute(
-                CommandPriority::Low,
-                vec,
-                conn,
-                shutdown_requested,
-                histograms,
-            )?;
-        }
+        Self::execute(vec, conn, shutdown_requested, histograms)?;
 
-        histograms.print_if_elapsed(metrics_instant);
+        histograms.print_if_elapsed();
         Ok(())
     }
 
@@ -821,7 +839,6 @@ impl SqlitePool {
                     &shutdown_finished,
                     command_rx,
                     config.queue_capacity,
-                    config.low_prio_threshold,
                     config.metrics_threshold,
                 );
             })
@@ -837,119 +854,76 @@ impl SqlitePool {
         }))
     }
 
-    #[instrument(level = Level::TRACE, skip_all, fields(name))]
-    pub async fn transaction_write<F, T, E>(
-        &self,
-        func: F,
-        name: &'static str,
-    ) -> Result<Result<T, E>, DbErrorGeneric /* only close variant */>
-    where
-        F: FnOnce(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
-        T: Send + 'static,
-        E: From<DbErrorGeneric> + Send + 'static,
-    {
-        self.transaction(func, true, name).await
-    }
-
-    #[instrument(level = Level::TRACE, skip_all, fields(name))]
-    pub async fn transaction_read<F, T, E>(
-        &self,
-        func: F,
-        name: &'static str,
-    ) -> Result<Result<T, E>, DbErrorGeneric /* only close variant */>
-    where
-        F: FnOnce(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
-        T: Send + 'static,
-        E: From<DbErrorGeneric> + Send + 'static,
-    {
-        self.transaction(func, false, name).await
-    }
-
     /// Invokes the provided function wrapping a new [`rusqlite::Transaction`] that is committed automatically.
-    async fn transaction<F, T, E>(
-        &self,
-        func: F,
-        write: bool,
-        name: &'static str,
-    ) -> Result<Result<T, E>, DbErrorGeneric /* only close variant */>
+    async fn transaction<F, T, E>(&self, func: F, func_name: &'static str) -> Result<T, E>
     where
         F: FnOnce(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
         T: Send + 'static,
-        E: From<DbErrorGeneric> + Send + 'static,
+        E: From<DbErrorGeneric> + From<RusqliteError> + Send + 'static,
     {
-        let (tx, rx) = oneshot::channel();
+        let (sender, receiver) = oneshot::channel();
+        let (commit_ack_sender, commit_ack_receiver) = oneshot::channel();
         let parent_span = Span::current();
-
+        let thread_command_func = ThreadCommand::Func {
+            parent_span: parent_span.clone(),
+            func: Box::new(move |tx| {
+                let func_res = parent_span.in_scope(|| func(tx));
+                _ = sender.send(func_res); // Outer function might be cancelled.
+            }),
+            sent_at: Instant::now(),
+            func_name,
+            commit_ack_sender,
+        };
         self.0
             .command_tx
-            .send(ThreadCommand::Func {
-                priority: if write {
-                    CommandPriority::High
-                } else {
-                    CommandPriority::Medium
-                },
-                func: Box::new(move |conn| {
-                    let tx_begin =
-                        debug_span!(parent: &parent_span, "tx_begin", name).in_scope(|| {
-                            conn.transaction_with_behavior(if write {
-                                rusqlite::TransactionBehavior::Immediate
-                            } else {
-                                rusqlite::TransactionBehavior::Deferred
-                            })
-                            .map_err(result_err_generic)
-                            .map_err(E::from)
-                        });
-                    let tx_apply = tx_begin.and_then(|mut transaction| {
-                        parent_span.in_scope(|| func(&mut transaction).map(|ok| (ok, transaction)))
-                    });
-                    let tx_commit = tx_apply.and_then(|(ok, transaction)| {
-                        debug_span!(parent: &parent_span, "tx_commit", name).in_scope(|| {
-                            transaction
-                                .commit()
-                                .map(|()| ok)
-                                .map_err(result_err_generic)
-                                .map_err(E::from)
-                        })
-                    });
-                    tx.send(tx_commit)
-                        .unwrap_or_else(|_| unreachable!("outer fn waits forever for the result"));
-                }),
-                sent_at: Instant::now(),
-                name,
-            })
+            .send(thread_command_func)
             .await
             .map_err(|_send_err| DbErrorGeneric::Close)?;
-        rx.await.map_err(|_recv_err| DbErrorGeneric::Close)
+        let fn_res = receiver.await.map_err(|_recv_err| DbErrorGeneric::Close)?;
+        match commit_ack_receiver.await {
+            Ok(Ok(())) => fn_res,
+            Ok(Err(rusqlite_err)) => Err(E::from(rusqlite_err)),
+            Err(_) => Err(E::from(DbErrorGeneric::Close)),
+        }
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(name))]
     pub async fn conn_low_prio<F, T>(
         &self,
         func: F,
-        name: &'static str,
+        func_name: &'static str,
     ) -> Result<T, DbErrorGeneric>
     where
         F: FnOnce(&Connection) -> Result<T, DbErrorGeneric> + Send + 'static,
         T: Send + 'static + Default,
     {
-        let (tx, rx) = oneshot::channel();
+        let (sender, receiver) = oneshot::channel();
+        let (commit_ack_sender, commit_ack_receiver) = oneshot::channel();
         let span = tracing::trace_span!("tx_function");
+        let thread_cmd_func = ThreadCommand::Func {
+            parent_span: Span::current(),
+            func: Box::new(move |tx| {
+                sender
+                    .send(span.in_scope(|| func(tx)))
+                    .unwrap_or_else(|_| unreachable!("outer fn waits forever for the result"));
+            }),
+            sent_at: Instant::now(),
+            func_name,
+            commit_ack_sender,
+        };
         self.0
             .command_tx
-            .send(ThreadCommand::Func {
-                priority: CommandPriority::Low,
-                func: Box::new(move |conn| {
-                    tx.send(span.in_scope(|| func(conn)))
-                        .unwrap_or_else(|_| unreachable!("outer fn waits forever for the result"));
-                }),
-                sent_at: Instant::now(),
-                name,
-            })
+            .send(thread_cmd_func)
             .await
             .map_err(|_send_err| DbErrorGeneric::Close)?;
-        match rx.await {
+        let unacked = match receiver.await {
             Ok(res) => res,
-            Err(_recv_err) => Ok(T::default()), // Dropped computation because of other priorities..
+            Err(_recv_err) => return Ok(T::default()), // Dropped computation because of other priorities..
+        };
+        match commit_ack_receiver.await {
+            Ok(Ok(())) => unacked,
+            Ok(Err(rusqlite_err)) => Err(DbErrorGeneric::from(rusqlite_err)),
+            Err(_) => Err(DbErrorGeneric::Close),
         }
     }
 
@@ -957,29 +931,25 @@ impl SqlitePool {
         conn: &Connection,
         execution_id: &ExecutionId,
     ) -> Result<CreateRequest, DbErrorRead> {
-        let mut stmt = conn
-            .prepare(
-                "SELECT created_at, json_value FROM t_execution_log WHERE \
+        let mut stmt = conn.prepare(
+            "SELECT created_at, json_value FROM t_execution_log WHERE \
             execution_id = :execution_id AND version = 0",
-            )
-            .map_err(prepare_err_generic)?;
-        let (created_at, event) = stmt
-            .query_row(
-                named_params! {
-                    ":execution_id": execution_id.to_string(),
-                },
-                |row| {
-                    let created_at = row.get("created_at")?;
-                    let event = row
-                        .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
-                        .map_err(|serde| {
-                            error!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
-                            consistency_rusqlite("cannot deserialize `Created` event")
-                        })?;
-                    Ok((created_at, event.0))
-                },
-            )
-            .map_err(result_err_generic)?;
+        )?;
+        let (created_at, event) = stmt.query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+            },
+            |row| {
+                let created_at = row.get("created_at")?;
+                let event = row
+                    .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                    .map_err(|serde| {
+                        error!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
+                        consistency_rusqlite("cannot deserialize `Created` event")
+                    })?;
+                Ok((created_at, event.0))
+            },
+        )?;
         if let ExecutionEventInner::Created {
             ffqn,
             params,
@@ -1053,7 +1023,7 @@ impl SqlitePool {
         tx.prepare(
                 "INSERT INTO t_execution_log (execution_id, created_at, version, json_value, variant, join_set_id ) \
                 VALUES (:execution_id, :created_at, :version, :json_value, :variant, :join_set_id)")
-        .map_err(prepare_err_generic)?
+        ?
         .execute(named_params! {
             ":execution_id": &execution_id_str,
             ":created_at": created_at,
@@ -1062,7 +1032,7 @@ impl SqlitePool {
             ":variant": event.variant(),
             ":join_set_id": event.join_set_id().map(std::string::ToString::to_string),
         })
-        .map_err(result_err_generic)?;
+        ?;
         let pending_state = PendingState::PendingAt { scheduled_at };
         let pending_at = {
             let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
@@ -1098,8 +1068,7 @@ impl SqlitePool {
                     :retry_exp_backoff_millis
                     )
                 ",
-            )
-            .map_err(prepare_err_generic)?
+            )?
             .execute(named_params! {
                 ":execution_id": execution_id.to_string(),
                 ":is_top_level": execution_id.is_top_level(),
@@ -1111,8 +1080,7 @@ impl SqlitePool {
                 ":scheduled_at": scheduled_at,
                 ":max_retries": max_retries,
                 ":retry_exp_backoff_millis": backoff_millis,
-            })
-            .map_err(result_err_generic)?;
+            })?;
             AppendNotifier {
                 pending_at: Some(NotifierPendingAt { scheduled_at, ffqn }),
                 execution_finished: None,
@@ -1284,8 +1252,7 @@ impl SqlitePool {
         let intermittent_event_count = tx
             .prepare(
                 "SELECT intermittent_event_count FROM t_state WHERE execution_id = :execution_id",
-            )
-            .map_err(prepare_err_generic)?
+            )?
             .query_row(
                 named_params! {
                     ":execution_id": execution_id_str,
@@ -1314,9 +1281,8 @@ impl SqlitePool {
     > {
         debug!("Setting t_state to BlockedByJoinSet(`{join_set_id}`)");
         let execution_id_str = execution_id.to_string();
-        let mut stmt = tx
-            .prepare_cached(
-                r"
+        let mut stmt = tx.prepare_cached(
+            r"
                 UPDATE t_state
                 SET
                     corresponding_version = :appending_version,
@@ -1334,18 +1300,15 @@ impl SqlitePool {
                     result_kind = NULL
                 WHERE execution_id = :execution_id
             ",
-            )
-            .map_err(prepare_err_generic)?;
-        let updated = stmt
-            .execute(named_params! {
-                ":execution_id": execution_id_str,
-                ":appending_version": appending_version.0,
-                ":pending_expires_finished": lock_expires_at,
-                ":state": STATE_BLOCKED_BY_JOIN_SET,
-                ":join_set_id": join_set_id,
-                ":join_set_closing": join_set_closing,
-            })
-            .map_err(result_err_generic)?;
+        )?;
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id_str,
+            ":appending_version": appending_version.0,
+            ":pending_expires_finished": lock_expires_at,
+            ":state": STATE_BLOCKED_BY_JOIN_SET,
+            ":join_set_id": join_set_id,
+            ":join_set_closing": join_set_closing,
+        })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
         }
@@ -1362,9 +1325,8 @@ impl SqlitePool {
     ) -> Result<(), DbErrorWrite> {
         debug!("Setting t_state to Finished");
         let execution_id_str = execution_id.to_string();
-        let mut stmt = tx
-            .prepare_cached(
-                r"
+        let mut stmt = tx.prepare_cached(
+            r"
                 UPDATE t_state
                 SET
                     corresponding_version = :appending_version,
@@ -1382,17 +1344,14 @@ impl SqlitePool {
                     result_kind = :result_kind
                 WHERE execution_id = :execution_id
             ",
-            )
-            .map_err(prepare_err_generic)?;
-        let updated = stmt
-            .execute(named_params! {
-                ":execution_id": execution_id_str,
-                ":appending_version": appending_version.0,
-                ":pending_expires_finished": finished_at,
-                ":state": STATE_FINISHED,
-                ":result_kind": result_kind.to_string(),
-            })
-            .map_err(result_err_generic)?;
+        )?;
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id_str,
+            ":appending_version": appending_version.0,
+            ":pending_expires_finished": finished_at,
+            ":state": STATE_FINISHED,
+            ":result_kind": result_kind.to_string(),
+        })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
         }
@@ -1409,23 +1368,19 @@ impl SqlitePool {
     ) -> Result<AppendResponse /* next version */, DbErrorWrite> {
         debug!("update_index_version");
         let execution_id_str = execution_id.to_string();
-        let mut stmt = tx
-            .prepare_cached(
-                r"
+        let mut stmt = tx.prepare_cached(
+            r"
                 UPDATE t_state
                 SET
                     corresponding_version = :appending_version,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE execution_id = :execution_id
             ",
-            )
-            .map_err(prepare_err_generic)?;
-        let updated = stmt
-            .execute(named_params! {
-                ":execution_id": execution_id_str,
-                ":appending_version": appending_version.0,
-            })
-            .map_err(result_err_generic)?;
+        )?;
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id_str,
+            ":appending_version": appending_version.0,
+        })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
         }
@@ -1436,20 +1391,17 @@ impl SqlitePool {
         }) = delay_req
         {
             debug!("Inserting delay to `t_delay`");
-            let mut stmt = tx
-                .prepare_cached(
-                    "INSERT INTO t_delay (execution_id, join_set_id, delay_id, expires_at) \
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO t_delay (execution_id, join_set_id, delay_id, expires_at) \
                 VALUES \
                 (:execution_id, :join_set_id, :delay_id, :expires_at)",
-                )
-                .map_err(prepare_err_generic)?;
+            )?;
             stmt.execute(named_params! {
                 ":execution_id": execution_id_str,
                 ":join_set_id": join_set_id.to_string(),
                 ":delay_id": delay_id.to_string(),
                 ":expires_at": expires_at,
-            })
-            .map_err(result_err_generic)?;
+            })?;
         }
         Ok(appending_version.increment())
     }
@@ -1458,9 +1410,8 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
     ) -> Result<CombinedState, DbErrorRead> {
-        let mut stmt = tx
-            .prepare(
-                r"
+        let mut stmt = tx.prepare(
+            r"
                 SELECT
                     state, ffqn, corresponding_version, pending_expires_finished,
                     last_lock_version, executor_id, run_id,
@@ -1470,8 +1421,7 @@ impl SqlitePool {
                 WHERE
                     execution_id = :execution_id
                 ",
-            )
-            .map_err(prepare_err_generic)?;
+        )?;
         stmt.query_row(
             named_params! {
                 ":execution_id": execution_id.to_string(),
@@ -1500,7 +1450,7 @@ impl SqlitePool {
                 )
             },
         )
-        .map_err(result_err_read)
+        .map_err(DbErrorRead::from)
     }
 
     fn list_executions(
@@ -1582,8 +1532,7 @@ impl SqlitePool {
             limit = statement_mod.limit
         );
         let mut vec: Vec<_> = read_tx
-            .prepare(&sql)
-            .map_err(prepare_err_generic)?
+            .prepare(&sql)?
             .query_map::<_, &[(&'static str, &dyn rusqlite::ToSql)], _>(
                 statement_mod
                     .params
@@ -1625,8 +1574,7 @@ impl SqlitePool {
                         scheduled_at,
                     })
                 },
-            )
-            .map_err(intermittent_err_generic)?
+            )?
             .collect::<Vec<Result<_, _>>>()
             .into_iter()
             .filter_map(|row| match row {
@@ -1721,8 +1669,7 @@ impl SqlitePool {
                 "SELECT json_value FROM t_execution_log WHERE \
                 execution_id = :execution_id AND (variant = :v1 OR variant = :v2) \
                 ORDER BY version",
-            )
-            .map_err(prepare_err_generic)?
+            )?
             .query_map(
                 named_params! {
                     ":execution_id": execution_id.to_string(),
@@ -1737,10 +1684,8 @@ impl SqlitePool {
                             consistency_rusqlite("cannot deserialize json value")
                         })
                 },
-            )
-            .map_err(result_err_generic)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(result_err_generic)?
+            )?
+            .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .collect::<VecDeque<_>>();
         let Some(ExecutionEventInner::Created {
@@ -1794,17 +1739,15 @@ impl SqlitePool {
         let mut stmt = tx.prepare(
             "SELECT COUNT(*) as count FROM t_execution_log WHERE execution_id = :execution_id AND join_set_id = :join_set_id \
             AND history_event_type = :join_next",
-        ).map_err(prepare_err_generic)?;
-        Ok(stmt
-            .query_row(
-                named_params! {
-                    ":execution_id": execution_id.to_string(),
-                    ":join_set_id": join_set_id.to_string(),
-                    ":join_next": HISTORY_EVENT_TYPE_JOIN_NEXT,
-                },
-                |row| row.get("count"),
-            )
-            .map_err(result_err_generic)?)
+        )?;
+        Ok(stmt.query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":join_set_id": join_set_id.to_string(),
+                ":join_next": HISTORY_EVENT_TYPE_JOIN_NEXT,
+            },
+            |row| row.get("count"),
+        )?)
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(%execution_id))]
@@ -1869,7 +1812,7 @@ impl SqlitePool {
         let mut stmt = tx.prepare(
                     "INSERT INTO t_execution_log (execution_id, created_at, json_value, version, variant, join_set_id) \
                     VALUES (:execution_id, :created_at, :json_value, :version, :variant, :join_set_id)")
-                    .map_err(prepare_err_generic)?;
+                    ?;
         stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
             ":created_at": req.created_at,
@@ -1877,8 +1820,7 @@ impl SqlitePool {
             ":version": appending_version.0,
             ":variant": req.event.variant(),
             ":join_set_id": req.event.join_set_id().map(std::string::ToString::to_string),
-        })
-        .map_err(result_err_generic)?;
+        })?;
         // Calculate current pending state
 
         match &req.event {
@@ -2042,7 +1984,7 @@ impl SqlitePool {
         let mut stmt = tx.prepare(
             "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, child_execution_id, finished_version) \
                     VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :child_execution_id, :finished_version)",
-        ).map_err(prepare_err_generic)?;
+        )?;
         let join_set_id = &response_outer.event.join_set_id;
         let delay_id = match &response_outer.event.event {
             JoinSetResponse::DelayFinished { delay_id } => Some(delay_id.to_string()),
@@ -2067,8 +2009,7 @@ impl SqlitePool {
             ":delay_id": delay_id,
             ":child_execution_id": child_execution_id,
             ":finished_version": finished_version,
-        })
-        .map_err(result_err_generic)?;
+        })?;
 
         // if the execution is going to be unblocked by this response...
         let combined_state = Self::get_combined_state(tx, execution_id)?;
@@ -2102,13 +2043,12 @@ impl SqlitePool {
             debug!(%join_set_id, %delay_id, "Deleting from `t_delay`");
             let mut stmt =
                 tx.prepare_cached("DELETE FROM t_delay WHERE execution_id = :execution_id AND join_set_id = :join_set_id AND delay_id = :delay_id")
-                .map_err(prepare_err_generic)?;
+                ?;
             stmt.execute(named_params! {
                 ":execution_id": execution_id.to_string(),
                 ":join_set_id": join_set_id.to_string(),
                 ":delay_id": delay_id.to_string(),
-            })
-            .map_err(result_err_generic)?;
+            })?;
         }
         notifier.response = Some((execution_id.clone(), response_outer));
         Ok(notifier)
@@ -2130,15 +2070,14 @@ impl SqlitePool {
                 "INSERT INTO t_backtrace (execution_id, component_id, version_min_including, version_max_excluding, wasm_backtrace) \
                     VALUES (:execution_id, :component_id, :version_min_including, :version_max_excluding, :wasm_backtrace)",
             )
-            .map_err(prepare_err_generic)?;
+            ?;
         stmt.execute(named_params! {
             ":execution_id": backtrace_info.execution_id.to_string(),
             ":component_id": backtrace_info.component_id.to_string(),
             ":version_min_including": backtrace_info.version_min_including.0,
             ":version_max_excluding": backtrace_info.version_max_excluding.0,
             ":wasm_backtrace": backtrace,
-        })
-        .map_err(result_err_generic)?;
+        })?;
         Ok(())
     }
 
@@ -2147,12 +2086,10 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
     ) -> Result<concepts::storage::ExecutionLog, DbErrorRead> {
-        let mut stmt = tx
-            .prepare(
-                "SELECT created_at, json_value FROM t_execution_log WHERE \
+        let mut stmt = tx.prepare(
+            "SELECT created_at, json_value FROM t_execution_log WHERE \
                         execution_id = :execution_id ORDER BY version",
-            )
-            .map_err(prepare_err_generic)?;
+        )?;
         let events = stmt
             .query_map(
                 named_params! {
@@ -2174,10 +2111,8 @@ impl SqlitePool {
                         backtrace_id: None,
                     })
                 },
-            )
-            .map_err(result_err_read)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(result_err_read)?;
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
         if events.is_empty() {
             return Err(DbErrorRead::NotFound);
         }
@@ -2228,8 +2163,7 @@ impl SqlitePool {
                 execution_id = :execution_id AND version >= :version_min AND version < :version_max_excluding
             ORDER BY version"
         };
-        tx.prepare(select)
-            .map_err(prepare_err_generic)?
+        tx.prepare(select)?
             .query_map(
                 named_params! {
                     ":execution_id": execution_id.to_string(),
@@ -2254,10 +2188,9 @@ impl SqlitePool {
                         })?;
                     Ok(event)
                 },
-            )
-            .map_err(result_err_read)?
+            )?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(result_err_read)
+            .map_err(DbErrorRead::from)
     }
 
     fn get_execution_event(
@@ -2265,12 +2198,10 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         version: VersionType,
     ) -> Result<ExecutionEvent, DbErrorRead> {
-        let mut stmt = tx
-            .prepare(
-                "SELECT created_at, json_value FROM t_execution_log WHERE \
+        let mut stmt = tx.prepare(
+            "SELECT created_at, json_value FROM t_execution_log WHERE \
                         execution_id = :execution_id AND version = :version",
-            )
-            .map_err(prepare_err_generic)?;
+        )?;
         stmt.query_row(
             named_params! {
                 ":execution_id": execution_id.to_string(),
@@ -2292,7 +2223,7 @@ impl SqlitePool {
                 })
             },
         )
-        .map_err(result_err_read)
+        .map_err(DbErrorRead::from)
     }
 
     fn list_responses(
@@ -2329,8 +2260,7 @@ impl SqlitePool {
             write!(sql, " LIMIT {limit}").unwrap();
         }
         params.push((":execution_id", Box::new(execution_id.to_string())));
-        tx.prepare(&sql)
-            .map_err(prepare_err_generic)?
+        tx.prepare(&sql)?
             .query_map::<_, &[(&'static str, &dyn ToSql)], _>(
                 params
                     .iter()
@@ -2338,10 +2268,9 @@ impl SqlitePool {
                     .collect::<Vec<_>>()
                     .as_ref(),
                 Self::parse_response_with_cursor,
-            )
-            .map_err(intermittent_err_generic)?
+            )?
             .collect::<Result<Vec<_>, rusqlite::Error>>()
-            .map_err(result_err_read)
+            .map_err(DbErrorRead::from)
     }
 
     fn parse_response_with_cursor(
@@ -2408,7 +2337,7 @@ impl SqlitePool {
                     ORDER BY id \
                     LIMIT 1 OFFSET :offset",
             )
-            .map_err(prepare_err_generic)?
+            ?
             .query_row(
                 named_params! {
                     ":execution_id": execution_id.to_string(),
@@ -2418,7 +2347,7 @@ impl SqlitePool {
                 Self::parse_response_with_cursor,
             )
             .optional()
-            .map_err(result_err_read)
+            .map_err(DbErrorRead::from)
     }
 
     // TODO(perf): Instead of OFFSET an per-execution sequential ID could improve the read performance.
@@ -2443,7 +2372,7 @@ impl SqlitePool {
             ORDER BY id \
             LIMIT -1 OFFSET :offset",
         )
-        .map_err(prepare_err_generic)?
+        ?
         .query_map(
             named_params! {
                 ":execution_id": execution_id.to_string(),
@@ -2451,10 +2380,10 @@ impl SqlitePool {
             },
             Self::parse_response_with_cursor,
         )
-        .map_err(result_err_read)?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(result_err_read)
         .map(|resp| resp.into_iter().map(|vec| vec.event).collect())
+        .map_err(DbErrorRead::from)
     }
 
     fn get_pending_of_single_ffqn(
@@ -2622,7 +2551,7 @@ impl DbExecutor for SqlitePool {
             Ok(vec![])
         } else {
             debug!("Locking {execution_ids_versions:?}");
-            self.transaction_write(
+            self.transaction(
                 move |tx| {
                     let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
                     // Append lock
@@ -2647,7 +2576,7 @@ impl DbExecutor for SqlitePool {
                 },
                 "lock_pending",
             )
-            .await?
+            .await
         }
     }
 
@@ -2664,7 +2593,7 @@ impl DbExecutor for SqlitePool {
     ) -> Result<LockedExecution, DbErrorWrite> {
         debug!(%execution_id, "lock_extend");
         let execution_id = execution_id.clone();
-        self.transaction_write(
+        self.transaction(
             move |tx| {
                 Self::lock_single_execution(
                     tx,
@@ -2679,7 +2608,7 @@ impl DbExecutor for SqlitePool {
             },
             "lock_inner",
         )
-        .await?
+        .await
     }
 
     #[instrument(level = Level::DEBUG, skip(self, req))]
@@ -2693,11 +2622,11 @@ impl DbExecutor for SqlitePool {
         trace!(?req, "append");
         let created_at = req.created_at;
         let (version, notifier) = self
-            .transaction_write(
+            .transaction(
                 move |tx| Self::append(tx, &execution_id, req, version),
                 "append",
             )
-            .await??;
+            .await?;
         self.notify_all(vec![notifier], created_at);
         Ok(version)
     }
@@ -2721,7 +2650,7 @@ impl DbExecutor for SqlitePool {
         }
         assert!(!events.batch.is_empty(), "Empty batch request"); // FIXME
         let (version, notifiers) = {
-            self.transaction_write(
+            self.transaction(
                 move |tx| {
                     let mut version = events.version;
                     let mut notifier_of_child = None;
@@ -2747,7 +2676,7 @@ impl DbExecutor for SqlitePool {
                 },
                 "append_batch_respond_to_parent",
             )
-            .await??
+            .await?
         };
         self.notify_all(notifiers, current_time);
         Ok(version)
@@ -2828,8 +2757,8 @@ impl DbConnection for SqlitePool {
         trace!(?req, "create");
         let created_at = req.created_at;
         let (version, notifier) = self
-            .transaction_write(move |tx| Self::create_inner(tx, req), "create")
-            .await??;
+            .transaction(move |tx| Self::create_inner(tx, req), "create")
+            .await?;
         self.notify_all(vec![notifier], created_at);
         Ok(version)
     }
@@ -2847,7 +2776,7 @@ impl DbConnection for SqlitePool {
         assert!(!batch.is_empty(), "Empty batch request");
 
         let (version, notifier) = self
-            .transaction_write(
+            .transaction(
                 move |tx| {
                     let mut version = version;
                     let mut notifier = None;
@@ -2863,7 +2792,7 @@ impl DbConnection for SqlitePool {
                 },
                 "append_batch",
             )
-            .await??;
+            .await?;
 
         self.notify_all(vec![notifier], current_time);
         Ok(version)
@@ -2883,7 +2812,7 @@ impl DbConnection for SqlitePool {
         assert!(!batch.is_empty(), "Empty batch request");
 
         let (version, notifiers) = self
-            .transaction_write(
+            .transaction(
                 move |tx| {
                     let mut notifier = None;
                     let mut version = version;
@@ -2903,7 +2832,7 @@ impl DbConnection for SqlitePool {
                 },
                 "append_batch_create_new_execution_inner",
             )
-            .await??;
+            .await?;
         self.notify_all(notifiers, current_time);
         Ok(version)
     }
@@ -2916,8 +2845,8 @@ impl DbConnection for SqlitePool {
     ) -> Result<concepts::storage::ExecutionLog, DbErrorRead> {
         trace!("get");
         let execution_id = execution_id.clone();
-        self.transaction_read(move |tx| Self::get(tx, &execution_id), "get")
-            .await?
+        self.transaction(move |tx| Self::get(tx, &execution_id), "get")
+            .await
     }
 
     #[instrument(level = Level::DEBUG, skip(self))]
@@ -2930,7 +2859,7 @@ impl DbConnection for SqlitePool {
     ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
         let execution_id = execution_id.clone();
         let since = since.0;
-        self.transaction_read(
+        self.transaction(
             move |tx| {
                 Self::list_execution_events(
                     tx,
@@ -2942,7 +2871,7 @@ impl DbConnection for SqlitePool {
             },
             "get",
         )
-        .await?
+        .await
     }
 
     // Supports only one subscriber per execution id.
@@ -2974,7 +2903,7 @@ impl DbConnection for SqlitePool {
         let response_subscribers = self.0.response_subscribers.clone();
         let resp_or_receiver = {
             let execution_id = execution_id.clone();
-            self.transaction_write(
+            self.transaction(
                 move |tx| {
                     let responses = Self::get_responses_with_offset(tx, &execution_id, start_idx)?;
                     if responses.is_empty() {
@@ -2993,8 +2922,6 @@ impl DbConnection for SqlitePool {
             )
             .await
         }
-        .map_err(DbErrorReadWithTimeout::from)
-        .flatten()
         .inspect_err(|_| {
             cleanup();
         })?;
@@ -3036,7 +2963,7 @@ impl DbConnection for SqlitePool {
 
         let resp_or_receiver = {
             let execution_id = execution_id.clone();
-            self.transaction_read(move |tx| {
+            self.transaction(move |tx| {
                 let pending_state =
                     Self::get_combined_state(tx, &execution_id)?.pending_state;
                 if let PendingState::Finished { finished } = pending_state {
@@ -3061,11 +2988,11 @@ impl DbConnection for SqlitePool {
                 }
             }, "wait_for_finished_result")
             .await
-        }.map_err(DbErrorReadWithTimeout::from)
-        .flatten()
+        }
         .inspect_err(|_| {
-            // This cleanup can race with the notification sender. If the
-            // sender already
+            // This cleanup can race with the notification sender, since both are running after a transaction was finished.
+            // If the notification sender wins, it removes our oneshot sender and puts a value in it, cleanup will not find the unique tag.
+            // If cleanup wins, it simply removes the oneshot sender.
             cleanup();
         })?;
 
@@ -3101,11 +3028,11 @@ impl DbConnection for SqlitePool {
             event: response_event,
         };
         let notifier = self
-            .transaction_write(
+            .transaction(
                 move |tx| Self::append_response(tx, &execution_id, event),
                 "append_response",
             )
-            .await??;
+            .await?;
         self.notify_all(vec![notifier], created_at);
         Ok(())
     }
@@ -3113,17 +3040,17 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite> {
         debug!("append_backtrace");
-        self.transaction_write(
+        self.transaction(
             move |tx| Self::append_backtrace(tx, &append),
             "append_backtrace",
         )
-        .await?
+        .await
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite> {
         debug!("append_backtrace_batch");
-        self.transaction_write(
+        self.transaction(
             move |tx| {
                 for append in batch {
                     Self::append_backtrace(tx, &append)?;
@@ -3132,7 +3059,7 @@ impl DbConnection for SqlitePool {
             },
             "append_backtrace",
         )
-        .await?
+        .await
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
@@ -3144,7 +3071,7 @@ impl DbConnection for SqlitePool {
         debug!("get_last_backtrace");
         let execution_id = execution_id.clone();
 
-        self.transaction_read(
+        self.transaction(
             move |tx| {
                 let select = "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_backtrace \
                                 WHERE execution_id = :execution_id";
@@ -3156,10 +3083,10 @@ impl DbConnection for SqlitePool {
                     },
                     BacktraceFilter::First => format!("{select} ORDER BY version_min_including LIMIT 1"),
                     BacktraceFilter::Last => format!("{select} ORDER BY version_min_including DESC LIMIT 1")
-               };
+                };
                 tx
                     .prepare(&select)
-                    .map_err(prepare_err_generic)?
+                    ?
                     .query_row::<_, &[(&'static str, &dyn ToSql)], _>(
                         params
                             .iter()
@@ -3175,11 +3102,10 @@ impl DbConnection for SqlitePool {
                             wasm_backtrace: row.get::<_, JsonWrapper<_>>("wasm_backtrace")?.0,
                         })
                     },
-                )
-                .map_err(result_err_read)
+                ).map_err(DbErrorRead::from)
             },
             "get_last_backtrace",
-        ).await?
+        ).await
     }
 
     /// Get currently expired delays and locks.
@@ -3192,7 +3118,7 @@ impl DbConnection for SqlitePool {
             move |conn| {
                 let mut expired_timers = conn.prepare(
                     "SELECT execution_id, join_set_id, delay_id FROM t_delay WHERE expires_at <= :at",
-                ).map_err(prepare_err_generic)?
+                )?
                 .query_map(
                         named_params! {
                             ":at": at,
@@ -3204,8 +3130,8 @@ impl DbConnection for SqlitePool {
                             let delay = ExpiredDelay { execution_id, join_set_id, delay_id };
                             Ok(ExpiredTimer::Delay(delay))
                         },
-                    ).map_err(result_err_generic)?
-                    .collect::<Result<Vec<_>, _>>().map_err(result_err_generic)?;
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
                 // Extend with expired locks
                 let expired = conn.prepare(&format!(r#"
                     SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis
@@ -3213,7 +3139,7 @@ impl DbConnection for SqlitePool {
                     WHERE pending_expires_finished <= :at AND state = "{STATE_LOCKED}"
                     "#
                 )
-                ).map_err(prepare_err_generic)?
+                )?
                 .query_map(
                         named_params! {
                             ":at": at,
@@ -3241,8 +3167,8 @@ impl DbConnection for SqlitePool {
                             };
                             Ok(ExpiredTimer::Lock(lock))
                         }
-                    ).map_err(result_err_generic)?
-                    .collect::<Result<Vec<_>, _>>().map_err(result_err_generic)?;
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
                 expired_timers.extend(expired);
                 if !expired_timers.is_empty() {
                     debug!("get_expired_timers found {expired_timers:?}");
@@ -3260,11 +3186,11 @@ impl DbConnection for SqlitePool {
     ) -> Result<ExecutionEvent, DbErrorRead> {
         let version = version.0;
         let execution_id = execution_id.clone();
-        self.transaction_read(
+        self.transaction(
             move |tx| Self::get_execution_event(tx, &execution_id, version),
             "get_execution_event",
         )
-        .await?
+        .await
     }
 
     async fn get_pending_state(
@@ -3273,11 +3199,11 @@ impl DbConnection for SqlitePool {
     ) -> Result<PendingState, DbErrorRead> {
         let execution_id = execution_id.clone();
         Ok(self
-            .transaction_read(
+            .transaction(
                 move |tx| Self::get_combined_state(tx, &execution_id),
                 "get_pending_state",
             )
-            .await??
+            .await?
             .pending_state)
     }
 
@@ -3287,11 +3213,11 @@ impl DbConnection for SqlitePool {
         top_level_only: bool,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
-        self.transaction_read(
+        self.transaction(
             move |tx| Self::list_executions(tx, ffqn, top_level_only, pagination),
             "list_executions",
         )
-        .await?
+        .await
     }
 
     async fn list_responses(
@@ -3300,11 +3226,11 @@ impl DbConnection for SqlitePool {
         pagination: Pagination<u32>,
     ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
         let execution_id = execution_id.clone();
-        self.transaction_read(
+        self.transaction(
             move |tx| Self::list_responses(tx, &execution_id, Some(pagination)),
             "list_executions",
         )
-        .await?
+        .await
     }
 }
 

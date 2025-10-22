@@ -83,8 +83,6 @@ pub(crate) struct SqliteConfigToml {
     directory: Option<String>,
     #[serde(default = "default_sqlite_queue_capacity")]
     queue_capacity: usize,
-    #[serde(default = "default_sqlite_low_prio_threshold")]
-    low_prio_threshold: usize,
     #[serde(default)]
     pragma: std::collections::HashMap<String, String>, // hashbrown is not supported by schemars
     #[serde(default)]
@@ -95,7 +93,6 @@ impl Default for SqliteConfigToml {
         Self {
             directory: None,
             queue_capacity: default_sqlite_queue_capacity(),
-            low_prio_threshold: default_sqlite_low_prio_threshold(),
             pragma: std::collections::HashMap::default(),
             metrics_threshold: Option::default(),
         }
@@ -119,7 +116,6 @@ impl SqliteConfigToml {
     pub(crate) fn as_sqlite_config(&self) -> SqliteConfig {
         SqliteConfig {
             queue_capacity: self.queue_capacity,
-            low_prio_threshold: self.low_prio_threshold,
             pragma_override: Some(self.pragma.clone().into_iter().collect()),
             metrics_threshold: self.metrics_threshold.map(Duration::from),
         }
@@ -1343,9 +1339,6 @@ fn default_out_style() -> LoggingStyle {
 
 fn default_sqlite_queue_capacity() -> usize {
     SqliteConfig::default().queue_capacity
-}
-fn default_sqlite_low_prio_threshold() -> usize {
-    SqliteConfig::default().low_prio_threshold
 }
 
 fn default_activities_directories_enabled() -> bool {

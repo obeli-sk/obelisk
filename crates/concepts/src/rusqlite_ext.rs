@@ -1,6 +1,7 @@
 use crate::{
     ExecutionId, JoinSetId,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
+    storage::{DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite},
 };
 use rusqlite::{
     ToSql,
@@ -113,5 +114,35 @@ impl FromSql for ExecutorId {
             );
             FromSqlError::InvalidType
         })
+    }
+}
+
+impl From<rusqlite::Error> for DbErrorGeneric {
+    fn from(err: rusqlite::Error) -> DbErrorGeneric {
+        error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
+        DbErrorGeneric::Uncategorized(err.to_string().into())
+    }
+}
+impl From<rusqlite::Error> for DbErrorRead {
+    fn from(err: rusqlite::Error) -> Self {
+        if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
+            Self::NotFound
+        } else {
+            Self::from(DbErrorGeneric::from(err))
+        }
+    }
+}
+impl From<rusqlite::Error> for DbErrorReadWithTimeout {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::from(DbErrorRead::from(err))
+    }
+}
+impl From<rusqlite::Error> for DbErrorWrite {
+    fn from(err: rusqlite::Error) -> Self {
+        if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
+            Self::NotFound
+        } else {
+            Self::from(DbErrorGeneric::from(err))
+        }
     }
 }

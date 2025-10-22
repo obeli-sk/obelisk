@@ -606,12 +606,6 @@
           ],
           "default": null
         },
-        "low_prio_threshold": {
-          "type": "integer",
-          "format": "uint",
-          "default": 100,
-          "minimum": 0
-        },
         "metrics_threshold": {
           "anyOf": [
             {
