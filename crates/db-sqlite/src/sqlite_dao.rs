@@ -6,14 +6,15 @@ use concepts::{
     ComponentId, ExecutionId, FunctionFqn, JoinSetId, SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
-        CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric,
-        DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWritePermanent, DbExecutor,
-        DbPool, DbPoolCloseable, ExecutionEvent, ExecutionEventInner, ExecutionListPagination,
-        ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
-        LockedExecution, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, ResponseWithCursor, Version, VersionType,
+        AppendBatchResponse, AppendEventsToExecution, AppendRequest, AppendResponse,
+        AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest, DUMMY_CREATED,
+        DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
+        DbErrorWrite, DbErrorWritePermanent, DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent,
+        ExecutionEventInner, ExecutionListPagination, ExecutionWithState, ExpiredDelay,
+        ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution,
+        Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
+        ResponseWithCursor, Version, VersionType,
     },
 };
 use conversions::{FromStrWrapper, JsonWrapper, consistency_db_err, consistency_rusqlite};
@@ -2701,19 +2702,15 @@ impl DbExecutor for SqlitePool {
         Ok(version)
     }
 
-    #[instrument(level = Level::DEBUG, skip(self, batch, parent_response_event))]
+    #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_batch_respond_to_parent(
         &self,
-        execution_id: ExecutionIdDerived,
+        events: AppendEventsToExecution,
+        response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-        batch: Vec<AppendRequest>,
-        version: Version,
-        parent_execution_id: ExecutionId,
-        parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         debug!("append_batch_respond_to_parent");
-        let execution_id = ExecutionId::Derived(execution_id);
-        if execution_id == parent_execution_id {
+        if events.execution_id == response.parent_execution_id {
             // Pending state would be wrong.
             // This is not a panic because it depends on DB state.
             return Err(DbErrorWrite::Permanent(
@@ -2722,25 +2719,24 @@ impl DbExecutor for SqlitePool {
                 ),
             ));
         }
-        trace!(
-            ?batch,
-            ?parent_response_event,
-            "append_batch_respond_to_parent"
-        );
-        assert!(!batch.is_empty(), "Empty batch request");
+        assert!(!events.batch.is_empty(), "Empty batch request"); // FIXME
         let (version, notifiers) = {
             self.transaction_write(
                 move |tx| {
-                    let mut version = version;
+                    let mut version = events.version;
                     let mut notifier_of_child = None;
-                    for append_request in batch {
-                        let (v, n) = Self::append(tx, &execution_id, append_request, version)?;
+                    for append_request in events.batch {
+                        let (v, n) =
+                            Self::append(tx, &events.execution_id, append_request, version)?;
                         version = v;
                         notifier_of_child = Some(n);
                     }
 
-                    let pending_at_parent =
-                        Self::append_response(tx, &parent_execution_id, parent_response_event)?;
+                    let pending_at_parent = Self::append_response(
+                        tx,
+                        &response.parent_execution_id,
+                        response.parent_response_event,
+                    )?;
                     Ok::<_, DbErrorWrite>((
                         version,
                         vec![

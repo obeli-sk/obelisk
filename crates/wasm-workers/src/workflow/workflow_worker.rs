@@ -707,7 +707,9 @@ pub(crate) mod tests {
     use assert_matches::assert_matches;
     use chrono::DateTime;
     use concepts::prefixed_ulid::ExecutionIdDerived;
-    use concepts::storage::PendingStateFinishedError;
+    use concepts::storage::{
+        AppendEventsToExecution, AppendResponseToExecution, PendingStateFinishedError,
+    };
     use concepts::storage::{
         AppendRequest, DbConnection, DbExecutor, ExecutionEventInner, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter,
@@ -2241,7 +2243,7 @@ pub(crate) mod tests {
         stub_execution_id: ExecutionIdDerived,
         result: SupportedFunctionReturnValue,
     ) {
-        let (parent_id, join_set_id) = stub_execution_id.split_to_parts().unwrap();
+        let (parent_execution_id, join_set_id) = stub_execution_id.split_to_parts().unwrap();
         let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
         let finished_req = AppendRequest {
             created_at,
@@ -2252,22 +2254,26 @@ pub(crate) mod tests {
         };
         db_connection
             .append_batch_respond_to_parent(
-                stub_execution_id.clone(),
-                created_at,
-                vec![finished_req],
-                stub_finished_version.clone(),
-                parent_id,
-                JoinSetResponseEventOuter {
-                    created_at,
-                    event: JoinSetResponseEvent {
-                        join_set_id,
-                        event: JoinSetResponse::ChildExecutionFinished {
-                            child_execution_id: stub_execution_id,
-                            finished_version: stub_finished_version.clone(),
-                            result,
+                AppendEventsToExecution {
+                    execution_id: ExecutionId::Derived(stub_execution_id.clone()),
+                    version: stub_finished_version.clone(),
+                    batch: vec![finished_req],
+                },
+                AppendResponseToExecution {
+                    parent_execution_id,
+                    parent_response_event: JoinSetResponseEventOuter {
+                        created_at,
+                        event: JoinSetResponseEvent {
+                            join_set_id,
+                            event: JoinSetResponse::ChildExecutionFinished {
+                                child_execution_id: stub_execution_id,
+                                finished_version: stub_finished_version.clone(),
+                                result,
+                            },
                         },
                     },
                 },
+                created_at,
             )
             .await
             .unwrap();

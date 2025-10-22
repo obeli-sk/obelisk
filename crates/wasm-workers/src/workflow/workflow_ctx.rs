@@ -1620,8 +1620,9 @@ pub(crate) mod tests {
     use chrono::DateTime;
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
-        AppendRequest, CreateRequest, DbExecutor, DbPool, ExecutionEvent, ExecutionEventInner,
-        HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, JoinSetResponse, PendingState,
+        AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest,
+        DbExecutor, DbPool, ExecutionEvent, ExecutionEventInner, HistoryEvent,
+        HistoryEventScheduleAt, JoinSetRequest, JoinSetResponse, PendingState,
         PendingStateFinished, PendingStateFinishedResultKind,
     };
     use concepts::storage::{
@@ -2574,28 +2575,32 @@ pub(crate) mod tests {
         );
         db_connection
             .append_batch_respond_to_parent(
-                child_execution_id.clone(),
-                sim_clock.now(),
-                vec![AppendRequest {
-                    created_at: sim_clock.now(),
-                    event: concepts::storage::ExecutionEventInner::Finished {
-                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                        http_client_traces: None,
-                    },
-                }],
-                child_log.next_version.clone(),
-                parent_execution_id,
-                JoinSetResponseEventOuter {
-                    created_at: sim_clock.now(),
-                    event: JoinSetResponseEvent {
-                        join_set_id,
-                        event: JoinSetResponse::ChildExecutionFinished {
-                            child_execution_id: child_execution_id.clone(),
-                            finished_version: child_log.next_version.clone(),
+                AppendEventsToExecution {
+                    execution_id: ExecutionId::Derived(child_execution_id.clone()),
+                    version: child_log.next_version.clone(),
+                    batch: vec![AppendRequest {
+                        created_at: sim_clock.now(),
+                        event: concepts::storage::ExecutionEventInner::Finished {
                             result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                            http_client_traces: None,
+                        },
+                    }],
+                },
+                AppendResponseToExecution {
+                    parent_execution_id,
+                    parent_response_event: JoinSetResponseEventOuter {
+                        created_at: sim_clock.now(),
+                        event: JoinSetResponseEvent {
+                            join_set_id,
+                            event: JoinSetResponse::ChildExecutionFinished {
+                                child_execution_id: child_execution_id.clone(),
+                                finished_version: child_log.next_version.clone(),
+                                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                            },
                         },
                     },
                 },
+                sim_clock.now(),
             )
             .await
             .unwrap();

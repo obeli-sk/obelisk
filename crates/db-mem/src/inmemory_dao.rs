@@ -7,14 +7,15 @@ use self::index::JournalsIndex;
 use crate::journal::ExecutionJournal;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
+use concepts::prefixed_ulid::{ExecutorId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, BacktraceFilter, BacktraceInfo,
-    CreateRequest, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
-    DbErrorWritePermanent, DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent,
-    ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredDelay,
-    ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse,
-    LockedExecution, Pagination, ResponseWithCursor, Version, VersionType,
+    AppendBatchResponse, AppendEventsToExecution, AppendRequest, AppendResponse,
+    AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest, DbConnection,
+    DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWritePermanent,
+    DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionEventInner,
+    ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredDelay, ExpiredLock,
+    ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution,
+    Pagination, ResponseWithCursor, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ExecutionId, FunctionFqn};
@@ -112,23 +113,17 @@ impl DbExecutor for InMemoryDbConnection {
             .append(req.created_at, &execution_id, appending_version, req.event)
     }
 
-    #[instrument(skip_all, %execution_id)]
+    #[instrument(skip_all)]
     async fn append_batch_respond_to_parent(
         &self,
-        execution_id: ExecutionIdDerived,
-        _created_at: DateTime<Utc>,
-        batch: Vec<AppendRequest>,
-        version: Version,
-        parent_execution_id: ExecutionId,
-        parent_response_event: JoinSetResponseEventOuter,
+        events: AppendEventsToExecution,
+        response: AppendResponseToExecution,
+        _current_time: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
-        self.0.lock().unwrap().append_batch_respond_to_parent(
-            &execution_id,
-            batch,
-            version,
-            &parent_execution_id,
-            parent_response_event,
-        )
+        self.0
+            .lock()
+            .unwrap()
+            .append_batch_respond_to_parent(events, response)
     }
 
     async fn wait_for_pending(
@@ -777,15 +772,15 @@ impl DbHolder {
 
     fn append_batch_respond_to_parent(
         &mut self,
-        execution_id: &ExecutionIdDerived,
-        batch: Vec<AppendRequest>,
-        version: Version,
-        parent_execution_id: &ExecutionId,
-        parent_response_event: JoinSetResponseEventOuter,
+        events: AppendEventsToExecution,
+        response: AppendResponseToExecution,
     ) -> Result<Version, DbErrorWrite> {
         let child_version =
-            self.append_batch(batch, &ExecutionId::Derived(execution_id.clone()), version)?;
-        self.append_response(parent_execution_id, parent_response_event)?;
+            self.append_batch(events.batch, &events.execution_id, events.version)?;
+        self.append_response(
+            &response.parent_execution_id,
+            response.parent_response_event,
+        )?;
         Ok(child_version)
     }
 

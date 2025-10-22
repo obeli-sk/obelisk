@@ -2,9 +2,9 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, RunId};
 use concepts::storage::{
-    AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, ExpiredDelay, ExpiredLock,
-    ExpiredTimer, JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedExecution,
-    PendingState, Version,
+    AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest, DbConnection,
+    ExecutionEventInner, ExpiredDelay, ExpiredLock, ExpiredTimer, JoinSetRequest, JoinSetResponse,
+    JoinSetResponseEventOuter, LockedExecution, PendingState, Version,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable};
 use concepts::storage::{DbErrorWritePermanent, HistoryEvent};
@@ -928,28 +928,32 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
         // Append child response to unblock the parent
         db_connection
             .append_batch_respond_to_parent(
-                child_id.clone(),
-                sim_clock.now(),
-                vec![AppendRequest {
-                    created_at: sim_clock.now(),
-                    event: ExecutionEventInner::Finished {
-                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                        http_client_traces: None,
-                    },
-                }],
-                child_version.clone(),
-                parent_id.clone(),
-                JoinSetResponseEventOuter {
-                    created_at: sim_clock.now(),
-                    event: JoinSetResponseEvent {
-                        join_set_id: join_set_id.clone(),
-                        event: JoinSetResponse::ChildExecutionFinished {
-                            child_execution_id: child_id.clone(),
-                            finished_version: child_version, // will remain at 1.
+                AppendEventsToExecution {
+                    execution_id: ExecutionId::Derived(child_id.clone()),
+                    version: child_version.clone(),
+                    batch: vec![AppendRequest {
+                        created_at: sim_clock.now(),
+                        event: ExecutionEventInner::Finished {
                             result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                            http_client_traces: None,
+                        },
+                    }],
+                },
+                AppendResponseToExecution {
+                    parent_execution_id: parent_id.clone(),
+                    parent_response_event: JoinSetResponseEventOuter {
+                        created_at: sim_clock.now(),
+                        event: JoinSetResponseEvent {
+                            join_set_id: join_set_id.clone(),
+                            event: JoinSetResponse::ChildExecutionFinished {
+                                child_execution_id: child_id.clone(),
+                                finished_version: child_version, // will remain at 1.
+                                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                            },
                         },
                     },
                 },
+                sim_clock.now(),
             )
             .await
             .unwrap();
@@ -979,7 +983,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
             })
             .await
             .unwrap();
-        let child_resp = vec![AppendRequest {
+        let batch = vec![AppendRequest {
             created_at: sim_clock.now(),
             event: ExecutionEventInner::Finished {
                 result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
@@ -989,22 +993,26 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
 
         db_connection
             .append_batch_respond_to_parent(
-                child_id.clone(),
-                sim_clock.now(),
-                child_resp,
-                child_version.clone(),
-                parent_id.clone(),
-                JoinSetResponseEventOuter {
-                    created_at: sim_clock.now(),
-                    event: JoinSetResponseEvent {
-                        join_set_id: join_set_id.clone(),
-                        event: JoinSetResponse::ChildExecutionFinished {
-                            child_execution_id: child_id.clone(),
-                            finished_version: child_version,
-                            result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                AppendEventsToExecution {
+                    execution_id: ExecutionId::Derived(child_id.clone()),
+                    version: child_version.clone(),
+                    batch,
+                },
+                AppendResponseToExecution {
+                    parent_execution_id: parent_id.clone(),
+                    parent_response_event: JoinSetResponseEventOuter {
+                        created_at: sim_clock.now(),
+                        event: JoinSetResponseEvent {
+                            join_set_id: join_set_id.clone(),
+                            event: JoinSetResponse::ChildExecutionFinished {
+                                child_execution_id: child_id.clone(),
+                                finished_version: child_version,
+                                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                            },
                         },
                     },
                 },
+                sim_clock.now(),
             )
             .await
             .unwrap();

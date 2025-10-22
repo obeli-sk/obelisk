@@ -47,7 +47,9 @@ use concepts::Params;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
 use concepts::SupportedFunctionReturnValue;
+use concepts::storage::AppendEventsToExecution;
 use concepts::storage::AppendRequest;
+use concepts::storage::AppendResponseToExecution;
 use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
@@ -378,7 +380,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             }
             ExecutionId::Derived(derived) => derived,
         };
-        let Ok((parent_id, join_set_id)) = execution_id.split_to_parts() else {
+        let Ok((parent_execution_id, join_set_id)) = execution_id.split_to_parts() else {
             return Err(tonic::Status::invalid_argument(
                 "execution ID cannot be parsed",
             ));
@@ -438,22 +440,26 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             };
             db_connection
                 .append_batch_respond_to_parent(
-                    execution_id.clone(),
-                    created_at,
-                    vec![finished_req],
-                    stub_finished_version.clone(),
-                    parent_id,
-                    JoinSetResponseEventOuter {
-                        created_at,
-                        event: JoinSetResponseEvent {
-                            join_set_id,
-                            event: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id: execution_id.clone(),
-                                finished_version: stub_finished_version.clone(),
-                                result: return_value.clone(),
+                    AppendEventsToExecution {
+                        execution_id: ExecutionId::Derived(execution_id.clone()),
+                        version: stub_finished_version.clone(),
+                        batch: vec![finished_req],
+                    },
+                    AppendResponseToExecution {
+                        parent_execution_id,
+                        parent_response_event: JoinSetResponseEventOuter {
+                            created_at,
+                            event: JoinSetResponseEvent {
+                                join_set_id,
+                                event: JoinSetResponse::ChildExecutionFinished {
+                                    child_execution_id: execution_id.clone(),
+                                    finished_version: stub_finished_version.clone(),
+                                    result: return_value.clone(),
+                                },
                             },
                         },
                     },
+                    created_at,
                 )
                 .await
         };

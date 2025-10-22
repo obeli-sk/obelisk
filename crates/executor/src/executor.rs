@@ -3,8 +3,9 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::{
-    AppendRequest, DbErrorGeneric, DbErrorWrite, DbExecutor, ExecutionLog, JoinSetResponseEvent,
-    JoinSetResponseEventOuter, LockedExecution,
+    AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbErrorGeneric,
+    DbErrorWrite, DbExecutor, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
+    LockedExecution,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{ComponentId, FunctionMetadata, StrVariant, SupportedFunctionReturnValue};
@@ -633,26 +634,29 @@ impl Append {
                 }
             );
             let derived = assert_matches!(self.execution_id.clone(), ExecutionId::Derived(derived) => derived);
-            db_exec
-                .append_batch_respond_to_parent(
-                    derived.clone(),
-                    self.created_at,
-                    vec![self.primary_event],
-                    self.version.clone(),
-                    child_finished.parent_execution_id,
-                    JoinSetResponseEventOuter {
-                        created_at: self.created_at,
-                        event: JoinSetResponseEvent {
-                            join_set_id: child_finished.parent_join_set,
-                            event: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id: derived,
-                                // Since self.primary_event is a finished event, the version will remain the same.
-                                finished_version: self.version,
-                                result: child_finished.result,
-                            },
+            let events = AppendEventsToExecution {
+                execution_id: self.execution_id,
+                version: self.version.clone(),
+                batch: vec![self.primary_event],
+            };
+            let response = AppendResponseToExecution {
+                parent_execution_id: child_finished.parent_execution_id,
+                parent_response_event: JoinSetResponseEventOuter {
+                    created_at: self.created_at,
+                    event: JoinSetResponseEvent {
+                        join_set_id: child_finished.parent_join_set,
+                        event: JoinSetResponse::ChildExecutionFinished {
+                            child_execution_id: derived,
+                            // Since self.primary_event is a finished event, the version will remain the same.
+                            finished_version: self.version,
+                            result: child_finished.result,
                         },
                     },
-                )
+                },
+            };
+
+            db_exec
+                .append_batch_respond_to_parent(events, response, self.created_at)
                 .await?;
         } else {
             db_exec

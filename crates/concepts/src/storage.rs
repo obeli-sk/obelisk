@@ -623,6 +623,19 @@ pub trait DbPoolCloseable {
     async fn close(self);
 }
 
+#[derive(Clone, Debug)]
+pub struct AppendEventsToExecution {
+    pub execution_id: ExecutionId,
+    pub version: Version,
+    pub batch: Vec<AppendRequest>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AppendResponseToExecution {
+    pub parent_execution_id: ExecutionId,
+    pub parent_response_event: JoinSetResponseEventOuter,
+}
+
 #[async_trait]
 pub trait DbExecutor: Send + Sync {
     #[expect(clippy::too_many_arguments)]
@@ -664,12 +677,9 @@ pub trait DbExecutor: Send + Sync {
     /// The batch cannot contain `ExecutionEventInner::Created`.
     async fn append_batch_respond_to_parent(
         &self,
-        execution_id: ExecutionIdDerived,
+        events: AppendEventsToExecution,
+        response: AppendResponseToExecution,
         current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
-        batch: Vec<AppendRequest>,
-        version: Version,
-        parent_execution_id: ExecutionId,
-        parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
     /// Notification mechainism with no strict guarantees for waiting while there are no pending executions.
