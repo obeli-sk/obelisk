@@ -3,6 +3,56 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.26.0](https://github.com/obeli-sk/obelisk/compare/v0.25.4...v0.26.0)
+
+This release contains database schema changes.
+
+### ⛰️ Features
+
+- *(toml)* Allow disabling the timers watcher - ([bb651fe](https://github.com/obeli-sk/obelisk/commit/bb651fe6794e5c72853b9992dd9f4addce816db4))
+- *(toml)* Allow debugging of WASM components - ([9f0beb9](https://github.com/obeli-sk/obelisk/commit/9f0beb9c55f8edaeb53a9dec03a1c7d12f079f60))
+
+### 🐛 Bug Fixes
+
+- *(grpc)* Fix panic when `get`ting an unfinished execution - ([5e9b080](https://github.com/obeli-sk/obelisk/commit/5e9b080b9e95a779ec0e358b3160f3aafd0f55c6))
+
+### 🚜 Refactor
+
+- *(sqlite)* Print metrics on configurable duration - ([266aa00](https://github.com/obeli-sk/obelisk/commit/266aa00e6893f4632cdd29249955fcc62021c0a5))
+- *(sqlite)* [**breaking**] Readd column `last_lock_version` - ([d049ec4](https://github.com/obeli-sk/obelisk/commit/d049ec487d1ca563edca5b49f26dde682788a27d))
+- *(sqlite)* Allow handling of `Locked` events in `append` - ([bb70f83](https://github.com/obeli-sk/obelisk/commit/bb70f83211dd1f8722f2a62c56b9b60850670722))
+- *(sqlite)* Make `wait_for_finished_result` use channels instead of poll - ([fa90fe5](https://github.com/obeli-sk/obelisk/commit/fa90fe50e7cafaa4a4ecb7dd7241b49ac33d732c))
+- *(sqlite)* Prototype using append-only `t_state` - ([cb3c2c1](https://github.com/obeli-sk/obelisk/commit/cb3c2c184fabd45943e524c0505cf57ac156e3e5))
+- *(sqlite)* Shutdown right when the flag is read - ([b0d3ea7](https://github.com/obeli-sk/obelisk/commit/b0d3ea76c15171663d408b662b7e4756bc1eeaf3))
+- *(sqlite)* Ignore metric recording errors - ([aedf3d8](https://github.com/obeli-sk/obelisk/commit/aedf3d86e463c3b34157ba7a2c7d75d3899d0335))
+- *(sqlite)* Avoid sending `ThreadCommand::Shutdown` on full channel - ([6e895b1](https://github.com/obeli-sk/obelisk/commit/6e895b1ec572a626f546e63a062735825186bb22))
+- *(sqlite)* Replace panic in init thread with `InitializationError` - ([ffbbc1c](https://github.com/obeli-sk/obelisk/commit/ffbbc1cb2cb1de790e0d741c2eb20b07d6babe05))
+- *(sqlite)* [**breaking**] Revert to using single row per execution in `t_state` - ([29941ff](https://github.com/obeli-sk/obelisk/commit/29941ff3e29256ff38e0340d408ea6f4fe55c5a6))
+- *(sqlite)* Change indexes - ([a7ad76d](https://github.com/obeli-sk/obelisk/commit/a7ad76dbe40ab0f8d394ebd8f498059ddc1d9876))
+- *(sqlite)* [**breaking**] Make `t_metadata` append only - ([c5c33f7](https://github.com/obeli-sk/obelisk/commit/c5c33f73550119006c004fff9c4b0288fbdc4ede))
+- *(sqlite,toml)* Improve metrics configuration - ([b787782](https://github.com/obeli-sk/obelisk/commit/b7877820dd4b9d49a32514f39738092de58b92e0))
+- Clean up `ffqn_to_pending_subscription` - ([836d5a4](https://github.com/obeli-sk/obelisk/commit/836d5a4a3d88e98c825f3c4b1c405ab619dfdbe5))
+- Remove return type from `DbPoolCloseable::close` - ([4434cbb](https://github.com/obeli-sk/obelisk/commit/4434cbb176002298046050b4bdc860e9db411420))
+- Remove `Sleep` generics from `SqlitePool` - ([1b3fc36](https://github.com/obeli-sk/obelisk/commit/1b3fc36480332d82095d9aeacc3b6392c4c44a4b))
+- Replace `DbError` with generic, read and write variants - ([976f7a1](https://github.com/obeli-sk/obelisk/commit/976f7a1e1caa16308fb9fe0f8d7b181ebed11098))
+- Disconnect `DbPoolCloseable` from `DbPool` - ([1f0678f](https://github.com/obeli-sk/obelisk/commit/1f0678fe1617e87f06ba6747d3aa88d60d2c701e))
+- Use `watch` channel for shutdown - ([4a3a240](https://github.com/obeli-sk/obelisk/commit/4a3a240781922934df345c43fdd6b5b27c883a03))
+- Remove `DbPool::is_closing` - ([5fc53fb](https://github.com/obeli-sk/obelisk/commit/5fc53fb24eff33fce741a561ba0db71b1b6ff22e))
+- Use `DbExecutor` in `executor` - ([eca31f9](https://github.com/obeli-sk/obelisk/commit/eca31f9ff429237cc7b2907a2b973cdb89bda2dd))
+- Extract `poll_status` - ([6077a44](https://github.com/obeli-sk/obelisk/commit/6077a44788e5ebb4a31cf85f89ada174cf1b5289))
+- Extract `Engines::new` - ([4bebf1d](https://github.com/obeli-sk/obelisk/commit/4bebf1d555934b3ec95c58a7b2beb00bcabd5c4e))
+- Move `lock_one` to `DbExecutor` - ([548c0ab](https://github.com/obeli-sk/obelisk/commit/548c0ab1bc2c7231d725ccfd5b71353f736f239d))
+- Extract `DbCloseable` - ([d808e99](https://github.com/obeli-sk/obelisk/commit/d808e9940332bf04800db98bfcfea0dc64fb94c0))
+- Introduce `DbExecutor` - ([90772d9](https://github.com/obeli-sk/obelisk/commit/90772d9233f03a104bfad911295f8aa4d3a77e95))
+- Rename `Lock.version` to `next_version` - ([cdfef49](https://github.com/obeli-sk/obelisk/commit/cdfef499f94c68e5e0ae8b031728e656505d334a))
+- Send response notification only after tx succeeds - ([19ba75d](https://github.com/obeli-sk/obelisk/commit/19ba75d47c0013182df63d65b2385378e475f3ba))
+- Clean up `response_subscribers` on timeout and select error - ([954ea50](https://github.com/obeli-sk/obelisk/commit/954ea50148e1591fae1e630e1578ed77296a86f8))
+- Replace `ResponseSubscribers` alias with actual type - ([0db1632](https://github.com/obeli-sk/obelisk/commit/0db163201de38b6d4983304a8b26da7f48958dca))
+- Move `backtrace` to `NonBlockingCache::StartAsync` - ([6c5d92d](https://github.com/obeli-sk/obelisk/commit/6c5d92d54f1a16c00fa48cd97872815cd64b72a8))
+- Avoid `append_backtrace_batch` on empty batch - ([b0f0b92](https://github.com/obeli-sk/obelisk/commit/b0f0b92fcd706e4908dfa5851c9745b4effd85d9))
+- Extract common engine configuration - ([0cfd092](https://github.com/obeli-sk/obelisk/commit/0cfd0928dadedda8cd8980d253df54fd0c3a2ea6))
+
+
 ## [0.25.4](https://github.com/obeli-sk/obelisk/compare/v0.25.3...v0.25.4)
 
 ### ⛰️ Features
