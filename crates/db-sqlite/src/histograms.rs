@@ -65,12 +65,12 @@ impl Histograms {
             && metrics_instant.elapsed() > metrics_threshold
         {
             print!("{{");
+            print_histogram("send_latency", &self.sending_latency, false);
+            self.sending_latency.clear();
             self.funcions.iter_mut().for_each(|(name, h)| {
                 print_histogram(*name, h, true);
                 h.clear();
             });
-            print_histogram("send_latency", &self.sending_latency, false);
-            self.sending_latency.clear();
             println!("}}");
             *metrics_instant = std::time::Instant::now();
         }
