@@ -2,6 +2,8 @@ name: release-3-create-github-release
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 on:
   workflow_dispatch:

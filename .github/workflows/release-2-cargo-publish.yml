@@ -2,6 +2,8 @@ name: release-2-cargo-publish
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 on:
   workflow_dispatch:
