@@ -3,6 +3,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.26.1](https://github.com/obeli-sk/obelisk/compare/v0.26.0...v0.26.1)
+
+### 🚜 Refactor
+
+- *(grpc)* Use `opentelemetry-http` for the http header extractor - ([35c0fac](https://github.com/obeli-sk/obelisk/commit/35c0fac2ddb3a878e39e07864b1f767c3e7d8b34))
+- *(grpc)* Set span name to the request path - ([f870758](https://github.com/obeli-sk/obelisk/commit/f8707580cb3ba8c1dbe747bb119e5a9d555d303c))
+- *(sqlite)* Introduce bulk transactions - ([0d96de4](https://github.com/obeli-sk/obelisk/commit/0d96de4c678e03faf6bdefe43cd4a3b6c43b12d3))
+- *(sqlite)* Break down bulk transaction on commit failure - ([f28db97](https://github.com/obeli-sk/obelisk/commit/f28db978077c539aec0666aa01d194dd64af36e0))
+- *(sqlite)* Prepare for replaying logical transactions - ([8ffb9fb](https://github.com/obeli-sk/obelisk/commit/8ffb9fb518806487d3de7499d26e4ae990b33750))
+- *(sqlite)* Make `ThreadCommand::Func` accept `FnMut` - ([837b038](https://github.com/obeli-sk/obelisk/commit/837b0387aaa295346aae3ac150370c677e06746c))
+- Extract structs from `append_batch_respond_to_parent` parameters - ([16bc2ca](https://github.com/obeli-sk/obelisk/commit/16bc2ca590eee985dc619fd2f630309464397ce2))
+- Remove generic db parameter from `ServerInit` - ([e7c2f97](https://github.com/obeli-sk/obelisk/commit/e7c2f977090e885bd1f12b84663e4ca0871b20e0))
+
+
 ## [0.26.0](https://github.com/obeli-sk/obelisk/compare/v0.25.4...v0.26.0)
 
 This release contains database schema changes.
