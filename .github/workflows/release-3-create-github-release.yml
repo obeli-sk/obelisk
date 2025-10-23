@@ -13,7 +13,6 @@ on:
         required: false
         type: string
   workflow_call:
-    secrets: inherit
     inputs:
       skip_latest:
         description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
@@ -65,5 +64,6 @@ jobs:
   call_child:
     needs: create-github-release
     uses: ./.github/workflows/release-3.1-upload-artifacts.yml
+    secrets: inherit
     with:
       skip_latest: "${{inputs.skip_latest}}"

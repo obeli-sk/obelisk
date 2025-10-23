@@ -13,7 +13,6 @@ on:
         required: false
         type: string
   workflow_call:
-    secrets: inherit
     inputs:
       skip_latest:
         description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
@@ -114,5 +113,6 @@ jobs:
   call_child:
     needs: upload-assets
     uses: ./.github/workflows/release-4-push-docker-image.yml
+    secrets: inherit
     with:
       skip_latest: "${{inputs.skip_latest}}"
