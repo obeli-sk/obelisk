@@ -1255,7 +1255,11 @@ async fn run_internal(
 
 fn make_span<B>(request: &axum::http::Request<B>) -> Span {
     let headers = request.headers();
-    info_span!("incoming gRPC request", ?headers)
+    info_span!(
+        "gRPC request",
+        "otel.name" = format!("gRPC request {}", request.uri().path()),
+        ?headers
+    )
 }
 
 struct ServerVerified {
