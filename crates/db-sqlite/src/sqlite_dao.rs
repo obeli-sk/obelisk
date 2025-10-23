@@ -735,9 +735,8 @@ impl SqlitePool {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|begin_err| {
                 error!("Cannot open transaction, closing sqlite - {begin_err:?}");
-                ()
             })?;
-        Self::ltx_apply_to_tx(&mut ltx, &mut physical_tx, histograms)?;
+        Self::ltx_apply_to_tx(&mut ltx, &mut physical_tx, histograms);
         ltx_list.push(ltx);
 
         while let Ok(more) = command_rx.try_recv() {
@@ -749,7 +748,7 @@ impl SqlitePool {
                 ThreadCommand::LogicalTx(ltx) => ltx,
             };
 
-            Self::ltx_apply_to_tx(&mut ltx, &mut physical_tx, histograms)?;
+            Self::ltx_apply_to_tx(&mut ltx, &mut physical_tx, histograms);
             ltx_list.push(ltx);
         }
         histograms.record_all_fns(all_fns_start.elapsed());
@@ -762,7 +761,7 @@ impl SqlitePool {
             }
             let commit_result = {
                 let now = std::time::Instant::now();
-                let commit_result = physical_tx.commit().map_err(|err| RusqliteError::from(err));
+                let commit_result = physical_tx.commit().map_err(RusqliteError::from);
                 histograms.record_commit(now.elapsed());
                 commit_result
             };
@@ -793,16 +792,15 @@ impl SqlitePool {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|begin_err| {
                 error!("Cannot open transaction, closing sqlite - {begin_err:?}");
-                ()
             })?;
-        Self::ltx_apply_to_tx(&mut ltx, &mut physical_tx, histograms)?;
+        Self::ltx_apply_to_tx(&mut ltx, &mut physical_tx, histograms);
         if shutdown_requested.load(Ordering::Relaxed) {
             debug!("Recveived shutdown during processing of the batch");
             return Err(());
         }
         let commit_result = {
             let now = std::time::Instant::now();
-            let commit_result = physical_tx.commit().map_err(|err| RusqliteError::from(err));
+            let commit_result = physical_tx.commit().map_err(RusqliteError::from);
             histograms.record_commit(now.elapsed());
             commit_result
         };
@@ -815,12 +813,11 @@ impl SqlitePool {
         ltx: &mut LogicalTx,
         physical_tx: &mut Transaction,
         histograms: &mut Histograms,
-    ) -> Result<(), ()> {
+    ) {
         let sent_latency = ltx.sent_at.elapsed();
         let started_at = Instant::now();
         (ltx.func)(physical_tx);
         histograms.record_command(sent_latency, ltx.func_name, started_at.elapsed());
-        Ok(())
     }
 
     #[instrument(level = Level::DEBUG, skip_all, name = "sqlite_new")]
@@ -1438,11 +1435,11 @@ impl SqlitePool {
         .map_err(DbErrorRead::from)
     }
 
-    fn list_executions<'a>(
+    fn list_executions(
         read_tx: &Transaction,
         ffqn: Option<&FunctionFqn>,
         top_level_only: bool,
-        pagination: &'a ExecutionListPagination,
+        pagination: &ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
         struct StatementModifier<'a> {
             where_vec: Vec<String>,
@@ -1528,7 +1525,6 @@ impl SqlitePool {
                 statement_mod
                     .params
                     .into_iter()
-                    .map(|(key, value)| (key, value))
                     .collect::<Vec<_>>()
                     .as_ref(),
                 |row| {
@@ -2551,9 +2547,9 @@ impl DbExecutor for SqlitePool {
                             tx,
                             created_at,
                             &component_id,
-                            &execution_id,
+                            execution_id,
                             run_id,
-                            &version,
+                            version,
                             executor_id,
                             lock_expires_at,
                         ) {
@@ -3050,7 +3046,7 @@ impl DbConnection for SqlitePool {
         self.transaction(
             move |tx| {
                 for append in &batch {
-                    Self::append_backtrace(tx, &append)?;
+                    Self::append_backtrace(tx, append)?;
                 }
                 Ok(())
             },
