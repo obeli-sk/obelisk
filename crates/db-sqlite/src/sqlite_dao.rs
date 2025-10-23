@@ -689,18 +689,6 @@ impl SqlitePool {
         Ok(conn)
     }
 
-    fn execute_ltx(
-        ltx: &mut LogicalTx,
-        physical_tx: &mut Transaction,
-        histograms: &mut Histograms,
-    ) -> Result<(), ()> {
-        let sent_latency = ltx.sent_at.elapsed();
-        let started_at = Instant::now();
-        (ltx.func)(physical_tx);
-        histograms.record_command(sent_latency, ltx.func_name, started_at.elapsed());
-        Ok(())
-    }
-
     fn connection_rpc(
         mut conn: Connection,
         shutdown_requested: &AtomicBool,
@@ -729,7 +717,7 @@ impl SqlitePool {
         command_rx: &mut mpsc::Receiver<ThreadCommand>,
         histograms: &mut Histograms,
     ) -> Result<(), ()> {
-        let mut commit_ack_senders = Vec::new();
+        let mut ltx_list = Vec::new();
         // Wait for first logical tx.
         let mut ltx = match command_rx.blocking_recv() {
             Some(ThreadCommand::LogicalTx(ltx)) => ltx,
@@ -745,9 +733,12 @@ impl SqlitePool {
         let all_fns_start = std::time::Instant::now();
         let mut physical_tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .expect("not sure what to do");
-        Self::execute_ltx(&mut ltx, &mut physical_tx, histograms)?;
-        commit_ack_senders.push(ltx.commit_ack_sender);
+            .map_err(|begin_err| {
+                error!("Cannot open transaction, closing sqlite - {begin_err:?}");
+                ()
+            })?;
+        Self::ltx_apply_to_tx(&mut ltx, &mut physical_tx, histograms)?;
+        ltx_list.push(ltx);
 
         while let Ok(more) = command_rx.try_recv() {
             let mut ltx = match more {
@@ -758,8 +749,8 @@ impl SqlitePool {
                 ThreadCommand::LogicalTx(ltx) => ltx,
             };
 
-            Self::execute_ltx(&mut ltx, &mut physical_tx, histograms)?;
-            commit_ack_senders.push(ltx.commit_ack_sender);
+            Self::ltx_apply_to_tx(&mut ltx, &mut physical_tx, histograms)?;
+            ltx_list.push(ltx);
         }
         histograms.record_all_fns(all_fns_start.elapsed());
 
@@ -775,12 +766,60 @@ impl SqlitePool {
                 histograms.record_commit(now.elapsed());
                 commit_result
             };
-            for commit_ack_sender in commit_ack_senders {
-                let _ = commit_ack_sender.send(commit_result.clone()); // Command caller errored in its function or timed out before awaiting the ack.
+            if commit_result.is_ok() || ltx_list.len() == 1 {
+                // Happy path - just send the commit ACK.
+                for ltx in ltx_list {
+                    // Ignore the result: ThreadCommand producer timed out before awaiting the ack.
+                    let _ = ltx.commit_ack_sender.send(commit_result.clone());
+                }
+            } else {
+                // Bulk transaction failed. Replay each ltx in its own physical transaction.
+                for ltx in ltx_list {
+                    Self::ltx_commit_single(ltx, conn, shutdown_requested, histograms)?;
+                }
             }
         }
-
         histograms.print_if_elapsed();
+        Ok(())
+    }
+
+    fn ltx_commit_single(
+        mut ltx: LogicalTx,
+        conn: &mut Connection,
+        shutdown_requested: &AtomicBool,
+        histograms: &mut Histograms,
+    ) -> Result<(), ()> {
+        let mut physical_tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|begin_err| {
+                error!("Cannot open transaction, closing sqlite - {begin_err:?}");
+                ()
+            })?;
+        Self::ltx_apply_to_tx(&mut ltx, &mut physical_tx, histograms)?;
+        if shutdown_requested.load(Ordering::Relaxed) {
+            debug!("Recveived shutdown during processing of the batch");
+            return Err(());
+        }
+        let commit_result = {
+            let now = std::time::Instant::now();
+            let commit_result = physical_tx.commit().map_err(|err| RusqliteError::from(err));
+            histograms.record_commit(now.elapsed());
+            commit_result
+        };
+        // Ignore the result: ThreadCommand producer timed out before awaiting the ack.
+        let _ = ltx.commit_ack_sender.send(commit_result);
+        Ok(())
+    }
+
+    fn ltx_apply_to_tx(
+        ltx: &mut LogicalTx,
+        physical_tx: &mut Transaction,
+        histograms: &mut Histograms,
+    ) -> Result<(), ()> {
+        let sent_latency = ltx.sent_at.elapsed();
+        let started_at = Instant::now();
+        (ltx.func)(physical_tx);
+        histograms.record_command(sent_latency, ltx.func_name, started_at.elapsed());
         Ok(())
     }
 
