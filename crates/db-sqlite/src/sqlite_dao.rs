@@ -27,6 +27,7 @@ use std::{
     cmp::max,
     collections::VecDeque,
     fmt::Debug,
+    ops::DerefMut,
     path::Path,
     str::FromStr,
     sync::{
@@ -40,7 +41,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
 };
-use tracing::{Level, Span, debug, error, info, instrument, trace, warn};
+use tracing::{Level, debug, error, info, instrument, trace, warn};
 
 #[derive(Debug, thiserror::Error)]
 #[error("initialization error")]
@@ -475,19 +476,19 @@ impl CombinedState {
 }
 
 #[derive(derive_more::Debug)]
+struct LogicalTx {
+    #[debug(skip)]
+    func: Box<dyn FnMut(&mut Transaction) + Send>,
+    sent_at: Instant,
+    func_name: &'static str,
+    #[debug(skip)]
+    commit_ack_sender: oneshot::Sender<Result<(), RusqliteError>>,
+}
+
+#[derive(derive_more::Debug)]
 enum ThreadCommand {
-    Func {
-        #[debug(skip)]
-        func: Box<dyn FnOnce(&mut Transaction) + Send>,
-        sent_at: Instant,
-        func_name: &'static str,
-        #[debug(skip)]
-        parent_span: Span,
-        #[debug(skip)]
-        commit_ack_sender: oneshot::Sender<Result<(), RusqliteError>>,
-    },
+    LogicalTx(LogicalTx),
     Shutdown,
-    Dummy,
 }
 
 #[derive(Clone)]
@@ -688,59 +689,15 @@ impl SqlitePool {
         Ok(conn)
     }
 
-    fn execute(
-        vec: &mut Vec<ThreadCommand>,
-        conn: &mut Connection,
-        shutdown_requested: &AtomicBool,
+    fn execute_ltx(
+        ltx: &mut LogicalTx,
+        physical_tx: &mut Transaction,
         histograms: &mut Histograms,
     ) -> Result<(), ()> {
-        let all_fns_start = std::time::Instant::now();
-
-        let mut tx = conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .expect("not sure what to do");
-        let mut commit_ack_senders = Vec::with_capacity(vec.len());
-        for item in vec {
-            match std::mem::replace(item, ThreadCommand::Dummy) {
-                ThreadCommand::Func {
-                    func,
-                    sent_at,
-                    func_name,
-                    parent_span: _,
-                    commit_ack_sender,
-                } => {
-                    let sent_latency = sent_at.elapsed();
-                    let started_at = Instant::now();
-                    func(&mut tx);
-                    commit_ack_senders.push(commit_ack_sender);
-                    histograms.record_command(sent_latency, func_name, started_at.elapsed());
-                }
-                ThreadCommand::Shutdown => {
-                    unreachable!("already checked in `tick`")
-                }
-                ThreadCommand::Dummy => unreachable!(
-                    "only set in `execute`, which runs only once per `tick`, which clears it"
-                ),
-            }
-        }
-
-        histograms.record_all_fns(all_fns_start.elapsed());
-
-        // Check for shutdown before the exensive commit call
-        if shutdown_requested.load(Ordering::Relaxed) {
-            debug!("Recveived shutdown during processing of the batch");
-            return Err(());
-        }
-        let tx_commit = {
-            let now = std::time::Instant::now();
-            let tx_commit = tx.commit().map_err(|err| RusqliteError::from(err));
-            histograms.record_commit(now.elapsed());
-            tx_commit
-        };
-        for commit_ack_sender in commit_ack_senders {
-            let _ = commit_ack_sender.send(tx_commit.clone()); // Command caller errored in its function or timed out before awaiting the ack.
-        }
-
+        let sent_latency = ltx.sent_at.elapsed();
+        let started_at = Instant::now();
+        (ltx.func)(physical_tx);
+        histograms.record_command(sent_latency, ltx.func_name, started_at.elapsed());
         Ok(())
     }
 
@@ -749,14 +706,10 @@ impl SqlitePool {
         shutdown_requested: &AtomicBool,
         shutdown_finished: &AtomicBool,
         mut command_rx: mpsc::Receiver<ThreadCommand>,
-        queue_capacity: usize,
         metrics_threshold: Option<Duration>,
     ) {
-        let mut vec: Vec<ThreadCommand> = Vec::with_capacity(queue_capacity);
         let mut histograms = Histograms::new(metrics_threshold);
-
         while Self::tick(
-            &mut vec,
             &mut conn,
             shutdown_requested,
             &mut command_rx,
@@ -771,32 +724,61 @@ impl SqlitePool {
     }
 
     fn tick(
-        vec: &mut Vec<ThreadCommand>,
         conn: &mut Connection,
         shutdown_requested: &AtomicBool,
         command_rx: &mut mpsc::Receiver<ThreadCommand>,
         histograms: &mut Histograms,
     ) -> Result<(), ()> {
-        vec.clear();
-        if let Some(item) = command_rx.blocking_recv() {
-            vec.push(item);
-        } else {
-            debug!("command_rx was closed");
-            return Err(());
-        }
-        while let Ok(more) = command_rx.try_recv() {
-            vec.push(more);
-        }
-        // Did we receive Shutdown in the batch?
-        let shutdown_found = vec
-            .iter()
-            .any(|item| matches!(item, ThreadCommand::Shutdown));
-        if shutdown_found || shutdown_requested.load(Ordering::Acquire) {
-            debug!("Recveived shutdown before processing the batch");
-            return Err(());
-        }
+        let mut commit_ack_senders = Vec::new();
+        // Wait for first logical tx.
+        let mut ltx = match command_rx.blocking_recv() {
+            Some(ThreadCommand::LogicalTx(ltx)) => ltx,
+            Some(ThreadCommand::Shutdown) => {
+                debug!("shutdown message received");
+                return Err(());
+            }
+            None => {
+                debug!("command_rx was closed");
+                return Err(());
+            }
+        };
+        let all_fns_start = std::time::Instant::now();
+        let mut physical_tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .expect("not sure what to do");
+        Self::execute_ltx(&mut ltx, &mut physical_tx, histograms)?;
+        commit_ack_senders.push(ltx.commit_ack_sender);
 
-        Self::execute(vec, conn, shutdown_requested, histograms)?;
+        while let Ok(more) = command_rx.try_recv() {
+            let mut ltx = match more {
+                ThreadCommand::Shutdown => {
+                    debug!("shutdown message received");
+                    return Err(());
+                }
+                ThreadCommand::LogicalTx(ltx) => ltx,
+            };
+
+            Self::execute_ltx(&mut ltx, &mut physical_tx, histograms)?;
+            commit_ack_senders.push(ltx.commit_ack_sender);
+        }
+        histograms.record_all_fns(all_fns_start.elapsed());
+
+        {
+            // Commit
+            if shutdown_requested.load(Ordering::Relaxed) {
+                debug!("Recveived shutdown during processing of the batch");
+                return Err(());
+            }
+            let commit_result = {
+                let now = std::time::Instant::now();
+                let commit_result = physical_tx.commit().map_err(|err| RusqliteError::from(err));
+                histograms.record_commit(now.elapsed());
+                commit_result
+            };
+            for commit_ack_sender in commit_ack_senders {
+                let _ = commit_ack_sender.send(commit_result.clone()); // Command caller errored in its function or timed out before awaiting the ack.
+            }
+        }
 
         histograms.print_if_elapsed();
         Ok(())
@@ -838,7 +820,6 @@ impl SqlitePool {
                     &shutdown_requested,
                     &shutdown_finished,
                     command_rx,
-                    config.queue_capacity,
                     config.metrics_threshold,
                 );
             })
@@ -861,69 +842,34 @@ impl SqlitePool {
         T: Send + 'static,
         E: From<DbErrorGeneric> + From<RusqliteError> + Send + 'static,
     {
-        let (sender, receiver) = oneshot::channel();
+        let fn_res: Arc<std::sync::Mutex<Option<_>>> = Arc::default();
         let (commit_ack_sender, commit_ack_receiver) = oneshot::channel();
-        let parent_span = Span::current();
-        let thread_command_func = ThreadCommand::Func {
-            parent_span: parent_span.clone(),
-            func: Box::new(move |tx| {
-                let func_res = parent_span.in_scope(|| func(tx));
-                _ = sender.send(func_res); // Outer function might be cancelled.
-            }),
-            sent_at: Instant::now(),
-            func_name,
-            commit_ack_sender,
+        let thread_command_func = {
+            let fn_res = fn_res.clone();
+            ThreadCommand::LogicalTx(LogicalTx {
+                func: Box::new(move |tx| {
+                    let func_res = func(tx);
+                    *fn_res.lock().unwrap() = Some(func_res);
+                }),
+                sent_at: Instant::now(),
+                func_name,
+                commit_ack_sender,
+            })
         };
         self.0
             .command_tx
             .send(thread_command_func)
             .await
             .map_err(|_send_err| DbErrorGeneric::Close)?;
-        let fn_res = receiver.await.map_err(|_recv_err| DbErrorGeneric::Close)?;
+
+        // Wait for commit ack, then get the retval from the mutex.
         match commit_ack_receiver.await {
-            Ok(Ok(())) => fn_res,
+            Ok(Ok(())) => {
+                let mut guard = fn_res.lock().unwrap();
+                std::mem::take(guard.deref_mut()).expect("ltx must have been run at least once")
+            }
             Ok(Err(rusqlite_err)) => Err(E::from(rusqlite_err)),
             Err(_) => Err(E::from(DbErrorGeneric::Close)),
-        }
-    }
-
-    #[instrument(level = Level::TRACE, skip_all, fields(name))]
-    pub async fn conn_low_prio<F, T>(
-        &self,
-        func: F,
-        func_name: &'static str,
-    ) -> Result<T, DbErrorGeneric>
-    where
-        F: FnOnce(&Connection) -> Result<T, DbErrorGeneric> + Send + 'static,
-        T: Send + 'static + Default,
-    {
-        let (sender, receiver) = oneshot::channel();
-        let (commit_ack_sender, commit_ack_receiver) = oneshot::channel();
-        let span = tracing::trace_span!("tx_function");
-        let thread_cmd_func = ThreadCommand::Func {
-            parent_span: Span::current(),
-            func: Box::new(move |tx| {
-                sender
-                    .send(span.in_scope(|| func(tx)))
-                    .unwrap_or_else(|_| unreachable!("outer fn waits forever for the result"));
-            }),
-            sent_at: Instant::now(),
-            func_name,
-            commit_ack_sender,
-        };
-        self.0
-            .command_tx
-            .send(thread_cmd_func)
-            .await
-            .map_err(|_send_err| DbErrorGeneric::Close)?;
-        let unacked = match receiver.await {
-            Ok(res) => res,
-            Err(_recv_err) => return Ok(T::default()), // Dropped computation because of other priorities..
-        };
-        match commit_ack_receiver.await {
-            Ok(Ok(())) => unacked,
-            Ok(Err(rusqlite_err)) => Err(DbErrorGeneric::from(rusqlite_err)),
-            Err(_) => Err(DbErrorGeneric::Close),
         }
     }
 
@@ -2548,7 +2494,7 @@ impl DbExecutor for SqlitePool {
         run_id: RunId,
     ) -> Result<LockPendingResponse, DbErrorGeneric> {
         let execution_ids_versions = self
-            .conn_low_prio(
+            .transaction(
                 move |conn| Self::get_pending(conn, batch_size, pending_at_or_sooner, &ffqns),
                 "get_pending",
             )
@@ -2711,7 +2657,7 @@ impl DbExecutor for SqlitePool {
         }
         async {
             let Ok(execution_ids_versions) = self
-                .conn_low_prio(
+                .transaction(
                     {
                         let ffqns = ffqns.clone();
                         move |conn| Self::get_pending(conn, 1, pending_at_or_sooner, ffqns.as_ref())
@@ -3126,7 +3072,7 @@ impl DbConnection for SqlitePool {
         &self,
         at: DateTime<Utc>,
     ) -> Result<Vec<ExpiredTimer>, DbErrorGeneric> {
-        self.conn_low_prio(
+        self.transaction(
             move |conn| {
                 let mut expired_timers = conn.prepare(
                     "SELECT execution_id, join_set_id, delay_id FROM t_delay WHERE expires_at <= :at",
