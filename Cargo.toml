@@ -330,6 +330,7 @@ wit-bindgen = "0.46.0"
 
 # otlp
 opentelemetry = "0.31.0"
+opentelemetry-http = "0.31.0"
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.31.0", features = [
     "tls",

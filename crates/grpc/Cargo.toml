@@ -30,11 +30,12 @@ tracing.workspace = true
 # otlp
 opentelemetry = { workspace = true, optional = true }
 tracing-opentelemetry = { workspace = true, optional = true }
-
+opentelemetry-http = { workspace = true, optional = true }
 [features]
 otlp = [
     "dep:opentelemetry",
-    "dep:tracing-opentelemetry"
+    "dep:tracing-opentelemetry",
+    "dep:opentelemetry-http",
 ]
 default = ["otlp"]
 

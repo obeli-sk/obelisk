@@ -88,38 +88,18 @@ pub mod injector {
     }
 }
 
-// TODO: replace with opentelemetry-http
-// Source: https://github.com/hseeberger/hello-tracing-rs/blob/b411f8b192b7d585c42b5928ea635b2bd8bde29c/hello-tracing-common/src/otel/http.rs
 #[cfg(feature = "otlp")]
 pub mod extractor {
-    use opentelemetry::propagation::Extractor;
-    use tracing::{Span, warn};
+    use opentelemetry_http::HeaderExtractor;
+    use tracing::Span;
     use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
-    struct HttpHeaderExtractor<'a>(&'a http::HeaderMap);
-
-    impl Extractor for HttpHeaderExtractor<'_> {
-        fn get(&self, key: &str) -> Option<&str> {
-            self.0.get(key).and_then(|v| {
-                let s = v.to_str();
-                if let Err(ref error) = s {
-                    warn!(%error, ?v, "cannot convert header value to ASCII");
-                }
-                s.ok()
-            })
-        }
-
-        fn keys(&self) -> Vec<&str> {
-            self.0.keys().map(http::HeaderName::as_str).collect()
-        }
-    }
-
-    /// Trace context propagation: associate the current span with the otel trace of the given request,
-    /// if any and valid.
+    /// Uses [`HeaderExtractor`] to fetch trace and span IDs from the request headers,
+    /// and sets the extracted context as the current span's parent, if valid.
     pub fn accept_trace<B>(request: http::Request<B>) -> http::Request<B> {
         // Current context, if no or invalid data is received.
         let parent_context = opentelemetry::global::get_text_map_propagator(|propagator| {
-            propagator.extract(&HttpHeaderExtractor(request.headers()))
+            propagator.extract(&HeaderExtractor(request.headers()))
         });
         let _ = Span::current().set_parent(parent_context);
         request
