@@ -573,7 +573,7 @@ impl SqlitePool {
         path: &Path,
         mut pragma_override: HashMap<String, String>,
     ) -> Result<Connection, InitializationError> {
-        fn execute<P: Params>(
+        fn conn_execute<P: Params>(
             conn: &Connection,
             sql: &str,
             params: P,
@@ -624,9 +624,9 @@ impl SqlitePool {
         }
 
         // t_metadata
-        execute(&conn, CREATE_TABLE_T_METADATA, [])?;
+        conn_execute(&conn, CREATE_TABLE_T_METADATA, [])?;
         // Insert row if not exists.
-        execute(
+        conn_execute(
             &conn,
             &format!(
                 "INSERT INTO t_metadata (schema_version, created_at) VALUES
@@ -655,36 +655,36 @@ impl SqlitePool {
         }
 
         // t_execution_log
-        execute(&conn, CREATE_TABLE_T_EXECUTION_LOG, [])?;
-        execute(
+        conn_execute(&conn, CREATE_TABLE_T_EXECUTION_LOG, [])?;
+        conn_execute(
             &conn,
             CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION,
             [],
         )?;
-        execute(
+        conn_execute(
             &conn,
             CREATE_INDEX_IDX_T_EXECUTION_ID_EXECUTION_ID_VARIANT,
             [],
         )?;
         // t_join_set_response
-        execute(&conn, CREATE_TABLE_T_JOIN_SET_RESPONSE, [])?;
-        execute(
+        conn_execute(&conn, CREATE_TABLE_T_JOIN_SET_RESPONSE, [])?;
+        conn_execute(
             &conn,
             CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID,
             [],
         )?;
         // t_state
-        execute(&conn, CREATE_TABLE_T_STATE, [])?;
-        execute(&conn, IDX_T_STATE_LOCK_PENDING, [])?;
-        execute(&conn, IDX_T_STATE_EXPIRED_TIMERS, [])?;
-        execute(&conn, IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL, [])?;
-        execute(&conn, IDX_T_STATE_FFQN, [])?;
-        execute(&conn, IDX_T_STATE_CREATED_AT, [])?;
+        conn_execute(&conn, CREATE_TABLE_T_STATE, [])?;
+        conn_execute(&conn, IDX_T_STATE_LOCK_PENDING, [])?;
+        conn_execute(&conn, IDX_T_STATE_EXPIRED_TIMERS, [])?;
+        conn_execute(&conn, IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL, [])?;
+        conn_execute(&conn, IDX_T_STATE_FFQN, [])?;
+        conn_execute(&conn, IDX_T_STATE_CREATED_AT, [])?;
         // t_delay
-        execute(&conn, CREATE_TABLE_T_DELAY, [])?;
+        conn_execute(&conn, CREATE_TABLE_T_DELAY, [])?;
         // t_backtrace
-        execute(&conn, CREATE_TABLE_T_BACKTRACE, [])?;
-        execute(&conn, IDX_T_BACKTRACE_EXECUTION_ID_VERSION, [])?;
+        conn_execute(&conn, CREATE_TABLE_T_BACKTRACE, [])?;
+        conn_execute(&conn, IDX_T_BACKTRACE_EXECUTION_ID_VERSION, [])?;
         Ok(conn)
     }
 
