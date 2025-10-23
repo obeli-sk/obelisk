@@ -21,7 +21,7 @@ use conversions::{FromStrWrapper, JsonWrapper, consistency_db_err, consistency_r
 use hashbrown::HashMap;
 use rusqlite::{
     CachedStatement, Connection, OpenFlags, OptionalExtension, Params, ToSql, Transaction,
-    TransactionBehavior, named_params,
+    TransactionBehavior, named_params, types::ToSqlOutput,
 };
 use std::{
     cmp::max,
@@ -855,9 +855,9 @@ impl SqlitePool {
     }
 
     /// Invokes the provided function wrapping a new [`rusqlite::Transaction`] that is committed automatically.
-    async fn transaction<F, T, E>(&self, func: F, func_name: &'static str) -> Result<T, E>
+    async fn transaction<F, T, E>(&self, mut func: F, func_name: &'static str) -> Result<T, E>
     where
-        F: FnOnce(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
+        F: FnMut(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
         T: Send + 'static,
         E: From<DbErrorGeneric> + From<RusqliteError> + Send + 'static,
     {
@@ -1453,25 +1453,26 @@ impl SqlitePool {
         .map_err(DbErrorRead::from)
     }
 
-    fn list_executions(
+    fn list_executions<'a>(
         read_tx: &Transaction,
-        ffqn: Option<FunctionFqn>,
+        ffqn: Option<&FunctionFqn>,
         top_level_only: bool,
-        pagination: ExecutionListPagination,
+        pagination: &'a ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
-        struct StatementModifier {
+        struct StatementModifier<'a> {
             where_vec: Vec<String>,
-            params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)>,
+            params: Vec<(&'static str, ToSqlOutput<'a>)>,
             limit: u32,
             limit_desc: bool,
         }
-        fn paginate<T: rusqlite::ToSql + 'static>(
-            pagination: Pagination<Option<T>>,
+
+        fn paginate<'a, T: rusqlite::ToSql + 'static>(
+            pagination: &'a Pagination<Option<T>>,
             column: &str,
             top_level_only: bool,
-        ) -> StatementModifier {
+        ) -> StatementModifier<'a> {
             let mut where_vec: Vec<String> = vec![];
-            let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
+            let mut params: Vec<(&'static str, ToSqlOutput<'a>)> = vec![];
             let limit = pagination.length();
             let limit_desc = pagination.is_desc();
             let rel = pagination.rel();
@@ -1485,7 +1486,7 @@ impl SqlitePool {
                     ..
                 } => {
                     where_vec.push(format!("{column} {rel} :cursor"));
-                    params.push((":cursor", Box::new(cursor)));
+                    params.push((":cursor", cursor.to_sql().expect("FIXME")));
                 }
                 _ => {}
             }
@@ -1499,6 +1500,7 @@ impl SqlitePool {
                 limit_desc,
             }
         }
+
         let mut statement_mod = match pagination {
             ExecutionListPagination::CreatedBy(pagination) => {
                 paginate(pagination, "created_at", top_level_only)
@@ -1508,11 +1510,15 @@ impl SqlitePool {
             }
         };
 
+        let ffqn_temporary;
         if let Some(ffqn) = ffqn {
             statement_mod.where_vec.push("ffqn = :ffqn".to_string());
-            statement_mod
-                .params
-                .push((":ffqn", Box::new(ffqn.to_string())));
+            ffqn_temporary = ffqn.to_string();
+            let ffqn = ffqn_temporary
+                .to_sql()
+                .expect("string conversion never fails");
+
+            statement_mod.params.push((":ffqn", ffqn));
         }
 
         let where_str = if statement_mod.where_vec.is_empty() {
@@ -1529,15 +1535,15 @@ impl SqlitePool {
             FROM t_state {where_str} ORDER BY created_at {desc} LIMIT {limit}
             ",
             desc = if statement_mod.limit_desc { "DESC" } else { "" },
-            limit = statement_mod.limit
+            limit = statement_mod.limit,
         );
         let mut vec: Vec<_> = read_tx
             .prepare(&sql)?
-            .query_map::<_, &[(&'static str, &dyn rusqlite::ToSql)], _>(
+            .query_map::<_, &[(&'static str, ToSqlOutput)], _>(
                 statement_mod
                     .params
-                    .iter()
-                    .map(|(key, value)| (*key, value.as_ref()))
+                    .into_iter()
+                    .map(|(key, value)| (key, value))
                     .collect::<Vec<_>>()
                     .as_ref(),
                 |row| {
@@ -1598,7 +1604,7 @@ impl SqlitePool {
     fn lock_single_execution(
         tx: &Transaction,
         created_at: DateTime<Utc>,
-        component_id: ComponentId,
+        component_id: &ComponentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         appending_version: &Version,
@@ -1618,7 +1624,7 @@ impl SqlitePool {
 
         // Append to `execution_log` table.
         let event = ExecutionEventInner::Locked {
-            component_id,
+            component_id: component_id.clone(),
             executor_id,
             lock_expires_at,
             run_id,
@@ -1779,7 +1785,7 @@ impl SqlitePool {
             return Self::lock_single_execution(
                 tx,
                 created_at,
-                component_id,
+                &component_id,
                 execution_id,
                 run_id,
                 &appending_version,
@@ -2555,11 +2561,11 @@ impl DbExecutor for SqlitePool {
                 move |tx| {
                     let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
                     // Append lock
-                    for (execution_id, version) in execution_ids_versions {
+                    for (execution_id, version) in &execution_ids_versions {
                         match Self::lock_single_execution(
                             tx,
                             created_at,
-                            component_id.clone(),
+                            &component_id,
                             &execution_id,
                             run_id,
                             &version,
@@ -2598,7 +2604,7 @@ impl DbExecutor for SqlitePool {
                 Self::lock_single_execution(
                     tx,
                     created_at,
-                    component_id,
+                    &component_id,
                     &execution_id,
                     run_id,
                     &version,
@@ -2623,7 +2629,7 @@ impl DbExecutor for SqlitePool {
         let created_at = req.created_at;
         let (version, notifier) = self
             .transaction(
-                move |tx| Self::append(tx, &execution_id, req, version),
+                move |tx| Self::append(tx, &execution_id, req.clone(), version.clone()),
                 "append",
             )
             .await?;
@@ -2652,11 +2658,15 @@ impl DbExecutor for SqlitePool {
         let (version, notifiers) = {
             self.transaction(
                 move |tx| {
-                    let mut version = events.version;
+                    let mut version = events.version.clone();
                     let mut notifier_of_child = None;
-                    for append_request in events.batch {
-                        let (v, n) =
-                            Self::append(tx, &events.execution_id, append_request, version)?;
+                    for append_request in &events.batch {
+                        let (v, n) = Self::append(
+                            tx,
+                            &events.execution_id,
+                            append_request.clone(),
+                            version,
+                        )?;
                         version = v;
                         notifier_of_child = Some(n);
                     }
@@ -2664,7 +2674,7 @@ impl DbExecutor for SqlitePool {
                     let pending_at_parent = Self::append_response(
                         tx,
                         &response.parent_execution_id,
-                        response.parent_response_event,
+                        response.parent_response_event.clone(),
                     )?;
                     Ok::<_, DbErrorWrite>((
                         version,
@@ -2757,7 +2767,7 @@ impl DbConnection for SqlitePool {
         trace!(?req, "create");
         let created_at = req.created_at;
         let (version, notifier) = self
-            .transaction(move |tx| Self::create_inner(tx, req), "create")
+            .transaction(move |tx| Self::create_inner(tx, req.clone()), "create")
             .await?;
         self.notify_all(vec![notifier], created_at);
         Ok(version)
@@ -2778,10 +2788,11 @@ impl DbConnection for SqlitePool {
         let (version, notifier) = self
             .transaction(
                 move |tx| {
-                    let mut version = version;
+                    let mut version = version.clone();
                     let mut notifier = None;
-                    for append_request in batch {
-                        let (v, n) = Self::append(tx, &execution_id, append_request, version)?;
+                    for append_request in &batch {
+                        let (v, n) =
+                            Self::append(tx, &execution_id, append_request.clone(), version)?;
                         version = v;
                         notifier = Some(n);
                     }
@@ -2815,17 +2826,18 @@ impl DbConnection for SqlitePool {
             .transaction(
                 move |tx| {
                     let mut notifier = None;
-                    let mut version = version;
-                    for append_request in batch {
-                        let (v, n) = Self::append(tx, &execution_id, append_request, version)?;
+                    let mut version = version.clone();
+                    for append_request in &batch {
+                        let (v, n) =
+                            Self::append(tx, &execution_id, append_request.clone(), version)?;
                         version = v;
                         notifier = Some(n);
                     }
                     let mut notifiers = Vec::new();
                     notifiers.push(notifier.expect("checked that the batch is not empty"));
 
-                    for child_req in child_req {
-                        let (_, notifier) = Self::create_inner(tx, child_req)?;
+                    for child_req in &child_req {
+                        let (_, notifier) = Self::create_inner(tx, child_req.clone())?;
                         notifiers.push(notifier);
                     }
                     Ok::<_, DbErrorWrite>((version, notifiers))
@@ -2912,7 +2924,7 @@ impl DbConnection for SqlitePool {
                         response_subscribers
                             .lock()
                             .unwrap()
-                            .insert(execution_id, (sender, unique_tag));
+                            .insert(execution_id.clone(), (sender, unique_tag));
                         Ok::<_, DbErrorReadWithTimeout>(itertools::Either::Right(receiver))
                     } else {
                         Ok(itertools::Either::Left(responses))
@@ -2983,7 +2995,7 @@ impl DbConnection for SqlitePool {
                     // or we end up here. If this tx fails, the cleanup will remove this entry.
                     let (sender, receiver) = oneshot::channel();
                     let mut guard = execution_finished_subscription.lock().unwrap();
-                    guard.entry(execution_id).or_default().insert(unique_tag, sender);
+                    guard.entry(execution_id.clone()).or_default().insert(unique_tag, sender);
                     Ok(itertools::Either::Right(receiver))
                 }
             }, "wait_for_finished_result")
@@ -3029,7 +3041,7 @@ impl DbConnection for SqlitePool {
         };
         let notifier = self
             .transaction(
-                move |tx| Self::append_response(tx, &execution_id, event),
+                move |tx| Self::append_response(tx, &execution_id, event.clone()),
                 "append_response",
             )
             .await?;
@@ -3052,7 +3064,7 @@ impl DbConnection for SqlitePool {
         debug!("append_backtrace_batch");
         self.transaction(
             move |tx| {
-                for append in batch {
+                for append in &batch {
                     Self::append_backtrace(tx, &append)?;
                 }
                 Ok(())
@@ -3076,7 +3088,7 @@ impl DbConnection for SqlitePool {
                 let select = "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_backtrace \
                                 WHERE execution_id = :execution_id";
                 let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![(":execution_id", Box::new(execution_id.to_string()))];
-                let select = match filter {
+                let select = match &filter {
                     BacktraceFilter::Specific(version) =>{
                         params.push((":version", Box::new(version.0)));
                         format!("{select} AND version_min_including <= :version AND version_max_excluding > :version")
@@ -3214,7 +3226,7 @@ impl DbConnection for SqlitePool {
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
         self.transaction(
-            move |tx| Self::list_executions(tx, ffqn, top_level_only, pagination),
+            move |tx| Self::list_executions(tx, ffqn.as_ref(), top_level_only, &pagination),
             "list_executions",
         )
         .await
