@@ -20,7 +20,7 @@ Add the `webui-proxy` as a webhook endpoint:
 ```toml
 [[http_server]]
 name = "webui2"
-listening_addr = "127.0.0.1:8081"
+listening_addr = "127.0.0.1:8082"
 
 [[webhook_endpoint]]
 name = "webui2"

@@ -1,36 +1,32 @@
-use futures_concurrency::prelude::*;
-use wstd::http::body::{BodyForthcoming, IncomingBody};
-use wstd::http::server::{Finished, Responder};
-use wstd::http::{Client, HeaderValue, Request, Response, Uri};
-use wstd::io::{AsyncWrite, copy};
+use wstd::http::{Body, Client, Error, HeaderValue, Request, Response, Uri};
 
 #[wstd::http_server]
-async fn main(mut server_req: Request<IncomingBody>, responder: Responder) -> Finished {
+async fn main(server_req: Request<Body>) -> Result<Response<Body>, Error> {
     match server_req.uri().path_and_query().unwrap().as_str() {
         "/webui_bg.wasm" => {
             let content = get_webui_bg_wasm();
             let content_type = "application/wasm";
-            write_static_response(content, content_type, responder).await
+            write_static_response(content, content_type)
         }
         "/webui.js" => {
             let content = get_webui_js();
             let content_type = "text/javascript";
-            write_static_response(content, content_type, responder).await
+            write_static_response(content, content_type)
         }
         "/blueprint.css" => {
             let content = get_blueprint_css();
             let content_type = "text/css";
-            write_static_response(content, content_type, responder).await
+            write_static_response(content, content_type)
         }
         "/styles.css" => {
             let content = get_styles_css();
             let content_type = "text/css";
-            write_static_response(content, content_type, responder).await
+            write_static_response(content, content_type)
         }
         "/syntect.css" => {
             let content = get_syntect_css();
             let content_type = "text/css";
-            write_static_response(content, content_type, responder).await
+            write_static_response(content, content_type)
         }
         api_prefixed_path if api_prefixed_path.starts_with("/api") => {
             // Remove /api prefix
@@ -44,87 +40,53 @@ async fn main(mut server_req: Request<IncomingBody>, responder: Responder) -> Fi
             )
             .parse()
             .expect("final target url should be parseable");
-
-            let client = Client::new();
-            let mut client_req = Request::builder();
-            client_req = client_req.uri(target_url).method(server_req.method());
-
-            // copy headers from incoming request to the client_request
-            for (key, value) in server_req.headers() {
-                client_req = client_req.header(key, value);
-            }
-
-            // Send the request.
-            let client_req = client_req
-                .body(BodyForthcoming)
-                .expect("client_req.body failed");
-            let (mut client_request_body, client_resp) = client
-                .start_request(client_req)
-                .await
-                .expect("client.start_request failed");
-
-            // Copy the outgoing request body to client_outgoing_body
-            let server_req_to_client_req = async {
-                let res = copy(server_req.body_mut(), &mut client_request_body).await;
-                Client::finish(client_request_body, None)
-                    .map_err(|_http_err| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Failed write the HTTP request body",
-                        )
-                    })
-                    .and(res)
-            };
-
-            // Copy the client_response headers to incoming response
-            let client_resp_to_server_resp = async {
-                let client_resp = client_resp.await.unwrap();
-                let mut server_resp = Response::builder();
-                for (key, value) in client_resp.headers() {
-                    server_resp
-                        .headers_mut()
-                        .unwrap()
-                        .append(key, value.clone());
-                }
-                // Start sending the incoming_response.
-                let server_resp = server_resp.body(BodyForthcoming).unwrap();
-                let mut server_resp = responder.start_response(server_resp);
-
-                (
-                    copy(client_resp.into_body(), &mut server_resp).await,
-                    server_resp,
-                )
-            };
-
-            let (server_req_to_client_req, (client_resp_to_server_resp, server_resp)) =
-                (server_req_to_client_req, client_resp_to_server_resp)
-                    .join()
-                    .await;
-            let is_success = server_req_to_client_req.and(client_resp_to_server_resp);
-
-            Finished::finish(server_resp, is_success, None)
+            proxy(server_req, target_url).await
         }
         _ => {
             let content = get_index();
             let content_type = "text/html";
-            write_static_response(content, content_type, responder).await
+            write_static_response(content, content_type)
         }
     }
 }
 
-async fn write_static_response(
-    body: &[u8],
-    content_type: &'static str,
-    responder: Responder,
-) -> Finished {
+async fn proxy(server_req: Request<Body>, target_url: Uri) -> Result<Response<Body>, Error> {
+    let client = Client::new();
+    let mut client_req = Request::builder();
+    client_req = client_req.uri(target_url).method(server_req.method());
+
+    // Copy headers from `server_req` to the `client_req`.
+    for (key, value) in server_req.headers() {
+        client_req = client_req.header(key, value);
+    }
+
+    // Stream the request body.
+    let client_body = Body::from_http_body(server_req.into_body().into_boxed_body());
+    let client_req = client_req.body(client_body)?;
+    // Send the request.
+    let client_resp = client.send(client_req).await?;
+    // Copy headers from `client_resp` to `server_resp`.
+    let mut server_resp = Response::builder();
+    for (key, value) in client_resp.headers() {
+        server_resp
+            .headers_mut()
+            .expect("no errors could be in ResponseBuilder")
+            .append(key, value.clone());
+    }
+    let resp_body = server_resp
+        .body(client_resp.into_body().into_boxed_body())
+        .map_err(Error::from)?;
+    let (resp_parts, resp_body) = resp_body.into_parts();
+    let resp_body = Body::from_http_body(resp_body);
+    Ok(Response::from_parts(resp_parts, resp_body))
+}
+
+fn write_static_response(body: &[u8], content_type: &'static str) -> Result<Response<Body>, Error> {
     let mut resp = Response::builder();
     resp.headers_mut()
         .unwrap()
         .append("content-type", HeaderValue::from_static(content_type));
-    let resp = resp.body(BodyForthcoming).unwrap();
-    let mut out_body = responder.start_response(resp);
-    let result = out_body.write_all(body).await;
-    Finished::finish(out_body, result, None)
+    resp.body(body.into()).map_err(Error::from)
 }
 
 // release: Include real files

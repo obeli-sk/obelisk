@@ -5,6 +5,10 @@ use syntect::{highlighting::ThemeSet, html::ClassStyle};
 fn main() {
     let workspace_dir = get_workspace_dir();
     let proto_path = workspace_dir.join("proto");
+
+    let obelisk_proto = workspace_dir.join("proto/obelisk.proto");
+    println!("cargo:rerun-if-changed={obelisk_proto:?}");
+
     tonic_prost_build::configure()
         .protoc_arg("--experimental_allow_proto3_optional") // not needed anymore with protoc  25.3
         .compile_well_known_types(true)
@@ -14,7 +18,7 @@ fn main() {
         .build_server(false)
         .build_transport(false)
         .build_client(true)
-        .compile_protos(&[PathBuf::from("obelisk.proto")], &[proto_path])
+        .compile_protos(&[obelisk_proto], &[proto_path])
         .unwrap();
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     generate_blueprint_css(&pkg_name);

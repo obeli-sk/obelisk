@@ -310,7 +310,7 @@ yew_icons = { version = "0.8.0", features = ["LucideBox", "LucideFileDiff"] }
 yew-router = "0.18.0"
 yewprint = "0.5.0"
 yewprint-css = "0.4.0"
-wstd = "0.5.6"
+wstd = "0.6.1"
 
 # wasmtime
 wasmtime = { version = "38.0.3", features = ["memory-protection-keys"] }
@@ -326,7 +326,7 @@ wit-component = "0.240.0"
 
 # testing components
 wasip2 = "1.0.1"
-wit-bindgen = "0.46.0"
+wit-bindgen = "0.47.0"
 
 # otlp
 opentelemetry = "0.31.0"
