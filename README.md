@@ -17,6 +17,10 @@ The [Stargazers](https://github.com/obeli-sk/demo-stargazers) app features:
 - Activities for interacting with Turso DB, OpenAI, and GitHub.
 - A workflow orchestrating the activities.
 
+[Obelisk fly.io deployment tool](https://github.com/obeli-sk/obelisk-deploy-flyio) features:
+- A complete workflow for deploying Obelisk apps on fly.io
+- Cleanup / compensating actions on failure
+
 ## What's Included
 - **Obelisk Runtime**: A single binary executing deterministic workflows, activities,
 and webhook endpoints, persisting steps in execution log using SQLite.
@@ -33,6 +37,7 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 [WIT IDL](https://component-model.bytecodealliance.org/design/wit.html) for generating API bindings.
 
 ## Use Cases
+- Sandboxing and auditing of [**AI-Assisted Code**](https://obeli.sk/blog/taming-ai-assisted-code/)
 - **Periodic Tasks**: Automate periodic checks with complex logic using regular code.
 - **Background Jobs**: Offload tasks with built-in error handling and retries.
 - **Batch jobs**: Manage large-scale tasks like faas deployments.
@@ -47,9 +52,8 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 
 ### [**Deterministic Workflows**](https://obeli.sk/docs/latest/concepts/workflows/)
 - Runtime guaranteed determinism, fully replayable with persistent execution log and thus crash resilient.
-- Automatic retries on failures.
+- Automatic retries on timeouts.
 - Support for spawning child executions with [structured concurrency](https://obeli.sk/docs/latest/concepts/structured-concurrency/).
-- Distributed sagas (planned).
 
 ### [**WASI Webhook Endpoints**](https://obeli.sk/docs/latest/concepts/webhook-endpoints/)
 - Mounted as a URL path, serving HTTP traffic.
