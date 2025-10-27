@@ -1,4 +1,4 @@
-use super::wasi::cli::{environment, exit, stderr, stdin, stdout};
+use super::wasi::cli::{self, environment, exit, stderr, stdin, stdout};
 use crate::workflow::workflow_ctx::WorkflowCtx;
 use concepts::time::ClockFn;
 use wasmtime::Result;
@@ -46,5 +46,44 @@ impl<C: ClockFn> stderr::Host for WorkflowCtx<C> {
     fn get_stderr(&mut self) -> Result<Resource<DynOutputStream>> {
         let stderr: DynOutputStream = Box::new(pipe::SinkOutputStream);
         Ok(self.resource_table.push(stderr)?)
+    }
+}
+
+impl<C: ClockFn> cli::terminal_input::Host for WorkflowCtx<C> {}
+impl<C: ClockFn> cli::terminal_input::HostTerminalInput for WorkflowCtx<C> {
+    fn drop(&mut self, _r: Resource<cli::terminal_input::TerminalInput>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl<C: ClockFn> cli::terminal_output::Host for WorkflowCtx<C> {}
+impl<C: ClockFn> cli::terminal_output::HostTerminalOutput for WorkflowCtx<C> {
+    fn drop(&mut self, _r: Resource<cli::terminal_output::TerminalOutput>) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
+impl<C: ClockFn> cli::terminal_stdin::Host for WorkflowCtx<C> {
+    fn get_terminal_stdin(
+        &mut self,
+    ) -> wasmtime::Result<Option<wasmtime::component::Resource<cli::terminal_stdin::TerminalInput>>>
+    {
+        Ok(None)
+    }
+}
+impl<C: ClockFn> cli::terminal_stdout::Host for WorkflowCtx<C> {
+    fn get_terminal_stdout(
+        &mut self,
+    ) -> wasmtime::Result<Option<wasmtime::component::Resource<cli::terminal_stdout::TerminalOutput>>>
+    {
+        Ok(None)
+    }
+}
+impl<C: ClockFn> cli::terminal_stderr::Host for WorkflowCtx<C> {
+    fn get_terminal_stderr(
+        &mut self,
+    ) -> wasmtime::Result<Option<wasmtime::component::Resource<cli::terminal_stderr::TerminalOutput>>>
+    {
+        Ok(None)
     }
 }

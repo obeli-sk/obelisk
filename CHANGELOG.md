@@ -3,6 +3,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Add support for [Python](https://github.com/bytecodealliance/componentize-py/) in workflows: all remaining WASI interfaces are stubbed when `stub_wasi` is enabled.
+
 ## [0.26.1](https://github.com/obeli-sk/obelisk/compare/v0.26.0...v0.26.1)
 
 ### 🚜 Refactor

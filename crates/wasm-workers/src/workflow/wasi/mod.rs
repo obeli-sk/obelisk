@@ -2,6 +2,7 @@ mod cli;
 mod clocks;
 mod filesystem;
 mod random;
+mod sockets;
 
 use super::workflow_ctx::WorkflowCtx;
 use crate::WasmFileError;
@@ -39,16 +40,54 @@ pub(crate) fn add_to_linker_async<C: ClockFn>(
         .map_err(linking_err)?;
     wasi::cli::environment::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
         .map_err(linking_err)?;
-    wasi::cli::exit::add_to_linker::<_, WorkflowCtx<C>>(linker, &options.into(), |x| x)
+    wasi::cli::exit::add_to_linker::<_, WorkflowCtx<C>>(linker, &options.clone().into(), |x| x)
         .map_err(linking_err)?;
     wasi::cli::stdin::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x).map_err(linking_err)?;
     wasi::cli::stdout::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x).map_err(linking_err)?;
     wasi::cli::stderr::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x).map_err(linking_err)?;
+    wasi::cli::terminal_input::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
+        .map_err(linking_err)?;
+    wasi::cli::terminal_output::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
+        .map_err(linking_err)?;
+
+    wasi::cli::terminal_stdin::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
+        .map_err(linking_err)?;
+    wasi::cli::terminal_stdout::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
+        .map_err(linking_err)?;
+    wasi::cli::terminal_stderr::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
+        .map_err(linking_err)?;
+
     wasi::filesystem::preopens::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
         .map_err(linking_err)?;
     wasi::filesystem::types::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
         .map_err(linking_err)?;
     wasi::random::random::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x).map_err(linking_err)?;
+    wasi::random::insecure::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
+        .map_err(linking_err)?;
+    wasi::random::insecure_seed::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
+        .map_err(linking_err)?;
+
+    wasi::sockets::network::add_to_linker::<_, WorkflowCtx<C>>(
+        linker,
+        &options.clone().into(),
+        |x| x,
+    )
+    .map_err(linking_err)?;
+
+    wasi::sockets::instance_network::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
+        .map_err(linking_err)?;
+
+    wasi::sockets::udp::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x).map_err(linking_err)?;
+    wasi::sockets::udp_create_socket::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
+        .map_err(linking_err)?;
+
+    wasi::sockets::tcp::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x).map_err(linking_err)?;
+    wasi::sockets::tcp_create_socket::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
+        .map_err(linking_err)?;
+
+    wasi::sockets::ip_name_lookup::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)
+        .map_err(linking_err)?;
+
     wasmtime_wasi_io::add_to_linker_async(linker).map_err(linking_err)?;
     Ok(())
 }
