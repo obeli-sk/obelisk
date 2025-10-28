@@ -77,6 +77,13 @@ impl ExecutorTaskHandle {
     #[instrument(level = Level::DEBUG, name = "executor.close", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id))]
     pub async fn close(&self) {
         trace!("Gracefully closing");
+        // TODO: Close all the workers tasks as well.
+        // Simple solution:
+        // Attempt to unlock all in-progress executions. Activities will not be penalized for shutdown, although the number of retries would increase,
+        // some progress will be lost.
+        // More complex solution:
+        // Activities will be awaited, up to some deadline, then unlocked.
+        // Workflows that are awating should be signaled using `DeadlineTracker`.
         self.is_closing.store(true, Ordering::Relaxed);
         while !self.abort_handle.is_finished() {
             tokio::time::sleep(Duration::from_millis(1)).await;

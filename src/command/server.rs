@@ -1707,8 +1707,8 @@ impl ConfigVerified {
             http_servers_to_webhook_names
         };
         let path_prefixes = Arc::new(path_prefixes);
-        // Download WASM files from OCI registries if needed.
-        // TODO!: Switch to `JoinSet` when madsim supports it.
+
+        // Fetch and verify components, each in its own tokio task.
         let activities_wasm = activities_wasm
             .into_iter()
             .map(|activity_wasm| {

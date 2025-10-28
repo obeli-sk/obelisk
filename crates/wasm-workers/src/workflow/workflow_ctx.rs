@@ -243,9 +243,10 @@ impl ScheduleFnCall<'_> {
             target_params,
             wasm_backtrace,
         } = self;
-        // TODO(edge case): handle ExecutionId conflict: This does not have to be deterministicly generated.
-        // Remove execution_id from EventCall::ScheduleRequest and add retries.
-        // Or use ExecutionId::generate(), but ignore the id when checking determinism.
+        // Generate new ULID using this execution, changing the randomness part using this execution's seed.
+        // We are ignoring the possibility of ExecutionId conflict:
+        // According to birthday paradox, with 80 bits of randomness, a 50% chance
+        // of a conflict will occur only after we generate 10^12 ULIDs.
         let execution_id = ExecutionId::from_parts(
             ctx.execution_id.get_top_level().timestamp_part(),
             ctx.next_u128(),
@@ -2396,7 +2397,7 @@ pub(crate) mod tests {
             .map(std::result::Result::unwrap)
             .filter(|step: &WorkflowStep| step.is_valid())
             .collect::<Vec<_>>();
-        // FIXME: the test harness supports a single child/delay request per join set
+        // TODO: the test harness supports a single child/delay request per join set
         let mut join_sets = hashbrown::HashSet::new();
         steps.retain(|step| match step {
             WorkflowStep::Call { ffqn } | WorkflowStep::SubmitExecution { target_ffqn: ffqn } => {
