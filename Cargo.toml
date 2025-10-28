@@ -371,12 +371,13 @@ unknown_lints = "deny"
 
 [profile.release]
 overflow-checks = true
-lto = true
 opt-level = "s"
+codegen-units = 1
+lto = "fat"
+strip = "debuginfo"
 
 [profile.release_trunk]
 inherits = "release"
-strip = "debuginfo"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/obelisk-{ target }.tar.gz"
