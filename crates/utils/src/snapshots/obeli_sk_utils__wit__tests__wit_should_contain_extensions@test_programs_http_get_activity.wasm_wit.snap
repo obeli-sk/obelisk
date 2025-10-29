@@ -142,8 +142,8 @@ package wasi:io@0.2.3 {
     resource error;
   }
   interface streams {
-    use error.{error};
     use poll.{pollable};
+    use error.{error};
 
     resource output-stream {
       check-write: func() -> result<u64, stream-error>;
@@ -185,74 +185,6 @@ package wasi:http@0.2.2 {
     use wasi:io/streams@0.2.3.{output-stream};
     use wasi:io/poll@0.2.3.{pollable};
     use wasi:io/streams@0.2.3.{input-stream};
-
-    resource future-incoming-response {
-      subscribe: func() -> pollable;
-      get: func() -> option<result<result<incoming-response, error-code>>>;
-    }
-
-    resource incoming-response {
-      status: func() -> status-code;
-      headers: func() -> headers;
-      consume: func() -> result<incoming-body>;
-    }
-
-    record DNS-error-payload {
-      rcode: option<string>,
-      info-code: option<u16>,
-    }
-
-    record TLS-alert-received-payload {
-      alert-id: option<u8>,
-      alert-message: option<string>,
-    }
-
-    record field-size-payload {
-      field-name: option<string>,
-      field-size: option<u32>,
-    }
-
-    variant error-code {
-      DNS-timeout,
-      DNS-error(DNS-error-payload),
-      destination-not-found,
-      destination-unavailable,
-      destination-IP-prohibited,
-      destination-IP-unroutable,
-      connection-refused,
-      connection-terminated,
-      connection-timeout,
-      connection-read-timeout,
-      connection-write-timeout,
-      connection-limit-reached,
-      TLS-protocol-error,
-      TLS-certificate-error,
-      TLS-alert-received(TLS-alert-received-payload),
-      HTTP-request-denied,
-      HTTP-request-length-required,
-      HTTP-request-body-size(option<u64>),
-      HTTP-request-method-invalid,
-      HTTP-request-URI-invalid,
-      HTTP-request-URI-too-long,
-      HTTP-request-header-section-size(option<u32>),
-      HTTP-request-header-size(option<field-size-payload>),
-      HTTP-request-trailer-section-size(option<u32>),
-      HTTP-request-trailer-size(field-size-payload),
-      HTTP-response-incomplete,
-      HTTP-response-header-section-size(option<u32>),
-      HTTP-response-header-size(field-size-payload),
-      HTTP-response-body-size(option<u64>),
-      HTTP-response-trailer-section-size(option<u32>),
-      HTTP-response-trailer-size(field-size-payload),
-      HTTP-response-transfer-coding(option<string>),
-      HTTP-response-content-coding(option<string>),
-      HTTP-response-timeout,
-      HTTP-upgrade-failed,
-      HTTP-protocol-error,
-      loop-detected,
-      configuration-error,
-      internal-error(option<string>),
-    }
 
     resource fields {
       from-list: static func(entries: list<tuple<field-name, field-value>>) -> result<fields, header-error>;
@@ -311,7 +243,75 @@ package wasi:http@0.2.2 {
       set-connect-timeout: func(duration: option<duration>) -> result;
     }
 
+    resource future-incoming-response {
+      subscribe: func() -> pollable;
+      get: func() -> option<result<result<incoming-response, error-code>>>;
+    }
+
     type trailers = fields;
+
+    record DNS-error-payload {
+      rcode: option<string>,
+      info-code: option<u16>,
+    }
+
+    record TLS-alert-received-payload {
+      alert-id: option<u8>,
+      alert-message: option<string>,
+    }
+
+    record field-size-payload {
+      field-name: option<string>,
+      field-size: option<u32>,
+    }
+
+    variant error-code {
+      DNS-timeout,
+      DNS-error(DNS-error-payload),
+      destination-not-found,
+      destination-unavailable,
+      destination-IP-prohibited,
+      destination-IP-unroutable,
+      connection-refused,
+      connection-terminated,
+      connection-timeout,
+      connection-read-timeout,
+      connection-write-timeout,
+      connection-limit-reached,
+      TLS-protocol-error,
+      TLS-certificate-error,
+      TLS-alert-received(TLS-alert-received-payload),
+      HTTP-request-denied,
+      HTTP-request-length-required,
+      HTTP-request-body-size(option<u64>),
+      HTTP-request-method-invalid,
+      HTTP-request-URI-invalid,
+      HTTP-request-URI-too-long,
+      HTTP-request-header-section-size(option<u32>),
+      HTTP-request-header-size(option<field-size-payload>),
+      HTTP-request-trailer-section-size(option<u32>),
+      HTTP-request-trailer-size(field-size-payload),
+      HTTP-response-incomplete,
+      HTTP-response-header-section-size(option<u32>),
+      HTTP-response-header-size(field-size-payload),
+      HTTP-response-body-size(option<u64>),
+      HTTP-response-trailer-section-size(option<u32>),
+      HTTP-response-trailer-size(field-size-payload),
+      HTTP-response-transfer-coding(option<string>),
+      HTTP-response-content-coding(option<string>),
+      HTTP-response-timeout,
+      HTTP-upgrade-failed,
+      HTTP-protocol-error,
+      loop-detected,
+      configuration-error,
+      internal-error(option<string>),
+    }
+
+    resource incoming-response {
+      status: func() -> status-code;
+      headers: func() -> headers;
+      consume: func() -> result<incoming-body>;
+    }
 
     type status-code = u16;
 

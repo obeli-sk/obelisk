@@ -163,7 +163,7 @@ package obelisk:workflow@3.0.0 {
 
 package testing:stub-activity-obelisk-ext {
   interface activity {
-    use obelisk:types/execution@3.0.0.{join-set, execution-id, get-extension-error, invoke-extension-error, await-next-extension-error};
+    use obelisk:types/execution@3.0.0.{join-set, execution-id, get-extension-error, await-next-extension-error, invoke-extension-error};
 
     foo-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
 
