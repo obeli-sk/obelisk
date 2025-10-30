@@ -73,12 +73,8 @@ async fn proxy(server_req: Request<Body>, target_url: Uri) -> Result<Response<Bo
             .expect("no errors could be in ResponseBuilder")
             .append(key, value.clone());
     }
-    let resp_body = server_resp
-        .body(client_resp.into_body().into_boxed_body())
-        .map_err(Error::from)?;
-    let (resp_parts, resp_body) = resp_body.into_parts();
-    let resp_body = Body::from_http_body(resp_body);
-    Ok(Response::from_parts(resp_parts, resp_body))
+    let resp_body = Body::from_http_body(client_resp.into_body().into_boxed_body());
+    Ok(server_resp.body(resp_body)?)
 }
 
 fn write_static_response(body: &[u8], content_type: &'static str) -> Result<Response<Body>, Error> {
