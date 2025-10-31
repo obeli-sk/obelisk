@@ -140,7 +140,7 @@ impl From<FatalError> for FinishedExecutionError {
             }
             FatalError::ParamsParsingError(params_parsing_error) => {
                 FinishedExecutionError::PermanentFailure {
-                    reason_inner: reason_full.to_string(),
+                    reason_inner: reason_full.clone(),
                     reason_full,
                     kind: PermanentFailureKind::ParamsParsingError,
                     detail: params_parsing_error.detail(),
@@ -157,7 +157,7 @@ impl From<FatalError> for FinishedExecutionError {
                 detail: Some(detail),
             },
             FatalError::ResultParsingError(_) => FinishedExecutionError::PermanentFailure {
-                reason_inner: reason_full.to_string(),
+                reason_inner: reason_full.clone(),
                 reason_full,
                 kind: PermanentFailureKind::ResultParsingError,
                 detail: None,

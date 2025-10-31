@@ -219,7 +219,7 @@ impl WastVal {
             Self::F32(b) => Val::Float32(*b),
             Self::F64(b) => Val::Float64(*b),
             Self::Char(b) => Val::Char(*b),
-            Self::String(s) => Val::String(s.to_string()),
+            Self::String(s) => Val::String(s.clone()),
             Self::List(vals) => {
                 let vals = vals.iter().map(Self::as_val).collect();
                 Val::List(vals)
@@ -227,15 +227,15 @@ impl WastVal {
             Self::Record(vals) => {
                 let mut fields = Vec::new();
                 for (name, v) in vals {
-                    fields.push((name.to_string(), v.as_val()));
+                    fields.push((name.clone(), v.as_val()));
                 }
                 Val::Record(fields)
             }
             Self::Tuple(vals) => Val::Tuple(vals.iter().map(Self::as_val).collect()),
-            Self::Enum(name) => Val::Enum(name.to_string()),
+            Self::Enum(name) => Val::Enum(name.clone()),
             Self::Variant(name, payload) => {
                 let payload = Self::payload_val(payload.as_deref());
-                Val::Variant(name.to_string(), payload)
+                Val::Variant(name.clone(), payload)
             }
             Self::Option(v) => Val::Option(v.as_ref().map(|v| Box::new(v.as_val()))),
             Self::Result(v) => Val::Result(match v {

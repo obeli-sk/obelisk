@@ -405,7 +405,7 @@ fn add_extended_interfaces(
                         let schedule_at_param_name =
                             generate_param_name("schedule-at", &original_fn.params);
                         let mut params = vec![(
-                            schedule_at_param_name.to_string(),
+                            schedule_at_param_name.clone(),
                             Type::Id(type_id_schedule_at),
                         )];
                         params.extend_from_slice(&original_fn.params);
@@ -469,8 +469,7 @@ fn add_extended_interfaces(
                         let params = {
                             let schedule_at_param_name =
                                 generate_param_name("label", &original_fn.params);
-                            let mut params =
-                                vec![(schedule_at_param_name.to_string(), Type::String)];
+                            let mut params = vec![(schedule_at_param_name.clone(), Type::String)];
                             params.extend_from_slice(&original_fn.params);
                             params
                         };

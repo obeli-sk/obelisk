@@ -671,7 +671,7 @@ pub mod params {
             .map(std::string::ToString::to_string)
             .with_position()
             .fold("[".to_string(), |mut acc, (pos, item)| {
-                acc.push_str(&item.to_string());
+                acc.push_str(&item.clone());
                 if pos != Position::Last && pos != Position::Only {
                     acc.push(',');
                 } else {

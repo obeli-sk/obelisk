@@ -842,7 +842,7 @@ fn populate_ifcs_with_compatible_fns(
         let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
         let mut fns = IndexMap::new();
         for (function_name, function) in &ifc.functions {
-            let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
+            let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.clone()));
             let return_type = if let Some(return_type) = function.result {
                 let mut printer = WitPrinter::default();
                 let wit_type = printer
@@ -870,7 +870,7 @@ fn populate_ifcs_with_compatible_fns(
                 (Some(return_type @ ReturnType::Extendable(_)), true)
                 | (Some(return_type), false) => {
                     let ffqn =
-                        FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
+                        FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.clone()));
                     let parameter_types = ParameterTypes({
                         let mut params = Vec::new();
                         for (param_name, param_ty) in &function.params {
@@ -884,7 +884,7 @@ fn populate_ifcs_with_compatible_fns(
                                         return Err(DecodeError::TypeNotSupported { err, ffqn });
                                     }
                                 },
-                                name: StrVariant::from(param_name.to_string()),
+                                name: StrVariant::from(param_name.clone()),
                                 wit_type: printer
                                     .print_type_name(resolve, param_ty)
                                     .ok()
