@@ -188,7 +188,7 @@ bytes = "1.10"
 cargo_metadata = "0.23"
 cfg-if = "1.0.4"
 chrono = { version = "0.4.42", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.50", features = ["derive"] }
+clap = { version = "4.5.51", features = ["derive"] }
 config = { version = "0.15.18", default-features = false, features = [
     "toml",
     "preserve_order",
