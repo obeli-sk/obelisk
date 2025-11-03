@@ -12,7 +12,7 @@ However, this loads the webui as specified in [webui-version.txt](../../assets/w
 
 Build
 ```sh
-trunk build --config crates/webui/Trunk.toml
+trunk --log=debug --offline build --config crates/webui/Trunk.toml
 cargo build --package webui-proxy --target=wasm32-wasip2 --profile=release_trunk
 ```
 
