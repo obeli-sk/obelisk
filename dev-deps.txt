@@ -15,7 +15,7 @@ cargo-zigbuild 0.20.1
 wasm-opt version 124
 trunk wasm_opt = "version_123"
 trunk 0.21.14
-wasm-bindgen 0.2.100
+wasm-bindgen 0.2.104
 trunk wasm_bindgen = "0.2.100"
 litestream v0.5.2
 ldd (GNU libc) 2.40

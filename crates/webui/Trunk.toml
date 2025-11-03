@@ -4,5 +4,5 @@ filehash = false
 cargo_profile = "release_trunk"
 
 [tools]
-wasm_opt = "version_123"
-wasm_bindgen = "0.2.100"
+wasm_opt = "version_124"
+wasm_bindgen = "0.2.104"

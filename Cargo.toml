@@ -298,9 +298,9 @@ id-arena = "2.2.1"
 log = "0.4.28"
 semver = "1.0.27"
 tonic-web-wasm-client = "0.8.0"
-wasm-bindgen = "=0.2.100" # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml.
-wasm-bindgen-futures = "=0.4.50" # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/futures/Cargo.toml
-web-sys = { version = "=0.3.77", features = [
+wasm-bindgen = "=0.2.104" # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml.
+wasm-bindgen-futures = "=0.4.54" # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/futures/Cargo.toml
+web-sys = { version = "=0.3.81", features = [
     "HtmlInputElement",
     "Performance",
     "Window",

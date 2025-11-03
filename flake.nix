@@ -15,32 +15,6 @@
         let
           overlays = [
             (import rust-overlay)
-            (final: prev: {
-              wasm-bindgen-cli = prev.wasm-bindgen-cli.overrideAttrs (old: rec {
-                pname = "${old.pname}-fork";
-                version = "fork";
-                src = prev.fetchFromGitHub {
-                  owner = "tomasol";
-                  repo = "wasm-bindgen";
-                  rev = "d501b68c5d459c41ba07d0b37bc1e84ae31cbfea";
-                  sha256 = "sha256-Ny0Q2ul3s2bpA3itgOP5QuGIVldromGlX+pm0VcqSHc=";
-                };
-                nativeBuildInputs = with prev; [
-                  cargo
-                  rustc
-                ];
-                buildPhase = ''
-                  cd crates/cli
-                  cargo build
-                '';
-                installPhase = ''
-                  mkdir -p $out/bin
-                  cp ../../target/debug/wasm-bindgen $out/bin/
-                '';
-
-                doCheck = false;
-              });
-            })
           ];
 
           pkgs = import nixpkgs {
@@ -219,7 +193,6 @@
               ];
           };
           devShells.web = pkgs.mkShell {
-            # Contains the forked wasm-bindgen-cli
             nativeBuildInputs = with pkgs;
               [
                 (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
