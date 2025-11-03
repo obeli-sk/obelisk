@@ -2,3 +2,4 @@ use flake .
 watch_file ./rust-toolchain.toml ./flake.nix
 
 export TRUNK_SKIP_VERSION_CHECK="true"
+export TRUNK_OFFLINE="true"

@@ -47,7 +47,7 @@ fn run_trunk_build(current_dir: &Path) {
     let mut cmd = Command::new("trunk");
     cmd.current_dir(current_dir)
         .arg("--log=debug")
-        .arg("--offline")
+        .arg("--offline=true")
         .arg("build")
         .env("CARGO_TARGET_DIR", &out_dir) // Avoid deadlock when outer cargo holds the lock to the target folder.
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
