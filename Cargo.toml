@@ -73,8 +73,7 @@ tracing-opentelemetry.workspace = true
 console-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
-parameterized.workspace = true
-parameterized-macro.workspace = true
+rstest.workspace = true
 
 [[bin]]
 name = "obelisk"
@@ -195,7 +194,7 @@ config = { version = "0.15.18", default-features = false, features = [
     "async",
     "convert-case",
 ] }
-console-subscriber = "0.4.1"
+console-subscriber = "0.5.0"
 const_format = "0.2.35"
 criterion = "0.7"
 crossterm = "0.29.0"
@@ -231,8 +230,6 @@ oci-client = { version = "0.15.0", default-features = false, features = [
 oci-wasm = { version = "0.3.0", default-features = false, features = [ # Dependent on matching oci-client
     "rustls-tls",
 ] }
-parameterized = "2.0.0"
-parameterized-macro = "2.0.0"
 prost = "0.14.1"
 prost-wkt-types = "0.7"
 rand = "0.8" # yew 0.21 needs getrandom 0.2
@@ -247,7 +244,7 @@ rusqlite = { version = "0.37.0", features = [
     "chrono",
     "serde_json",
 ] }
-schemars = "1.0.4"
+schemars = "1.1.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_with = "3.15.1"
@@ -310,7 +307,7 @@ yew_icons = { version = "0.8.0", features = ["LucideBox", "LucideFileDiff"] }
 yew-router = "0.18.0"
 yewprint = "0.5.0"
 yewprint-css = "0.4.0"
-wstd = "0.6.1"
+wstd = "0.6.3"
 
 # wasmtime
 wasmtime = { version = "38.0.3", features = ["memory-protection-keys"] }

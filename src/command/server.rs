@@ -2547,18 +2547,18 @@ mod tests {
         command::server::{ServerCompiledLinked, ServerVerified, VerifyParams},
     };
     use directories::BaseDirs;
-    use parameterized::parameterized;
+    use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
 
     fn get_workspace_dir() -> PathBuf {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
     }
 
-    #[parameterized(obelisk_toml = {
-    "obelisk-local.toml", "obelisk.toml"
-})]
-    #[parameterized_macro(tokio::test(flavor = "multi_thread"))] // for WASM component compilation
-    async fn server_verify(obelisk_toml: &str) -> Result<(), anyhow::Error> {
+    #[rstest]
+    #[case("obelisk-local.toml")]
+    #[case("obelisk.toml")]
+    #[tokio::test(flavor = "multi_thread")] // for WASM component compilation]
+    async fn server_verify(#[case] obelisk_toml: &'static str) -> Result<(), anyhow::Error> {
         let obelisk_toml = get_workspace_dir().join(obelisk_toml);
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
