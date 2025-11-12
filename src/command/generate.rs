@@ -1,3 +1,4 @@
+use crate::args::Generate;
 use crate::{args::shadow::PKG_VERSION, config::toml::ConfigToml};
 use anyhow::Context;
 use concepts::ComponentType;
@@ -9,6 +10,30 @@ use std::{
     path::PathBuf,
 };
 use utils::{wasm_tools::WasmComponent, wit};
+
+impl Generate {
+    pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
+        match self {
+            Generate::ConfigSchema { output } => generate_toml_schema(output),
+            Generate::Extensions {
+                component_type,
+                input_wit_directory,
+                output_directory,
+            } => {
+                generate_exported_extension_wits(
+                    input_wit_directory,
+                    output_directory,
+                    component_type,
+                )
+                .await
+            }
+            Generate::WitSupport {
+                component_type,
+                output_directory,
+            } => generate_support_wits(component_type, output_directory).await,
+        }
+    }
+}
 
 pub(crate) fn generate_toml_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     let schema = schema_for!(ConfigToml);

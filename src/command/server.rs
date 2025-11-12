@@ -1,3 +1,4 @@
+use crate::args::Server;
 use crate::config::ComponentConfig;
 use crate::config::ComponentConfigImportable;
 use crate::config::ComponentLocation;
@@ -26,6 +27,7 @@ use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::init;
 use crate::init::Guard;
+use crate::project_dirs;
 use anyhow::Context;
 use anyhow::bail;
 use chrono::DateTime;
@@ -143,6 +145,55 @@ const WEBUI_OCI_REFERENCE: &str = include_str!("../../assets/webui-version.txt")
 const GET_STATUS_POLLING_SLEEP: Duration = Duration::from_secs(1);
 
 type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
+
+impl Server {
+    pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
+        match self {
+            Server::Run {
+                clean_sqlite_directory,
+                clean_cache,
+                clean_codegen_cache,
+                config,
+            } => {
+                Box::pin(run(
+                    project_dirs(),
+                    BaseDirs::new(),
+                    config,
+                    RunParams {
+                        clean_sqlite_directory,
+                        clean_cache,
+                        clean_codegen_cache,
+                    },
+                ))
+                .await
+            }
+            Server::GenerateConfig => {
+                let obelisk_toml = PathBuf::from("obelisk.toml");
+                ConfigHolder::generate_default_config(&obelisk_toml).await?;
+                println!("Generated {obelisk_toml:?}");
+                Ok(())
+            }
+            Server::Verify {
+                clean_cache,
+                clean_codegen_cache,
+                config,
+                ignore_missing_env_vars,
+            } => {
+                verify(
+                    project_dirs(),
+                    BaseDirs::new(),
+                    config,
+                    VerifyParams {
+                        clean_cache,
+                        clean_codegen_cache,
+                        ignore_missing_env_vars,
+                    },
+                )
+                .await
+            }
+        }
+    }
+}
 
 #[derive(derive_more::Debug)]
 struct GrpcServer {
@@ -2543,8 +2594,8 @@ impl MatchableSourceMap {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ConfigHolder,
         command::server::{ServerCompiledLinked, ServerVerified, VerifyParams},
+        config::config_holder::ConfigHolder,
     };
     use directories::BaseDirs;
     use rstest::rstest;

@@ -1,4 +1,7 @@
 use crate::ExecutionRepositoryClient;
+use crate::args;
+use crate::args::params::parse_params;
+use crate::get_execution_repository_client;
 use crate::get_fn_repository_client;
 use anyhow::bail;
 use chrono::DateTime;
@@ -14,6 +17,54 @@ use itertools::Either;
 use serde_json::json;
 use std::time::Duration;
 use tracing::instrument;
+
+impl args::Execution {
+    pub(crate) async fn run(self, api_url: &str) -> Result<(), anyhow::Error> {
+        match self {
+            args::Execution::Submit {
+                ffqn,
+                params,
+                follow,
+                json,
+                no_reconnect,
+            } => {
+                let client = get_execution_repository_client(api_url).await?;
+                let opts = if json {
+                    SubmitOutputOpts::Json
+                } else {
+                    SubmitOutputOpts::Plain { no_reconnect }
+                };
+                submit(client, ffqn, parse_params(params)?, follow, opts, api_url).await
+            }
+            args::Execution::Stub(args::Stub {
+                execution_id,
+                return_value,
+            }) => {
+                let client = get_execution_repository_client(api_url).await?;
+                stub(client, execution_id, return_value).await
+            }
+            args::Execution::Get {
+                execution_id,
+                follow,
+                no_reconnect,
+            } => {
+                let client = get_execution_repository_client(api_url).await?;
+                let opts = GetStatusOptions {
+                    follow,
+                    no_reconnect,
+                };
+                get_status(client, execution_id, opts).await
+            }
+            args::Execution::GetJson {
+                follow,
+                execution_id,
+            } => {
+                let client = get_execution_repository_client(api_url).await?;
+                get_status_json(client, execution_id, follow, false).await
+            }
+        }
+    }
+}
 
 #[derive(PartialEq)]
 pub(crate) enum SubmitOutputOpts {

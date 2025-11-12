@@ -1,11 +1,58 @@
 use crate::FunctionMetadataVerbosity;
 use crate::FunctionRepositoryClient;
+use crate::args;
+use crate::get_fn_repository_client;
+use crate::oci;
 use anyhow::Context;
 use concepts::ComponentType;
 use concepts::{FunctionFqn, FunctionMetadata};
 use grpc::grpc_gen;
 use std::path::PathBuf;
 use utils::wasm_tools::WasmComponent;
+
+impl args::Component {
+    pub(crate) async fn run(self, api_url: &str) -> Result<(), anyhow::Error> {
+        match self {
+            args::Component::Inspect {
+                path,
+                component_type,
+                imports,
+                extensions,
+                convert_core_module,
+            } => {
+                inspect(
+                    path,
+                    component_type,
+                    if imports {
+                        FunctionMetadataVerbosity::ExportsAndImports
+                    } else {
+                        FunctionMetadataVerbosity::ExportsOnly
+                    },
+                    extensions,
+                    convert_core_module,
+                )
+                .await
+            }
+            args::Component::List {
+                imports,
+                extensions,
+            } => {
+                let client = get_fn_repository_client(api_url).await?;
+                list_components(
+                    client,
+                    if imports {
+                        FunctionMetadataVerbosity::ExportsAndImports
+                    } else {
+                        FunctionMetadataVerbosity::ExportsOnly
+                    },
+                    extensions,
+                )
+                .await
+            }
+            args::Component::Push { path, image_name } => oci::push(path, &image_name).await,
+        }
+    }
+}
 
 pub(crate) async fn inspect(
     wasm_path: PathBuf,
