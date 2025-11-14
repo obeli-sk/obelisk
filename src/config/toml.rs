@@ -56,7 +56,9 @@ pub(crate) struct ConfigToml {
     #[serde(default, rename = "activity_wasm")]
     pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
     #[serde(default, rename = "activity_stub")]
-    pub(crate) activities_stub: Vec<ActivityStubComponentConfigToml>,
+    pub(crate) activities_stub: Vec<ActivityStubExtComponentConfigToml>,
+    #[serde(default, rename = "activity_external")]
+    pub(crate) activities_external: Vec<ActivityStubExtComponentConfigToml>,
     #[serde(default, rename = "workflow")]
     pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
     #[cfg(feature = "otlp")]
@@ -461,38 +463,39 @@ pub(crate) struct ActivityWasmComponentConfigToml {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ActivityStubComponentConfigToml {
+pub(crate) struct ActivityStubExtComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
 }
 #[derive(Debug)]
-pub(crate) struct ActivityStubConfigVerified {
+pub(crate) struct ActivityStubExtConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) component_id: ComponentId,
     pub(crate) content_digest: ContentDigest,
+    pub(crate) retry_config: ComponentRetryConfig,
 }
-impl ActivityStubComponentConfigToml {
+impl ActivityStubExtComponentConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
     pub(crate) async fn fetch_and_verify(
         self,
+        component_type: ComponentType,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         path_prefixes: Arc<PathPrefixes>,
-    ) -> Result<ActivityStubConfigVerified, anyhow::Error> {
-        let component_id = ComponentId::new(
-            ComponentType::ActivityStub,
-            StrVariant::from(self.common.name.clone()),
-        )?;
+    ) -> Result<ActivityStubExtConfigVerified, anyhow::Error> {
+        let component_id =
+            ComponentId::new(component_type, StrVariant::from(self.common.name.clone()))?;
         tracing::Span::current().record("component_id", tracing::field::display(&component_id));
 
         let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
-        Ok(ActivityStubConfigVerified {
+        Ok(ActivityStubExtConfigVerified {
             content_digest: common.content_digest,
             wasm_path,
             component_id,
+            retry_config: ComponentRetryConfig::ZERO, // FIXME for external
         })
     }
 }

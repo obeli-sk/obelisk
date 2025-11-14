@@ -7,8 +7,8 @@ use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
 use crate::config::toml::ActivitiesDirectoriesGlobalConfigToml;
-use crate::config::toml::ActivityStubComponentConfigToml;
-use crate::config::toml::ActivityStubConfigVerified;
+use crate::config::toml::ActivityStubExtComponentConfigToml;
+use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityWasmComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ComponentCommon;
@@ -1399,6 +1399,7 @@ impl ServerVerified {
         let mut config = ConfigVerified::fetch_and_verify_all(
             config.activities_wasm,
             config.activities_stub,
+            config.activities_external,
             config.workflows,
             http_servers,
             webhooks,
@@ -1459,7 +1460,7 @@ impl ServerCompiledLinked {
         let (compiled_components, component_registry_ro, supressed_errors) = compile_and_verify(
             &server_verified.engines,
             server_verified.config.activities_wasm,
-            server_verified.config.activities_stub,
+            server_verified.config.activities_stub_ext,
             server_verified.config.workflows,
             server_verified.config.webhooks_by_names,
             server_verified.config.global_backtrace_persist,
@@ -1678,7 +1679,7 @@ async fn start_http_servers(
 #[derive(Debug)]
 struct ConfigVerified {
     activities_wasm: Vec<ActivityWasmConfigVerified>,
-    activities_stub: Vec<ActivityStubConfigVerified>,
+    activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
@@ -1691,7 +1692,8 @@ impl ConfigVerified {
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
         activities_wasm: Vec<ActivityWasmComponentConfigToml>,
-        activities_stub: Vec<ActivityStubComponentConfigToml>,
+        activities_stub: Vec<ActivityStubExtComponentConfigToml>,
+        activities_external: Vec<ActivityStubExtComponentConfigToml>,
         workflows: Vec<WorkflowComponentConfigToml>,
         http_servers: Vec<webhook::HttpServer>,
         webhooks: Vec<webhook::WebhookComponentConfigToml>,
@@ -1779,20 +1781,30 @@ impl ConfigVerified {
             })
             .collect::<Vec<_>>();
 
-        let activities_stub = activities_stub
-            .into_iter()
-            .map(|activity_stub| {
-                tokio::spawn({
-                    activity_stub
-                        .fetch_and_verify(
-                            wasm_cache_dir.clone(),
-                            metadata_dir.clone(),
-                            path_prefixes.clone(),
+        let stub_ext_fetch_verify =
+            |activities: Vec<ActivityStubExtComponentConfigToml>, component_type: ComponentType| {
+                activities
+                    .into_iter()
+                    .zip(std::iter::repeat(component_type))
+                    .map(|(activity, component_type)| {
+                        tokio::spawn(
+                            activity
+                                .fetch_and_verify(
+                                    component_type,
+                                    wasm_cache_dir.clone(),
+                                    metadata_dir.clone(),
+                                    path_prefixes.clone(),
+                                )
+                                .in_current_span(),
                         )
-                        .in_current_span()
-                })
-            })
-            .collect::<Vec<_>>();
+                    })
+            };
+        let mut activities_stub_ext =
+            stub_ext_fetch_verify(activities_stub, ComponentType::ActivityStub).collect::<Vec<_>>();
+        activities_stub_ext.extend(stub_ext_fetch_verify(
+            activities_external,
+            ComponentType::ActivityExternal,
+        ));
 
         let workflows = workflows
             .into_iter()
@@ -1836,30 +1848,29 @@ impl ConfigVerified {
         // We do not need to abort the tasks here.
         let all = futures_util::future::join4(
             futures_util::future::join_all(activities_wasm),
-            futures_util::future::join_all(activities_stub),
+            futures_util::future::join_all(activities_stub_ext),
             futures_util::future::join_all(workflows),
             futures_util::future::join_all(webhooks_by_names),
         );
         tokio::select! {
-            (activity_wasm_results, activity_stub_results, workflow_results, webhook_results) = all => {
-                let mut activities_wasm = Vec::with_capacity(activity_wasm_results.len());
-                for a in activity_wasm_results {
-                    activities_wasm.push(a??);
-                }
-                let mut activities_stub = Vec::with_capacity(activity_stub_results.len());
-                for a in activity_stub_results {
-                    activities_stub.push(a??);
-                }
-                let mut workflows = Vec::with_capacity(workflow_results.len());
-                for w in workflow_results {
-                    workflows.push(w??);
-                }
+            (activity_wasm_results, activity_stub_ext_results, workflow_results, webhook_results) = all => {
+                let activities_wasm = activity_wasm_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
+                let activities_stub_ext = activity_stub_ext_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
+                let workflows = workflow_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let mut webhooks_by_names = hashbrown::HashMap::new();
                 for webhook in webhook_results {
                     let (k, v) = webhook??;
                     webhooks_by_names.insert(k, v);
                 }
-                Ok(ConfigVerified {activities_wasm, activities_stub, workflows, webhooks_by_names, http_servers_to_webhook_names, global_backtrace_persist, fuel})
+                Ok(ConfigVerified {
+                    activities_wasm,
+                    activities_stub_ext,
+                    workflows,
+                    webhooks_by_names,
+                    http_servers_to_webhook_names,
+                    global_backtrace_persist,
+                    fuel
+                })
             },
             sigint = tokio::signal::ctrl_c() => {
                 sigint.expect("failed to listen for SIGINT event");
@@ -1887,7 +1898,7 @@ enum CompiledComponent {
         routes: Vec<WebhookRouteVerified>,
         content_digest: ContentDigest,
     },
-    ActivityStub {
+    ActivityStubOrExternal {
         component_config: ComponentConfig,
     },
 }
@@ -1897,7 +1908,7 @@ enum CompiledComponent {
 async fn compile_and_verify(
     engines: &Engines,
     activities_wasm: Vec<ActivityWasmConfigVerified>,
-    activities_stub: Vec<ActivityStubConfigVerified>,
+    activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
     global_backtrace_persist: bool,
@@ -1934,14 +1945,14 @@ async fn compile_and_verify(
                 })
             })
         })
-        .chain(activities_stub.into_iter().map(|activity_stub| {
+        .chain(activities_stub_ext.into_iter().map(|activity_stub_ext| {
             // No build_semaphore as there is no WASM compilation.
-            let span = info_span!("activity_stub_init", component_id = %activity_stub.component_id); // automatically associated with parent
+            let span = info_span!("activity_stub_ext_init", component_id = %activity_stub_ext.component_id); // automatically associated with parent
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     let wasm_component = WasmComponent::new(
-                        activity_stub.wasm_path,
-                        activity_stub.component_id.component_type,
+                        activity_stub_ext.wasm_path,
+                        activity_stub_ext.component_id.component_type,
                     )?;
                     let wit = wasm_component
                         .wit()
@@ -1953,16 +1964,16 @@ async fn compile_and_verify(
                     let component_config_importable = ComponentConfigImportable {
                         exports_ext,
                         exports_hierarchy_ext,
-                        retry_config: ComponentRetryConfig::ZERO,
+                        retry_config: activity_stub_ext.retry_config,
                     };
                     let component_config = ComponentConfig {
-                        component_id: activity_stub.component_id,
+                        component_id: activity_stub_ext.component_id,
                         imports: vec![],
                         workflow_or_activity_config: Some(component_config_importable),
-                        content_digest: activity_stub.content_digest,
+                        content_digest: activity_stub_ext.content_digest,
                         wit,
                     };
-                    Ok(CompiledComponent::ActivityStub { component_config })
+                    Ok(CompiledComponent::ActivityStubOrExternal { component_config })
                 })
             })
         }))
@@ -2048,7 +2059,7 @@ async fn compile_and_verify(
                         let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
                         assert!(old.is_none());
                     },
-                    CompiledComponent::ActivityStub {  component_config } => {
+                    CompiledComponent::ActivityStubOrExternal {  component_config } => {
                         component_registry.insert(component_config)?;
                     },
                 }
@@ -2404,7 +2415,7 @@ impl ComponentConfigRegistry {
                     _ => false,
                 }
             }
-            ComponentType::ActivityStub => false,
+            ComponentType::ActivityStub | ComponentType::ActivityExternal => false,
         }
     }
 

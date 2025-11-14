@@ -1,4 +1,5 @@
 use grpc_client::{ComponentType, result_detail};
+use yew::{Html, ToHtml as _};
 
 mod component_id;
 pub mod execution_id;
@@ -42,6 +43,7 @@ impl yew::ToHtml for ComponentType {
             ComponentType::Workflow => "Workflow",
             ComponentType::ActivityWasm => "Activity",
             ComponentType::ActivityStub => "Activity Stub",
+            ComponentType::ActivityExternal => "External Activity",
             ComponentType::WebhookEndpoint => "Webhook Endpoint",
         }
         .to_html()
@@ -53,8 +55,19 @@ impl ComponentType {
         match self {
             ComponentType::Workflow => yewprint::Icon::GanttChart,
             ComponentType::ActivityWasm => yewprint::Icon::CodeBlock,
-            ComponentType::ActivityStub => yewprint::Icon::Import,
+            ComponentType::ActivityStub | ComponentType::ActivityExternal => yewprint::Icon::Import,
             ComponentType::WebhookEndpoint => yewprint::Icon::GlobeNetwork,
         }
+    }
+
+    pub fn as_root_label(&self) -> Html {
+        match self {
+            ComponentType::Workflow => "Workflows",
+            ComponentType::ActivityWasm => "WASM Activities",
+            ComponentType::WebhookEndpoint => "Webhooks",
+            ComponentType::ActivityStub => "Stub Activities",
+            ComponentType::ActivityExternal => "External Activities",
+        }
+        .to_html()
     }
 }

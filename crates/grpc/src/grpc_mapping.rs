@@ -186,6 +186,7 @@ impl From<ComponentType> for grpc_gen::ComponentType {
         match value {
             ComponentType::ActivityWasm => grpc_gen::ComponentType::ActivityWasm,
             ComponentType::ActivityStub => grpc_gen::ComponentType::ActivityStub,
+            ComponentType::ActivityExternal => grpc_gen::ComponentType::ActivityExternal,
             ComponentType::Workflow => grpc_gen::ComponentType::Workflow,
             ComponentType::WebhookEndpoint => grpc_gen::ComponentType::WebhookEndpoint,
         }

@@ -97,6 +97,7 @@ enum ComponentType {
     ACTIVITY_WASM = 1;
     WEBHOOK_ENDPOINT = 2;
     ACTIVITY_STUB = 3;
+    ACTIVITY_EXTERNAL = 4;
 }
 
 message FunctionDetail {

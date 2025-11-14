@@ -119,7 +119,7 @@ pub(crate) async fn generate_support_wits(
                 wit::WIT_OBELISK_LOG_PACKAGE,
             ]
         }
-        ComponentType::ActivityStub => vec![],
+        ComponentType::ActivityStub | ComponentType::ActivityExternal => vec![],
         ComponentType::Workflow => vec![
             wit::WIT_OBELISK_TYPES_PACKAGE,
             wit::WIT_OBELISK_WORKFLOW_PACKAGE,

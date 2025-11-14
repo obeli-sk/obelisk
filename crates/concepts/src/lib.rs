@@ -1777,6 +1777,7 @@ impl<'a> arbitrary::Arbitrary<'a> for JoinSetId {
 pub enum ComponentType {
     ActivityWasm,
     ActivityStub,
+    ActivityExternal,
     Workflow,
     WebhookEndpoint,
 }

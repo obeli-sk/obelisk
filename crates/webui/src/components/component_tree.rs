@@ -156,7 +156,7 @@ impl ComponentTree {
                 &mut tree,
                 &root_id,
                 config,
-                as_label(&component_type),
+                component_type.as_root_label(),
                 component_type.as_icon(),
                 filter_component_list_by_type(components, component_type),
             );
@@ -170,16 +170,6 @@ impl ComponentTree {
         }
         tree.into()
     }
-}
-
-fn as_label(component_type: &ComponentType) -> Html {
-    match component_type {
-        ComponentType::Workflow => "Workflows",
-        ComponentType::ActivityWasm => "WASM Activities",
-        ComponentType::WebhookEndpoint => "Webhooks",
-        ComponentType::ActivityStub => "Stub Activities",
-    }
-    .to_html()
 }
 
 impl Component for ComponentTree {
