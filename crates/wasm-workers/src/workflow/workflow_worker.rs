@@ -914,8 +914,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
@@ -1092,8 +1090,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: sim_clock.now(),
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: u32::MAX,
                     component_id: ComponentId::dummy_workflow(),
                     scheduled_by: None,
                 })
@@ -1210,8 +1206,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
@@ -1375,8 +1369,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
@@ -1471,8 +1463,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
@@ -1565,8 +1555,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                retry_exp_backoff: Duration::from_millis(0),
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
@@ -1658,8 +1646,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
@@ -1707,6 +1693,7 @@ pub(crate) mod tests {
                 ExecutorId::generate(),
                 sim_clock.now() + Duration::from_secs(1),
                 RunId::generate(),
+                ComponentRetryConfig::WORKFLOW_TEST,
             )
             .await
             .unwrap();
@@ -1766,8 +1753,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
@@ -1856,8 +1841,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
@@ -1986,7 +1969,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
                 executor_id: ExecutorId::from_parts(0, 0),
-                retry_config: ComponentRetryConfig::ZERO,
+                retry_config: ComponentRetryConfig::WORKFLOW_TEST,
             },
             sim_clock.clone(),
             db_exec,
@@ -2004,8 +1987,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
@@ -2183,8 +2164,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
@@ -2327,8 +2306,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })

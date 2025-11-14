@@ -309,8 +309,6 @@ mod bench {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: u32::MAX,
                 component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })

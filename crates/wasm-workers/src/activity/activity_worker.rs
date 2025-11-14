@@ -560,8 +560,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
                 component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
@@ -757,8 +755,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
@@ -941,8 +937,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
@@ -1055,8 +1049,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
@@ -1181,8 +1173,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: retry_config.retry_exp_backoff,
-                    max_retries: retry_config.max_retries,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
@@ -1349,8 +1339,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: retry_config.retry_exp_backoff,
-                    max_retries: retry_config.max_retries,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
@@ -1433,8 +1421,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
@@ -1514,8 +1500,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
@@ -1589,8 +1573,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
@@ -1648,8 +1630,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })

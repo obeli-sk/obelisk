@@ -285,7 +285,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         };
 
         // Check that ffqn exists
-        let Some((component_id, retry_config, fn_metadata)) = self
+        let Some((component_id, _retry_config, fn_metadata)) = self
             .component_registry_ro
             .find_by_exported_ffqn_submittable(&concepts::FunctionFqn::new_arc(
                 Arc::from(interface_name),
@@ -400,8 +400,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 params,
                 parent: None,
                 scheduled_at,
-                retry_exp_backoff: retry_config.retry_exp_backoff,
-                max_retries: retry_config.max_retries,
                 component_id: component_id.clone(),
                 scheduled_by: None,
             })

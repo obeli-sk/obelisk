@@ -14,7 +14,6 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::ClosingStrategy;
 use concepts::ComponentId;
-use concepts::ComponentRetryConfig;
 use concepts::ExecutionMetadata;
 use concepts::FunctionRegistry;
 use concepts::InvalidNameError;
@@ -1111,7 +1110,6 @@ impl EventHistory {
             EventCall::SubmitChildExecution(SubmitChildExecution {
                 target_ffqn,
                 fn_component_id,
-                fn_retry_config,
                 join_set_id,
                 child_execution_id,
                 params,
@@ -1138,8 +1136,6 @@ impl EventHistory {
                     parent: Some((self.execution_id.clone(), join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
-                    retry_exp_backoff: fn_retry_config.retry_exp_backoff,
-                    max_retries: fn_retry_config.max_retries,
                     component_id: fn_component_id,
                     scheduled_by: None,
                 };
@@ -1242,7 +1238,6 @@ impl EventHistory {
                 execution_id: new_execution_id,
                 ffqn,
                 fn_component_id,
-                fn_retry_config,
                 params,
                 wasm_backtrace,
             }) => {
@@ -1266,8 +1261,6 @@ impl EventHistory {
                     params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
                     scheduled_at: scheduled_at_if_new,
-                    retry_exp_backoff: fn_retry_config.retry_exp_backoff,
-                    max_retries: fn_retry_config.max_retries,
                     component_id: fn_component_id,
                     scheduled_by: Some(self.execution_id.clone()),
                 };
@@ -1408,7 +1401,6 @@ impl EventHistory {
             EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
                 ffqn,
                 fn_component_id,
-                fn_retry_config,
                 join_set_id,
                 child_execution_id,
                 params,
@@ -1459,8 +1451,6 @@ impl EventHistory {
                     parent: Some((self.execution_id.clone(), join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
-                    retry_exp_backoff: fn_retry_config.retry_exp_backoff,
-                    max_retries: fn_retry_config.max_retries,
                     component_id: fn_component_id,
                     scheduled_by: None,
                 };
@@ -2021,7 +2011,7 @@ impl JoinSetCreate {
 pub(crate) struct SubmitChildExecution {
     pub(crate) target_ffqn: FunctionFqn,
     pub(crate) fn_component_id: ComponentId,
-    pub(crate) fn_retry_config: ComponentRetryConfig,
+    // pub(crate) fn_retry_config: ComponentRetryConfig,
     pub(crate) join_set_id: JoinSetId,
     pub(crate) child_execution_id: ExecutionIdDerived,
     #[debug(skip)]
@@ -2117,7 +2107,7 @@ pub(crate) struct Schedule {
     pub(crate) execution_id: ExecutionId,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) fn_component_id: ComponentId,
-    pub(crate) fn_retry_config: ComponentRetryConfig,
+    // pub(crate) fn_retry_config: ComponentRetryConfig,
     #[debug(skip)]
     pub(crate) params: Params,
     #[debug(skip)]
@@ -2260,7 +2250,6 @@ impl JoinNext {
 pub(crate) struct OneOffChildExecutionRequest {
     ffqn: FunctionFqn,
     fn_component_id: ComponentId,
-    fn_retry_config: ComponentRetryConfig,
     join_set_id: JoinSetId,
     child_execution_id: ExecutionIdDerived,
     #[debug(skip)]
@@ -2273,7 +2262,6 @@ impl OneOffChildExecutionRequest {
     pub(crate) async fn apply(
         ffqn: FunctionFqn,
         fn_component_id: ComponentId,
-        fn_retry_config: ComponentRetryConfig,
         params: Params,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         event_history: &mut EventHistory,
@@ -2288,7 +2276,6 @@ impl OneOffChildExecutionRequest {
         let event = EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
             ffqn,
             fn_component_id,
-            fn_retry_config,
             join_set_id,
             child_execution_id,
             params,
@@ -2312,7 +2299,6 @@ impl OneOffChildExecutionRequest {
     pub(crate) async fn apply_invoke(
         ffqn: FunctionFqn,
         fn_component_id: ComponentId,
-        fn_retry_config: ComponentRetryConfig,
         label: &str,
         params: Params,
         wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -2335,7 +2321,6 @@ impl OneOffChildExecutionRequest {
         let event = EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
             ffqn,
             fn_component_id,
-            fn_retry_config,
             join_set_id,
             child_execution_id,
             params,
@@ -2492,7 +2477,6 @@ impl EventCall {
                 join_set_id,
                 ffqn,
                 fn_component_id: _,
-                fn_retry_config: _,
                 child_execution_id: _,
                 params: _,
                 wasm_backtrace: _,
@@ -2733,8 +2717,8 @@ mod tests {
     };
     use concepts::time::ClockFn;
     use concepts::{
-        ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn,
-        FunctionRegistry, Params, SUPPORTED_RETURN_VALUE_OK_EMPTY, SupportedFunctionReturnValue,
+        ClosingStrategy, ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params,
+        SUPPORTED_RETURN_VALUE_OK_EMPTY, SupportedFunctionReturnValue,
     };
     use concepts::{JoinSetId, StrVariant};
     use db_tests::Database;
@@ -3161,7 +3145,6 @@ mod tests {
                     execution_id: ExecutionId::generate(),
                     ffqn: MOCK_FFQN,
                     fn_component_id: ComponentId::dummy_activity(),
-                    fn_retry_config: ComponentRetryConfig::ZERO,
                     params: Params::empty(),
                     wasm_backtrace: None,
                 }),
@@ -3366,8 +3349,6 @@ mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
                 component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
@@ -3467,7 +3448,6 @@ mod tests {
                 EventCall::SubmitChildExecution(SubmitChildExecution {
                     target_ffqn: ffqn,
                     fn_component_id: ComponentId::dummy_activity(),
-                    fn_retry_config: ComponentRetryConfig::ZERO,
                     join_set_id,
                     child_execution_id,
                     params: Params::empty(),
@@ -3508,7 +3488,6 @@ mod tests {
                 EventCall::SubmitChildExecution(SubmitChildExecution {
                     target_ffqn: ffqn_b,
                     fn_component_id: ComponentId::dummy_activity(),
-                    fn_retry_config: ComponentRetryConfig::ZERO,
                     join_set_id: join_set_id.clone(),
                     child_execution_id: child_execution_id_b,
                     params: Params::empty(),

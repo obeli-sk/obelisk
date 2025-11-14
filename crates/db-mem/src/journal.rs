@@ -10,7 +10,7 @@ use concepts::storage::{ExecutionLog, PendingState, Version};
 use concepts::{ExecutionId, ExecutionMetadata};
 use concepts::{FunctionFqn, Params};
 use std::cmp::max;
-use std::{collections::VecDeque, time::Duration};
+use std::collections::VecDeque;
 use tokio::sync::oneshot;
 
 #[derive(Debug)]
@@ -109,6 +109,7 @@ impl ExecutionJournal {
             lock_expires_at,
             run_id,
             component_id: _,
+            retry_config: _,
         } = &event
         {
             self.pending_state.can_append_lock(
@@ -171,6 +172,7 @@ impl ExecutionJournal {
                     lock_expires_at,
                     run_id,
                     component_id: _,
+                    retry_config: _,
                 } => Some(PendingState::Locked {
                     executor_id: *executor_id,
                     lock_expires_at: *lock_expires_at,
@@ -268,22 +270,6 @@ impl ExecutionJournal {
                 None
             }
         })
-    }
-
-    #[must_use]
-    pub fn retry_exp_backoff(&self) -> Duration {
-        assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
-                event: ExecutionEventInner::Created { retry_exp_backoff, .. },
-                ..
-            }) => *retry_exp_backoff)
-    }
-
-    #[must_use]
-    pub fn max_retries(&self) -> u32 {
-        assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
-                event: ExecutionEventInner::Created { max_retries, .. },
-                ..
-            }) => *max_retries)
     }
 
     #[must_use]

@@ -1,4 +1,5 @@
 use concepts::ComponentId;
+use concepts::ComponentRetryConfig;
 use concepts::ExecutionId;
 use concepts::Params;
 use concepts::SupportedFunctionReturnValue;
@@ -41,8 +42,6 @@ async fn diff_proptest_inner(seed: u64) {
         parent: None,
         metadata: concepts::ExecutionMetadata::empty(),
         scheduled_at: Now.now(),
-        retry_exp_backoff: Duration::ZERO,
-        max_retries: 0,
         component_id: ComponentId::dummy_activity(),
         scheduled_by: None,
     };
@@ -168,8 +167,6 @@ async fn persist_finished_event(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: component_id.clone(),
             scheduled_by: None,
         })
@@ -189,6 +186,10 @@ async fn persist_finished_event(
                 exec1,
                 created_at + LOCK_EXPIRY,
                 RunId::generate(),
+                ComponentRetryConfig {
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
             )
             .await
             .unwrap();

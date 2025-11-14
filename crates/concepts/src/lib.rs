@@ -2137,7 +2137,7 @@ pub struct PackageIfcFns {
     pub fns: IndexMap<FnName, FunctionMetadata>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComponentRetryConfig {
     pub max_retries: u32,
     pub retry_exp_backoff: Duration,

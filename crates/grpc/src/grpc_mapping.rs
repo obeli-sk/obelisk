@@ -392,8 +392,6 @@ pub fn from_execution_event_to_grpc(
                     params,
                     parent: _,
                     scheduled_at,
-                    retry_exp_backoff: _,
-                    max_retries: _,
                     component_id,
                     metadata: _,
                     scheduled_by,
@@ -412,6 +410,7 @@ pub fn from_execution_event_to_grpc(
                     executor_id: _,
                     run_id,
                     lock_expires_at,
+                    retry_config: _,
                 } => grpc_gen::execution_event::Event::Locked(grpc_gen::execution_event::Locked {
                     component_id: Some(component_id.into()),
                     run_id: run_id.to_string(),

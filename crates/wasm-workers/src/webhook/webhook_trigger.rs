@@ -25,7 +25,6 @@ use hyper_util::rt::TokioIo;
 use route_recognizer::{Match, Router};
 use std::ops::Deref;
 use std::path::Path;
-use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::sync::OwnedSemaphorePermit;
@@ -406,8 +405,6 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             parent: None,
             metadata,
             scheduled_at: created_at,
-            max_retries: 0,
-            retry_exp_backoff: Duration::ZERO,
             component_id: self.component_id.clone(),
             scheduled_by: None,
         };
@@ -478,7 +475,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let new_execution_id = ExecutionId::generate();
-                let (_function_metadata, component_id, import_retry_config) = self
+                let (_function_metadata, component_id, _import_retry_config) = self
                     .fn_registry
                     .get_by_exported_function(&ffqn)
                     .expect("target function must be found in fn_registry");
@@ -504,8 +501,6 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
                     metadata: ExecutionMetadata::from_linked_span(&self.component_logger.span),
                     scheduled_at: schedule_at,
-                    max_retries: import_retry_config.max_retries,
-                    retry_exp_backoff: import_retry_config.retry_exp_backoff,
                     component_id,
                     scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
                 };
@@ -544,7 +539,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             let child_execution_id =
                 ExecutionId::TopLevel(self.execution_id).next_level(&join_set_id_direct);
             let created_at = self.clock_fn.now();
-            let (fn_metadata, component_id, import_retry_config) = self
+            let (fn_metadata, component_id, _import_retry_config) = self
                 .fn_registry
                 .get_by_exported_function(&ffqn)
                 .expect("import was mocked using fn_registry exports limited to -schedule and no-ext functions");
@@ -593,8 +588,6 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 parent: Some((ExecutionId::TopLevel(self.execution_id), join_set_id_direct)),
                 metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
                 scheduled_at: created_at,
-                max_retries: import_retry_config.max_retries,
-                retry_exp_backoff: import_retry_config.retry_exp_backoff,
                 component_id,
                 scheduled_by: None,
             };

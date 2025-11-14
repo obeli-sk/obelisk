@@ -18,7 +18,7 @@ use concepts::storage::{
     Pagination, ResponseWithCursor, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
-use concepts::{ComponentId, ExecutionId, FunctionFqn};
+use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
@@ -46,6 +46,7 @@ impl DbExecutor for InMemoryDbConnection {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
+        retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorGeneric> {
         Ok(self.0.lock().unwrap().lock_pending(
             batch_size,
@@ -56,6 +57,7 @@ impl DbExecutor for InMemoryDbConnection {
             executor_id,
             lock_expires_at,
             run_id,
+            retry_config,
         ))
     }
 
@@ -69,6 +71,7 @@ impl DbExecutor for InMemoryDbConnection {
         version: Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
+        retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite> {
         let (next_version, event_history) = self.0.lock().unwrap().lock(
             created_at,
@@ -78,6 +81,7 @@ impl DbExecutor for InMemoryDbConnection {
             version,
             executor_id,
             lock_expires_at,
+            retry_config,
         )?;
         let db_holder_guard = self.0.lock().unwrap();
         let journal = db_holder_guard
@@ -532,6 +536,7 @@ impl DbHolder {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
+        retry_config: ComponentRetryConfig,
     ) -> LockPendingResponse {
         let pending =
             self.index
@@ -563,6 +568,7 @@ impl DbHolder {
                     row.next_version.clone(),
                     executor_id,
                     lock_expires_at,
+                    retry_config,
                 )
                 .expect("must be lockable within the same transaction");
             row.next_version = next_version;
@@ -609,12 +615,14 @@ impl DbHolder {
         version: Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
+        retry_config: ComponentRetryConfig,
     ) -> Result<(Version /* next version */, Vec<HistoryEvent>), DbErrorWrite> {
         let event = ExecutionEventInner::Locked {
             component_id,
             executor_id,
             lock_expires_at,
             run_id,
+            retry_config,
         };
         self.append(created_at, execution_id, version, event)
             .map(|next_version| {
@@ -678,21 +686,30 @@ impl DbHolder {
                 };
                 ExpiredTimer::Delay(delay)
             } else {
+                let (locked_at_version, retry_config) = journal
+                    .execution_events
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find_map(|(idx, outer)| {
+                        if let ExecutionEventInner::Locked { retry_config, .. } = outer.event {
+                            Some((
+                                Version::new(VersionType::try_from(idx).unwrap()),
+                                retry_config,
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("must have been locked");
+
                 let lock = ExpiredLock {
                     execution_id: journal.execution_id().clone(),
-                    locked_at_version: journal
-                        .execution_events
-                        .iter()
-                        .enumerate()
-                        .rfind(|(_idx, outer)| {
-                            matches!(outer.event, ExecutionEventInner::Locked { .. })
-                        })
-                        .map(|(idx, _)| Version::new(VersionType::try_from(idx).unwrap()))
-                        .expect("must have been locked"),
+                    locked_at_version,
                     next_version: journal.version(),
-                    max_retries: journal.max_retries(),
+                    max_retries: retry_config.max_retries,
                     intermittent_event_count: journal.temporary_event_count(),
-                    retry_exp_backoff: journal.retry_exp_backoff(),
+                    retry_exp_backoff: retry_config.retry_exp_backoff,
                     parent: journal.parent(),
                 };
                 ExpiredTimer::Lock(lock)

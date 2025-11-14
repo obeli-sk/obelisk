@@ -11,7 +11,7 @@ use concepts::storage::{DbErrorWritePermanent, HistoryEvent};
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
-use concepts::{ClosingStrategy, JoinSetId, SUPPORTED_RETURN_VALUE_OK_EMPTY};
+use concepts::{ClosingStrategy, ComponentRetryConfig, JoinSetId, SUPPORTED_RETURN_VALUE_OK_EMPTY};
 use concepts::{ComponentId, Params, StrVariant};
 use concepts::{ExecutionId, prefixed_ulid::ExecutorId};
 use db_tests::Database;
@@ -167,8 +167,6 @@ async fn append_after_finish_should_not_be_possible(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: component_id.clone(),
             scheduled_by: None,
         })
@@ -243,6 +241,10 @@ async fn lock_pending(
             executor_id,
             lock_expires_at,
             RunId::generate(),
+            ComponentRetryConfig {
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            },
         )
         .await
         .unwrap();
@@ -280,8 +282,6 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: component_id.clone(),
             scheduled_by: None,
         })
@@ -332,6 +332,10 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
                 exec1,
                 created_at + lock_expiry,
                 RunId::generate(),
+                ComponentRetryConfig {
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
             )
             .await
             .unwrap();
@@ -352,6 +356,10 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
                 exec1,
                 created_at + lock_expiry,
                 RunId::generate(),
+                ComponentRetryConfig {
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
             )
             .await
             .unwrap();
@@ -428,8 +436,6 @@ async fn lock_and_attept_to_extend(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: component_id.clone(),
             scheduled_by: None,
         })
@@ -452,6 +458,10 @@ async fn lock_and_attept_to_extend(
                 exec_pending,
                 created_at + lock_expiry,
                 run_pending,
+                ComponentRetryConfig {
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
             )
             .await
             .unwrap();
@@ -476,6 +486,10 @@ async fn lock_and_attept_to_extend(
             version,
             exec_extend,
             created_at + lock_expiry,
+            ComponentRetryConfig {
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            },
         )
         .await
 }
@@ -505,8 +519,6 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: component_id.clone(),
             scheduled_by: None,
         })
@@ -527,6 +539,10 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
                 exec1,
                 created_at + lock_expiry,
                 RunId::generate(),
+                ComponentRetryConfig {
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
             )
             .await
             .unwrap();
@@ -571,6 +587,10 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
                 exec1,
                 created_at + lock_expiry,
                 RunId::generate(),
+                ComponentRetryConfig {
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
             )
             .await
             .unwrap();
@@ -602,7 +622,11 @@ async fn lock_pending_while_nothing_is_stored_should_work(
                 ComponentId::dummy_activity(),
                 exec1,
                 sim_clock.now() + lock_expiry,
-                RunId::generate()
+                RunId::generate(),
+                ComponentRetryConfig {
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
             )
             .await
             .unwrap()
@@ -635,7 +659,11 @@ async fn creating_execution_twice_should_fail(
                 ComponentId::dummy_activity(),
                 exec1,
                 sim_clock.now() + lock_expiry,
-                RunId::generate()
+                RunId::generate(),
+                ComponentRetryConfig {
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
             )
             .await
             .unwrap()
@@ -652,8 +680,6 @@ async fn creating_execution_twice_should_fail(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: component_id.clone(),
             scheduled_by: None,
         })
@@ -670,8 +696,6 @@ async fn creating_execution_twice_should_fail(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
@@ -712,8 +736,6 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: component_id.clone(),
             scheduled_by: None,
         })
@@ -734,6 +756,10 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
                 exec1,
                 created_at + LOCK_EXPIRY,
                 RunId::generate(),
+                ComponentRetryConfig {
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
             )
             .await
             .unwrap();
@@ -758,7 +784,11 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
                     ComponentId::dummy_activity(),
                     exec1,
                     sim_clock.now() + LOCK_EXPIRY,
-                    RunId::generate()
+                    RunId::generate(),
+                    ComponentRetryConfig {
+                        retry_exp_backoff: Duration::ZERO,
+                        max_retries: 0,
+                    },
                 )
                 .await
                 .unwrap()
@@ -785,8 +815,6 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: RETRY_EXP_BACKOFF,
-                max_retries: MAX_RETRIES,
                 component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
@@ -806,6 +834,10 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
                 exec1,
                 sim_clock.now() + lock_duration,
                 RunId::generate(),
+                ComponentRetryConfig {
+                    retry_exp_backoff: RETRY_EXP_BACKOFF,
+                    max_retries: MAX_RETRIES,
+                },
             )
             .await
             .unwrap();
@@ -846,8 +878,6 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
@@ -891,8 +921,6 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
                 component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
@@ -976,8 +1004,6 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
                 component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
@@ -1089,8 +1115,6 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
@@ -1108,8 +1132,6 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
@@ -1127,8 +1149,6 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
@@ -1145,6 +1165,10 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             ExecutorId::generate(),
             sim_clock.now() + Duration::from_secs(1),
             RunId::generate(),
+            ComponentRetryConfig {
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            },
         )
         .await
         .unwrap()
@@ -1168,8 +1192,6 @@ pub async fn test_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
@@ -1228,6 +1250,10 @@ async fn lock(
             executor_id,
             lock_expires_at,
             RunId::generate(),
+            ComponentRetryConfig {
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            },
         )
         .await
         .unwrap();
@@ -1251,8 +1277,6 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
@@ -1310,8 +1334,6 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
@@ -1418,8 +1440,6 @@ async fn get_expired_times_with_execution_that_made_progress(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
             component_id: component_id.clone(),
             scheduled_by: None,
         })

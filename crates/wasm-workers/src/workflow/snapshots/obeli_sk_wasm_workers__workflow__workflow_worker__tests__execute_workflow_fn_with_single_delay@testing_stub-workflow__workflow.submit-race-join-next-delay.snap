@@ -16,11 +16,6 @@ expression: execution_log
           "params": [],
           "parent": null,
           "scheduled_at": "1970-01-01T00:00:00Z",
-          "retry_exp_backoff": {
-            "secs": 0,
-            "nanos": 0
-          },
-          "max_retries": 4294967295,
           "component_id": "workflow:",
           "metadata": null,
           "scheduled_by": null
@@ -35,7 +30,14 @@ expression: execution_log
           "component_id": "workflow:",
           "executor_id": "Exr_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000001",
-          "lock_expires_at": "1970-01-01T00:00:01Z"
+          "lock_expires_at": "1970-01-01T00:00:01Z",
+          "retry_config": {
+            "max_retries": 4294967295,
+            "retry_exp_backoff": {
+              "secs": 0,
+              "nanos": 0
+            }
+          }
         }
       },
       "backtrace_id": null
@@ -114,7 +116,14 @@ expression: execution_log
           "component_id": "workflow:",
           "executor_id": "Exr_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000002",
-          "lock_expires_at": "1970-01-01T00:00:01.010Z"
+          "lock_expires_at": "1970-01-01T00:00:01.010Z",
+          "retry_config": {
+            "max_retries": 4294967295,
+            "retry_exp_backoff": {
+              "secs": 0,
+              "nanos": 0
+            }
+          }
         }
       },
       "backtrace_id": null
@@ -164,7 +173,14 @@ expression: execution_log
           "component_id": "workflow:",
           "executor_id": "Exr_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000003",
-          "lock_expires_at": "1970-01-01T00:00:01.010Z"
+          "lock_expires_at": "1970-01-01T00:00:01.010Z",
+          "retry_config": {
+            "max_retries": 4294967295,
+            "retry_exp_backoff": {
+              "secs": 0,
+              "nanos": 0
+            }
+          }
         }
       },
       "backtrace_id": null

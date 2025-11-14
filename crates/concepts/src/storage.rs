@@ -1,5 +1,6 @@
 use crate::ClosingStrategy;
 use crate::ComponentId;
+use crate::ComponentRetryConfig;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
 use crate::FunctionFqn;
@@ -61,22 +62,6 @@ impl ExecutionLog {
     ) -> Duration {
         Self::can_be_retried_after(temporary_event_count, u32::MAX, retry_exp_backoff)
             .expect("`max_retries` set to MAX must never return None")
-    }
-
-    #[must_use]
-    pub fn retry_exp_backoff(&self) -> Duration {
-        assert_matches!(self.events.first(), Some(ExecutionEvent {
-            event: ExecutionEventInner::Created { retry_exp_backoff, .. },
-            ..
-        }) => *retry_exp_backoff)
-    }
-
-    #[must_use]
-    pub fn max_retries(&self) -> u32 {
-        assert_matches!(self.events.first(), Some(ExecutionEvent {
-            event: ExecutionEventInner::Created { max_retries, .. },
-            ..
-        }) => *max_retries)
     }
 
     #[must_use]
@@ -213,8 +198,6 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     params: Params::empty(),
     parent: None,
     scheduled_at: DateTime::from_timestamp_nanos(0),
-    retry_exp_backoff: Duration::ZERO,
-    max_retries: 0,
     component_id: ComponentId::dummy_activity(),
     metadata: ExecutionMetadata::empty(),
     scheduled_by: None,
@@ -242,9 +225,6 @@ pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::Histor
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[allow(clippy::large_enum_variant)]
 pub enum ExecutionEventInner {
-    /// Created by an external system or a scheduler when requesting a child execution or
-    /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
-    /// The execution is [`PendingState::PendingAt`]`(scheduled_at)`.
     #[display("Created({ffqn}, `{scheduled_at}`)")]
     Created {
         ffqn: FunctionFqn,
@@ -253,17 +233,12 @@ pub enum ExecutionEventInner {
         params: Params,
         parent: Option<(ExecutionId, JoinSetId)>,
         scheduled_at: DateTime<Utc>,
-        retry_exp_backoff: Duration,
-        max_retries: u32,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
         component_id: ComponentId,
         #[cfg_attr(any(test, feature = "test"), arbitrary(default))]
         metadata: ExecutionMetadata,
         scheduled_by: Option<ExecutionId>,
     },
-    // Created by an executor.
-    // Either immediately followed by an execution request by an executor or
-    // after expiry immediately followed by WaitingForExecutor by a scheduler.
     #[display("Locked(`{lock_expires_at}`, {component_id})")]
     Locked {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
@@ -271,6 +246,8 @@ pub enum ExecutionEventInner {
         executor_id: ExecutorId,
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentRetryConfig::ZERO))]
+        retry_config: ComponentRetryConfig,
     },
     /// Returns execution to [`PendingState::PendingNow`] state
     /// without timing out. This can happen when the executor is running
@@ -295,7 +272,7 @@ pub enum ExecutionEventInner {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
-    // Created by the executor holding last lock.
+    // Created by the executor holding the lock.
     // After expiry interpreted as pending.
     #[display("TemporarilyTimedOut(`{backoff_expires_at}`)")]
     TemporarilyTimedOut {
@@ -303,9 +280,7 @@ pub enum ExecutionEventInner {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
-    // Created by the executor holding last lock.
-    // Processed by a scheduler if a parent execution needs to be notified,
-    // also when
+    // Created by the executor holding the lock.
     #[display("Finished")]
     Finished {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::SUPPORTED_RETURN_VALUE_OK_EMPTY))]
@@ -588,8 +563,6 @@ pub struct CreateRequest {
     pub params: Params,
     pub parent: Option<(ExecutionId, JoinSetId)>,
     pub scheduled_at: DateTime<Utc>,
-    pub retry_exp_backoff: Duration,
-    pub max_retries: u32,
     pub component_id: ComponentId,
     pub metadata: ExecutionMetadata,
     pub scheduled_by: Option<ExecutionId>,
@@ -602,8 +575,6 @@ impl From<CreateRequest> for ExecutionEventInner {
             params: value.params,
             parent: value.parent,
             scheduled_at: value.scheduled_at,
-            retry_exp_backoff: value.retry_exp_backoff,
-            max_retries: value.max_retries,
             component_id: value.component_id,
             metadata: value.metadata,
             scheduled_by: value.scheduled_by,
@@ -647,6 +618,7 @@ pub trait DbExecutor: Send + Sync {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
+        retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorGeneric>;
 
     /// Specialized locking for e.g. extending the lock by the original executor and run.
@@ -660,6 +632,7 @@ pub trait DbExecutor: Send + Sync {
         version: Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
+        retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite>;
 
     /// Append a single event to an existing execution log.
@@ -753,8 +726,6 @@ pub trait DbConnection: DbExecutor {
             params,
             parent,
             scheduled_at,
-            retry_exp_backoff,
-            max_retries,
             component_id,
             metadata,
             scheduled_by,
@@ -767,8 +738,6 @@ pub trait DbConnection: DbExecutor {
                 params,
                 parent,
                 scheduled_at,
-                retry_exp_backoff,
-                max_retries,
                 component_id,
                 metadata,
                 scheduled_by,

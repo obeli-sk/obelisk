@@ -3,7 +3,8 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, JoinSetId, StrVariant,
+    SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendEventsToExecution, AppendRequest, AppendResponse,
@@ -136,7 +137,7 @@ CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_id ON t_join_set
 /// Stores executions in `PendingState`
 /// `state` to column mapping:
 /// `PendingAt`:            (nothing but required columns)
-/// `Locked`:               `last_lock_version`, `executor_id`, `run_id`
+/// `Locked`:               `max_retries`, `retry_exp_backoff_millis`, `last_lock_version`, `executor_id`, `run_id`
 /// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
 /// `Finished` :            `result_kind`.
 const CREATE_TABLE_T_STATE: &str = r"
@@ -151,9 +152,9 @@ CREATE TABLE IF NOT EXISTS t_state (
     updated_at TEXT NOT NULL,
     scheduled_at TEXT NOT NULL,
     intermittent_event_count INTEGER NOT NULL,
-    max_retries INTEGER NOT NULL,
-    retry_exp_backoff_millis INTEGER NOT NULL,
 
+    max_retries INTEGER,
+    retry_exp_backoff_millis INTEGER,
     last_lock_version INTEGER,
     executor_id TEXT,
     run_id TEXT,
@@ -937,8 +938,6 @@ impl SqlitePool {
             params,
             parent,
             scheduled_at,
-            retry_exp_backoff,
-            max_retries,
             component_id,
             metadata,
             scheduled_by,
@@ -951,8 +950,6 @@ impl SqlitePool {
                 params,
                 parent,
                 scheduled_at,
-                retry_exp_backoff,
-                max_retries,
                 component_id,
                 metadata,
                 scheduled_by,
@@ -994,9 +991,6 @@ impl SqlitePool {
         let ffqn = req.ffqn.clone();
         let created_at = req.created_at;
         let scheduled_at = req.scheduled_at;
-        let max_retries = req.max_retries;
-        let backoff_millis =
-            u64::try_from(req.retry_exp_backoff.as_millis()).expect("backoff too big");
         let event = ExecutionEventInner::from(req);
         let event_ser = serde_json::to_string(&event).map_err(|err| {
             error!("Cannot serialize {event:?} - {err:?}");
@@ -1031,9 +1025,7 @@ impl SqlitePool {
                     created_at,
                     updated_at,
                     scheduled_at,
-                    intermittent_event_count,
-                    max_retries,
-                    retry_exp_backoff_millis
+                    intermittent_event_count
                     )
                 VALUES (
                     :execution_id,
@@ -1045,9 +1037,7 @@ impl SqlitePool {
                     :created_at,
                     CURRENT_TIMESTAMP,
                     :scheduled_at,
-                    0,
-                    :max_retries,
-                    :retry_exp_backoff_millis
+                    0
                     )
                 ",
             )?
@@ -1060,8 +1050,6 @@ impl SqlitePool {
                 ":state": STATE_PENDING_AT,
                 ":created_at": created_at,
                 ":scheduled_at": scheduled_at,
-                ":max_retries": max_retries,
-                ":retry_exp_backoff_millis": backoff_millis,
             })?;
             AppendNotifier {
                 pending_at: Some(NotifierPendingAt { scheduled_at, ffqn }),
@@ -1191,8 +1179,11 @@ impl SqlitePool {
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
         appending_version: &Version,
+        retry_config: ComponentRetryConfig,
     ) -> Result<u32, DbErrorWrite> {
         debug!("Setting t_state to Locked(`{lock_expires_at:?}`)");
+        let backoff_millis =
+            u64::try_from(retry_config.retry_exp_backoff.as_millis()).expect("backoff too big");
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx
             .prepare_cached(
@@ -1204,6 +1195,8 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
 
+                    max_retries = :max_retries,
+                    retry_exp_backoff_millis = :retry_exp_backoff_millis,
                     last_lock_version = :appending_version,
                     executor_id = :executor_id,
                     run_id = :run_id,
@@ -1222,6 +1215,8 @@ impl SqlitePool {
                 ":appending_version": appending_version.0,
                 ":pending_expires_finished": lock_expires_at,
                 ":state": STATE_LOCKED,
+                ":max_retries": retry_config.max_retries,
+                ":retry_exp_backoff_millis": backoff_millis,
                 ":executor_id": executor_id.to_string(),
                 ":run_id": run_id.to_string(),
             })
@@ -1591,8 +1586,9 @@ impl SqlitePool {
         appending_version: &Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
+        retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite> {
-        debug!("lock_inner");
+        debug!("lock_single_execution");
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         combined_state.pending_state.can_append_lock(
             created_at,
@@ -1609,6 +1605,7 @@ impl SqlitePool {
             executor_id,
             lock_expires_at,
             run_id,
+            retry_config,
         };
         let event_ser = serde_json::to_string(&event).map_err(|err| {
             warn!("Cannot serialize {event:?} - {err:?}");
@@ -1649,6 +1646,7 @@ impl SqlitePool {
             run_id,
             lock_expires_at,
             appending_version,
+            retry_config,
         )?;
         // Fetch event_history and `Created` event to construct the response.
         let mut events = tx
@@ -1755,6 +1753,7 @@ impl SqlitePool {
                     executor_id,
                     run_id,
                     lock_expires_at,
+                    retry_config,
                 },
             created_at,
         } = req
@@ -1768,6 +1767,7 @@ impl SqlitePool {
                 &appending_version,
                 executor_id,
                 lock_expires_at,
+                retry_config,
             )
             .map(|locked_execution| (locked_execution.next_version, AppendNotifier::default()));
         }
@@ -2523,6 +2523,7 @@ impl DbExecutor for SqlitePool {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
+        retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorGeneric> {
         let execution_ids_versions = self
             .transaction(
@@ -2548,6 +2549,7 @@ impl DbExecutor for SqlitePool {
                             version,
                             executor_id,
                             lock_expires_at,
+                            retry_config,
                         ) {
                             Ok(locked) => locked_execs.push(locked),
                             Err(err) => {
@@ -2573,8 +2575,9 @@ impl DbExecutor for SqlitePool {
         version: Version,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
+        retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite> {
-        debug!(%execution_id, "lock_extend");
+        debug!(%execution_id, "lock_one");
         let execution_id = execution_id.clone();
         self.transaction(
             move |tx| {
@@ -2587,6 +2590,7 @@ impl DbExecutor for SqlitePool {
                     &version,
                     executor_id,
                     lock_expires_at,
+                    retry_config,
                 )
             },
             "lock_inner",

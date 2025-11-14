@@ -255,6 +255,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                     self.config.executor_id,
                     lock_expires_at,
                     run_id,
+                    self.config.retry_config,
                 )
                 .await?;
             // Drop permits if too many were allocated.
@@ -846,9 +847,7 @@ mod tests {
             CreateAndTickConfig {
                 execution_id: ExecutionId::generate(),
                 created_at,
-                max_retries: 0,
                 executed_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
             },
             clock_fn,
             db_connection,
@@ -901,9 +900,7 @@ mod tests {
             CreateAndTickConfig {
                 execution_id: ExecutionId::generate(),
                 created_at,
-                max_retries: 0,
                 executed_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
             },
             clock_fn,
             db_pool.connection().as_ref(),
@@ -930,9 +927,7 @@ mod tests {
     struct CreateAndTickConfig {
         execution_id: ExecutionId,
         created_at: DateTime<Utc>,
-        max_retries: u32,
         executed_at: DateTime<Utc>,
-        retry_exp_backoff: Duration,
     }
 
     async fn create_and_tick<
@@ -959,8 +954,6 @@ mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: config.created_at,
-                retry_exp_backoff: config.retry_exp_backoff,
-                max_retries: config.max_retries,
                 component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
@@ -1032,9 +1025,7 @@ mod tests {
             CreateAndTickConfig {
                 execution_id: ExecutionId::generate(),
                 created_at: sim_clock.now(),
-                max_retries: retry_config.max_retries,
                 executed_at: sim_clock.now(),
-                retry_exp_backoff: retry_config.retry_exp_backoff,
             },
             sim_clock.clone(),
             db_pool.connection().as_ref(),
@@ -1162,9 +1153,7 @@ mod tests {
             CreateAndTickConfig {
                 execution_id: ExecutionId::generate(),
                 created_at,
-                max_retries: 0,
                 executed_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
             },
             clock_fn,
             db_pool.connection().as_ref(),
@@ -1253,8 +1242,6 @@ mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
                 component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
@@ -1289,8 +1276,6 @@ mod tests {
                 parent: Some((parent_execution_id.clone(), join_set_id.clone())),
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
                 component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             };
@@ -1486,8 +1471,6 @@ mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                retry_exp_backoff: timeout_duration,
-                max_retries: 1,
                 component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
