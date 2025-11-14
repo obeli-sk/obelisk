@@ -92,8 +92,6 @@ impl DbExecutor for InMemoryDbConnection {
             params: journal.params(),
             event_history,
             responses: journal.responses.clone(),
-            retry_exp_backoff: journal.retry_exp_backoff(),
-            max_retries: journal.max_retries(),
             run_id,
             parent: journal.parent(),
             intermittent_event_count: journal.temporary_event_count(),
@@ -548,8 +546,6 @@ impl DbHolder {
                 params: journal.params(),
                 event_history: Vec::default(), // updated later
                 responses: journal.responses.clone(),
-                retry_exp_backoff: journal.retry_exp_backoff(),
-                max_retries: journal.max_retries(),
                 run_id,
                 parent: journal.parent(),
                 intermittent_event_count: journal.temporary_event_count(),

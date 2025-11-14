@@ -1678,8 +1678,6 @@ impl SqlitePool {
         let Some(ExecutionEventInner::Created {
             ffqn,
             params,
-            retry_exp_backoff,
-            max_retries,
             parent,
             metadata,
             ..
@@ -1711,8 +1709,6 @@ impl SqlitePool {
             params,
             event_history,
             responses,
-            retry_exp_backoff,
-            max_retries,
             parent,
             intermittent_event_count,
         })

@@ -566,8 +566,6 @@ pub struct LockedExecution {
     pub params: Params,
     pub event_history: Vec<HistoryEvent>,
     pub responses: Vec<JoinSetResponseEventOuter>,
-    pub retry_exp_backoff: Duration,
-    pub max_retries: u32,
     pub parent: Option<(ExecutionId, JoinSetId)>,
     pub intermittent_event_count: u32,
 }
