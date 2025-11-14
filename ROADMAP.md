@@ -1,9 +1,16 @@
 # Immediate goals
 
+## Upcoming goals
+
+## feat: Lock resource
+Workflows can lock an external resource (VM, shopping cart, etc.) with methods `lock(string)`, `try_lock(string`.
+Lock is automatically released when it gets out of scope, `close` is called or workflow finishes.
+
+## feat: Multiple execution queues
+Allow specifying queue ID when submitting, and when configuring an executor.
+
 ## feat: Expose network configuration for activities, webhooks
 Enable allow/deny lists of remote hosts.
-
-## Upcoming goals
 
 ## feat: Add `obelisk generate`
 `obelisk generate config` blank(just webui),fibo, testing, stargazers
