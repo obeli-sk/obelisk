@@ -281,7 +281,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 locked_execution.metadata.enrich(&worker_span);
                 tokio::spawn({
                     let worker_span2 = worker_span.clone();
-                    let retry_config = self.config.retry_config.clone();
+                    let retry_config = self.config.retry_config;
                     async move {
                         let _permit = permit;
                         let res = Self::run_worker(

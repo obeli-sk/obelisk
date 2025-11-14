@@ -20,7 +20,6 @@ use std::{
     str::FromStr,
     sync::Arc,
     time::Duration,
-    u32,
 };
 use storage::{PendingStateFinishedError, PendingStateFinishedResultKind};
 use tracing::Span;
