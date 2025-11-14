@@ -6,10 +6,16 @@
     "activities": {
       "$ref": "#/$defs/ActivitiesGlobalConfigToml"
     },
+    "activity_external": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActivityStubExtComponentConfigToml"
+      }
+    },
     "activity_stub": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/ActivityStubComponentConfigToml"
+        "$ref": "#/$defs/ActivityStubExtComponentConfigToml"
       }
     },
     "activity_wasm": {
@@ -139,7 +145,7 @@
         "native"
       ]
     },
-    "ActivityStubComponentConfigToml": {
+    "ActivityStubExtComponentConfigToml": {
       "type": "object",
       "properties": {
         "location": {
