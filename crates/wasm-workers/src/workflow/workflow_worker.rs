@@ -715,6 +715,7 @@ pub(crate) mod tests {
         JoinSetResponseEvent, JoinSetResponseEventOuter,
     };
     use concepts::time::TokioSleep;
+    use concepts::{ComponentRetryConfig, ExecutionId, Params, SupportedFunctionReturnValue};
     use concepts::{
         ComponentType,
         prefixed_ulid::{ExecutorId, RunId},
@@ -723,7 +724,6 @@ pub(crate) mod tests {
             PendingStateFinishedResultKind, Version, wait_for_pending_state_fn,
         },
     };
-    use concepts::{ExecutionId, Params, SupportedFunctionReturnValue};
     use db_tests::Database;
     use executor::executor::extract_exported_ffqns_noext_test;
     use executor::{
@@ -822,6 +822,7 @@ pub(crate) mod tests {
             component_id,
             task_limiter: None,
             executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::WORKFLOW_TEST,
         };
         ExecTask::new_all_ffqns_test(worker, exec_config, clock_fn, db_exec)
     }
@@ -1123,9 +1124,10 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
             };
             let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
-            ExecTask::new(worker, exec_config, sim_clock.clone(), db_exec, ffqns)
+            ExecTask::new_test(worker, exec_config, sim_clock.clone(), db_exec, ffqns)
         };
         {
             let worker_tasks = sleep_exec
@@ -1231,9 +1233,10 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
             };
             let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
-            ExecTask::new(worker, exec_config, sim_clock.clone(), db_exec, ffqns)
+            ExecTask::new_test(worker, exec_config, sim_clock.clone(), db_exec, ffqns)
         };
         {
             let worker_tasks = sleep_exec
@@ -1351,6 +1354,7 @@ pub(crate) mod tests {
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
+            ComponentRetryConfig::ZERO,
         );
 
         let workflow_exec = new_workflow(
@@ -1435,6 +1439,7 @@ pub(crate) mod tests {
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
+            ComponentRetryConfig::ZERO,
         );
 
         let workflow_exec = new_workflow(
@@ -1529,6 +1534,7 @@ pub(crate) mod tests {
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
+            ComponentRetryConfig::ZERO,
         );
         let workflow_exec = new_workflow(
             db_pool.clone(),
@@ -1659,7 +1665,7 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
-        let exec_task = ExecTask::new(
+        let exec_task = ExecTask::new_test(
             worker,
             ExecConfig {
                 batch_size: 1,
@@ -1668,6 +1674,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
             },
             sim_clock.clone(),
             db_exec,
@@ -1734,6 +1741,7 @@ pub(crate) mod tests {
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone(),
             TokioSleep,
+            ComponentRetryConfig::ZERO,
         );
 
         let workflow_exec = new_workflow(
@@ -1855,7 +1863,7 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
-        let exec_task = ExecTask::new(
+        let exec_task = ExecTask::new_test(
             worker,
             ExecConfig {
                 batch_size: 1,
@@ -1864,6 +1872,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
             },
             sim_clock.clone(),
             db_exec,
@@ -1968,7 +1977,7 @@ pub(crate) mod tests {
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
         );
-        let exec_task = ExecTask::new(
+        let exec_task = ExecTask::new_test(
             worker,
             ExecConfig {
                 batch_size: 1,
@@ -1977,6 +1986,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
                 executor_id: ExecutorId::from_parts(0, 0),
+                retry_config: ComponentRetryConfig::ZERO,
             },
             sim_clock.clone(),
             db_exec,
@@ -2180,7 +2190,7 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
-        let exec_task = ExecTask::new(
+        let exec_task = ExecTask::new_test(
             worker,
             ExecConfig {
                 batch_size: 1,
@@ -2189,6 +2199,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
             },
             sim_clock.clone(),
             db_exec,
@@ -2324,7 +2335,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let exec_workflow = ExecTask::new(
+        let exec_workflow = ExecTask::new_test(
             workflow_worker,
             ExecConfig {
                 batch_size: 1,
@@ -2333,6 +2344,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
             },
             sim_clock.clone(),
             db_exec.clone(),
@@ -2380,6 +2392,7 @@ pub(crate) mod tests {
                     component_id,
                     task_limiter: None,
                     executor_id: ExecutorId::generate(),
+                    retry_config: ComponentRetryConfig::ZERO,
                 },
                 sim_clock.clone(),
                 db_exec.clone(),

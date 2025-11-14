@@ -1631,8 +1631,8 @@ pub(crate) mod tests {
     };
     use concepts::time::{ClockFn, Now};
     use concepts::{
-        ComponentId, ExecutionMetadata, FunctionRegistry, IfcFqnName, JoinSetId, JoinSetKind,
-        RETURN_TYPE_DUMMY, SUFFIX_PKG_EXT, SUPPORTED_RETURN_VALUE_OK_EMPTY,
+        ComponentId, ComponentRetryConfig, ExecutionMetadata, FunctionRegistry, IfcFqnName,
+        JoinSetId, JoinSetKind, RETURN_TYPE_DUMMY, SUFFIX_PKG_EXT, SUPPORTED_RETURN_VALUE_OK_EMPTY,
     };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
@@ -2007,8 +2007,9 @@ pub(crate) mod tests {
                     component_id: ComponentId::dummy_activity(),
                     task_limiter: None,
                     executor_id: ExecutorId::from_parts(0, 0), // only appears in Locked events
+                    retry_config: ComponentRetryConfig::ZERO,
                 };
-                ExecTask::new(
+                ExecTask::new_test(
                     worker,
                     exec_config,
                     sim_clock.clone(),
@@ -2470,8 +2471,9 @@ pub(crate) mod tests {
                     u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
                     next_u128(),
                 ),
+                retry_config: ComponentRetryConfig::ZERO,
             };
-            ExecTask::new(
+            ExecTask::new_test(
                 worker,
                 exec_config,
                 sim_clock.clone(),

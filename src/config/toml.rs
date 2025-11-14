@@ -426,6 +426,7 @@ impl ExecConfigToml {
         self,
         component_id: ComponentId,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        retry_config: ComponentRetryConfig,
     ) -> executor::executor::ExecConfig {
         executor::executor::ExecConfig {
             lock_expiry: self.lock_expiry.into(),
@@ -434,6 +435,7 @@ impl ExecConfigToml {
             component_id,
             task_limiter: global_executor_instance_limiter,
             executor_id: ExecutorId::generate(),
+            retry_config,
         }
     }
 }
@@ -590,17 +592,20 @@ impl ActivityWasmComponentConfigToml {
             directories_config,
             fuel,
         };
+        let retry_config = ComponentRetryConfig {
+            max_retries: self.max_retries,
+            retry_exp_backoff: self.retry_exp_backoff.into(),
+        };
         Ok(ActivityWasmConfigVerified {
             content_digest: common.content_digest,
             wasm_path,
             activity_config,
-            exec_config: self
-                .exec
-                .into_exec_exec_config(component_id, global_executor_instance_limiter),
-            retry_config: ComponentRetryConfig {
-                max_retries: self.max_retries,
-                retry_exp_backoff: self.retry_exp_backoff.into(),
-            },
+            exec_config: self.exec.into_exec_exec_config(
+                component_id,
+                global_executor_instance_limiter,
+                retry_config,
+            ),
+            retry_config,
         })
     }
 }
@@ -773,18 +778,21 @@ impl WorkflowComponentConfigToml {
         };
         let frame_files_to_sources =
             verify_frame_files_to_sources(self.backtrace.frame_files_to_sources, &path_prefixes);
+        let retry_config = ComponentRetryConfig {
+            max_retries: u32::MAX,
+            retry_exp_backoff,
+        };
         Ok(WorkflowConfigVerified {
             content_digest: common.content_digest,
             wasm_path,
             workflow_config,
-            exec_config: self
-                .exec
-                .into_exec_exec_config(component_id, global_executor_instance_limiter),
-            retry_config: ComponentRetryConfig {
-                max_retries: u32::MAX,
-                retry_exp_backoff,
-            },
+            exec_config: self.exec.into_exec_exec_config(
+                component_id,
+                global_executor_instance_limiter,
+                retry_config,
+            ),
             frame_files_to_sources,
+            retry_config,
         })
     }
 }

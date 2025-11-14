@@ -388,6 +388,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
+    use concepts::ComponentRetryConfig;
     use concepts::prefixed_ulid::RunId;
     use concepts::storage::DbExecutor;
     use concepts::time::TokioSleep;
@@ -490,8 +491,16 @@ pub(crate) mod tests {
         wasm_path: &'static str,
         clock_fn: C,
         sleep: impl Sleep + 'static,
+        retry_config: ComponentRetryConfig,
     ) -> ExecTask<C> {
-        new_activity_with_config(db_exec, wasm_path, clock_fn, sleep, activity_config)
+        new_activity_with_config(
+            db_exec,
+            wasm_path,
+            clock_fn,
+            sleep,
+            activity_config,
+            retry_config,
+        )
     }
 
     pub(crate) fn new_activity_with_config<C: ClockFn + 'static>(
@@ -500,6 +509,7 @@ pub(crate) mod tests {
         clock_fn: C,
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
+        retry_config: ComponentRetryConfig,
     ) -> ExecTask<C> {
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let (worker, component_id) =
@@ -511,6 +521,7 @@ pub(crate) mod tests {
             component_id,
             task_limiter: None,
             executor_id: ExecutorId::generate(),
+            retry_config,
         };
         ExecTask::new_all_ffqns_test(worker, exec_config, clock_fn, db_exec)
     }
@@ -525,6 +536,7 @@ pub(crate) mod tests {
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             clock_fn,
             sleep,
+            ComponentRetryConfig::ZERO,
         )
     }
 
@@ -580,7 +592,8 @@ pub(crate) mod tests {
         use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
         use concepts::time::Now;
         use concepts::{
-            FinishedExecutionError, PermanentFailureKind, SUPPORTED_RETURN_VALUE_OK_EMPTY,
+            ComponentRetryConfig, FinishedExecutionError, PermanentFailureKind,
+            SUPPORTED_RETURN_VALUE_OK_EMPTY,
         };
         use concepts::{
             prefixed_ulid::RunId,
@@ -722,6 +735,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
             };
             let exec_task = ExecTask::spawn_new(worker, exec_config, Now, db_exec, TokioSleep);
 
@@ -882,7 +896,6 @@ pub(crate) mod tests {
                 matchers::{method, path},
             };
             const BODY: &str = "ok";
-            const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
             test_utils::set_up();
             info!("All set up");
             let sim_clock = SimClock::default();
@@ -902,9 +915,11 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-            let exec_task = ExecTask::new(worker, exec_config, sim_clock.clone(), db_exec, ffqns);
+            let exec_task =
+                ExecTask::new_test(worker, exec_config, sim_clock.clone(), db_exec, ffqns);
 
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let server_address = listener
@@ -926,8 +941,8 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: RETRY_EXP_BACKOFF,
-                    max_retries: 1,
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
@@ -1014,9 +1029,11 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-            let exec_task = ExecTask::new(worker, exec_config, sim_clock.clone(), db_exec, ffqns);
+            let exec_task =
+                ExecTask::new_test(worker, exec_config, sim_clock.clone(), db_exec, ffqns);
 
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let server_address = listener
@@ -1129,6 +1146,10 @@ pub(crate) mod tests {
                 sim_clock.clone(),
                 TokioSleep,
             );
+            let retry_config = ComponentRetryConfig {
+                max_retries: 1,
+                retry_exp_backoff: RETRY_EXP_BACKOFF,
+            };
             let exec_config = ExecConfig {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
@@ -1136,9 +1157,11 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config,
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-            let exec_task = ExecTask::new(worker, exec_config, sim_clock.clone(), db_exec, ffqns);
+            let exec_task =
+                ExecTask::new_test(worker, exec_config, sim_clock.clone(), db_exec, ffqns);
 
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let server_address = listener
@@ -1158,8 +1181,8 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: RETRY_EXP_BACKOFF,
-                    max_retries: 1,
+                    retry_exp_backoff: retry_config.retry_exp_backoff,
+                    max_retries: retry_config.max_retries,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
@@ -1288,6 +1311,10 @@ pub(crate) mod tests {
             let db_connection = db_pool.connection();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
             let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
+            let retry_config = ComponentRetryConfig {
+                max_retries: 1, // should fail in first try
+                retry_exp_backoff: Duration::ZERO,
+            };
             let exec = new_activity_with_config(
                 db_exec,
                 test_programs_dir_activity_builder::TEST_PROGRAMS_DIR_ACTIVITY,
@@ -1306,6 +1333,7 @@ pub(crate) mod tests {
                     }),
                     fuel: None,
                 },
+                retry_config,
             );
             // Create an execution.
             let execution_id = ExecutionId::generate();
@@ -1321,8 +1349,8 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: 1, // should fail in first try
+                    retry_exp_backoff: retry_config.retry_exp_backoff,
+                    max_retries: retry_config.max_retries,
                     component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
@@ -1391,6 +1419,7 @@ pub(crate) mod tests {
                     }),
                     fuel: None,
                 },
+                ComponentRetryConfig::ZERO,
             );
             // Create an execution.
             let execution_id = ExecutionId::generate();
@@ -1469,6 +1498,7 @@ pub(crate) mod tests {
                     }),
                     fuel: None,
                 },
+                ComponentRetryConfig::ZERO,
             );
             // Create an execution.
             let execution_id = ExecutionId::generate();
@@ -1542,6 +1572,7 @@ pub(crate) mod tests {
                     directories_config: None,
                     fuel: None,
                 },
+                ComponentRetryConfig::ZERO,
             );
             // Create an execution.
             let ffqn = FunctionFqn::new_static_tuple(
@@ -1600,6 +1631,7 @@ pub(crate) mod tests {
                     directories_config: None,
                     fuel: None,
                 },
+                ComponentRetryConfig::ZERO,
             );
             // Create an execution.
             let ffqn = FunctionFqn::new_static_tuple(

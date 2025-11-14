@@ -20,6 +20,7 @@ use std::{
     str::FromStr,
     sync::Arc,
     time::Duration,
+    u32,
 };
 use storage::{PendingStateFinishedError, PendingStateFinishedResultKind};
 use tracing::Span;
@@ -2144,6 +2145,12 @@ pub struct ComponentRetryConfig {
 impl ComponentRetryConfig {
     pub const ZERO: ComponentRetryConfig = ComponentRetryConfig {
         max_retries: 0,
+        retry_exp_backoff: Duration::ZERO,
+    };
+
+    #[cfg(feature = "test")]
+    pub const WORKFLOW_TEST: ComponentRetryConfig = ComponentRetryConfig {
+        max_retries: u32::MAX,
         retry_exp_backoff: Duration::ZERO,
     };
 }

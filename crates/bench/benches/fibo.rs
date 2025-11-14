@@ -9,8 +9,8 @@ mod bench {
     use concepts::storage::{DbExecutor, DbPool, DbPoolCloseable};
     use concepts::time::{ClockFn, Now, Sleep, TokioSleep};
     use concepts::{
-        ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params, StrVariant,
-        SupportedFunctionReturnValue,
+        ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, FunctionRegistry, Params,
+        StrVariant, SupportedFunctionReturnValue,
     };
     use concepts::{ComponentType, prefixed_ulid::ExecutorId, storage::CreateRequest};
     use db_tests::Database;
@@ -98,6 +98,7 @@ mod bench {
             component_id,
             task_limiter: None,
             executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::ZERO,
         };
         ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
     }
@@ -189,6 +190,7 @@ mod bench {
             component_id,
             task_limiter: None,
             executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::ZERO,
         };
         ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
     }

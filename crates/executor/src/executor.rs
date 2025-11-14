@@ -8,7 +8,9 @@ use concepts::storage::{
     LockedExecution,
 };
 use concepts::time::{ClockFn, Sleep};
-use concepts::{ComponentId, FunctionMetadata, StrVariant, SupportedFunctionReturnValue};
+use concepts::{
+    ComponentId, ComponentRetryConfig, FunctionMetadata, StrVariant, SupportedFunctionReturnValue,
+};
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use concepts::{
     FinishedExecutionError,
@@ -34,6 +36,7 @@ pub struct ExecConfig {
     pub component_id: ComponentId,
     pub task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     pub executor_id: ExecutorId,
+    pub retry_config: ComponentRetryConfig,
 }
 
 pub struct ExecTask<C: ClockFn> {
@@ -118,7 +121,7 @@ fn extract_exported_ffqns_noext(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
 
 impl<C: ClockFn + 'static> ExecTask<C> {
     #[cfg(feature = "test")]
-    pub fn new(
+    pub fn new_test(
         worker: Arc<dyn Worker>,
         config: ExecConfig,
         clock_fn: C,
@@ -277,6 +280,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 locked_execution.metadata.enrich(&worker_span);
                 tokio::spawn({
                     let worker_span2 = worker_span.clone();
+                    let retry_config = self.config.retry_config.clone();
                     async move {
                         let _permit = permit;
                         let res = Self::run_worker(
@@ -285,6 +289,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                             execution_deadline,
                             clock_fn,
                             locked_execution,
+                            retry_config,
                             worker_span2,
                         )
                         .await;
@@ -306,6 +311,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
         locked_execution: LockedExecution,
+        retry_config: ComponentRetryConfig,
         worker_span: Span,
     ) -> Result<(), DbErrorWrite> {
         debug!("Worker::run starting");
@@ -317,13 +323,13 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         );
         let can_be_retried = ExecutionLog::can_be_retried_after(
             locked_execution.intermittent_event_count + 1,
-            locked_execution.max_retries,
-            locked_execution.retry_exp_backoff,
+            retry_config.max_retries,
+            retry_config.retry_exp_backoff,
         );
         let unlock_expiry_on_limit_reached =
             ExecutionLog::compute_retry_duration_when_retrying_forever(
                 locked_execution.intermittent_event_count + 1,
-                locked_execution.retry_exp_backoff,
+                retry_config.retry_exp_backoff,
             );
         let ctx = WorkerContext {
             execution_id: locked_execution.execution_id.clone(),
@@ -787,7 +793,7 @@ mod tests {
     ) -> Vec<ExecutionId> {
         trace!("Ticking with {worker:?}");
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
-        let executor = ExecTask::new(worker, config, clock_fn, db_exec, ffqns);
+        let executor = ExecTask::new_test(worker, config, clock_fn, db_exec, ffqns);
         executor
             .tick_test_await(executed_at, RunId::generate())
             .await
@@ -833,6 +839,7 @@ mod tests {
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
             executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::ZERO,
         };
 
         let execution_log = create_and_tick(
@@ -881,6 +888,7 @@ mod tests {
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
             executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::ZERO,
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
@@ -994,6 +1002,11 @@ mod tests {
         set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+        let retry_exp_backoff = Duration::from_millis(100);
+        let retry_config = ComponentRetryConfig {
+            max_retries: 1,
+            retry_exp_backoff,
+        };
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -1001,6 +1014,7 @@ mod tests {
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
             executor_id: ExecutorId::generate(),
+            retry_config,
         };
         let expected_reason = "error reason";
         let expected_detail = "error detail";
@@ -1013,15 +1027,14 @@ mod tests {
                 http_client_traces: None,
             },
         )));
-        let retry_exp_backoff = Duration::from_millis(100);
         debug!(now = %sim_clock.now(), "Creating an execution that should fail");
         let execution_log = create_and_tick(
             CreateAndTickConfig {
                 execution_id: ExecutionId::generate(),
                 created_at: sim_clock.now(),
-                max_retries: 1,
+                max_retries: retry_config.max_retries,
                 executed_at: sim_clock.now(),
-                retry_exp_backoff,
+                retry_exp_backoff: retry_config.retry_exp_backoff,
             },
             sim_clock.clone(),
             db_pool.connection().as_ref(),
@@ -1055,7 +1068,7 @@ mod tests {
             );
             assert_eq!(Some(expected_detail), detail.as_deref());
             assert_eq!(at, sim_clock.now());
-            assert_eq!(sim_clock.now() + retry_exp_backoff, expires_at);
+            assert_eq!(sim_clock.now() + retry_config.retry_exp_backoff, expires_at);
         }
         let worker = Arc::new(SimpleWorker::with_worker_results_rev(Arc::new(
             std::sync::Mutex::new(IndexMap::from([(
@@ -1079,7 +1092,7 @@ mod tests {
             .is_empty()
         );
         // tick again to finish the execution
-        sim_clock.move_time_forward(retry_exp_backoff);
+        sim_clock.move_time_forward(retry_config.retry_exp_backoff);
         tick_fn(
             exec_config,
             sim_clock.clone(),
@@ -1131,6 +1144,7 @@ mod tests {
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
             executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::ZERO,
         };
 
         let expected_reason = "error reason";
@@ -1254,6 +1268,7 @@ mod tests {
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
             },
             sim_clock.clone(),
             db_exec.clone(),
@@ -1336,6 +1351,7 @@ mod tests {
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
             },
             sim_clock.clone(),
             db_exec.clone(),
@@ -1432,6 +1448,11 @@ mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         let lock_expiry = Duration::from_millis(100);
+        let timeout_duration = Duration::from_millis(300);
+        let retry_config = ComponentRetryConfig {
+            max_retries: 1,
+            retry_exp_backoff: timeout_duration,
+        };
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry,
@@ -1439,6 +1460,7 @@ mod tests {
             component_id: ComponentId::dummy_activity(),
             task_limiter: None,
             executor_id: ExecutorId::generate(),
+            retry_config,
         };
 
         let worker = Arc::new(SleepyWorker {
@@ -1454,7 +1476,6 @@ mod tests {
         });
         // Create an execution
         let execution_id = ExecutionId::generate();
-        let timeout_duration = Duration::from_millis(300);
         let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
@@ -1474,7 +1495,7 @@ mod tests {
             .unwrap();
 
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
-        let executor = ExecTask::new(
+        let executor = ExecTask::new_test(
             worker,
             exec_config,
             sim_clock.clone(),
