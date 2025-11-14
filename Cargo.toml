@@ -183,12 +183,12 @@ directories = "6.0"
 arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"
-bytes = "1.10"
+bytes = "1.11"
 cargo_metadata = "0.23"
 cfg-if = "1.0.4"
 chrono = { version = "0.4.42", features = ["arbitrary", "serde"] }
 clap = { version = "4.5.51", features = ["derive"] }
-config = { version = "0.15.18", default-features = false, features = [
+config = { version = "0.15.19", default-features = false, features = [
     "toml",
     "preserve_order",
     "async",
@@ -217,7 +217,7 @@ hashbrown = { version = "0.16.0", features = ["serde"] }
 hdrhistogram = "7.5.4"
 http = "1.3.1"
 http-body-util = "0.1"
-hyper = "1.7.0"
+hyper = "1.8.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 indexmap = { version = "2.12", features = ["serde"] }
 insta = { version = "1.43.2", features = ["json"] }
@@ -310,11 +310,11 @@ yewprint-css = "0.4.0"
 wstd = "0.6.3"
 
 # wasmtime
-wasmtime = { version = "38.0.3", features = ["memory-protection-keys"] }
-wasmtime-wasi = "38.0.3"
-wasmtime-wasi-io = "38.0.3"
-wasmtime-wasi-http = "38.0.3"
-wasmtime-environ = "38.0.3"
+wasmtime = { version = "38.0.4", features = ["memory-protection-keys"] }
+wasmtime-wasi = "38.0.4"
+wasmtime-wasi-io = "38.0.4"
+wasmtime-wasi-http = "38.0.4"
+wasmtime-environ = "38.0.4"
 # wasm-tools
 wast = "240.0.0"
 wit-parser = "0.240.0"
