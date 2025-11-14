@@ -5,7 +5,6 @@ pub(crate) mod toml;
 use crate::oci;
 use anyhow::Context;
 use concepts::ComponentId;
-use concepts::ComponentRetryConfig;
 use concepts::ContentDigest;
 use concepts::FunctionMetadata;
 use concepts::PackageIfcFns;
@@ -33,7 +32,6 @@ pub(crate) struct ComponentConfig {
 pub(crate) struct ComponentConfigImportable {
     pub(crate) exports_ext: Vec<FunctionMetadata>,
     pub(crate) exports_hierarchy_ext: Vec<PackageIfcFns>,
-    pub(crate) retry_config: ComponentRetryConfig,
 }
 
 #[derive(Debug, Clone, Hash)]

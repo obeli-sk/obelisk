@@ -533,7 +533,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             let child_execution_id =
                 ExecutionId::TopLevel(self.execution_id).next_level(&join_set_id_direct);
             let created_at = self.clock_fn.now();
-            let (fn_metadata, _component_id, _import_retry_config) = self
+            let (fn_metadata, _component_id) = self
                 .fn_registry
                 .get_by_exported_function(&ffqn)
                 .expect("import was mocked using fn_registry exports limited to -schedule and no-ext functions");

@@ -1,15 +1,13 @@
+use crate::RunnableComponent;
 use concepts::{
-    ComponentId, ComponentRetryConfig, FnName, FunctionFqn, FunctionMetadata, FunctionRegistry,
-    IfcFqnName, PackageIfcFns, ParameterTypes, RETURN_TYPE_DUMMY,
+    ComponentId, FnName, FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName,
+    PackageIfcFns, ParameterTypes, RETURN_TYPE_DUMMY,
 };
 use indexmap::IndexMap;
-use std::{sync::Arc, time::Duration};
-
-use crate::RunnableComponent;
+use std::sync::Arc;
 
 pub struct TestingFnRegistry {
-    ffqn_to_fn_details:
-        hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ComponentId, ComponentRetryConfig)>,
+    ffqn_to_fn_details: hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ComponentId)>,
     export_hierarchy: Vec<PackageIfcFns>,
 }
 
@@ -28,14 +26,7 @@ impl TestingFnRegistry {
                 let ffqn = exported_function.ffqn.clone();
                 ffqn_to_fn_details.insert(
                     ffqn.clone(),
-                    (
-                        exported_function.clone(),
-                        component_id.clone(),
-                        ComponentRetryConfig {
-                            max_retries: 0,
-                            retry_exp_backoff: Duration::ZERO,
-                        },
-                    ),
+                    (exported_function.clone(), component_id.clone()),
                 );
 
                 let index_map = export_hierarchy.entry(ffqn.ifc_fqn.clone()).or_default();
@@ -61,7 +52,7 @@ impl FunctionRegistry for TestingFnRegistry {
     fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ComponentId, ComponentRetryConfig)> {
+    ) -> Option<(FunctionMetadata, ComponentId)> {
         self.ffqn_to_fn_details.get(ffqn).cloned()
     }
 
@@ -84,14 +75,7 @@ pub fn fn_registry_dummy(ffqns: &[FunctionFqn]) -> Arc<dyn FunctionRegistry> {
             extension: None,
             submittable: true,
         };
-        ffqn_to_fn_details.insert(
-            ffqn.clone(),
-            (
-                fn_metadata.clone(),
-                component_id.clone(),
-                ComponentRetryConfig::ZERO,
-            ),
-        );
+        ffqn_to_fn_details.insert(ffqn.clone(), (fn_metadata.clone(), component_id.clone()));
         let index_map = export_hierarchy.entry(ffqn.ifc_fqn.clone()).or_default();
         index_map.insert(ffqn.function_name.clone(), fn_metadata);
     }

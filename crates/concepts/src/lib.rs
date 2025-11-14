@@ -2159,13 +2159,13 @@ pub trait FunctionRegistry: Send + Sync {
     fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ComponentId, ComponentRetryConfig)>;
+    ) -> Option<(FunctionMetadata, ComponentId)>;
 
     // TODO: return Option<&TypeWrapperTopLevel>, optimize
     /// Get return type of a non-ext function, otherwise return `None`.
     fn get_ret_type(&self, ffqn: &FunctionFqn) -> Option<TypeWrapperTopLevel> {
         self.get_by_exported_function(ffqn)
-            .and_then(|(fn_meta, _, _)| {
+            .and_then(|(fn_meta, _)| {
                 if let ReturnType::Extendable(ReturnTypeExtendable {
                     type_wrapper_tl: type_wrapper,
                     wit_type: _,

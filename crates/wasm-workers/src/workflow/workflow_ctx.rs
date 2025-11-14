@@ -687,7 +687,7 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let (target_fn_metadata, _target_component_id, _target_retry_config) = fn_registry
+                let (target_fn_metadata, _target_component_id) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from `fn_registry.all_exports()` must be found");
                 assert_eq!(None, target_fn_metadata.extension);
@@ -731,7 +731,7 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let (target_fn_metadata, _fn_component_id, _fn_retry_config) = fn_registry
+                let (target_fn_metadata, _fn_component_id) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from `fn_registry.all_exports()` must be found");
                 assert_eq!(None, target_fn_metadata.extension);
@@ -757,7 +757,7 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let (target_fn_metadata, _target_component_id, _target_retry_config) = fn_registry
+                let (target_fn_metadata, _target_component_id) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from `fn_registry.all_exports()` must be found");
                 assert_eq!(None, target_fn_metadata.extension);
@@ -783,7 +783,7 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let (target_fn_metadata, _target_component_id, _target_retry_config) = fn_registry
+                let (target_fn_metadata, _target_component_id) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from `fn_registry.all_exports()` must be found");
                 assert_eq!(None, target_fn_metadata.extension);
@@ -801,7 +801,7 @@ impl<'a> ImportedFnCall<'a> {
                 );
             }
         } else {
-            let (fn_metadata, _fn_component_id, _fn_retry_config) = fn_registry
+            let (fn_metadata, _fn_component_id) = fn_registry
                 .get_by_exported_function(&called_ffqn)
                 .expect("function obtained from `fn_registry.all_exports()` must be found");
             assert_eq!(None, fn_metadata.extension);
@@ -1730,7 +1730,7 @@ pub(crate) mod tests {
                         .await
                         .map(|_| ()),
                     WorkflowStep::Call { ffqn } => {
-                        let (_fn_metadata, _fn_component_id, _fn_retry_config) =
+                        let (_fn_metadata, _fn_component_id) =
                             self.fn_registry.get_by_exported_function(ffqn).expect(
                                 "function obtained from `fn_registry.all_exports()` must be found",
                             );
@@ -1780,7 +1780,7 @@ pub(crate) mod tests {
                                 target_ffqn.function_name, SUFFIX_FN_SUBMIT
                             )),
                         };
-                        let (_fn_metadata, _target_component_id, _target_retry_config) = self
+                        let (_fn_metadata, _target_component_id) = self
                             .fn_registry
                             .get_by_exported_function(target_ffqn)
                             .expect(

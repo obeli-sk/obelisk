@@ -474,7 +474,6 @@ pub(crate) struct ActivityStubExtConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) component_id: ComponentId,
     pub(crate) content_digest: ContentDigest,
-    pub(crate) retry_config: ComponentRetryConfig,
 }
 impl ActivityStubExtComponentConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
@@ -497,7 +496,6 @@ impl ActivityStubExtComponentConfigToml {
             content_digest: common.content_digest,
             wasm_path,
             component_id,
-            retry_config: ComponentRetryConfig::ZERO, // FIXME for external
         })
     }
 }
@@ -534,7 +532,6 @@ pub(crate) struct ActivityWasmConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
-    pub(crate) retry_config: ComponentRetryConfig,
     pub(crate) content_digest: ContentDigest,
 }
 
@@ -605,7 +602,6 @@ impl ActivityWasmComponentConfigToml {
                 global_executor_instance_limiter,
                 retry_config,
             ),
-            retry_config,
         })
     }
 }
@@ -701,7 +697,6 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
-    pub(crate) retry_config: ComponentRetryConfig,
     pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesVerified,
 }
 
@@ -792,7 +787,6 @@ impl WorkflowComponentConfigToml {
                 retry_config,
             ),
             frame_files_to_sources,
-            retry_config,
         })
     }
 }

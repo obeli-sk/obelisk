@@ -33,7 +33,6 @@ use anyhow::bail;
 use chrono::DateTime;
 use chrono::Utc;
 use concepts::ComponentId;
-use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
 use concepts::ContentDigest;
 use concepts::ExecutionId;
@@ -285,7 +284,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         };
 
         // Check that ffqn exists
-        let Some((component_id, _retry_config, fn_metadata)) = self
+        let Some((component_id, fn_metadata)) = self
             .component_registry_ro
             .find_by_exported_ffqn_submittable(&concepts::FunctionFqn::new_arc(
                 Arc::from(interface_name),
@@ -350,11 +349,10 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         .to_string(),
                 ),
             };
-            let fn_metadata = self
+            let (_component_id, fn_metadata) = self
                 .component_registry_ro
                 .find_by_exported_ffqn_submittable(&ffqn)
-                .expect("-schedule must have the original counterpart in the component registry")
-                .2;
+                .expect("-schedule must have the original counterpart in the component registry");
 
             (
                 schedule_at
@@ -1961,7 +1959,6 @@ async fn compile_and_verify(
                     let component_config_importable = ComponentConfigImportable {
                         exports_ext,
                         exports_hierarchy_ext,
-                        retry_config: activity_stub_ext.retry_config,
                     };
                     let component_config = ComponentConfig {
                         component_id: activity_stub_ext.component_id,
@@ -2150,7 +2147,6 @@ fn prespawn_activity(
         worker,
         activity.content_digest,
         activity.exec_config,
-        activity.retry_config,
         wit,
     ))
 }
@@ -2185,7 +2181,6 @@ fn prespawn_workflow(
         worker,
         workflow.content_digest,
         workflow.exec_config,
-        workflow.retry_config,
         wit,
     ))
 }
@@ -2200,7 +2195,6 @@ impl WorkerCompiled {
         worker: ActivityWorker<Now, TokioSleep>,
         content_digest: ContentDigest,
         exec_config: ExecConfig,
-        retry_config: ComponentRetryConfig,
         wit: Option<String>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -2209,7 +2203,6 @@ impl WorkerCompiled {
             workflow_or_activity_config: Some(ComponentConfigImportable {
                 exports_ext: worker.exported_functions_ext().to_vec(),
                 exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
-                retry_config,
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
@@ -2227,7 +2220,6 @@ impl WorkerCompiled {
         worker: WorkflowWorkerCompiled<Now>,
         content_digest: ContentDigest,
         exec_config: ExecConfig,
-        retry_config: ComponentRetryConfig,
         wit: Option<String>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -2236,7 +2228,6 @@ impl WorkerCompiled {
             workflow_or_activity_config: Some(ComponentConfigImportable {
                 exports_ext: worker.exported_functions_ext().to_vec(),
                 exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
-                retry_config,
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
@@ -2292,8 +2283,7 @@ pub struct ComponentConfigRegistry {
 
 #[derive(Default, Debug)]
 struct ComponentConfigRegistryInner {
-    exported_ffqns_ext:
-        hashbrown::HashMap<FunctionFqn, (ComponentId, FunctionMetadata, ComponentRetryConfig)>,
+    exported_ffqns_ext: hashbrown::HashMap<FunctionFqn, (ComponentId, FunctionMetadata)>,
     export_hierarchy: Vec<PackageIfcFns>,
     ids_to_components: hashbrown::HashMap<ComponentId, ComponentConfig>,
 }
@@ -2314,8 +2304,7 @@ impl ComponentConfigRegistry {
                 .iter()
                 .map(|f| &f.ffqn)
             {
-                if let Some((conflicting_id, _, _)) =
-                    self.inner.exported_ffqns_ext.get(exported_ffqn)
+                if let Some((conflicting_id, _)) = self.inner.exported_ffqns_ext.get(exported_ffqn)
                 {
                     bail!(
                         "function {exported_ffqn} is already exported by component {conflicting_id}, cannot insert {}",
@@ -2327,11 +2316,7 @@ impl ComponentConfigRegistry {
             for exported_fn_metadata in &workflow_or_activity_config.exports_ext {
                 let old = self.inner.exported_ffqns_ext.insert(
                     exported_fn_metadata.ffqn.clone(),
-                    (
-                        component.component_id.clone(),
-                        exported_fn_metadata.clone(),
-                        workflow_or_activity_config.retry_config,
-                    ),
+                    (component.component_id.clone(), exported_fn_metadata.clone()),
                 );
                 assert!(old.is_none());
             }
@@ -2423,7 +2408,7 @@ impl ComponentConfigRegistry {
         errors: &mut Vec<String>,
     ) {
         for imported_fn_metadata in imports {
-            if let Some((exported_component_id, exported_fn_metadata, _)) = self
+            if let Some((exported_component_id, exported_fn_metadata)) = self
                 .inner
                 .exported_ffqns_ext
                 .get(&imported_fn_metadata.ffqn)
@@ -2484,31 +2469,33 @@ impl ComponentConfigRegistryRO {
     pub fn find_by_exported_ffqn_submittable(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(&ComponentId, ComponentRetryConfig, &FunctionMetadata)> {
-        self.inner.exported_ffqns_ext.get(ffqn).and_then(
-            |(component_id, fn_metadata, retry_config)| {
+    ) -> Option<(&ComponentId, &FunctionMetadata)> {
+        self.inner
+            .exported_ffqns_ext
+            .get(ffqn)
+            .and_then(|(component_id, fn_metadata)| {
                 if fn_metadata.submittable {
-                    Some((component_id, *retry_config, fn_metadata))
+                    Some((component_id, fn_metadata))
                 } else {
                     None
                 }
-            },
-        )
+            })
     }
 
     pub fn find_by_exported_ffqn_stub(
         &self,
         ffqn: &FunctionFqn,
     ) -> Option<(&ComponentId, &FunctionMetadata)> {
-        self.inner.exported_ffqns_ext.get(ffqn).and_then(
-            |(component_id, fn_metadata, _retry_config)| {
+        self.inner
+            .exported_ffqns_ext
+            .get(ffqn)
+            .and_then(|(component_id, fn_metadata)| {
                 if component_id.component_type == ComponentType::ActivityStub {
                     Some((component_id, fn_metadata))
                 } else {
                     None
                 }
-            },
-        )
+            })
     }
 
     pub fn list(&self, extensions: bool) -> Vec<ComponentConfig> {
@@ -2534,14 +2521,14 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
     fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ComponentId, ComponentRetryConfig)> {
+    ) -> Option<(FunctionMetadata, ComponentId)> {
         if ffqn.ifc_fqn.is_extension() {
             None
         } else {
             self.inner
                 .exported_ffqns_ext
                 .get(ffqn)
-                .map(|(id, metadata, retry)| (metadata.clone(), id.clone(), *retry))
+                .map(|(id, metadata)| (metadata.clone(), id.clone()))
         }
     }
 
