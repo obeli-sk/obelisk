@@ -42,7 +42,6 @@ async fn diff_proptest_inner(seed: u64) {
         parent: None,
         metadata: concepts::ExecutionMetadata::empty(),
         scheduled_at: Now.now(),
-        component_id: ComponentId::dummy_activity(),
         scheduled_by: None,
     };
     let mut append_requests = vec![];
@@ -167,7 +166,6 @@ async fn persist_finished_event(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: component_id.clone(),
             scheduled_by: None,
         })
         .await

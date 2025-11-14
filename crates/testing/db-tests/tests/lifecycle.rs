@@ -167,7 +167,6 @@ async fn append_after_finish_should_not_be_possible(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: component_id.clone(),
             scheduled_by: None,
         })
         .await
@@ -282,7 +281,6 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: component_id.clone(),
             scheduled_by: None,
         })
         .await
@@ -436,7 +434,6 @@ async fn lock_and_attept_to_extend(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: component_id.clone(),
             scheduled_by: None,
         })
         .await
@@ -519,7 +516,6 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: component_id.clone(),
             scheduled_by: None,
         })
         .await
@@ -670,7 +666,6 @@ async fn creating_execution_twice_should_fail(
             .is_empty()
     );
     // Create
-    let component_id = ComponentId::dummy_activity();
     db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
@@ -680,7 +675,6 @@ async fn creating_execution_twice_should_fail(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: component_id.clone(),
             scheduled_by: None,
         })
         .await
@@ -696,7 +690,6 @@ async fn creating_execution_twice_should_fail(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -736,7 +729,6 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: component_id.clone(),
             scheduled_by: None,
         })
         .await
@@ -815,7 +807,6 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -878,7 +869,6 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -921,7 +911,6 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -1004,7 +993,6 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -1115,7 +1103,6 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -1132,7 +1119,6 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -1149,7 +1135,6 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -1192,7 +1177,6 @@ pub async fn test_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -1277,7 +1261,6 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -1334,7 +1317,6 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: ComponentId::dummy_activity(),
             scheduled_by: None,
         })
         .await
@@ -1440,7 +1422,6 @@ async fn get_expired_times_with_execution_that_made_progress(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: component_id.clone(),
             scheduled_by: None,
         })
         .await

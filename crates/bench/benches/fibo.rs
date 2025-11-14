@@ -309,7 +309,6 @@ mod bench {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                component_id: ComponentId::dummy_workflow(),
                 scheduled_by: None,
             })
             .await

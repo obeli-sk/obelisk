@@ -134,7 +134,6 @@ pub(crate) enum ImportedFnCall<'a> {
 #[derive(derive_more::Debug)]
 pub(crate) struct DirectFnCall<'a> {
     ffqn: FunctionFqn,
-    fn_component_id: ComponentId,
     params: &'a [Val],
     #[debug(skip)]
     wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -147,13 +146,11 @@ impl DirectFnCall<'_> {
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let DirectFnCall {
             ffqn,
-            fn_component_id,
             params,
             wasm_backtrace,
         } = self;
         OneOffChildExecutionRequest::apply(
             ffqn,
-            fn_component_id,
             Params::from_wasmtime(Arc::from(params)),
             wasm_backtrace,
             &mut ctx.event_history,
@@ -168,7 +165,6 @@ impl DirectFnCall<'_> {
 #[derive(derive_more::Debug)]
 pub(crate) struct ScheduleFnCall<'a> {
     target_ffqn: FunctionFqn,
-    target_component_id: ComponentId,
     schedule_at: HistoryEventScheduleAt,
     #[debug(skip)]
     target_params: &'a [Val],
@@ -181,7 +177,6 @@ impl ScheduleFnCall<'_> {
         called_ffqn: FunctionFqn,
         params: &[Val],
         wasm_backtrace: Option<storage::WasmBacktrace>,
-        target_component_id: ComponentId,
     ) -> Result<ScheduleFnCall<'_>, WorkflowFunctionError> {
         let Some((schedule_at, params)) = params.split_first() else {
             return Err(WorkflowFunctionError::ImportedFunctionCallError {
@@ -215,7 +210,6 @@ impl ScheduleFnCall<'_> {
         };
         Ok(ScheduleFnCall {
             target_ffqn,
-            target_component_id,
             schedule_at,
             target_params: params,
             wasm_backtrace,
@@ -230,7 +224,6 @@ impl ScheduleFnCall<'_> {
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let ScheduleFnCall {
             target_ffqn,
-            target_component_id,
             schedule_at,
             target_params,
             wasm_backtrace,
@@ -255,7 +248,6 @@ impl ScheduleFnCall<'_> {
             scheduled_at_if_new,
             execution_id,
             ffqn: target_ffqn,
-            fn_component_id: target_component_id,
             params: Params::from_wasmtime(Arc::from(target_params)),
             wasm_backtrace,
         }
@@ -272,7 +264,6 @@ impl ScheduleFnCall<'_> {
 #[derive(derive_more::Debug)]
 pub(crate) struct SubmitExecutionFnCall<'a> {
     target_ffqn: FunctionFqn,
-    target_component_id: ComponentId,
     join_set_id: JoinSetId,
     #[debug(skip)]
     target_params: &'a [Val],
@@ -286,7 +277,6 @@ impl SubmitExecutionFnCall<'_> {
         store_ctx: &mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
         params: &'a [Val],
         wasm_backtrace: Option<storage::WasmBacktrace>,
-        target_component_id: ComponentId,
     ) -> Result<SubmitExecutionFnCall<'a>, WorkflowFunctionError> {
         let (join_set_id, params) =
             ImportedFnCall::extract_join_set_id(&called_ffqn, store_ctx, params).map_err(
@@ -298,7 +288,6 @@ impl SubmitExecutionFnCall<'_> {
             )?;
         Ok(SubmitExecutionFnCall {
             target_ffqn,
-            target_component_id,
             join_set_id,
             target_params: params,
             wasm_backtrace,
@@ -312,7 +301,6 @@ impl SubmitExecutionFnCall<'_> {
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let SubmitExecutionFnCall {
             target_ffqn,
-            target_component_id,
             join_set_id,
             target_params,
             wasm_backtrace,
@@ -320,7 +308,6 @@ impl SubmitExecutionFnCall<'_> {
         let child_execution_id = ctx.next_child_id(&join_set_id);
         SubmitChildExecution {
             target_ffqn,
-            fn_component_id: target_component_id,
             join_set_id,
             params: Params::from_wasmtime(Arc::from(target_params)),
             child_execution_id,
@@ -589,7 +576,6 @@ impl GetFnCall {
 #[derive(derive_more::Debug)]
 pub(crate) struct InvokeFnCall<'a> {
     target_ffqn: FunctionFqn,
-    fn_component_id: ComponentId,
     label: &'a str,
     params: &'a [Val],
     #[debug(skip)]
@@ -599,7 +585,6 @@ impl InvokeFnCall<'_> {
     fn new(
         called_ffqn: FunctionFqn,
         target_ffqn: FunctionFqn,
-        fn_component_id: ComponentId,
         params: &[Val],
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<InvokeFnCall<'_>, WorkflowFunctionError> {
@@ -612,7 +597,6 @@ impl InvokeFnCall<'_> {
         };
         Ok(InvokeFnCall {
             target_ffqn,
-            fn_component_id,
             label,
             params,
             wasm_backtrace,
@@ -626,14 +610,12 @@ impl InvokeFnCall<'_> {
     ) -> Result<Val, WorkflowFunctionError> {
         let InvokeFnCall {
             target_ffqn,
-            fn_component_id,
             label,
             params,
             wasm_backtrace,
         } = self;
         OneOffChildExecutionRequest::apply_invoke(
             target_ffqn,
-            fn_component_id,
             label,
             Params::from_wasmtime(Arc::from(params)),
             wasm_backtrace,
@@ -705,7 +687,7 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let (target_fn_metadata, target_component_id, _target_retry_config) = fn_registry
+                let (target_fn_metadata, _target_component_id, _target_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from `fn_registry.all_exports()` must be found");
                 assert_eq!(None, target_fn_metadata.extension);
@@ -715,7 +697,6 @@ impl<'a> ImportedFnCall<'a> {
                     store_ctx,
                     params,
                     wasm_backtrace,
-                    target_component_id,
                 )?;
                 Ok(ImportedFnCall::SubmitExecution(submit))
             } else if let Some(function_name) =
@@ -750,17 +731,11 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let (target_fn_metadata, fn_component_id, _fn_retry_config) = fn_registry
+                let (target_fn_metadata, _fn_component_id, _fn_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from `fn_registry.all_exports()` must be found");
                 assert_eq!(None, target_fn_metadata.extension);
-                let invoke = InvokeFnCall::new(
-                    called_ffqn,
-                    target_ffqn,
-                    fn_component_id,
-                    params,
-                    wasm_backtrace,
-                )?;
+                let invoke = InvokeFnCall::new(called_ffqn, target_ffqn, params, wasm_backtrace)?;
                 Ok(ImportedFnCall::Invoke(invoke))
             } else {
                 unreachable!(
@@ -782,17 +757,12 @@ impl<'a> ImportedFnCall<'a> {
                     Arc::from(target_ifc_fqn.to_string()),
                     Arc::from(function_name),
                 );
-                let (target_fn_metadata, target_component_id, _target_retry_config) = fn_registry
+                let (target_fn_metadata, _target_component_id, _target_retry_config) = fn_registry
                     .get_by_exported_function(&target_ffqn)
                     .expect("function obtained from `fn_registry.all_exports()` must be found");
                 assert_eq!(None, target_fn_metadata.extension);
-                let schedule = ScheduleFnCall::new(
-                    target_ffqn,
-                    called_ffqn,
-                    params,
-                    wasm_backtrace,
-                    target_component_id,
-                )?;
+                let schedule =
+                    ScheduleFnCall::new(target_ffqn, called_ffqn, params, wasm_backtrace)?;
                 Ok(ImportedFnCall::Schedule(schedule))
             } else {
                 unreachable!(
@@ -831,7 +801,7 @@ impl<'a> ImportedFnCall<'a> {
                 );
             }
         } else {
-            let (fn_metadata, fn_component_id, _fn_retry_config) = fn_registry
+            let (fn_metadata, _fn_component_id, _fn_retry_config) = fn_registry
                 .get_by_exported_function(&called_ffqn)
                 .expect("function obtained from `fn_registry.all_exports()` must be found");
             assert_eq!(None, fn_metadata.extension);
@@ -839,7 +809,6 @@ impl<'a> ImportedFnCall<'a> {
                 ffqn: called_ffqn,
                 params,
                 wasm_backtrace,
-                fn_component_id,
             }))
         }
     }
@@ -1761,7 +1730,7 @@ pub(crate) mod tests {
                         .await
                         .map(|_| ()),
                     WorkflowStep::Call { ffqn } => {
-                        let (_fn_metadata, fn_component_id, _fn_retry_config) =
+                        let (_fn_metadata, _fn_component_id, _fn_retry_config) =
                             self.fn_registry.get_by_exported_function(ffqn).expect(
                                 "function obtained from `fn_registry.all_exports()` must be found",
                             );
@@ -1769,7 +1738,6 @@ pub(crate) mod tests {
                             .call_imported_fn(
                                 ImportedFnCall::Direct(DirectFnCall {
                                     ffqn: ffqn.clone(),
-                                    fn_component_id,
                                     params: &[],
                                     wasm_backtrace: None,
                                 }),
@@ -1812,7 +1780,7 @@ pub(crate) mod tests {
                                 target_ffqn.function_name, SUFFIX_FN_SUBMIT
                             )),
                         };
-                        let (_fn_metadata, target_component_id, _target_retry_config) = self
+                        let (_fn_metadata, _target_component_id, _target_retry_config) = self
                             .fn_registry
                             .get_by_exported_function(target_ffqn)
                             .expect(
@@ -1822,7 +1790,6 @@ pub(crate) mod tests {
                             .call_imported_fn(
                                 ImportedFnCall::SubmitExecution(SubmitExecutionFnCall {
                                     target_ffqn: target_ffqn.clone(),
-                                    target_component_id,
                                     join_set_id,
                                     target_params: &[],
                                     wasm_backtrace: None,
@@ -2003,7 +1970,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: sim_clock.now(),
-                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
@@ -2166,7 +2132,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -2462,7 +2427,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await

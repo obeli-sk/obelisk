@@ -560,7 +560,6 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -755,7 +754,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
@@ -937,7 +935,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
@@ -1049,7 +1046,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
@@ -1173,7 +1169,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
@@ -1339,7 +1334,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
@@ -1421,7 +1415,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
@@ -1500,7 +1493,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
@@ -1573,7 +1565,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await
@@ -1630,7 +1621,6 @@ pub(crate) mod tests {
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
                     scheduled_by: None,
                 })
                 .await

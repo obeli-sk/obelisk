@@ -938,7 +938,6 @@ impl SqlitePool {
             params,
             parent,
             scheduled_at,
-            component_id,
             metadata,
             scheduled_by,
         } = event
@@ -950,7 +949,6 @@ impl SqlitePool {
                 params,
                 parent,
                 scheduled_at,
-                component_id,
                 metadata,
                 scheduled_by,
             })
