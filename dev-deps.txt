@@ -1,14 +1,14 @@
 cargo-binstall 1.15.9
-cargo-edit-upgrade 0.13.7
+cargo-edit-upgrade 0.13.8
 cargo-expand 1.0.118
 cargo-insta 1.43.2
-cargo-nextest 0.9.110
-cargo-semver-checks 0.44.0
+cargo-nextest 0.9.111
+cargo-semver-checks 0.45.0
 litecli Version: 1.12.3
 nixpkgs-fmt 1.3.0
 pkg-config 0.29.2
-libprotoc 32.1
-rustc 1.91.0 (f8297e351 2025-10-28)
+libprotoc 33.0
+rustc 1.91.1 (ed61e7d7e 2025-11-07)
 wasm-tools 1.239.0
 wasmtime 38.0.3
 cargo-zigbuild 0.20.1
