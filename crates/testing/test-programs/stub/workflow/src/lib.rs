@@ -91,6 +91,17 @@ impl Guest for Component {
             .unwrap_err();
         Ok(())
     }
+
+    fn stubbing_after_join_set_close_should_fail() -> Result<(), ()> {
+        let execution_id = {
+            let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete); // CancelActivities +
+            // here could be another child execution that finished sooner on `join-next`.
+            activity_ext::foo_submit(&join_set, "")
+        };
+        activity_stub::foo_stub(&execution_id, Ok("should fail"))
+            .expect_err("stubbed activity must NOT accept return value after join set close");
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

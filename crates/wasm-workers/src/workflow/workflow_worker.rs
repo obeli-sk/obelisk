@@ -2399,4 +2399,20 @@ pub(crate) mod tests {
         );
         db_close.close().await;
     }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn stubbing_after_join_set_close_should_fail(
+        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
+    ) {
+        execute_workflow_fn_with_single_delay(
+            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+            FunctionFqn::new_static_tuple(
+                test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::STUBBING_AFTER_JOIN_SET_CLOSE_SHOULD_FAIL
+            ),
+            None,
+            db,
+        )
+        .await;
+    }
 }

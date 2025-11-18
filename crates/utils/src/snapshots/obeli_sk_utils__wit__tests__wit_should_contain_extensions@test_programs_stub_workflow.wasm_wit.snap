@@ -156,6 +156,8 @@ package obelisk:workflow@3.0.0 {
 
     new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set;
 
+    close: func(join-set: join-set);
+
     join-next: func(join-set: borrow<join-set>) -> result<response-id, join-next-error>;
   }
 }
@@ -217,6 +219,8 @@ package testing:stub-workflow {
     join-next-in-scope: func() -> result;
 
     invoke-expect-execution-error: func() -> result;
+
+    stubbing-after-join-set-close-should-fail: func() -> result;
   }
 }
 
@@ -304,6 +308,14 @@ package testing:stub-workflow-obelisk-ext {
     invoke-expect-execution-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
     invoke-expect-execution-error-invoke: func(label: string) -> result<result, invoke-extension-error>;
+
+    stubbing-after-join-set-close-should-fail-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+    stubbing-after-join-set-close-should-fail-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+
+    stubbing-after-join-set-close-should-fail-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+
+    stubbing-after-join-set-close-should-fail-invoke: func(label: string) -> result<result, invoke-extension-error>;
   }
 }
 
@@ -332,5 +344,7 @@ package testing:stub-workflow-obelisk-schedule {
     join-next-in-scope-schedule: func(schedule-at: schedule-at) -> execution-id;
 
     invoke-expect-execution-error-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+    stubbing-after-join-set-close-should-fail-schedule: func(schedule-at: schedule-at) -> execution-id;
   }
 }

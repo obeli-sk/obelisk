@@ -78,6 +78,7 @@ interface execution {
         /// Execution response was awaited and marked as processed, but it belongs to a different function.
         /// This can happen when join set contains responses of multiple functions or delay requests.
         function-mismatch(function-mismatch),
+        cancelled,
     }
 
     /// Error variants that may occur when calling `-get` extension functions.
@@ -102,7 +103,7 @@ interface execution {
     @since(version = 3.0.0)
     variant stub-error {
         /// Conflict can happen when a second writer attempts to stub a value, while the
-        /// value is not equal to the already stubbed value.
+        /// value is not equal to the already stubbed value or when the execution was cancelled.
         conflict,
     }
 }

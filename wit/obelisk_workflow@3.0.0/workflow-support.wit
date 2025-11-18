@@ -1,19 +1,29 @@
-package obelisk:workflow@3.0.0;
+package obelisk:workflow@3.1.0;
 
 @since(version = 3.0.0)
 interface workflow-support {
     use obelisk:types/time@3.0.0.{schedule-at, datetime};
     use obelisk:types/execution@3.0.0.{join-set, delay-id, execution-id, response-id};
 
-    /// The closing strategy of a join set. Join sets are closed when execution finishes.
-    @since(version = 3.0.0)
+    /// Closing strategy defines what should happen when the join set is closed. Join sets are closed
+    /// either using `join-set-close`, or when they get out of scope, or, as a last resort, when the execution finishes.
+    @since(version = 4.0.0)
     enum closing-strategy {
         /// All submitted child execution requests that were not awaited by the workflow are awaited during join set close.
-        /// Delay requests are not awaited.
-        complete,
+        /// Unawaited delay requests are ignored.
+        await-unprocessed,
 
-        // All submitted executions that were not awaited are cancelled.
-        // TODO: Implement cancel
+        /// All submitted executions that were not awaited are cancelled.
+        /// Unawaited activities (including stub activities) are marked finished with cancellation.
+        /// Unawaited child workflow executions are notified of cancellation recursively:
+        /// Their in-progress activities are cancelled and workflows notified of cancellation.
+        /// During cancellation only "cheap" operations are permitted: creating join sets, scheduling (cleanup) operations,
+        /// generating random values. `-submit` operations are allowed but they are immediatelly marked as cancelled.
+        /// Persistent sleep is cancelled as well, `sleep` returns an error.
+        cancel-unprocessed,
+
+        /// Default strategy. Unless the workflow is being cancelled
+        inherit,
     }
 
     /// Error variants that may occur on named join set creation.
@@ -35,21 +45,35 @@ interface workflow-support {
     @since(version = 3.0.0)
     random-string: func(min-length: u16, max-length-exclusive: u16) -> string;
 
-    /// Block execution for given time, return `schedule-at` resolved to time when the execution is scheduled.
-    @since(version = 3.0.0)
-    sleep: func(schedule-at: schedule-at) -> datetime;
+    /// Blocks the execution for given time, returning resolved `schedule-at` to the time when the execution is scheduled.
+    /// Interrupts on cancellation request.
+    @since(version = 4.0.0)
+    sleep: func(schedule-at: schedule-at) -> result<datetime>;
+
+    @since(version = 4.0.0)
+    sleep-uncancellable: func(schedule-at: schedule-at) -> datetime;
 
     /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
     @since(version = 3.0.0)
     submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id;
 
-    /// Create a new completing join set.
+    /// Create a new join set with `inherit` closing strategy.
     @since(version = 3.0.0)
-    new-join-set-named: func(name: string, closing-strategy: closing-strategy) -> result<join-set, join-set-create-error>;
+    join-set-new-named: func(name: string) -> result<join-set, join-set-create-error>;
 
-    /// Create a new completing join set with a generated name.
+    @since(version = 4.0.0)
+    join-set-new-named-with-strategy: func(name: string, closing-strategy: closing-strategy) -> result<join-set, join-set-create-error>;
+
+    /// Create a new join set with a generated name with `inherit` closing strategy.
     @since(version = 3.0.0)
-    new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set;
+    join-set-new-generated: func() -> join-set;
+
+    @since(version = 3.0.0)
+    join-set-new-generated-with-strategy: func(closing-strategy: closing-strategy) -> join-set;
+
+    /// Cancel all unprocessed activities. Child workflows are notified using "cancel requested" event, which aborts
+    /// all persistent sleep requests.
+    join-set-cancel: func(join-set);
 
     /// Error variants that may occur when calling `join-next` function.
     @since(version = 3.0.0)
@@ -58,18 +82,45 @@ interface workflow-support {
         all-processed,
     }
 
+    @since(version = 3.1.0)
+    variant join-next-cancellable-error {
+        /// All submitted requests and their responses were already processed.
+        all-processed,
+        cancelled,
+    }
+
     /// Explicitly close join set. All executions that were submitted and not awaited,
     /// in other words executions with unprocessed responses, will be either
     /// awaited or cancelled based on `closing-strategy`.
-    /// Extension function `-get` can be used to lookup the execution result.
+    /// After join set is closed, extension function `-get` can be used to lookup the execution result,
+    /// because all execution responses are marked as processed during join set close.
+    /// If `join-set-close` is not called, join set will be closed either when it gets out of scope, or during
+    /// workflow finish/cleanup.
     @since(version = 3.0.0)
-    close: func(join-set: join-set);
+    join-set-close: func(join-set: join-set);
 
-    /// Block the workflow execution until next response associated with the join set arrives.
-    /// The response is marked as processed.
-    /// Child execution result can be obtained using `-get` extension function using the
-    /// returned execution ID.
-    /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
+    /// Blocks the workflow execution until the next response of the join set arrives.
+    /// Marks the response as processed.
+    /// The returned execution ID can be used to obtain the execution result using `-get` extension function.
+    ///
+    /// Return `join-next-error::all-processed` if all requests in the join set have been matched with responses.
+    /// Cancellation request is ignored.
     @since(version = 3.0.0)
+    @deprecated
     join-next: func(join-set: borrow<join-set>) -> result<response-id, join-next-error>;
+
+    /// Blocks the workflow execution until the next response of the join set arrives.
+    /// Marks the response as processed.
+    /// The returned execution ID can be used to obtain the execution result using `-get` extension function.
+    ///
+    /// Return `join-next-error::all-processed` if all requests in the join set have been matched with responses.
+    /// Cancellation request is ignored.
+    @since(version = 3.1.0)
+    join-next-uncancellable: func(join-set: borrow<join-set>) -> result<response-id, join-next-error>;
+
+    /// Block the execution as `join-next`, however interrupt on cancellation request.
+    @since(version = 3.1.0)
+    join-next-cancellable: func(join-set: borrow<join-set>) -> result<response-id, join-next-cancellable-error>;
+
+    cancel-requested() -> bool;
 }

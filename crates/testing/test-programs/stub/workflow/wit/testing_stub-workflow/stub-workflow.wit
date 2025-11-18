@@ -19,4 +19,6 @@ interface workflow {
     join-next-in-scope: func() -> result;
 
     invoke-expect-execution-error: func() -> result;
+
+    stubbing-after-join-set-close-should-fail: func() -> result;
 }
