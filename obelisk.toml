@@ -63,7 +63,6 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Common executor settings - see above.
 ## Specific settings for activity_wasm:
 ## Retry customization: All activities are retried on trap (panic) and timeouts until `max_retries` condition is met.
-## FIXME: Rename to `retries` as the actual number of retries can be higher.
 # max_retries = 5
 # retry_exp_backoff.milliseconds = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
 ## Retry on err setting

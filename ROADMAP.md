@@ -1,10 +1,28 @@
 # Immediate goals
 
-## Upcoming goals
+# Upcoming goals
 
-## feat: Lock resource
-Workflows can lock an external resource (VM, shopping cart, etc.) with methods `lock(string)`, `try_lock(string`.
-Lock is automatically released when it gets out of scope, `close` is called or workflow finishes.
+## feat!: Cooperative cancellation for workflows
+Add `cancel(ExecutionId)` rpc that:
+* sends `cancel-requested` event to a workflow, or
+* stops the execution of an activity.
+
+Add cancellable / uncancellable variants for each blocking function call (`sleep`, `join-next`, `-await-next`, ...).
+Add `join-set-cancel: func(join-set)`, which marks its activities cancelled. Child workflows
+receive cancellation request using `cancel-requested` or by getting `cancelled`
+error on cancellable blocking calls.
+Add `canceling` closing strategy.
+
+## feat!: Return execution id in -invoke, allow in webhooks
+Similarly to `-await-next`, return a tuple of execution id and the result.
+
+## fix: Mark `-stub` execution as cancelled after its join set has been cancelled.
+
+## feat: KV host activity
+Allow using the underlying database.
+
+## feat: Retention
+Perform a cascading delete of top-level executions that finished more than a certain number of days ago.
 
 ## feat: Multiple execution queues
 Allow specifying queue ID when submitting, and when configuring an executor.
@@ -13,11 +31,12 @@ Allow specifying queue ID when submitting, and when configuring an executor.
 Enable allow/deny lists of remote hosts.
 
 ## feat: Add `obelisk generate`
+`obelisk generate execution-id` + `submit --execution-id`
 `obelisk generate config` blank(just webui),fibo, testing, stargazers
 `obelisk generate wit -c obelisk.toml --out-dir wit/deps/ my-activity`
 `obelisk generate wit` - based on obelisk-deps.toml tool + extensions based on component type, e.g. just `-schedule` for webhooks
+`obelisk generate wit --oci path` - add WIT files + extensions
 `obelisk new` - show templates, blank workflow should have obelisk types and workflow support
-`obelisk add --oci path` - add WIT files + extensions
 
 ## feat: Inspect remote or cached components
 `obelisk client component inspect/wit` should accept: path, componentId, oci location
