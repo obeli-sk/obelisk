@@ -765,6 +765,7 @@ enum ParamsInternal {
     Empty,
 }
 
+// TODO: replace usages with Params::empty() and remove
 impl Default for Params {
     fn default() -> Self {
         Self(ParamsInternal::Empty)
@@ -1085,44 +1086,24 @@ impl PartialEq for Params {
         if self.len() != other.len() {
             return false;
         }
-        if let ParamsInternal::JsonValues(left) = &self.0
-            && let ParamsInternal::JsonValues(right) = &other.0
-        {
-            return left == right;
-        }
-        if let ParamsInternal::Vals { vals: left } = &self.0
-            && let ParamsInternal::Vals { vals: right } = &other.0
-        {
-            return left == right;
-        }
-        // Mixed case: convert the other side to JSON
-        // TODO(perf): Store the JSON representation
-        let temp_left;
-        let temp_right;
 
-        let left = match &self.0 {
-            ParamsInternal::JsonValues(json) => json,
-            ParamsInternal::Vals { vals } => {
-                let Ok(vec) = to_json(vals) else {
-                    return false;
-                };
-                temp_left = vec;
-                &temp_left
+        // TODO(perf): Store the JSON representation
+
+        match (&self.0, &other.0) {
+            (ParamsInternal::JsonValues(l), ParamsInternal::JsonValues(r)) => l == r,
+
+            (ParamsInternal::Vals { vals: l }, ParamsInternal::Vals { vals: r }) => l == r,
+
+            (ParamsInternal::JsonValues(json_vals), ParamsInternal::Vals { vals })
+            | (ParamsInternal::Vals { vals }, ParamsInternal::JsonValues(json_vals)) => {
+                let Ok(vec) = to_json(vals) else { return false };
+                json_vals == &vec
             }
-            ParamsInternal::Empty => unreachable!("0 length handled above"),
-        };
-        let right = match &other.0 {
-            ParamsInternal::JsonValues(json) => json,
-            ParamsInternal::Vals { vals } => {
-                let Ok(vec) = to_json(vals) else {
-                    return false;
-                };
-                temp_right = vec;
-                &temp_right
+
+            (ParamsInternal::Empty, _) | (_, ParamsInternal::Empty) => {
+                unreachable!("zero length and different lengths handled earlier")
             }
-            ParamsInternal::Empty => unreachable!("0 length handled above"),
-        };
-        left == right
+        }
     }
 }
 impl Eq for Params {}
