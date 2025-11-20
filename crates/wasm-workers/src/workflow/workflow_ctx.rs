@@ -1528,25 +1528,44 @@ mod workflow_support {
     }
 }
 
+fn trace_on_replay<C: ClockFn>(ctx: &WorkflowCtx<C>, message: &str) -> bool {
+    if ctx.event_history.has_unprocessed_requests() {
+        ctx.component_logger.trace(&format!("(replay) {message}"));
+        true
+    } else {
+        false
+    }
+}
+
 impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
     fn trace(&mut self, message: String) {
-        self.component_logger.trace(&message);
+        if !trace_on_replay(self, &message) {
+            self.component_logger.trace(&message);
+        }
     }
 
     fn debug(&mut self, message: String) {
-        self.component_logger.debug(&message);
+        if !trace_on_replay(self, &message) {
+            self.component_logger.debug(&message);
+        }
     }
 
     fn info(&mut self, message: String) {
-        self.component_logger.info(&message);
+        if !trace_on_replay(self, &message) {
+            self.component_logger.info(&message);
+        }
     }
 
     fn warn(&mut self, message: String) {
-        self.component_logger.warn(&message);
+        if !trace_on_replay(self, &message) {
+            self.component_logger.warn(&message);
+        }
     }
 
     fn error(&mut self, message: String) {
-        self.component_logger.error(&message);
+        if !trace_on_replay(self, &message) {
+            self.component_logger.error(&message);
+        }
     }
 }
 

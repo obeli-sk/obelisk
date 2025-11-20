@@ -90,6 +90,7 @@ pub(crate) struct EventHistory {
     component_id: ComponentId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     deadline: DateTime<Utc>,
+    // Contains requests (events produced by the workflow)
     event_history: Vec<(HistoryEvent, ProcessingStatus)>,
     // Used for `-get`ting the processed response by Execution Id.
     index_child_exe_to_processed_response_idx: HashMap<ExecutionIdDerived, usize>,
@@ -193,6 +194,11 @@ impl EventHistory {
             deadline_tracker,
             fn_registry,
         }
+    }
+
+    /// Unprocessed requests imply replaying
+    pub(crate) fn has_unprocessed_requests(&self) -> bool {
+        self.first_unprocessed_request().is_some()
     }
 
     pub(crate) fn join_set_name_exists(&self, join_set_name: &str, kind: JoinSetKind) -> bool {
