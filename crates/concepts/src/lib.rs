@@ -761,6 +761,7 @@ enum ParamsInternal {
     ),
     Vals {
         vals: Arc<[wasmtime::component::Val]>,
+        json_vals_cache: Arc<std::sync::RwLock<Option<Arc<[Value]>>>>, // Caches json values
     },
     Empty,
 }
@@ -876,24 +877,34 @@ pub mod serde_params {
         where
             S: ::serde::Serializer,
         {
+            let serialize_json_values = |slice: &[serde_json::Value], serializer: S| {
+                let mut seq = serializer.serialize_seq(Some(slice.len()))?;
+                for item in slice {
+                    seq.serialize_element(item)?;
+                }
+                seq.end()
+            };
             match &self.0 {
-                ParamsInternal::Vals { vals } => {
-                    let mut seq = serializer.serialize_seq(Some(vals.len()))?; // size must be equal, checked when constructed.
-                    for val in vals.iter() {
-                        let value = WastVal::try_from(val.clone())
-                            .map_err(|err| serde::ser::Error::custom(err.to_string()))?;
-                        seq.serialize_element(&value)?;
+                ParamsInternal::Vals {
+                    vals,
+                    json_vals_cache,
+                } => {
+                    let guard = json_vals_cache.read().unwrap();
+                    if let Some(slice) = &*guard {
+                        serialize_json_values(&*slice, serializer)
+                    } else {
+                        drop(guard);
+                        let mut seq = serializer.serialize_seq(Some(vals.len()))?; // size must be equal, checked when constructed.
+                        for val in vals.iter() {
+                            let value = WastVal::try_from(val.clone())
+                                .map_err(|err| serde::ser::Error::custom(err.to_string()))?;
+                            seq.serialize_element(&value)?;
+                        }
+                        seq.end()
                     }
-                    seq.end()
                 }
                 ParamsInternal::Empty => serializer.serialize_seq(Some(0))?.end(),
-                ParamsInternal::JsonValues(vec) => {
-                    let mut seq = serializer.serialize_seq(Some(vec.len()))?;
-                    for item in vec {
-                        seq.serialize_element(item)?;
-                    }
-                    seq.end()
-                }
+                ParamsInternal::JsonValues(vec) => serialize_json_values(vec, serializer),
             }
         }
     }
@@ -976,7 +987,10 @@ impl Params {
         if vals.is_empty() {
             Self::empty()
         } else {
-            Self(ParamsInternal::Vals { vals })
+            Self(ParamsInternal::Vals {
+                vals,
+                json_vals_cache: Arc::default(),
+            })
         }
     }
 
@@ -1058,7 +1072,7 @@ impl Params {
 
 impl PartialEq for Params {
     fn eq(&self, other: &Self) -> bool {
-        fn to_json(vals: &[wasmtime::component::Val]) -> Result<Vec<serde_json::Value>, ()> {
+        fn to_json(vals: &[wasmtime::component::Val]) -> Result<Arc<[serde_json::Value]>, ()> {
             let mut vec = Vec::with_capacity(vals.len());
             for val in vals.iter() {
                 let value = match WastVal::try_from(val.clone()) {
@@ -1077,7 +1091,7 @@ impl PartialEq for Params {
                 };
                 vec.push(value);
             }
-            Ok(vec)
+            Ok(Arc::from(vec))
         }
 
         if self.is_empty() && other.is_empty() {
@@ -1092,12 +1106,35 @@ impl PartialEq for Params {
         match (&self.0, &other.0) {
             (ParamsInternal::JsonValues(l), ParamsInternal::JsonValues(r)) => l == r,
 
-            (ParamsInternal::Vals { vals: l }, ParamsInternal::Vals { vals: r }) => l == r,
+            (
+                ParamsInternal::Vals {
+                    vals: l,
+                    json_vals_cache: _,
+                },
+                ParamsInternal::Vals {
+                    vals: r,
+                    json_vals_cache: _,
+                },
+            ) => l == r,
 
-            (ParamsInternal::JsonValues(json_vals), ParamsInternal::Vals { vals })
-            | (ParamsInternal::Vals { vals }, ParamsInternal::JsonValues(json_vals)) => {
+            (
+                ParamsInternal::JsonValues(json_vals),
+                ParamsInternal::Vals {
+                    vals,
+                    json_vals_cache,
+                },
+            )
+            | (
+                ParamsInternal::Vals {
+                    vals,
+                    json_vals_cache,
+                },
+                ParamsInternal::JsonValues(json_vals),
+            ) => {
                 let Ok(vec) = to_json(vals) else { return false };
-                json_vals == &vec
+                let equals = *json_vals == *vec;
+                *json_vals_cache.write().unwrap() = Some(vec);
+                equals
             }
 
             (ParamsInternal::Empty, _) | (_, ParamsInternal::Empty) => {
