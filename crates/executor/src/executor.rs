@@ -526,7 +526,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         )
                     }
                     WorkerError::FatalError(fatal_error, version) => {
-                        info!("Fatal worker error - {fatal_error:?}");
+                        warn!("Fatal worker error - {fatal_error:?}");
                         let result = SupportedFunctionReturnValue::ExecutionError(
                             FinishedExecutionError::from(fatal_error),
                         );
