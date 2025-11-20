@@ -358,12 +358,16 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 schedule_at
                     .as_date_time(created_at)
                     .map_err(|_| tonic::Status::invalid_argument("schedule-at conversion error"))?,
-                Params::from_json_values(params),
+                Params::from_json_values(Arc::from(params)),
                 fn_metadata,
             )
         } else {
             assert!(fn_metadata.extension.is_none());
-            (created_at, Params::from_json_values(params), fn_metadata)
+            (
+                created_at,
+                Params::from_json_values(Arc::from(params)),
+                fn_metadata,
+            )
         };
 
         let ffqn = &fn_metadata.ffqn;

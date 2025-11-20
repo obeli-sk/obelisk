@@ -1257,7 +1257,7 @@ pub(crate) mod tests {
             let conn = fibo_webhook_harness.db_pool.connection();
             let create_req = conn.get_create_request(&execution_id).await.unwrap();
             assert_eq!(FIBOA_WORKFLOW_FFQN, create_req.ffqn);
-            let expected_params = Params::from_json_values(vec![json!(10), json!(1)]);
+            let expected_params = Params::from_json_values_test(vec![json!(10), json!(1)]);
             assert_eq!(
                 serde_json::to_string(&expected_params).unwrap(),
                 serde_json::to_string(&create_req.params).unwrap()

@@ -904,7 +904,8 @@ pub(crate) mod tests {
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
 
-        let params = Params::from_json_values(vec![json!(FIBO_10_INPUT), json!(INPUT_ITERATIONS)]);
+        let params =
+            Params::from_json_values_test(vec![json!(FIBO_10_INPUT), json!(INPUT_ITERATIONS)]);
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -1054,7 +1055,7 @@ pub(crate) mod tests {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
             ffqn: SLEEP1_HOST_ACTIVITY_FFQN,
-            params: Params::from_json_values(vec![json!({"milliseconds": SLEEP_MILLIS})]),
+            params: Params::from_json_values_test(vec![json!({"milliseconds": SLEEP_MILLIS})]),
             event_history: Vec::new(),
             responses: Vec::new(),
             version: Version::new(0),
@@ -1079,7 +1080,7 @@ pub(crate) mod tests {
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
         {
-            let params = Params::from_json_values(vec![json!("now")]);
+            let params = Params::from_json_values_test(vec![json!("now")]);
             db_connection
                 .create(CreateRequest {
                     created_at: sim_clock.now(),
@@ -1200,7 +1201,7 @@ pub(crate) mod tests {
                 created_at: sim_clock.now(),
                 execution_id: execution_id.clone(),
                 ffqn: SLEEP1_HOST_ACTIVITY_FFQN,
-                params: Params::from_json_values(vec![json!({"milliseconds": SLEEP_MILLIS})]),
+                params: Params::from_json_values_test(vec![json!({"milliseconds": SLEEP_MILLIS})]),
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
@@ -1447,7 +1448,7 @@ pub(crate) mod tests {
             .await;
         debug!("started mock server on {}", server.address());
         let url = format!("http://127.0.0.1:{}/", server.address().port());
-        let params = Params::from_json_values(vec![json!(url)]);
+        let params = Params::from_json_values_test(vec![json!(url)]);
         // Create an execution.
         let execution_id = ExecutionId::generate();
         db_connection
@@ -1537,7 +1538,7 @@ pub(crate) mod tests {
             .await;
         debug!("started mock server on {}", server.address());
         let url = format!("http://127.0.0.1:{}/", server.address().port());
-        let params = Params::from_json_values(vec![json!(url), json!(concurrency)]);
+        let params = Params::from_json_values_test(vec![json!(url), json!(concurrency)]);
         // Create an execution.
         let execution_id = ExecutionId::generate();
 
@@ -1629,8 +1630,9 @@ pub(crate) mod tests {
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
 
-        let params =
-            Params::from_json_values(vec![json!({"milliseconds": SLEEP_DURATION.as_millis()})]);
+        let params = Params::from_json_values_test(vec![
+            json!({"milliseconds": SLEEP_DURATION.as_millis()}),
+        ]);
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -1734,7 +1736,7 @@ pub(crate) mod tests {
         );
 
         let url = "http://";
-        let params = Params::from_json_values(vec![json!(url)]);
+        let params = Params::from_json_values_test(vec![json!(url)]);
         // Create an execution.
         let execution_id = ExecutionId::generate();
         db_connection
@@ -1823,7 +1825,7 @@ pub(crate) mod tests {
         let db_connection = db_pool.connection();
 
         let params =
-            Params::from_json_values(vec![serde_json::Value::String(INPUT_PARAM.to_string())]);
+            Params::from_json_values_test(vec![serde_json::Value::String(INPUT_PARAM.to_string())]);
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),

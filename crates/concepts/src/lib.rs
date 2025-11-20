@@ -996,12 +996,22 @@ impl Params {
         }
     }
 
+    #[cfg(any(test, feature = "test"))]
     #[must_use]
-    pub fn from_json_values(vec: Vec<Value>) -> Self {
+    pub fn from_json_values_test(vec: Vec<Value>) -> Self {
         if vec.is_empty() {
             Self::empty()
         } else {
             Self(ParamsInternal::JsonValues(Arc::from(vec)))
+        }
+    }
+
+    #[must_use]
+    pub fn from_json_values(values: Arc<[Value]>) -> Self {
+        if values.is_empty() {
+            Self::empty()
+        } else {
+            Self(ParamsInternal::JsonValues(values))
         }
     }
 

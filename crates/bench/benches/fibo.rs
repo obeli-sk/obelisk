@@ -299,7 +299,7 @@ mod bench {
         let created_at = Now.now();
         let db_connection = db_pool.connection();
 
-        let params = Params::from_json_values(vec![json!(fibo_n), json!(iterations)]);
+        let params = Params::from_json_values_test(vec![json!(fibo_n), json!(iterations)]);
         db_connection
             .create(CreateRequest {
                 created_at,
