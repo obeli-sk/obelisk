@@ -227,7 +227,7 @@ pub enum ExecutionEventInner {
     #[display("Created({ffqn}, `{scheduled_at}`)")]
     Created {
         ffqn: FunctionFqn,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(default))]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Params::empty()))]
         #[debug(skip)]
         params: Params,
         parent: Option<(ExecutionId, JoinSetId)>,

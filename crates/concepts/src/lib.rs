@@ -763,13 +763,6 @@ enum ParamsInternal {
     Empty,
 }
 
-// TODO: replace usages with Params::empty() and remove
-impl Default for Params {
-    fn default() -> Self {
-        Self(ParamsInternal::Empty)
-    }
-}
-
 pub const SUFFIX_FN_SUBMIT: &str = "-submit";
 pub const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 pub const SUFFIX_FN_SCHEDULE: &str = "-schedule";
