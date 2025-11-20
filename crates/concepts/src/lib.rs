@@ -870,6 +870,7 @@ pub mod serde_params {
     use serde::ser::SerializeSeq;
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
+    use std::sync::Arc;
     use val_json::wast_val::WastVal;
 
     impl Serialize for Params {
@@ -894,12 +895,18 @@ pub mod serde_params {
                         serialize_json_values(&*slice, serializer)
                     } else {
                         drop(guard);
-                        let mut seq = serializer.serialize_seq(Some(vals.len()))?; // size must be equal, checked when constructed.
+                        let mut seq = serializer.serialize_seq(Some(vals.len()))?;
+                        let mut json_vals = Vec::with_capacity(vals.len());
                         for val in vals.iter() {
                             let value = WastVal::try_from(val.clone())
                                 .map_err(|err| serde::ser::Error::custom(err.to_string()))?;
+                            let value = serde_json::to_value(&value)
+                                .map_err(|err| serde::ser::Error::custom(err.to_string()))?;
                             seq.serialize_element(&value)?;
+                            json_vals.push(value);
                         }
+                        let json_vals = Arc::from(json_vals);
+                        *json_vals_cache.write().unwrap() = Some(json_vals);
                         seq.end()
                     }
                 }
