@@ -889,7 +889,7 @@ pub mod serde_params {
                 } => {
                     let guard = json_vals_cache.read().unwrap();
                     if let Some(slice) = &*guard {
-                        serialize_json_values(&*slice, serializer)
+                        serialize_json_values(slice, serializer)
                     } else {
                         drop(guard);
                         let mut json_vals = Vec::with_capacity(vals.len());
@@ -1086,7 +1086,7 @@ impl PartialEq for Params {
     fn eq(&self, other: &Self) -> bool {
         fn to_json(vals: &[wasmtime::component::Val]) -> Result<Arc<[serde_json::Value]>, ()> {
             let mut vec = Vec::with_capacity(vals.len());
-            for val in vals.iter() {
+            for val in vals {
                 let value = match WastVal::try_from(val.clone()) {
                     Ok(ok) => ok,
                     Err(err) => {
