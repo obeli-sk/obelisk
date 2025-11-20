@@ -63,7 +63,10 @@ expression: execution_log
             "join_set_id": "n:a",
             "request": {
               "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:a_1"
+              "child_execution_id": "E_00000000000000000000000000.n:a_1",
+              "params": [
+                "a"
+              ]
             }
           }
         }
@@ -102,7 +105,10 @@ expression: execution_log
             "join_set_id": "n:a",
             "request": {
               "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:a_2"
+              "child_execution_id": "E_00000000000000000000000000.n:a_2",
+              "params": [
+                "aa"
+              ]
             }
           }
         }
@@ -154,7 +160,10 @@ expression: execution_log
             "join_set_id": "n:b",
             "request": {
               "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:b_1"
+              "child_execution_id": "E_00000000000000000000000000.n:b_1",
+              "params": [
+                "b"
+              ]
             }
           }
         }
@@ -193,7 +202,10 @@ expression: execution_log
             "join_set_id": "n:b",
             "request": {
               "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:b_2"
+              "child_execution_id": "E_00000000000000000000000000.n:b_2",
+              "params": [
+                "bb"
+              ]
             }
           }
         }
@@ -245,7 +257,10 @@ expression: execution_log
             "join_set_id": "n:f",
             "request": {
               "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:f_1"
+              "child_execution_id": "E_00000000000000000000000000.n:f_1",
+              "params": [
+                "f"
+              ]
             }
           }
         }
@@ -284,7 +299,10 @@ expression: execution_log
             "join_set_id": "n:f",
             "request": {
               "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:f_2"
+              "child_execution_id": "E_00000000000000000000000000.n:f_2",
+              "params": [
+                "ff"
+              ]
             }
           }
         }
@@ -415,7 +433,10 @@ expression: execution_log
             "join_set_id": "n:c",
             "request": {
               "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:c_1"
+              "child_execution_id": "E_00000000000000000000000000.n:c_1",
+              "params": [
+                "c"
+              ]
             }
           }
         }
@@ -454,7 +475,10 @@ expression: execution_log
             "join_set_id": "n:c",
             "request": {
               "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:c_2"
+              "child_execution_id": "E_00000000000000000000000000.n:c_2",
+              "params": [
+                "cc"
+              ]
             }
           }
         }

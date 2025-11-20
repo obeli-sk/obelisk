@@ -1266,11 +1266,12 @@ mod tests {
         let child_execution_id = parent_execution_id.next_level(&join_set_id);
         // executor does not append anything, this should have been written by the worker:
         {
+            let params = Params::empty();
             let child = CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id: ExecutionId::Derived(child_execution_id.clone()),
                 ffqn: FFQN_CHILD,
-                params: Params::empty(),
+                params: params.clone(),
                 parent: Some((parent_execution_id.clone(), join_set_id.clone())),
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
@@ -1293,6 +1294,7 @@ mod tests {
                         join_set_id: join_set_id.clone(),
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
+                            params,
                         },
                     },
                 },

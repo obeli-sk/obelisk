@@ -456,6 +456,8 @@ pub enum JoinSetRequest {
     #[display("ChildExecutionRequest({child_execution_id})")]
     ChildExecutionRequest {
         child_execution_id: ExecutionIdDerived,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Params::empty()))]
+        params: Params,
     },
 }
 

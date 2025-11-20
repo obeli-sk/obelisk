@@ -63,7 +63,10 @@ expression: execution_log
             "join_set_id": "g:1",
             "request": {
               "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.g:1_1"
+              "child_execution_id": "E_00000000000000000000000000.g:1_1",
+              "params": [
+                "some param"
+              ]
             }
           }
         }

@@ -2217,7 +2217,10 @@ pub(crate) mod tests {
                             HistoryEvent::JoinSetRequest {
                                 join_set_id: found,
                                 request:
-                                    JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                                    JoinSetRequest::ChildExecutionRequest {
+                                        child_execution_id,
+                                        params: _,
+                                    },
                             } if last_join_set == found => Some(child_execution_id),
                             _ => None,
                         })
@@ -2495,7 +2498,10 @@ pub(crate) mod tests {
                                 .unwrap();
                         assert!(actual_progress.expired_async_timers > 0); // Ignore SubmitDelay-s that were fullfiled by the watcher.
                     }
-                    JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
+                    JoinSetRequest::ChildExecutionRequest {
+                        child_execution_id,
+                        params: _,
+                    } => {
                         assert!(child_execution_count > 0);
                         exec_child(child_execution_id, db_pool.clone(), sim_clock.clone()).await;
                         child_execution_count -= 1;

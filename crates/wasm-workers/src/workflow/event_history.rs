@@ -243,7 +243,7 @@ impl EventHistory {
                         event,
                         HistoryEvent::JoinSetRequest {
                             join_set_id: found,
-                            request: JoinSetRequest::ChildExecutionRequest { .. }
+                            request: JoinSetRequest::ChildExecutionRequest { .. },
                         }
                         if found == join_set_id
                     )
@@ -675,13 +675,20 @@ impl EventHistory {
                     join_set_id,
                     child_execution_id: execution_id,
                     target_ffqn,
+                    params,
                 },
                 HistoryEvent::JoinSetRequest {
                     join_set_id: found_join_set_id,
-                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                    request:
+                        JoinSetRequest::ChildExecutionRequest {
+                            child_execution_id,
+                            params: stored_params,
+                        },
                 },
-            ) if *join_set_id == *found_join_set_id && *execution_id == *child_execution_id => {
-                // TODO: Check params to catch non-deterministic errors.
+            ) if *join_set_id == *found_join_set_id
+                && *execution_id == *child_execution_id
+                && params == stored_params =>
+            {
                 trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
                 self.index_child_exe_to_ffqn
                     .insert(child_execution_id.clone(), target_ffqn.clone());
@@ -1126,6 +1133,7 @@ impl EventHistory {
                     join_set_id: join_set_id.clone(),
                     request: JoinSetRequest::ChildExecutionRequest {
                         child_execution_id: child_execution_id.clone(),
+                        params: params.clone(),
                     },
                 };
                 let history_events = vec![event.clone()];
@@ -1408,7 +1416,8 @@ impl EventHistory {
                 wasm_backtrace,
             }) => {
                 // Non-cacheable event.
-                debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Flushing and appending JoinSet,ChildExecutionRequest,JoinNext");
+                debug!(%child_execution_id, %join_set_id,
+                    "OneOffChildExecutionRequest: Flushing and appending JoinSet,ChildExecutionRequest,JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let mut history_events = Vec::with_capacity(3);
@@ -1425,6 +1434,7 @@ impl EventHistory {
                     join_set_id: join_set_id.clone(),
                     request: JoinSetRequest::ChildExecutionRequest {
                         child_execution_id: child_execution_id.clone(),
+                        params: params.clone(),
                     },
                 };
                 history_events.push(event.clone());
@@ -1966,8 +1976,8 @@ pub(crate) enum EventCall {
     Stub(Stub),
     JoinNextRequestingFfqn(JoinNextRequestingFfqn),
     JoinNext(JoinNext),
-    OneOffChildExecutionRequest(OneOffChildExecutionRequest),
-    OneOffDelayRequest(OneOffDelayRequest),
+    OneOffChildExecutionRequest(OneOffChildExecutionRequest), // blocking call
+    OneOffDelayRequest(OneOffDelayRequest),                   // blocking sleep
     Persist(Persist),
 }
 
@@ -2528,6 +2538,7 @@ enum DeterministicKey {
         join_set_id: JoinSetId,
         child_execution_id: ExecutionIdDerived,
         target_ffqn: FunctionFqn,
+        params: Params,
     },
     DelayRequest {
         join_set_id: JoinSetId,
@@ -2586,11 +2597,13 @@ impl EventCall {
                 join_set_id,
                 child_execution_id,
                 target_ffqn,
-                ..
+                params,
+                wasm_backtrace: _,
             }) => vec![DeterministicKey::ChildExecutionRequest {
                 join_set_id: join_set_id.clone(),
                 child_execution_id: child_execution_id.clone(),
                 target_ffqn: target_ffqn.clone(),
+                params: params.clone(),
             }],
             EventCall::SubmitDelay(SubmitDelay {
                 delay_id,
@@ -2617,7 +2630,8 @@ impl EventCall {
                 join_set_id,
                 child_execution_id,
                 ffqn,
-                ..
+                params,
+                wasm_backtrace: _,
             }) => vec![
                 DeterministicKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
@@ -2627,6 +2641,7 @@ impl EventCall {
                     join_set_id: join_set_id.clone(),
                     child_execution_id: child_execution_id.clone(),
                     target_ffqn: ffqn.clone(),
+                    params: params.clone(),
                 },
                 DeterministicKey::JoinNextChild {
                     join_set_id: join_set_id.clone(),

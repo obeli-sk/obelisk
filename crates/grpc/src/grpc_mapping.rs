@@ -483,7 +483,7 @@ pub fn from_execution_event_to_grpc(
                                         }
                                     ))
                                 }
-                                JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
+                                JoinSetRequest::ChildExecutionRequest { child_execution_id, params: _ } => {
                                     Some(history_event::join_set_request::JoinSetRequest::ChildExecutionRequest(
                                         history_event::join_set_request::ChildExecutionRequest {
                                             child_execution_id: Some(grpc_gen::ExecutionId { id: child_execution_id.to_string() }),

@@ -22,7 +22,7 @@ use std::{
     time::Duration,
 };
 use storage::{PendingStateFinishedError, PendingStateFinishedResultKind};
-use tracing::Span;
+use tracing::{Span, error};
 use val_json::{
     type_wrapper::{TypeConversionError, TypeWrapper},
     wast_val::{WastVal, WastValWithType},
@@ -750,14 +750,16 @@ pub fn execution_error_to_wast_val(ret_type: &TypeWrapperTopLevel) -> WastVal {
     unreachable!("unexpected top-level return type {ret_type:?} cannot be ReturnTypeCompatible")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Params(ParamsInternal);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 enum ParamsInternal {
-    JsonValues(Vec<Value>),
+    JsonValues(
+        // TODO: change to Arc<[]>
+        Vec<Value>,
+    ),
     Vals {
-        //TODO: is Arc needed here? Or move upwards?
         vals: Arc<[wasmtime::component::Val]>,
     },
     Empty,
@@ -1052,6 +1054,78 @@ impl Params {
         self.len() == 0
     }
 }
+
+impl PartialEq for Params {
+    fn eq(&self, other: &Self) -> bool {
+        fn to_json(vals: &[wasmtime::component::Val]) -> Result<Vec<serde_json::Value>, ()> {
+            let mut vec = Vec::with_capacity(vals.len());
+            for val in vals.iter() {
+                let value = match WastVal::try_from(val.clone()) {
+                    Ok(ok) => ok,
+                    Err(err) => {
+                        error!("cannot compare Params, cannot convert to WastVal: {err:?}");
+                        return Err(());
+                    }
+                };
+                let value = match serde_json::to_value(&value) {
+                    Ok(ok) => ok,
+                    Err(err) => {
+                        error!("cannot compare Params, cannot convert to JSON: {err:?}");
+                        return Err(());
+                    }
+                };
+                vec.push(value);
+            }
+            Ok(vec)
+        }
+
+        if self.is_empty() && other.is_empty() {
+            return true;
+        }
+        if self.len() != other.len() {
+            return false;
+        }
+        if let ParamsInternal::JsonValues(left) = &self.0
+            && let ParamsInternal::JsonValues(right) = &other.0
+        {
+            return left == right;
+        }
+        if let ParamsInternal::Vals { vals: left } = &self.0
+            && let ParamsInternal::Vals { vals: right } = &other.0
+        {
+            return left == right;
+        }
+        // Mixed case: convert the other side to JSON
+        // TODO(perf): Store the JSON representation
+        let temp_left;
+        let temp_right;
+
+        let left = match &self.0 {
+            ParamsInternal::JsonValues(json) => json,
+            ParamsInternal::Vals { vals } => {
+                let Ok(vec) = to_json(vals) else {
+                    return false;
+                };
+                temp_left = vec;
+                &temp_left
+            }
+            ParamsInternal::Empty => unreachable!("0 length handled above"),
+        };
+        let right = match &other.0 {
+            ParamsInternal::JsonValues(json) => json,
+            ParamsInternal::Vals { vals } => {
+                let Ok(vec) = to_json(vals) else {
+                    return false;
+                };
+                temp_right = vec;
+                &temp_right
+            }
+            ParamsInternal::Empty => unreachable!("0 length handled above"),
+        };
+        left == right
+    }
+}
+impl Eq for Params {}
 
 pub mod prefixed_ulid {
     use crate::{JoinSetId, JoinSetIdParseError};

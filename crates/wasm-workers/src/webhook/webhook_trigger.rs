@@ -28,9 +28,7 @@ use std::path::Path;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::sync::OwnedSemaphorePermit;
-use tracing::{
-    Instrument, Level, Span, debug, debug_span, error, info, info_span, instrument, trace,
-};
+use tracing::{Instrument, Span, debug, debug_span, error, info, info_span, instrument, trace};
 use types_v3_0_0::obelisk::types::execution::Host as ExecutionHost;
 use types_v3_0_0::obelisk::types::execution::HostJoinSet;
 use utils::wasm_tools::ExIm;
@@ -413,7 +411,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
         Ok(version)
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, fields(%ffqn, version), err)]
+    #[instrument(skip_all, fields(%ffqn, version, %execution_id = self.execution_id), err)]
     async fn call_imported_fn(
         &mut self,
         ffqn: FunctionFqn,
@@ -552,6 +550,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     },
                 },
             };
+            let params = Params::from_wasmtime(Arc::from(params));
             let req_child_exec = AppendRequest {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
@@ -559,6 +558,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                         join_set_id: join_set_id_direct.clone(),
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
+                            params: params.clone(),
                         },
                     },
                 },
@@ -578,7 +578,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 created_at,
                 execution_id: ExecutionId::Derived(child_execution_id.clone()),
                 ffqn: ffqn.clone(),
-                params: Params::from_wasmtime(Arc::from(params)),
+                params,
                 parent: Some((ExecutionId::TopLevel(self.execution_id), join_set_id_direct)),
                 metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
                 scheduled_at: created_at,
@@ -617,7 +617,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
 
             results[0] = res.into_wast_val(move || return_type_tl).as_val();
 
-            trace!(?params, ?results, "call_imported_fn finish");
+            trace!(?results, "call_imported_fn finish");
             (db_connection, version_min_including, version_max_excluding)
         };
 
