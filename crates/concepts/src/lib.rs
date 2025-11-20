@@ -755,10 +755,7 @@ pub struct Params(ParamsInternal);
 
 #[derive(Debug, Clone)]
 enum ParamsInternal {
-    JsonValues(
-        // TODO: change to Arc<[]>
-        Vec<Value>,
-    ),
+    JsonValues(Arc<[Value]>),
     Vals {
         vals: Arc<[wasmtime::component::Val]>,
         json_vals_cache: Arc<std::sync::RwLock<Option<Arc<[Value]>>>>, // Caches json values
@@ -945,7 +942,7 @@ pub mod serde_params {
             if vec.is_empty() {
                 Ok(Self(ParamsInternal::Empty))
             } else {
-                Ok(Self(ParamsInternal::JsonValues(vec)))
+                Ok(Self(ParamsInternal::JsonValues(Arc::from(vec))))
             }
         }
     }
@@ -1004,7 +1001,7 @@ impl Params {
         if vec.is_empty() {
             Self::empty()
         } else {
-            Self(ParamsInternal::JsonValues(vec))
+            Self(ParamsInternal::JsonValues(Arc::from(vec)))
         }
     }
 
@@ -1137,7 +1134,7 @@ impl PartialEq for Params {
                 ParamsInternal::JsonValues(json_vals),
             ) => {
                 let Ok(vec) = to_json(vals) else { return false };
-                let equals = *json_vals == *vec;
+                let equals = *json_vals == vec;
                 *json_vals_cache.write().unwrap() = Some(vec);
                 equals
             }
