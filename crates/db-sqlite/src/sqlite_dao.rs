@@ -1445,7 +1445,7 @@ impl SqlitePool {
             pagination: &'a Pagination<Option<T>>,
             column: &str,
             top_level_only: bool,
-        ) -> StatementModifier<'a> {
+        ) -> Result<StatementModifier<'a>, DbErrorGeneric> {
             let mut where_vec: Vec<String> = vec![];
             let mut params: Vec<(&'static str, ToSqlOutput<'a>)> = vec![];
             let limit = pagination.length();
@@ -1461,27 +1461,31 @@ impl SqlitePool {
                     ..
                 } => {
                     where_vec.push(format!("{column} {rel} :cursor"));
-                    params.push((":cursor", cursor.to_sql().expect("FIXME")));
+                    let cursor = cursor.to_sql().map_err(|err| {
+                        error!("Possible program error - cannot convert cursor to sql - {err:?}");
+                        DbErrorGeneric::Uncategorized("cannot convert cursor to sql".into())
+                    })?;
+                    params.push((":cursor", cursor));
                 }
                 _ => {}
             }
             if top_level_only {
                 where_vec.push("is_top_level=true".to_string());
             }
-            StatementModifier {
+            Ok(StatementModifier {
                 where_vec,
                 params,
                 limit,
                 limit_desc,
-            }
+            })
         }
 
         let mut statement_mod = match pagination {
             ExecutionListPagination::CreatedBy(pagination) => {
-                paginate(pagination, "created_at", top_level_only)
+                paginate(pagination, "created_at", top_level_only)?
             }
             ExecutionListPagination::ExecutionId(pagination) => {
-                paginate(pagination, "execution_id", top_level_only)
+                paginate(pagination, "execution_id", top_level_only)?
             }
         };
 
