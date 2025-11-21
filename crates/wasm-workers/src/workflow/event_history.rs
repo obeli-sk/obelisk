@@ -3434,6 +3434,95 @@ mod tests {
         db_close.close().await;
     }
 
+    #[rstest]
+    #[tokio::test]
+    async fn trimmed_second_execution_should_result_in_nondeterminism_detected(
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100})]
+        second_run_strategy: JoinNextBlockingStrategy,
+    ) {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection();
+
+        // Create an execution.
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
+
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
+
+        let (mut event_history, mut version) = load_event_history(
+            db_connection.as_ref(),
+            execution_id.clone(),
+            sim_clock.now(),
+            Duration::from_secs(1), // execution deadline
+            Arc::new(DeadlineTrackerFactoryTokio),
+            JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
+            fn_registry.clone(),
+        )
+        .await;
+
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        let child_execution_id = execution_id.next_level(&join_set_id);
+
+        assert_matches!(
+            apply_create_join_set_start_async_await_next(
+                db_connection.as_ref(),
+                MOCK_FFQN,
+                child_execution_id.clone(),
+                &mut event_history,
+                &mut version,
+                join_set_id.clone(),
+                sim_clock.now()
+            )
+            .await
+            .unwrap_err(),
+            ApplyError::InterruptDbUpdated,
+            "should have ended with an interrupt"
+        );
+        db_connection
+            .append_response(
+                sim_clock.now(),
+                execution_id.clone(),
+                JoinSetResponseEvent {
+                    join_set_id: join_set_id.clone(),
+                    event: JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id: child_execution_id.clone(),
+                        finished_version: Version(0), // does not matter
+                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+
+        info!("Second run attemts to finish with no requests");
+        let (mut event_history, mut version) = load_event_history(
+            db_connection.as_ref(),
+            execution_id,
+            sim_clock.now(),
+            Duration::from_secs(1), // execution deadline
+            Arc::new(DeadlineTrackerFactoryTokio),
+            second_run_strategy,
+            fn_registry,
+        )
+        .await;
+
+        // finish the execution
+        let err = event_history
+            .join_sets_close_on_finish(db_connection.as_ref(), &mut version, sim_clock.now())
+            .await
+            .unwrap_err();
+        let reason = assert_matches!(err, ApplyError::NondeterminismDetected(reason) => reason);
+        assert_eq!(
+            "found unprocessed event stored at index 0: event: JoinSetCreate(o:)",
+            reason
+        );
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
     // TODO: Check -await-next for fn without return type
     // TODO: Check execution errors translating to await-next-extension-error
 
