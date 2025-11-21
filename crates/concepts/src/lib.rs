@@ -1077,36 +1077,12 @@ impl Params {
 
 impl PartialEq for Params {
     fn eq(&self, other: &Self) -> bool {
-        fn to_json(vals: &[wasmtime::component::Val]) -> Result<Arc<[serde_json::Value]>, ()> {
-            let mut vec = Vec::with_capacity(vals.len());
-            for val in vals {
-                let value = match WastVal::try_from(val.clone()) {
-                    Ok(ok) => ok,
-                    Err(err) => {
-                        error!("cannot compare Params, cannot convert to WastVal: {err:?}");
-                        return Err(());
-                    }
-                };
-                let value = match serde_json::to_value(&value) {
-                    Ok(ok) => ok,
-                    Err(err) => {
-                        error!("cannot compare Params, cannot convert to JSON: {err:?}");
-                        return Err(());
-                    }
-                };
-                vec.push(value);
-            }
-            Ok(Arc::from(vec))
-        }
-
         if self.is_empty() && other.is_empty() {
             return true;
         }
         if self.len() != other.len() {
             return false;
         }
-
-        // TODO(perf): Store the JSON representation
 
         match (&self.0, &other.0) {
             (ParamsInternal::JsonValues(l), ParamsInternal::JsonValues(r)) => l == r,
@@ -1149,6 +1125,68 @@ impl PartialEq for Params {
     }
 }
 impl Eq for Params {}
+
+/// Convert wasmtime's Vals to serde's Values
+fn to_json(vals: &[wasmtime::component::Val]) -> Result<Arc<[serde_json::Value]>, ()> {
+    let mut vec = Vec::with_capacity(vals.len());
+    for val in vals {
+        let value = match WastVal::try_from(val.clone()) {
+            Ok(ok) => ok,
+            Err(err) => {
+                error!("cannot compare Params, cannot convert to WastVal: {err:?}");
+                return Err(());
+            }
+        };
+        let value = match serde_json::to_value(&value) {
+            Ok(ok) => ok,
+            Err(err) => {
+                error!("cannot compare Params, cannot convert to JSON: {err:?}");
+                return Err(());
+            }
+        };
+        vec.push(value);
+    }
+    Ok(Arc::from(vec))
+}
+
+impl Display for Params {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let render_json_vals =
+            |f: &mut std::fmt::Formatter<'_>, json_vals: &[Value]| -> std::fmt::Result {
+                for (i, json_value) in json_vals.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{json_value}")?;
+                }
+                Ok(())
+            };
+        write!(f, "[")?;
+        match &self.0 {
+            ParamsInternal::Empty => {}
+            ParamsInternal::JsonValues(json_vals) => {
+                render_json_vals(f, json_vals)?;
+            }
+            ParamsInternal::Vals {
+                vals,
+                json_vals_cache,
+            } => {
+                let guard = json_vals_cache.read().unwrap();
+                if let Some(json_vals) = &*guard {
+                    render_json_vals(f, json_vals)?;
+                } else {
+                    drop(guard);
+                    let Ok(json_vals) = to_json(vals) else {
+                        return write!(f, "<serialization error>]"); // note trailing ]
+                    };
+                    render_json_vals(f, &json_vals)?;
+                    *json_vals_cache.write().unwrap() = Some(json_vals);
+                }
+            }
+        }
+        write!(f, "]")
+    }
+}
 
 pub mod prefixed_ulid {
     use crate::{JoinSetId, JoinSetIdParseError};
