@@ -3142,11 +3142,6 @@ impl DbConnection for SqlitePool {
                             let intermittent_event_count = row.get("intermittent_event_count")?;
                             let max_retries = row.get("max_retries")?;
                             let retry_exp_backoff_millis = row.get("retry_exp_backoff_millis")?;
-                            let parent = if let ExecutionId::Derived(derived) = &execution_id {
-                                derived.split_to_parts().inspect_err(|err| error!("cannot split execution {execution_id} to parts: {err:?}")).ok()
-                            } else {
-                                None
-                            };
                             let lock = ExpiredLock {
                                 execution_id,
                                 locked_at_version,
@@ -3154,7 +3149,6 @@ impl DbConnection for SqlitePool {
                                 intermittent_event_count,
                                 max_retries,
                                 retry_exp_backoff: Duration::from_millis(retry_exp_backoff_millis),
-                                parent
                             };
                             Ok(ExpiredTimer::Lock(lock))
                         }

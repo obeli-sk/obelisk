@@ -710,7 +710,6 @@ impl DbHolder {
                     max_retries: retry_config.max_retries,
                     intermittent_event_count: journal.temporary_event_count(),
                     retry_exp_backoff: retry_config.retry_exp_backoff,
-                    parent: journal.parent(),
                 };
                 ExpiredTimer::Lock(lock)
             });

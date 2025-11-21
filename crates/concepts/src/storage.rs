@@ -1029,7 +1029,6 @@ pub struct ExpiredLock {
     pub intermittent_event_count: u32,
     pub max_retries: u32,
     pub retry_exp_backoff: Duration,
-    pub parent: Option<(ExecutionId, JoinSetId)>, // TODO: Remove
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -2,6 +2,7 @@ use crate::AbortOnDropHandle;
 use crate::executor::Append;
 use crate::executor::ChildFinishedResponse;
 use chrono::{DateTime, Utc};
+use concepts::ExecutionId;
 use concepts::StrVariant;
 use concepts::SupportedFunctionReturnValue;
 use concepts::storage::AppendRequest;
@@ -25,6 +26,7 @@ use std::{
     time::Duration,
 };
 use tracing::Level;
+use tracing::error;
 use tracing::warn;
 use tracing::{debug, info, instrument};
 
@@ -106,7 +108,6 @@ pub(crate) async fn tick(
                 intermittent_event_count,
                 max_retries,
                 retry_exp_backoff,
-                parent,
             }) => {
                 let append = if max_retries == u32::MAX && locked_at_version.0 + 1 < next_version.0
                 {
@@ -150,6 +151,16 @@ pub(crate) async fn tick(
                     let finished_exec_result = SupportedFunctionReturnValue::ExecutionError(
                         FinishedExecutionError::PermanentTimeout,
                     );
+                    let parent = if let ExecutionId::Derived(derived) = &execution_id {
+                        derived
+                            .split_to_parts()
+                            .inspect_err(|err| {
+                                error!("cannot split execution {execution_id} to parts: {err:?}")
+                            })
+                            .ok()
+                    } else {
+                        None
+                    };
                     let child_finished = parent.map(|(parent_execution_id, parent_join_set)| {
                         ChildFinishedResponse {
                             parent_execution_id,

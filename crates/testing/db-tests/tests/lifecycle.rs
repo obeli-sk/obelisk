@@ -852,7 +852,6 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
         assert_eq!(0, lock.intermittent_event_count);
         assert_eq!(MAX_RETRIES, lock.max_retries);
         assert_eq!(RETRY_EXP_BACKOFF, lock.retry_exp_backoff);
-        assert_eq!(None, lock.parent);
     }
 }
 
@@ -1299,7 +1298,6 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
         intermittent_event_count: 0,
         max_retries: 0,
         retry_exp_backoff: Duration::ZERO,
-        parent: None,
     });
     assert_eq!(expected, actual);
 }
@@ -1480,7 +1478,6 @@ async fn get_expired_times_with_execution_that_made_progress(
         intermittent_event_count: 0,
         max_retries: 0,
         retry_exp_backoff: Duration::ZERO,
-        parent: None,
     };
     assert_eq!(expected_lock, expired_lock);
 
