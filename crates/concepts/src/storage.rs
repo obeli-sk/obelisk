@@ -539,7 +539,7 @@ pub struct LockedExecution {
     pub run_id: RunId,
     pub ffqn: FunctionFqn,
     pub params: Params,
-    pub event_history: Vec<HistoryEvent>,
+    pub event_history: Vec<HistoryEvent>, // FIXME: Add version
     pub responses: Vec<JoinSetResponseEventOuter>,
     pub parent: Option<(ExecutionId, JoinSetId)>,
     pub intermittent_event_count: u32,

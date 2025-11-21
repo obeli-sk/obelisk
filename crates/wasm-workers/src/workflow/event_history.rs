@@ -91,7 +91,7 @@ pub(crate) struct EventHistory {
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     deadline: DateTime<Utc>,
     // Contains requests (events produced by the workflow)
-    event_history: Vec<(HistoryEvent, ProcessingStatus)>,
+    event_history: Vec<(HistoryEvent, ProcessingStatus)>, // FIXME: Add version
     // Used for `-get`ting the processed response by Execution Id.
     index_child_exe_to_processed_response_idx: HashMap<ExecutionIdDerived, usize>,
     index_child_exe_to_ffqn: HashMap<ExecutionIdDerived, FunctionFqn>,
@@ -965,6 +965,7 @@ impl EventHistory {
             }
 
             (key, found) => Err(ApplyError::NondeterminismDetected(format!(
+                // FIXME: Add version
                 "key does not match event stored at index {found_idx}: key: {key}, event: {found}",
             ))),
         }
