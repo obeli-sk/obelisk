@@ -965,7 +965,7 @@ impl EventHistory {
             }
 
             (key, found) => Err(ApplyError::NondeterminismDetected(format!(
-                "key {key:?} not matching {found:?} stored at index {found_idx}",
+                "key does not match event stored at index {found_idx}: key: {key}, event: {found}",
             ))),
         }
     }
@@ -2523,52 +2523,67 @@ impl EventCall {
 /// Those properties are checked for equality with `HistoryEvent` before it is marked as `Processed`.
 /// One `EventCall` can be represented as multiple `DeterministicKey`-s.
 /// One `DeterministicKey` corresponds to one `HistoryEvent`.
-#[derive(derive_more::Debug, Clone)]
+#[derive(derive_more::Debug, Clone, derive_more::Display)]
 enum DeterministicKey {
+    #[display("Persist({kind})")]
     Persist {
         #[debug(skip)]
         value: Vec<u8>,
         kind: PersistKind,
     },
+
+    #[display("CreateJoinSet({join_set_id}, {closing_strategy})")]
     CreateJoinSet {
         join_set_id: JoinSetId,
         closing_strategy: ClosingStrategy,
     },
+
+    #[display("ChildExecutionRequest({child_execution_id}, {target_ffqn}, params: {params})")]
+    // join_set_id is part of child_execution_id
     ChildExecutionRequest {
         join_set_id: JoinSetId,
         child_execution_id: ExecutionIdDerived,
         target_ffqn: FunctionFqn,
         params: Params,
     },
+
+    #[display("DelayRequest({delay_id}, {schedule_at})")] // join_set_id is part of delay_id
     DelayRequest {
         join_set_id: JoinSetId,
         delay_id: DelayId,
         schedule_at: HistoryEventScheduleAt,
     },
+
+    #[display("JoinNextChild({join_set_id}, {kind}, {requested_ffqn})")]
     JoinNextChild {
         join_set_id: JoinSetId,
         kind: JoinNextChildKind,
         requested_ffqn: FunctionFqn,
     },
-    // one-off delay requests only, represents host function sleep
-    JoinNextDelay {
-        join_set_id: JoinSetId,
-    },
+
+    #[display("JoinNextDelay({join_set_id})")]
+    JoinNextDelay { join_set_id: JoinSetId },
+
+    #[display("JoinNext({join_set_id}{})", if *closing {" closing"} else {""} )]
     JoinNext {
         join_set_id: JoinSetId,
         closing: bool,
     },
+
+    #[display("Schedule({target_execution_id}, {schedule_at})")]
     Schedule {
         target_execution_id: ExecutionId,
         schedule_at: HistoryEventScheduleAt,
     },
+
+    #[display("Stub({target_execution_id})")]
     Stub {
         target_execution_id: ExecutionIdDerived,
         return_value: SupportedFunctionReturnValue,
     },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, derive_more::Display)]
 enum JoinNextChildKind {
     AwaitNext,
     DirectCall,

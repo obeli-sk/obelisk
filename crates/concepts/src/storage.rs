@@ -412,6 +412,7 @@ pub enum HistoryEvent {
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 pub enum HistoryEventScheduleAt {
     Now,
+    #[display("At(`{_0}`)")]
     At(DateTime<Utc>),
     #[display("In({_0:?})")]
     In(Duration),
@@ -453,7 +454,7 @@ pub enum JoinSetRequest {
         schedule_at: HistoryEventScheduleAt,
     },
     // Must be created by the executor in `PendingState::Locked`.
-    #[display("ChildExecutionRequest({child_execution_id})")]
+    #[display("ChildExecutionRequest({child_execution_id}, params: {params})")]
     ChildExecutionRequest {
         child_execution_id: ExecutionIdDerived,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = Params::empty()))]
