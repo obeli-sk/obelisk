@@ -111,7 +111,7 @@ pub fn insert_json_into_tree(
     tree.insert(
         Node::new(NodeData {
             icon: Icon::Database,
-            label: html! {<> {"Serialized: "} <input type="text" value={json_string} /> </>},
+            label: html! {<> {"Serialized: "} <input type="text" readonly=true value={json_string} /> </>},
             ..Default::default()
         }),
         InsertBehavior::UnderNode(&parent_node),

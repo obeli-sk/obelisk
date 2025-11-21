@@ -111,8 +111,8 @@ pub fn attach_result_detail(
             if let Some(detail) = &failure.detail {
                 tree.insert(
                     Node::new(NodeData {
-                        icon: Icon::List,
-                        label: format!("detail: {detail}").into_html(),
+                        icon: Icon::Database,
+                        label: html! {<> {"Detail: "} <input type="text" readonly=true value={detail.clone()} /> </>},
                         ..Default::default()
                     }),
                     InsertBehavior::UnderNode(&error_node),
