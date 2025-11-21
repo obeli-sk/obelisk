@@ -2633,7 +2633,12 @@ impl DbExecutor for SqlitePool {
                 ),
             ));
         }
-        assert!(!events.batch.is_empty(), "Empty batch request"); // FIXME
+        if events.batch.is_empty() {
+            error!("Batch cannot be empty");
+            return Err(DbErrorWrite::Permanent(
+                DbErrorWritePermanent::ValidationFailed("batch cannot be empty".into()),
+            ));
+        }
         let (version, notifiers) = {
             self.transaction(
                 move |tx| {
