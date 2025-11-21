@@ -155,7 +155,7 @@ pub(crate) async fn tick(
                         derived
                             .split_to_parts()
                             .inspect_err(|err| {
-                                error!("cannot split execution {execution_id} to parts: {err:?}")
+                                error!("cannot split execution {execution_id} to parts: {err:?}");
                             })
                             .ok()
                     } else {
