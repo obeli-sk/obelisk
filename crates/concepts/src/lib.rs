@@ -1934,6 +1934,7 @@ pub enum ComponentType {
 pub struct ComponentId {
     pub component_type: ComponentType,
     pub name: StrVariant,
+    // TODO: Add ContentDigest
 }
 impl ComponentId {
     pub fn new(
