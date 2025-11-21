@@ -2783,7 +2783,7 @@ mod tests {
 
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
 
-        let (event_history, version) = load_event_history(
+        let (mut event_history, mut version) = load_event_history(
             db_connection.as_ref(),
             execution_id.clone(),
             sim_clock.now(),
@@ -2803,8 +2803,8 @@ mod tests {
                 db_connection.as_ref(),
                 MOCK_FFQN,
                 child_execution_id.clone(),
-                event_history,
-                version,
+                &mut event_history,
+                &mut version,
                 join_set_id.clone(),
                 sim_clock.now()
             )
@@ -2830,7 +2830,7 @@ mod tests {
             .unwrap();
 
         info!("Second run");
-        let (event_history, version) = load_event_history(
+        let (mut event_history, mut version) = load_event_history(
             db_connection.as_ref(),
             execution_id,
             sim_clock.now(),
@@ -2844,13 +2844,20 @@ mod tests {
             db_connection.as_ref(),
             MOCK_FFQN,
             child_execution_id,
-            event_history,
-            version,
+            &mut event_history,
+            &mut version,
             join_set_id,
             sim_clock.now(),
         )
         .await
-        .expect("should finish successfuly");
+        .expect("response was appended, should finish successfuly");
+
+        // finish the execution
+        let closed_count = event_history
+            .join_sets_close_on_finish(db_connection.as_ref(), &mut version, sim_clock.now())
+            .await
+            .unwrap();
+        assert_eq!(0, closed_count);
 
         drop(db_connection);
         db_close.close().await;
@@ -2962,6 +2969,13 @@ mod tests {
         ])))));
         let res = assert_matches!(res, ChildReturnValue::WastVal(res) => res);
         assert_eq!(child_resp_wrapped, res);
+
+        // finish the execution
+        let closed_count = event_history
+            .join_sets_close_on_finish(db_connection.as_ref(), &mut version, sim_clock.now())
+            .await
+            .unwrap();
+        assert_eq!(0, closed_count);
 
         db_close.close().await;
     }
@@ -3145,6 +3159,14 @@ mod tests {
             let res = assert_matches!(res, ChildReturnValue::WastVal(res) => res);
             assert_eq!(kid_b, res);
         }
+
+        // finish the execution
+        let closed_count = event_history
+            .join_sets_close_on_finish(db_connection.as_ref(), &mut version, sim_clock.now())
+            .await
+            .unwrap();
+        assert_eq!(0, closed_count);
+
         db_close.close().await;
     }
 
@@ -3203,6 +3225,13 @@ mod tests {
             .await
             .unwrap();
 
+        // finish the execution
+        let closed_count = event_history
+            .join_sets_close_on_finish(db_connection, &mut version, sim_clock.now())
+            .await
+            .unwrap();
+        assert_eq!(0, closed_count);
+
         db_close.close().await;
     }
 
@@ -3219,7 +3248,7 @@ mod tests {
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         let child_execution_id = execution_id.next_level(&join_set_id);
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
-        for run_id in 0..1 {
+        for run_id in 0..=1 {
             info!("Run {run_id}");
             let (mut event_history, mut version) = load_event_history(
                 db_connection,
@@ -3280,14 +3309,21 @@ mod tests {
                 child_return_value,
                 ChildReturnValue::WastVal(_child_execution_id)
             );
+
+            // finish the execution
+            let closed_count = event_history
+                .join_sets_close_on_finish(db_connection, &mut version, sim_clock.now())
+                .await
+                .unwrap();
+            assert_eq!(0, closed_count);
         }
 
         db_close.close().await;
     }
 
     #[tokio::test]
-    // Simulate idempotency of two executions setting the same value to the same execution.
-    async fn submit_stub_stub_with_same_value_should_be_ok() {
+    // Two executions are setting the same stub value to the target activity_stub.
+    async fn stubbing_many_times_with_same_value_should_be_ok() {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
@@ -3297,9 +3333,10 @@ mod tests {
         let execution_id = create_execution(db_connection, &sim_clock).await;
         let join_set_id =
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
-        let child_execution_id = execution_id.next_level(&join_set_id);
+        let target_activity_stub = execution_id.next_level(&join_set_id);
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
-        for run_id in 0..1 {
+        // First execution creates `target_activity_stub` and stubs its return value.
+        for run_id in 0..=1 {
             info!("Run {run_id}");
             let (mut event_history, mut version) = load_event_history(
                 db_connection,
@@ -3319,43 +3356,79 @@ mod tests {
                 &mut version,
                 join_set_id.clone(),
                 MOCK_FFQN,
-                child_execution_id.clone(),
+                target_activity_stub.clone(),
                 sim_clock.now(),
             )
             .await;
-            event_history
-                .apply(
-                    EventCall::Stub(Stub {
-                        target_ffqn: MOCK_FFQN,
-                        target_execution_id: child_execution_id.clone(),
-                        parent_id: execution_id.clone(),
-                        join_set_id: join_set_id.clone(),
-                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                        wasm_backtrace: None,
-                    }),
-                    db_connection,
-                    &mut version,
-                    sim_clock.now(),
-                )
-                .await
-                .unwrap();
+            for _ in 0..=1 {
+                // In the same execution we can ask many times to stub the same value to target_activity_stub
+                event_history
+                    .apply(
+                        EventCall::Stub(Stub {
+                            target_ffqn: MOCK_FFQN,
+                            target_execution_id: target_activity_stub.clone(),
+                            parent_id: execution_id.clone(),
+                            join_set_id: join_set_id.clone(),
+                            result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                            wasm_backtrace: None,
+                        }),
+                        db_connection,
+                        &mut version,
+                        sim_clock.now(),
+                    )
+                    .await
+                    .unwrap();
+            }
 
-            event_history
-                .apply(
-                    EventCall::Stub(Stub {
-                        target_ffqn: MOCK_FFQN,
-                        target_execution_id: child_execution_id.clone(),
-                        parent_id: execution_id.clone(),
-                        join_set_id: join_set_id.clone(),
-                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                        wasm_backtrace: None,
-                    }),
-                    db_connection,
-                    &mut version,
-                    sim_clock.now(),
-                )
+            // finish the execution
+            let closed_count = event_history
+                .join_sets_close_on_finish(db_connection, &mut version, sim_clock.now())
                 .await
                 .unwrap();
+            assert_eq!(0, closed_count);
+        }
+        drop(execution_id);
+        // Second execution
+        {
+            let execution_id = create_execution(db_connection, &sim_clock).await;
+            let (mut event_history, mut version) = load_event_history(
+                db_connection,
+                execution_id.clone(),
+                sim_clock.now(),
+                Duration::from_secs(1),
+                Arc::new(DeadlineTrackerFactoryTokio),
+                JoinNextBlockingStrategy::Await {
+                    non_blocking_event_batching: 0,
+                },
+                fn_registry.clone(),
+            )
+            .await;
+            for _ in 0..=1 {
+                // In the same execution we can ask many times to stub the same value to target_activity_stub
+                event_history
+                    .apply(
+                        EventCall::Stub(Stub {
+                            target_ffqn: MOCK_FFQN,
+                            target_execution_id: target_activity_stub.clone(),
+                            parent_id: execution_id.clone(),
+                            join_set_id: join_set_id.clone(),
+                            result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                            wasm_backtrace: None,
+                        }),
+                        db_connection,
+                        &mut version,
+                        sim_clock.now(),
+                    )
+                    .await
+                    .unwrap();
+            }
+
+            // finish the execution
+            let closed_count = event_history
+                .join_sets_close_on_finish(db_connection, &mut version, sim_clock.now())
+                .await
+                .unwrap();
+            assert_eq!(0, closed_count);
         }
 
         db_close.close().await;
@@ -3423,15 +3496,15 @@ mod tests {
         db_connection: &dyn DbConnection,
         ffqn: FunctionFqn,
         child_execution_id: ExecutionIdDerived,
-        mut event_history: EventHistory,
-        mut version: Version,
+        event_history: &mut EventHistory,
+        version: &mut Version,
         join_set_id: JoinSetId,
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, ApplyError> {
         apply_create_join_set_start_async(
             db_connection,
-            &mut event_history,
-            &mut version,
+            event_history,
+            version,
             join_set_id.clone(),
             ffqn.clone(),
             child_execution_id,
@@ -3446,7 +3519,7 @@ mod tests {
                     requested_ffqn: ffqn,
                 }),
                 db_connection,
-                &mut version,
+                version,
                 called_at,
             )
             .await
