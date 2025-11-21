@@ -558,6 +558,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                         join_set_id: join_set_id_direct.clone(),
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
+                            target_ffqn: ffqn.clone(),
                             params: params.clone(),
                         },
                     },

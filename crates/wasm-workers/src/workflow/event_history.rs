@@ -682,11 +682,13 @@ impl EventHistory {
                     request:
                         JoinSetRequest::ChildExecutionRequest {
                             child_execution_id,
+                            target_ffqn: stored_target_ffqn,
                             params: stored_params,
                         },
                 },
             ) if *join_set_id == *found_join_set_id
                 && *execution_id == *child_execution_id
+                && target_ffqn == stored_target_ffqn
                 && params == stored_params =>
             {
                 trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
@@ -1134,6 +1136,7 @@ impl EventHistory {
                     join_set_id: join_set_id.clone(),
                     request: JoinSetRequest::ChildExecutionRequest {
                         child_execution_id: child_execution_id.clone(),
+                        target_ffqn: target_ffqn.clone(),
                         params: params.clone(),
                     },
                 };
@@ -1435,6 +1438,7 @@ impl EventHistory {
                     join_set_id: join_set_id.clone(),
                     request: JoinSetRequest::ChildExecutionRequest {
                         child_execution_id: child_execution_id.clone(),
+                        target_ffqn: ffqn.clone(),
                         params: params.clone(),
                     },
                 };

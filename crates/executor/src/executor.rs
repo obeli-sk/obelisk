@@ -1294,6 +1294,7 @@ mod tests {
                         join_set_id: join_set_id.clone(),
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
+                            target_ffqn: FFQN_CHILD,
                             params,
                         },
                     },

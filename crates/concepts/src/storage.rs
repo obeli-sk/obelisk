@@ -364,7 +364,8 @@ pub enum HistoryEvent {
         join_set_id: JoinSetId,
         closing_strategy: ClosingStrategy,
     },
-    #[display("JoinSetRequest({join_set_id}, {request})")]
+    #[display("JoinSetRequest({request})")]
+    // join_set_id is part of ExecutionId or DelayId in the `request`
     JoinSetRequest {
         join_set_id: JoinSetId,
         request: JoinSetRequest,
@@ -454,9 +455,10 @@ pub enum JoinSetRequest {
         schedule_at: HistoryEventScheduleAt,
     },
     // Must be created by the executor in `PendingState::Locked`.
-    #[display("ChildExecutionRequest({child_execution_id}, params: {params})")]
+    #[display("ChildExecutionRequest({child_execution_id}, {target_ffqn}, params: {params})")]
     ChildExecutionRequest {
         child_execution_id: ExecutionIdDerived,
+        target_ffqn: FunctionFqn,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = Params::empty()))]
         params: Params,
     },

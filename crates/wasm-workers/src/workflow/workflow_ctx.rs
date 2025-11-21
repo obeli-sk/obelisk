@@ -2219,6 +2219,7 @@ pub(crate) mod tests {
                                 request:
                                     JoinSetRequest::ChildExecutionRequest {
                                         child_execution_id,
+                                        target_ffqn: _,
                                         params: _,
                                     },
                             } if last_join_set == found => Some(child_execution_id),
@@ -2500,6 +2501,7 @@ pub(crate) mod tests {
                     }
                     JoinSetRequest::ChildExecutionRequest {
                         child_execution_id,
+                        target_ffqn: _,
                         params: _,
                     } => {
                         assert!(child_execution_count > 0);

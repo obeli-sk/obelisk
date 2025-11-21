@@ -64,6 +64,10 @@ expression: execution_log
             "request": {
               "type": "ChildExecutionRequest",
               "child_execution_id": "E_00000000000000000000000000.n:a_1",
+              "target_ffqn": {
+                "ifc_fqn": "testing:stub-activity/activity",
+                "function_name": "foo"
+              },
               "params": [
                 "a"
               ]
@@ -106,6 +110,10 @@ expression: execution_log
             "request": {
               "type": "ChildExecutionRequest",
               "child_execution_id": "E_00000000000000000000000000.n:a_2",
+              "target_ffqn": {
+                "ifc_fqn": "testing:stub-activity/activity",
+                "function_name": "foo"
+              },
               "params": [
                 "aa"
               ]
@@ -161,6 +169,10 @@ expression: execution_log
             "request": {
               "type": "ChildExecutionRequest",
               "child_execution_id": "E_00000000000000000000000000.n:b_1",
+              "target_ffqn": {
+                "ifc_fqn": "testing:stub-activity/activity",
+                "function_name": "foo"
+              },
               "params": [
                 "b"
               ]
@@ -203,6 +215,10 @@ expression: execution_log
             "request": {
               "type": "ChildExecutionRequest",
               "child_execution_id": "E_00000000000000000000000000.n:b_2",
+              "target_ffqn": {
+                "ifc_fqn": "testing:stub-activity/activity",
+                "function_name": "foo"
+              },
               "params": [
                 "bb"
               ]
@@ -258,6 +274,10 @@ expression: execution_log
             "request": {
               "type": "ChildExecutionRequest",
               "child_execution_id": "E_00000000000000000000000000.n:f_1",
+              "target_ffqn": {
+                "ifc_fqn": "testing:stub-activity/activity",
+                "function_name": "foo"
+              },
               "params": [
                 "f"
               ]
@@ -300,6 +320,10 @@ expression: execution_log
             "request": {
               "type": "ChildExecutionRequest",
               "child_execution_id": "E_00000000000000000000000000.n:f_2",
+              "target_ffqn": {
+                "ifc_fqn": "testing:stub-activity/activity",
+                "function_name": "foo"
+              },
               "params": [
                 "ff"
               ]
@@ -434,6 +458,10 @@ expression: execution_log
             "request": {
               "type": "ChildExecutionRequest",
               "child_execution_id": "E_00000000000000000000000000.n:c_1",
+              "target_ffqn": {
+                "ifc_fqn": "testing:stub-activity/activity",
+                "function_name": "foo"
+              },
               "params": [
                 "c"
               ]
@@ -476,6 +504,10 @@ expression: execution_log
             "request": {
               "type": "ChildExecutionRequest",
               "child_execution_id": "E_00000000000000000000000000.n:c_2",
+              "target_ffqn": {
+                "ifc_fqn": "testing:stub-activity/activity",
+                "function_name": "foo"
+              },
               "params": [
                 "cc"
               ]
