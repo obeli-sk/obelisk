@@ -753,11 +753,12 @@ pub fn execution_error_to_wast_val(ret_type: &TypeWrapperTopLevel) -> WastVal {
 #[derive(Debug, Clone)]
 pub struct Params(ParamsInternal);
 
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 enum ParamsInternal {
     JsonValues(Arc<[Value]>),
     Vals {
         vals: Arc<[wasmtime::component::Val]>,
+        #[debug(skip)]
         json_vals_cache: Arc<std::sync::RwLock<Option<Arc<[Value]>>>>, // Caches json values
     },
     Empty,
