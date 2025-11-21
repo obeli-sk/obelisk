@@ -1,7 +1,19 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
 ## [Unreleased]
+
+## [0.27.0](https://github.com/obeli-sk/obelisk/compare/v0.26.2...v0.27.0)
+
+### Fixed
+Nondeterminism detection was improved: FFQN and parameters of child executions are now compared with the event stored in the database.
+
+### Changed
+- Database format, namely execution events structure, has been changed. This is an incompatible change, delete the old database with: `obelisk server run --clean-sqlite-directory`
+- Retry configuration has moved from `Created` to `Locked` event, meaning it applies the current configuration by the last executor.
 
 ## [0.26.2](https://github.com/obeli-sk/obelisk/compare/v0.26.1...v0.26.2)
 
