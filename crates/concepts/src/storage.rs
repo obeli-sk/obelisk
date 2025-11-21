@@ -198,6 +198,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     params: Params::empty(),
     parent: None,
     scheduled_at: DateTime::from_timestamp_nanos(0),
+    component_id: ComponentId::dummy_activity(),
     metadata: ExecutionMetadata::empty(),
     scheduled_by: None,
 };
@@ -232,6 +233,8 @@ pub enum ExecutionEventInner {
         params: Params,
         parent: Option<(ExecutionId, JoinSetId)>,
         scheduled_at: DateTime<Utc>,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
+        component_id: ComponentId,
         #[cfg_attr(any(test, feature = "test"), arbitrary(default))]
         metadata: ExecutionMetadata,
         scheduled_by: Option<ExecutionId>,
@@ -565,6 +568,7 @@ pub struct CreateRequest {
     pub params: Params,
     pub parent: Option<(ExecutionId, JoinSetId)>,
     pub scheduled_at: DateTime<Utc>,
+    pub component_id: ComponentId,
     pub metadata: ExecutionMetadata,
     pub scheduled_by: Option<ExecutionId>,
 }
@@ -576,6 +580,7 @@ impl From<CreateRequest> for ExecutionEventInner {
             params: value.params,
             parent: value.parent,
             scheduled_at: value.scheduled_at,
+            component_id: value.component_id,
             metadata: value.metadata,
             scheduled_by: value.scheduled_by,
         }
@@ -726,6 +731,7 @@ pub trait DbConnection: DbExecutor {
             params,
             parent,
             scheduled_at,
+            component_id,
             metadata,
             scheduled_by,
         } = execution_event.event
@@ -737,6 +743,7 @@ pub trait DbConnection: DbExecutor {
                 params,
                 parent,
                 scheduled_at,
+                component_id,
                 metadata,
                 scheduled_by,
             })

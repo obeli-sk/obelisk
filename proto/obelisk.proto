@@ -271,6 +271,7 @@ message ExecutionEvent {
         FunctionName function_name = 1;
         google.protobuf.Any params = 2;
         google.protobuf.Timestamp scheduled_at = 3;
+        ComponentId component_id = 4;
         optional ExecutionId scheduled_by = 5;
     }
 

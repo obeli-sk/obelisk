@@ -954,6 +954,7 @@ mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: config.created_at,
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -1241,6 +1242,7 @@ mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -1275,6 +1277,7 @@ mod tests {
                 parent: Some((parent_execution_id.clone(), join_set_id.clone())),
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             };
             let current_time = sim_clock.now();
@@ -1471,6 +1474,7 @@ mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await

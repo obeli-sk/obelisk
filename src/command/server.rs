@@ -327,7 +327,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         "cannot convert `schedule-at` - {serde_err}"
                     ))
                 })?;
-            // Find the target fn_metadata of the scheduled fn.
+            // Find the target fn_metadata of the scheduled fn. No need to change the `component_id` as they belong to the same component.
             let ffqn = FunctionFqn {
                 ifc_fqn: IfcFqnName::from_parts(
                     fn_metadata.ffqn.ifc_fqn.namespace(),
@@ -402,6 +402,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 params,
                 parent: None,
                 scheduled_at,
+                component_id: component_id.clone(),
                 scheduled_by: None,
             })
             .await

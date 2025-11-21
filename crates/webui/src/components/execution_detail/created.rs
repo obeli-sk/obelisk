@@ -1,4 +1,5 @@
 use crate::app::AppState;
+use crate::app::Route;
 use crate::components::execution_detail::tree_component::TreeComponent;
 use crate::components::execution_header::ExecutionLink;
 use crate::components::ffqn_with_links::FfqnWithLinks;
@@ -6,6 +7,7 @@ use crate::components::json_tree::JsonValue;
 use crate::components::json_tree::insert_json_into_tree;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::grpc_client;
+use crate::grpc::grpc_client::ComponentId;
 use crate::grpc::grpc_client::ExecutionId;
 use crate::grpc::version::VersionType;
 use chrono::{DateTime, Utc};
@@ -13,6 +15,7 @@ use grpc_client::execution_event::Created;
 use serde_json::Value;
 use yew::Html;
 use yew::prelude::*;
+use yew_router::prelude::Link;
 use yewprint::id_tree::{InsertBehavior, Node, TreeBuilder};
 use yewprint::{Icon, NodeData, TreeData};
 
@@ -29,6 +32,7 @@ impl CreatedEventProps {
             function_name: Some(function_name),
             params: Some(params),
             scheduled_at,
+            component_id: Some(component_id),
             scheduled_by,
         } = &self.created
         else {
@@ -60,6 +64,8 @@ impl CreatedEventProps {
             scheduled_at,
             ffqn,
             scheduled_by,
+            component_id: component_id.clone(),
+            component_exists: app_state.components_by_id.contains_key(component_id),
             version: self.version,
             link: self.link,
             is_selected: self.is_selected,
@@ -73,6 +79,8 @@ struct ProcessedProps {
     scheduled_at: DateTime<Utc>,
     ffqn: FunctionFqn,
     scheduled_by: Option<ExecutionId>,
+    component_id: ComponentId,
+    component_exists: bool,
     version: VersionType,
     link: ExecutionLink,
     is_selected: bool,
@@ -153,6 +161,25 @@ impl ProcessedProps {
             let _ =
                 insert_json_into_tree(&mut tree, param_name_node, JsonValue::Parsed(&param_value));
         }
+        // component id
+        tree.insert(
+            Node::new(NodeData {
+                icon: self.component_id.as_type().as_icon(),
+                label: html! {
+                    if self.component_exists {
+                        <Link<Route> to={Route::Component { component_id: self.component_id.clone() } }>
+                        { self.component_id.id }
+                        </Link<Route>>
+                    } else {
+                        { self.component_id.id }
+                    }
+                },
+                has_caret: false,
+                ..Default::default()
+            }),
+            InsertBehavior::UnderNode(&event_type),
+        )
+        .unwrap();
         // scheduled by
         if let Some(scheduled_by) = self.scheduled_by {
             tree.insert(

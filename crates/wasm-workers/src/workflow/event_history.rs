@@ -1134,6 +1134,7 @@ impl EventHistory {
 
             EventCall::SubmitChildExecution(SubmitChildExecution {
                 target_ffqn,
+                fn_component_id,
                 join_set_id,
                 child_execution_id,
                 params,
@@ -1162,6 +1163,7 @@ impl EventHistory {
                     parent: Some((self.execution_id.clone(), join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
+                    component_id: fn_component_id,
                     scheduled_by: None,
                 };
                 *version =
@@ -1262,6 +1264,7 @@ impl EventHistory {
                 scheduled_at_if_new,
                 execution_id: new_execution_id,
                 ffqn,
+                fn_component_id,
                 params,
                 wasm_backtrace,
             }) => {
@@ -1285,6 +1288,7 @@ impl EventHistory {
                     params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
                     scheduled_at: scheduled_at_if_new,
+                    component_id: fn_component_id,
                     scheduled_by: Some(self.execution_id.clone()),
                 };
                 *version =
@@ -1423,6 +1427,7 @@ impl EventHistory {
 
             EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
                 ffqn,
+                fn_component_id,
                 join_set_id,
                 child_execution_id,
                 params,
@@ -1476,6 +1481,7 @@ impl EventHistory {
                     parent: Some((self.execution_id.clone(), join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
+                    component_id: fn_component_id,
                     scheduled_by: None,
                 };
                 *version = {
@@ -2034,6 +2040,7 @@ impl JoinSetCreate {
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct SubmitChildExecution {
     pub(crate) target_ffqn: FunctionFqn,
+    pub(crate) fn_component_id: ComponentId,
     pub(crate) join_set_id: JoinSetId,
     pub(crate) child_execution_id: ExecutionIdDerived,
     #[debug(skip)]
@@ -2128,6 +2135,8 @@ pub(crate) struct Schedule {
     pub(crate) scheduled_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
     pub(crate) execution_id: ExecutionId,
     pub(crate) ffqn: FunctionFqn,
+    pub(crate) fn_component_id: ComponentId,
+    // pub(crate) fn_retry_config: ComponentRetryConfig,
     #[debug(skip)]
     pub(crate) params: Params,
     #[debug(skip)]
@@ -2269,6 +2278,7 @@ impl JoinNext {
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct OneOffChildExecutionRequest {
     ffqn: FunctionFqn,
+    fn_component_id: ComponentId,
     join_set_id: JoinSetId,
     child_execution_id: ExecutionIdDerived,
     #[debug(skip)]
@@ -2277,8 +2287,10 @@ pub(crate) struct OneOffChildExecutionRequest {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl OneOffChildExecutionRequest {
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn apply(
         ffqn: FunctionFqn,
+        fn_component_id: ComponentId,
         params: Params,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         event_history: &mut EventHistory,
@@ -2292,6 +2304,7 @@ impl OneOffChildExecutionRequest {
         let child_execution_id = event_history.execution_id.next_level(&join_set_id);
         let event = EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
             ffqn,
+            fn_component_id,
             join_set_id,
             child_execution_id,
             params,
@@ -2314,6 +2327,7 @@ impl OneOffChildExecutionRequest {
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn apply_invoke(
         ffqn: FunctionFqn,
+        fn_component_id: ComponentId,
         label: &str,
         params: Params,
         wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -2335,6 +2349,7 @@ impl OneOffChildExecutionRequest {
         let child_execution_id = event_history.execution_id.next_level(&join_set_id);
         let event = EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
             ffqn,
+            fn_component_id,
             join_set_id,
             child_execution_id,
             params,
@@ -2490,6 +2505,7 @@ impl EventCall {
             EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
                 join_set_id,
                 ffqn,
+                fn_component_id: _,
                 child_execution_id: _,
                 params: _,
                 wasm_backtrace: _,
@@ -2627,6 +2643,7 @@ impl EventCall {
                 child_execution_id,
                 target_ffqn,
                 params,
+                fn_component_id: _,
                 wasm_backtrace: _,
             }) => vec![DeterministicKey::ChildExecutionRequest {
                 join_set_id: join_set_id.clone(),
@@ -2660,6 +2677,7 @@ impl EventCall {
                 child_execution_id,
                 ffqn,
                 params,
+                fn_component_id: _,
                 wasm_backtrace: _,
             }) => vec![
                 DeterministicKey::CreateJoinSet {
@@ -3199,6 +3217,7 @@ mod tests {
                     scheduled_at_if_new: sim_clock.now(),
                     execution_id: ExecutionId::generate(),
                     ffqn: MOCK_FFQN,
+                    fn_component_id: ComponentId::dummy_activity(),
                     params: Params::empty(),
                     wasm_backtrace: None,
                 }),
@@ -3543,6 +3562,7 @@ mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
+                component_id: ComponentId::dummy_activity(),
                 scheduled_by: None,
             })
             .await
@@ -3640,6 +3660,7 @@ mod tests {
             .apply(
                 EventCall::SubmitChildExecution(SubmitChildExecution {
                     target_ffqn: ffqn,
+                    fn_component_id: ComponentId::dummy_activity(),
                     join_set_id,
                     child_execution_id,
                     params: Params::empty(),
@@ -3679,6 +3700,7 @@ mod tests {
             .apply(
                 EventCall::SubmitChildExecution(SubmitChildExecution {
                     target_ffqn: ffqn_b,
+                    fn_component_id: ComponentId::dummy_activity(),
                     join_set_id: join_set_id.clone(),
                     child_execution_id: child_execution_id_b,
                     params: Params::empty(),

@@ -392,6 +392,7 @@ pub fn from_execution_event_to_grpc(
                     params,
                     parent: _,
                     scheduled_at,
+                    component_id,
                     metadata: _,
                     scheduled_by,
                 } => grpc_gen::execution_event::Event::Created(grpc_gen::execution_event::Created {
@@ -401,6 +402,7 @@ pub fn from_execution_event_to_grpc(
                     ).expect("Params must be JSON-serializable")),
                     function_name: Some(grpc_gen::FunctionName::from(ffqn)),
                     scheduled_at: Some(prost_wkt_types::Timestamp::from(scheduled_at)),
+                    component_id: Some(component_id.into()),
                     scheduled_by: scheduled_by.map(|id| grpc_gen::ExecutionId { id: id.to_string() }),
                 }),
                 ExecutionEventInner::Locked {
