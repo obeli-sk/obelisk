@@ -1209,14 +1209,15 @@ impl<C: ClockFn> WorkflowCtx<C> {
         Ok(())
     }
 
-    pub(crate) async fn close_forgotten_join_sets(&mut self) -> Result<(), ApplyError> {
+    pub(crate) async fn join_sets_close_on_finish(&mut self) -> Result<(), ApplyError> {
         self.event_history
-            .close_forgotten_join_sets(
+            .join_sets_close_on_finish(
                 self.db_pool.connection().as_ref(),
                 &mut self.version,
                 self.clock_fn.now(),
             )
-            .await
+            .await?;
+        Ok(())
     }
 
     fn next_child_id(&mut self, join_set_id: &JoinSetId) -> ExecutionIdDerived {
@@ -1874,7 +1875,7 @@ pub(crate) mod tests {
                 }
             }
             info!("Closing opened join sets");
-            let res = match workflow_ctx.close_forgotten_join_sets().await {
+            let res = match workflow_ctx.join_sets_close_on_finish().await {
                 Ok(()) => {
                     info!("Finishing");
                     WorkerResult::Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY, workflow_ctx.version, None)

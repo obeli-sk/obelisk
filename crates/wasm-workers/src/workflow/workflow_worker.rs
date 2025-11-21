@@ -641,7 +641,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
 
     async fn close_join_sets(workflow_ctx: &mut WorkflowCtx<C>) -> Result<(), WorkerResult> {
         workflow_ctx
-            .close_forgotten_join_sets()
+            .join_sets_close_on_finish()
             .await
             .map_err(|err| match err {
                 ApplyError::InterruptDbUpdated => WorkerResult::DbUpdatedByWorkerOrWatcher,

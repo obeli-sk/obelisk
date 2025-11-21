@@ -476,20 +476,29 @@ impl EventHistory {
             })
     }
 
+    /// Close still open join sets. Final determinism check: there must be no unprocessed requests.
     #[instrument(skip_all)]
-    pub(crate) async fn close_forgotten_join_sets(
+    pub(crate) async fn join_sets_close_on_finish(
         &mut self,
         db_connection: &dyn DbConnection,
         version: &mut Version,
         called_at: DateTime<Utc>,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<usize /* number of closed join sets */, ApplyError> {
         debug!("close_forgotten_join_sets");
+        let mut closed_count = 0;
         while let Some(join_set_id) = self.last_join_set() {
             self.join_set_close_inner(join_set_id, db_connection, version, called_at, None)
                 .await?;
             // No action was needed, continue with next join set.
+            closed_count += 1;
         }
-        Ok(())
+        if let Some((found_idx, first_unprocessed)) = self.first_unprocessed_request() {
+            return Err(ApplyError::NondeterminismDetected(format!(
+                // FIXME: Add version
+                "found unprocessed event stored at index {found_idx}: event: {first_unprocessed}",
+            )));
+        }
+        Ok(closed_count)
     }
 
     // Return ChildReturnValue if response is found
