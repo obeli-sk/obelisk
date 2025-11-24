@@ -51,6 +51,8 @@ pub(crate) struct ConfigToml {
     pub(crate) wasm_global_config: WasmGlobalConfigToml,
     #[serde(default, rename = "activities")]
     pub(crate) activities_global_config: ActivitiesGlobalConfigToml,
+    #[serde(default, rename = "workflows")]
+    pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
     #[serde(default)]
     pub(crate) timers_watcher: TimersWatcherTomlConfig,
     #[serde(default, rename = "activity_wasm")]
@@ -218,6 +220,21 @@ impl ActivitiesGlobalConfigToml {
             Some(&self.directories)
         } else {
             None
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+
+pub(crate) struct WorkflowsGlobalConfigToml {
+    #[serde(default = "default_workflows_locking_leeway")]
+    pub(crate) locking_leeway: DurationConfig,
+}
+impl Default for WorkflowsGlobalConfigToml {
+    fn default() -> WorkflowsGlobalConfigToml {
+        WorkflowsGlobalConfigToml {
+            locking_leeway: default_workflows_locking_leeway(),
         }
     }
 }
@@ -1345,7 +1362,9 @@ fn default_out_style() -> LoggingStyle {
 fn default_sqlite_queue_capacity() -> usize {
     SqliteConfig::default().queue_capacity
 }
-
+fn default_workflows_locking_leeway() -> DurationConfig {
+    DurationConfig::Milliseconds(50)
+}
 fn default_activities_directories_enabled() -> bool {
     false
 }

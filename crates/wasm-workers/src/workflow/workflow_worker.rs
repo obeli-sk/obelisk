@@ -812,7 +812,12 @@ pub(crate) mod tests {
             .unwrap()
             .link(fn_registry.clone())
             .unwrap()
-            .into_worker(db_pool, Arc::new(DeadlineTrackerFactoryTokio)),
+            .into_worker(
+                db_pool,
+                Arc::new(DeadlineTrackerFactoryTokio {
+                    leeway: Duration::ZERO,
+                }),
+            ),
         );
         info!("Instantiated worker");
         let exec_config = ExecConfig {
@@ -1022,7 +1027,12 @@ pub(crate) mod tests {
             .unwrap()
             .link(fn_registry.clone())
             .unwrap()
-            .into_worker(db_pool, Arc::new(DeadlineTrackerFactoryTokio)),
+            .into_worker(
+                db_pool,
+                Arc::new(DeadlineTrackerFactoryTokio {
+                    leeway: Duration::ZERO,
+                }),
+            ),
         )
     }
 

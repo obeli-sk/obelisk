@@ -2806,7 +2806,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            Arc::new(DeadlineTrackerFactoryTokio),
+            DeadlineTrackerFactoryTokio::zero(),
             JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
             fn_registry.clone(),
         )
@@ -2853,7 +2853,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            Arc::new(DeadlineTrackerFactoryTokio),
+            DeadlineTrackerFactoryTokio::zero(),
             second_run_strategy,
             fn_registry,
         )
@@ -2905,7 +2905,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            Arc::new(DeadlineTrackerFactoryTokio),
+            DeadlineTrackerFactoryTokio::zero(),
             join_next_blocking_strategy,
             fn_registry.clone(),
         )
@@ -2950,7 +2950,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            Arc::new(DeadlineTrackerFactoryTokio),
+            DeadlineTrackerFactoryTokio::zero(),
             join_next_blocking_strategy,
             fn_registry,
         )
@@ -3041,7 +3041,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            Arc::new(DeadlineTrackerFactoryTokio),
+            DeadlineTrackerFactoryTokio::zero(),
             JoinNextBlockingStrategy::Interrupt, // First blocking strategy is always Interrupt
             fn_registry.clone(),
         )
@@ -3117,7 +3117,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::ZERO, // deadline
-            Arc::new(DeadlineTrackerFactoryTokio),
+            DeadlineTrackerFactoryTokio::zero(),
             JoinNextBlockingStrategy::Interrupt,
             fn_registry,
         )
@@ -3204,7 +3204,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            Arc::new(DeadlineTrackerFactoryTokio),
+            DeadlineTrackerFactoryTokio::zero(),
             JoinNextBlockingStrategy::Interrupt, // does not matter, there are no blocking events
             fn_registry,
         )
@@ -3274,7 +3274,7 @@ mod tests {
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1), // execution deadline
-                Arc::new(DeadlineTrackerFactoryTokio),
+                DeadlineTrackerFactoryTokio::zero(),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3362,7 +3362,7 @@ mod tests {
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1),
-                Arc::new(DeadlineTrackerFactoryTokio),
+                DeadlineTrackerFactoryTokio::zero(),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3415,7 +3415,7 @@ mod tests {
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1),
-                Arc::new(DeadlineTrackerFactoryTokio),
+                DeadlineTrackerFactoryTokio::zero(),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3474,7 +3474,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            Arc::new(DeadlineTrackerFactoryTokio),
+            DeadlineTrackerFactoryTokio::zero(),
             JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
             fn_registry.clone(),
         )
@@ -3521,7 +3521,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            Arc::new(DeadlineTrackerFactoryTokio),
+            DeadlineTrackerFactoryTokio::zero(),
             second_run_strategy,
             fn_registry,
         )

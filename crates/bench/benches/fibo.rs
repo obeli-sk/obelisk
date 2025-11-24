@@ -181,7 +181,12 @@ mod bench {
             .unwrap()
             .link(fn_registry.clone())
             .unwrap()
-            .into_worker(db_pool, Arc::new(DeadlineTrackerFactoryTokio)),
+            .into_worker(
+                db_pool,
+                Arc::new(DeadlineTrackerFactoryTokio {
+                    leeway: Duration::ZERO,
+                }),
+            ),
         );
         let exec_config = ExecConfig {
             batch_size: 1,

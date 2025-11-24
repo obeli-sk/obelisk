@@ -1319,6 +1319,7 @@ struct ServerVerified {
     parent_preopen_dir: Option<Arc<Path>>,
     activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
     build_semaphore: Option<u64>,
+    workflows_locking_leeway: Duration,
 }
 
 impl ServerVerified {
@@ -1332,6 +1333,7 @@ impl ServerVerified {
         path_prefixes: PathPrefixes,
     ) -> Result<(Self, ComponentSourceMap), anyhow::Error> {
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
+        let workflows_locking_leeway = config.workflows_global_config.locking_leeway.into();
         let engines = {
             let consume_fuel = fuel.is_some();
             let engine_config = EngineConfig {
@@ -1439,6 +1441,7 @@ impl ServerVerified {
                 parent_preopen_dir,
                 activities_cleanup,
                 build_semaphore,
+                workflows_locking_leeway,
             },
             component_source_map,
         ))
@@ -1466,6 +1469,7 @@ impl ServerCompiledLinked {
             server_verified.config.global_backtrace_persist,
             server_verified.config.fuel,
             server_verified.build_semaphore,
+            server_verified.workflows_locking_leeway,
         )
         .await?;
         Ok(Self {
@@ -1914,6 +1918,7 @@ async fn compile_and_verify(
     global_backtrace_persist: bool,
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
+    workflows_locking_leeway: Duration,
 ) -> Result<
     (
         LinkedComponents,
@@ -1984,7 +1989,8 @@ async fn compile_and_verify(
                 let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "workflow_compile", component_id = %workflow.component_id());
                 span.in_scope(|| {
-                    prespawn_workflow(workflow, &engines).map(|(worker, component_config)| {
+                    prespawn_workflow(workflow, &engines, workflows_locking_leeway)
+                    .map(|(worker, component_config)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
@@ -2164,6 +2170,7 @@ fn prespawn_activity(
 fn prespawn_workflow(
     workflow: WorkflowConfigVerified,
     engines: &Engines,
+    workflows_locking_leeway: Duration,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     assert!(workflow.component_id().component_type == ComponentType::Workflow);
     debug!("Instantiating workflow");
@@ -2187,11 +2194,17 @@ fn prespawn_workflow(
         workflow.content_digest,
         workflow.exec_config,
         wit,
+        workflows_locking_leeway,
     ))
 }
 
+struct WorkflowWorkerCompiledWithConfig {
+    worker: WorkflowWorkerCompiled<Now>,
+    workflows_locking_leeway: Duration,
+}
+
 struct WorkerCompiled {
-    worker: Either<Arc<dyn Worker>, WorkflowWorkerCompiled<Now>>,
+    worker: Either<Arc<dyn Worker>, WorkflowWorkerCompiledWithConfig>,
     exec_config: ExecConfig,
 }
 
@@ -2226,6 +2239,7 @@ impl WorkerCompiled {
         content_digest: ContentDigest,
         exec_config: ExecConfig,
         wit: Option<String>,
+        workflows_locking_leeway: Duration,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
@@ -2239,7 +2253,10 @@ impl WorkerCompiled {
         };
         (
             WorkerCompiled {
-                worker: Either::Right(worker),
+                worker: Either::Right(WorkflowWorkerCompiledWithConfig {
+                    worker,
+                    workflows_locking_leeway,
+                }),
                 exec_config,
             },
             component,
@@ -2251,17 +2268,23 @@ impl WorkerCompiled {
         Ok(WorkerLinked {
             worker: match self.worker {
                 Either::Left(activity) => Either::Left(activity),
-                Either::Right(workflow_compiled) => {
-                    Either::Right(workflow_compiled.link(fn_registry.clone())?)
-                }
+                Either::Right(workflow_compiled) => Either::Right(WorkflowWorkerLinkedWithConfig {
+                    worker: workflow_compiled.worker.link(fn_registry.clone())?,
+                    workflows_locking_leeway: workflow_compiled.workflows_locking_leeway,
+                }),
             },
             exec_config: self.exec_config,
         })
     }
 }
 
+struct WorkflowWorkerLinkedWithConfig {
+    worker: WorkflowWorkerLinked<Now>,
+    workflows_locking_leeway: Duration,
+}
+
 struct WorkerLinked {
-    worker: Either<Arc<dyn Worker>, WorkflowWorkerLinked<Now>>,
+    worker: Either<Arc<dyn Worker>, WorkflowWorkerLinkedWithConfig>,
     exec_config: ExecConfig,
 }
 impl WorkerLinked {
@@ -2272,9 +2295,12 @@ impl WorkerLinked {
     ) -> ExecutorTaskHandle {
         let worker = match self.worker {
             Either::Left(activity) => activity,
-            Either::Right(workflow_linked) => Arc::from(
-                workflow_linked.into_worker(db_pool.clone(), Arc::new(DeadlineTrackerFactoryTokio)),
-            ),
+            Either::Right(workflow_linked) => Arc::from(workflow_linked.worker.into_worker(
+                db_pool.clone(),
+                Arc::new(DeadlineTrackerFactoryTokio {
+                    leeway: workflow_linked.workflows_locking_leeway,
+                }),
+            )),
         };
         ExecTask::spawn_new(worker, self.exec_config, Now, db_executor, TokioSleep)
     }
