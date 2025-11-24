@@ -494,7 +494,7 @@ pub enum DbErrorWrite {
     #[error("non-retriable error: {0}")]
     NonRetriable(#[from] DbErrorWriteNonRetriable),
     #[error(transparent)]
-    DbErrorGeneric(#[from] DbErrorGeneric),
+    Generic(#[from] DbErrorGeneric),
 }
 
 /// Read error tied to an execution
@@ -503,14 +503,14 @@ pub enum DbErrorRead {
     #[error("cannot read - row not found")]
     NotFound,
     #[error(transparent)]
-    DbErrorGeneric(#[from] DbErrorGeneric),
+    Generic(#[from] DbErrorGeneric),
 }
 
 impl From<DbErrorRead> for DbErrorWrite {
     fn from(value: DbErrorRead) -> DbErrorWrite {
         match value {
             DbErrorRead::NotFound => DbErrorWrite::NotFound,
-            DbErrorRead::DbErrorGeneric(err) => DbErrorWrite::DbErrorGeneric(err),
+            DbErrorRead::Generic(err) => DbErrorWrite::Generic(err),
         }
     }
 }
@@ -746,7 +746,7 @@ pub trait DbConnection: DbExecutor {
             })
         } else {
             error!(%execution_id, "Execution log must start with creation");
-            Err(DbErrorRead::DbErrorGeneric(DbErrorGeneric::Uncategorized(
+            Err(DbErrorRead::Generic(DbErrorGeneric::Uncategorized(
                 "execution log must start with creation".into(),
             )))
         }
