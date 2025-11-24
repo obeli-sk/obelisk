@@ -97,10 +97,7 @@ impl ExecutionJournal {
     ) -> Result<Version, DbErrorWrite> {
         if self.pending_state.is_finished() {
             return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::CannotWrite {
-                    reason: "already finished".into(),
-                    expected_version: None,
-                },
+                DbErrorWritePermanent::IllegalState("already finished".into()),
             ));
         }
 

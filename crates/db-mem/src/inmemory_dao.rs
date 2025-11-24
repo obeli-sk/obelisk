@@ -580,10 +580,9 @@ impl DbHolder {
     fn create(&mut self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         if self.journals.contains_key(&req.execution_id) {
             return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::CannotWrite {
-                    reason: "execution already exists with the same id".into(),
-                    expected_version: None,
-                },
+                DbErrorWritePermanent::IllegalState(
+                    "execution already exists with the same id".into(),
+                ),
             ));
         }
         let subscription = self.ffqn_to_pending_subscription.get(&req.ffqn);
@@ -650,10 +649,7 @@ impl DbHolder {
         let expected_version = journal.version();
         if appending_version != expected_version {
             return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::CannotWrite {
-                    reason: "version conflict".into(),
-                    expected_version: Some(expected_version),
-                },
+                DbErrorWritePermanent::VersionConflict(expected_version),
             ));
         }
         let next_version = journal.append(created_at, event)?;
@@ -740,10 +736,7 @@ impl DbHolder {
                 journal.truncate_and_update_pending_state(truncate_len);
                 self.index.update(journal);
                 return Err(DbErrorWrite::Permanent(
-                    DbErrorWritePermanent::CannotWrite {
-                        reason: "version conflict".into(),
-                        expected_version: Some(expected_version),
-                    },
+                    DbErrorWritePermanent::VersionConflict(expected_version),
                 ));
             }
             match journal.append(append_request.created_at, append_request.event) {

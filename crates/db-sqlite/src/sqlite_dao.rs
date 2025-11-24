@@ -969,10 +969,7 @@ impl SqlitePool {
                 "Version conflict - expected: {expected_version:?}, appending: {appending_version:?}"
             );
             return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::CannotWrite {
-                    reason: "version conflict".into(),
-                    expected_version: Some(expected_version.clone()),
-                },
+                DbErrorWritePermanent::VersionConflict(expected_version.clone()),
             ));
         }
         Ok(())
@@ -1632,10 +1629,7 @@ impl SqlitePool {
         })
         .map_err(|err| {
             warn!("Cannot lock execution - {err:?}");
-            DbErrorWritePermanent::CannotWrite {
-                reason: "cannot lock execution".into(),
-                expected_version: None,
-            }
+            DbErrorWrite::Permanent(DbErrorWritePermanent::IllegalState("cannot lock".into()))
         })?;
 
         // Update `t_state`
@@ -1780,10 +1774,7 @@ impl SqlitePool {
         if combined_state.pending_state.is_finished() {
             debug!("Execution is already finished");
             return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::CannotWrite {
-                    reason: "already finished".into(),
-                    expected_version: None,
-                },
+                DbErrorWritePermanent::IllegalState("already finished".into()),
             ));
         }
 

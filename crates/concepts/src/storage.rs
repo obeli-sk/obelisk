@@ -471,21 +471,19 @@ pub enum JoinSetRequest {
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 pub enum DbErrorGeneric {
     #[error("database error: {0}")]
-    Uncategorized(StrVariant), // Previously GenericError
+    Uncategorized(StrVariant),
     #[error("database was closed")]
     Close,
 }
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
 pub enum DbErrorWritePermanent {
-    /// Parameter error.
     #[error("validation failed: {0}")]
     ValidationFailed(StrVariant),
-    #[error("cannot write: {reason}")]
-    CannotWrite {
-        reason: StrVariant,
-        expected_version: Option<Version>,
-    },
+    #[error("illegal state: {0}")]
+    IllegalState(StrVariant),
+    #[error("version conflict: {0}")]
+    VersionConflict(Version),
 }
 
 /// Write error tied to an execution
@@ -1154,20 +1152,17 @@ impl PendingState {
                     // Original executor is extending the lock.
                     Ok(LockKind::Extending)
                 } else {
-                    Err(DbErrorWritePermanent::CannotWrite {
-                        reason: "cannot lock, already locked".into(),
-                        expected_version: None,
-                    })
+                    Err(DbErrorWritePermanent::IllegalState(
+                        "cannot lock, already locked".into(),
+                    ))
                 }
             }
-            PendingState::BlockedByJoinSet { .. } => Err(DbErrorWritePermanent::CannotWrite {
-                reason: "cannot append Locked event when in BlockedByJoinSet state".into(),
-                expected_version: None,
-            }),
-            PendingState::Finished { .. } => Err(DbErrorWritePermanent::CannotWrite {
-                reason: "already finished".into(),
-                expected_version: None,
-            }),
+            PendingState::BlockedByJoinSet { .. } => Err(DbErrorWritePermanent::IllegalState(
+                "cannot append Locked event when in BlockedByJoinSet state".into(),
+            )),
+            PendingState::Finished { .. } => Err(DbErrorWritePermanent::IllegalState(
+                "already finished".into(),
+            )),
         }
     }
 
