@@ -442,11 +442,11 @@ impl EventHistory {
         while created_child_request_count > processed_child_response_count + close_count {
             debug!(%join_set_id, created_child_request_count, processed_child_response_count, "Flusing and adding JoinNext");
             self.apply_inner(
-                EventCall::JoinNext(JoinNext {
+                EventCall::Blocking(EventCallBlocking::JoinNext(JoinNext {
                     join_set_id: join_set_id.clone(),
                     closing: true,
                     wasm_backtrace: wasm_backtrace.clone(),
-                }),
+                })),
                 db_connection,
                 version,
                 called_at,
@@ -996,13 +996,14 @@ impl EventHistory {
         db_connection: &dyn DbConnection,
         current_time: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
-        match &self.non_blocking_event_batch {
-            Some(vec) if vec.len() >= self.non_blocking_event_batch_size => {
+        if let Some(vec) = &self.non_blocking_event_batch {
+            let too_many = vec.len() >= self.non_blocking_event_batch_size;
+            if too_many {
                 self.flush_non_blocking_event_cache(db_connection, current_time)
-                    .await
+                    .await?;
             }
-            _ => Ok(()),
         }
+        Ok(())
     }
 
     #[instrument(level = tracing::Level::DEBUG, skip(self, db_connection))]
@@ -1067,11 +1068,11 @@ impl EventHistory {
         // NB: Flush the cache before writing to the DB.
         trace!(%version, "append_to_db");
         match event_call {
-            EventCall::JoinSetCreate(JoinSetCreate {
+            EventCall::NonBlocking(EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
                 join_set_id,
                 closing_strategy,
                 wasm_backtrace,
-            }) => {
+            })) => {
                 // a non-cacheable event: Flush the cache, write the event and persist_backtrace_blocking
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
                 let event = HistoryEvent::JoinSetCreate {
@@ -1102,11 +1103,11 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::Persist(Persist {
+            EventCall::NonBlocking(EventCallNonBlocking::Persist(Persist {
                 value,
                 kind,
                 wasm_backtrace,
-            }) => {
+            })) => {
                 // Non-cacheable event.
                 let event = HistoryEvent::Persist { value, kind };
                 let history_events = vec![event.clone()];
@@ -1132,14 +1133,16 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::SubmitChildExecution(SubmitChildExecution {
-                target_ffqn,
-                fn_component_id,
-                join_set_id,
-                child_execution_id,
-                params,
-                wasm_backtrace,
-            }) => {
+            EventCall::NonBlocking(EventCallNonBlocking::SubmitChildExecution(
+                SubmitChildExecution {
+                    target_ffqn,
+                    fn_component_id,
+                    join_set_id,
+                    child_execution_id,
+                    params,
+                    wasm_backtrace,
+                },
+            )) => {
                 // Cacheable event.
                 debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
                 let event = HistoryEvent::JoinSetRequest {
@@ -1212,13 +1215,13 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::SubmitDelay(SubmitDelay {
+            EventCall::NonBlocking(EventCallNonBlocking::SubmitDelay(SubmitDelay {
                 join_set_id,
                 delay_id,
                 schedule_at,
                 expires_at_if_new,
                 wasm_backtrace,
-            }) => {
+            })) => {
                 // Non-cacheable event.
                 debug!(%delay_id, %join_set_id, "SubmitDelay");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
@@ -1259,7 +1262,7 @@ impl EventHistory {
                 Ok(vec![event])
             }
 
-            EventCall::Schedule(Schedule {
+            EventCall::NonBlocking(EventCallNonBlocking::Schedule(Schedule {
                 schedule_at,
                 scheduled_at_if_new,
                 execution_id: new_execution_id,
@@ -1267,7 +1270,7 @@ impl EventHistory {
                 fn_component_id,
                 params,
                 wasm_backtrace,
-            }) => {
+            })) => {
                 // Cacheable event.
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
@@ -1337,11 +1340,11 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::JoinNext(JoinNext {
+            EventCall::Blocking(EventCallBlocking::JoinNext(JoinNext {
                 join_set_id,
                 closing,
                 wasm_backtrace,
-            }) => {
+            })) => {
                 // Non-cacheable event.
                 debug!(%join_set_id, "JoinNext(closing:{closing}): Flushing and appending JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
@@ -1381,11 +1384,13 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
-                join_set_id,
-                requested_ffqn,
-                wasm_backtrace,
-            }) => {
+            EventCall::Blocking(EventCallBlocking::JoinNextRequestingFfqn(
+                JoinNextRequestingFfqn {
+                    join_set_id,
+                    requested_ffqn,
+                    wasm_backtrace,
+                },
+            )) => {
                 // Non-cacheable event.
                 debug!(%join_set_id, "BlockingChildAwaitNext: Flushing and appending JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
@@ -1425,14 +1430,16 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
-                ffqn,
-                fn_component_id,
-                join_set_id,
-                child_execution_id,
-                params,
-                wasm_backtrace,
-            }) => {
+            EventCall::Blocking(EventCallBlocking::OneOffChildExecutionRequest(
+                OneOffChildExecutionRequest {
+                    ffqn,
+                    fn_component_id,
+                    join_set_id,
+                    child_execution_id,
+                    params,
+                    wasm_backtrace,
+                },
+            )) => {
                 // Non-cacheable event.
                 debug!(%child_execution_id, %join_set_id,
                     "OneOffChildExecutionRequest: Flushing and appending JoinSet,ChildExecutionRequest,JoinNext");
@@ -1507,13 +1514,13 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::OneOffDelayRequest(OneOffDelayRequest {
+            EventCall::Blocking(EventCallBlocking::OneOffDelayRequest(OneOffDelayRequest {
                 join_set_id,
                 delay_id,
                 schedule_at,
                 expires_at_if_new,
                 wasm_backtrace,
-            }) => {
+            })) => {
                 // Non-cacheable event.
                 debug!(%delay_id, %join_set_id, "BlockingDelayRequest: Flushing and appending JoinSet,DelayRequest,JoinNext");
                 self.flush_non_blocking_event_cache(db_connection, called_at)
@@ -1574,14 +1581,14 @@ impl EventHistory {
                 Ok(history_events)
             }
 
-            EventCall::Stub(Stub {
+            EventCall::NonBlocking(EventCallNonBlocking::Stub(Stub {
                 target_ffqn,
                 target_execution_id,
                 parent_id,
                 join_set_id,
                 result,
                 wasm_backtrace,
-            }) => {
+            })) => {
                 // Attempt to write to target_execution_id, will continue on conflict.
                 // Non-cacheable event. (could be turned into one)
                 // The idempotent write is needed to avoid race with stub requests originating from gRPC.
@@ -1989,15 +1996,25 @@ impl JoinNextVariant {
 
 #[derive(derive_more::Debug, Clone, IntoStaticStr)]
 pub(crate) enum EventCall {
+    Blocking(EventCallBlocking),
+    NonBlocking(EventCallNonBlocking),
+}
+
+#[derive(derive_more::Debug, Clone, IntoStaticStr)]
+pub(crate) enum EventCallBlocking {
+    JoinNextRequestingFfqn(JoinNextRequestingFfqn),
+    JoinNext(JoinNext),
+    OneOffChildExecutionRequest(OneOffChildExecutionRequest), // blocking call
+    OneOffDelayRequest(OneOffDelayRequest),                   // blocking sleep
+}
+
+#[derive(derive_more::Debug, Clone, IntoStaticStr)]
+pub(crate) enum EventCallNonBlocking {
     JoinSetCreate(JoinSetCreate),
     SubmitChildExecution(SubmitChildExecution),
     SubmitDelay(SubmitDelay),
     Schedule(Schedule),
     Stub(Stub),
-    JoinNextRequestingFfqn(JoinNextRequestingFfqn),
-    JoinNext(JoinNext),
-    OneOffChildExecutionRequest(OneOffChildExecutionRequest), // blocking call
-    OneOffDelayRequest(OneOffDelayRequest),                   // blocking sleep
     Persist(Persist),
 }
 
@@ -2020,7 +2037,7 @@ impl JoinSetCreate {
         let join_set_id = self.join_set_id.clone();
         let value = event_history
             .apply_inner(
-                EventCall::JoinSetCreate(self),
+                EventCall::NonBlocking(EventCallNonBlocking::JoinSetCreate(self)),
                 db_connection,
                 version,
                 called_at,
@@ -2064,7 +2081,7 @@ impl SubmitChildExecution {
         let join_set_id = self.join_set_id.clone();
         let value = event_history
             .apply(
-                EventCall::SubmitChildExecution(self),
+                EventCall::NonBlocking(EventCallNonBlocking::SubmitChildExecution(self)),
                 db_connection,
                 version,
                 called_at,
@@ -2115,7 +2132,7 @@ impl SubmitDelay {
         assert!(!event_history.closed_join_sets.contains(&self.join_set_id));
         let value = event_history
             .apply(
-                EventCall::SubmitDelay(self),
+                EventCall::NonBlocking(EventCallNonBlocking::SubmitDelay(self)),
                 db_connection,
                 version,
                 called_at,
@@ -2151,7 +2168,12 @@ impl Schedule {
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val /* ExecutionId */, WorkflowFunctionError> {
         let value = event_history
-            .apply(EventCall::Schedule(self), db_connection, version, called_at)
+            .apply(
+                EventCall::NonBlocking(EventCallNonBlocking::Schedule(self)),
+                db_connection,
+                version,
+                called_at,
+            )
             .await?;
         // TODO: Must be an ExecutionId
         match value {
@@ -2186,7 +2208,12 @@ impl Stub {
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let value = event_history
-            .apply(EventCall::Stub(self), db_connection, version, called_at)
+            .apply(
+                EventCall::NonBlocking(EventCallNonBlocking::Stub(self)),
+                db_connection,
+                version,
+                called_at,
+            )
             .await?;
 
         match value {
@@ -2226,7 +2253,7 @@ impl JoinNextRequestingFfqn {
         assert!(!event_history.closed_join_sets.contains(&self.join_set_id));
         let value = event_history
             .apply(
-                EventCall::JoinNextRequestingFfqn(self),
+                EventCall::Blocking(EventCallBlocking::JoinNextRequestingFfqn(self)),
                 db_connection,
                 version,
                 called_at,
@@ -2268,7 +2295,12 @@ impl JoinNext {
         );
         assert!(!event_history.closed_join_sets.contains(&self.join_set_id));
         let value = event_history
-            .apply_inner(EventCall::JoinNext(self), db_connection, version, called_at)
+            .apply_inner(
+                EventCall::Blocking(EventCallBlocking::JoinNext(self)),
+                db_connection,
+                version,
+                called_at,
+            )
             .await?;
         let value = assert_matches!(value,ChildReturnValue::JoinNext(value) => value);
         Ok(value)
@@ -2302,14 +2334,16 @@ impl OneOffChildExecutionRequest {
             .next_join_set_one_off_named(&ffqn.function_name)
             .expect("no illegal chars in fn name: only alphanumeric and dash");
         let child_execution_id = event_history.execution_id.next_level(&join_set_id);
-        let event = EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
-            ffqn,
-            fn_component_id,
-            join_set_id,
-            child_execution_id,
-            params,
-            wasm_backtrace,
-        });
+        let event = EventCall::Blocking(EventCallBlocking::OneOffChildExecutionRequest(
+            OneOffChildExecutionRequest {
+                ffqn,
+                fn_component_id,
+                join_set_id,
+                child_execution_id,
+                params,
+                wasm_backtrace,
+            },
+        ));
 
         let value = event_history
             .apply(event, db_connection, version, called_at)
@@ -2347,14 +2381,16 @@ impl OneOffChildExecutionRequest {
             }
         };
         let child_execution_id = event_history.execution_id.next_level(&join_set_id);
-        let event = EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
-            ffqn,
-            fn_component_id,
-            join_set_id,
-            child_execution_id,
-            params,
-            wasm_backtrace,
-        });
+        let event = EventCall::Blocking(EventCallBlocking::OneOffChildExecutionRequest(
+            OneOffChildExecutionRequest {
+                ffqn,
+                fn_component_id,
+                join_set_id,
+                child_execution_id,
+                params,
+                wasm_backtrace,
+            },
+        ));
 
         match event_history
             .apply_inner(event, db_connection, version, called_at)
@@ -2402,13 +2438,13 @@ impl OneOffDelayRequest {
 
         let ChildReturnValue::OneOffDelay { scheduled_at } = event_history
             .apply(
-                EventCall::OneOffDelayRequest(OneOffDelayRequest {
+                EventCall::Blocking(EventCallBlocking::OneOffDelayRequest(OneOffDelayRequest {
                     join_set_id,
                     delay_id,
                     schedule_at,
                     expires_at_if_new,
                     wasm_backtrace,
-                }),
+                })),
                 db_connection,
                 version,
                 called_at,
@@ -2444,14 +2480,14 @@ impl Persist {
         let value = Vec::from_iter(value.bytes());
         let value = event_history
             .apply(
-                EventCall::Persist(Persist {
+                EventCall::NonBlocking(EventCallNonBlocking::Persist(Persist {
                     value,
                     kind: PersistKind::RandomString {
                         min_length,
                         max_length_exclusive,
                     },
                     wasm_backtrace,
-                }),
+                })),
                 db_connection,
                 version,
                 called_at,
@@ -2476,11 +2512,11 @@ impl Persist {
         let value = Vec::from(storage::from_u64_to_bytes(value));
         let value = event_history
             .apply(
-                EventCall::Persist(Persist {
+                EventCall::NonBlocking(EventCallNonBlocking::Persist(Persist {
                     value,
                     kind: PersistKind::RandomU64 { min, max_inclusive },
                     wasm_backtrace,
-                }),
+                })),
                 db_connection,
                 version,
                 called_at,
@@ -2493,8 +2529,10 @@ impl Persist {
 
 impl Display for EventCall {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s: &'static str = self.into();
-        write!(f, "{s}")
+        match self {
+            EventCall::Blocking(inner) => write!(f, "{}", <&str>::from(inner)),
+            EventCall::NonBlocking(inner) => write!(f, "{}", <&str>::from(inner)),
+        }
     }
 }
 
@@ -2502,49 +2540,48 @@ impl EventCall {
     fn join_next_variant(&self) -> Option<JoinNextVariant> {
         match &self {
             // Blocking calls can be polled for JoinSetResponse
-            EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
-                join_set_id,
-                ffqn,
-                fn_component_id: _,
-                child_execution_id: _,
-                params: _,
-                wasm_backtrace: _,
-            }) => Some(JoinNextVariant::Child {
+            EventCall::Blocking(EventCallBlocking::OneOffChildExecutionRequest(
+                OneOffChildExecutionRequest {
+                    join_set_id,
+                    ffqn,
+                    fn_component_id: _,
+                    child_execution_id: _,
+                    params: _,
+                    wasm_backtrace: _,
+                },
+            )) => Some(JoinNextVariant::Child {
                 join_set_id: join_set_id.clone(),
                 kind: JoinNextChildKind::DirectCall,
                 requested_ffqn: ffqn.clone(),
             }),
-            EventCall::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
-                join_set_id,
-                requested_ffqn,
-                wasm_backtrace: _,
-            }) => Some(JoinNextVariant::Child {
+            EventCall::Blocking(EventCallBlocking::JoinNextRequestingFfqn(
+                JoinNextRequestingFfqn {
+                    join_set_id,
+                    requested_ffqn,
+                    wasm_backtrace: _,
+                },
+            )) => Some(JoinNextVariant::Child {
                 join_set_id: join_set_id.clone(),
                 kind: JoinNextChildKind::AwaitNext,
                 requested_ffqn: requested_ffqn.clone(),
             }),
-            EventCall::OneOffDelayRequest(OneOffDelayRequest {
+            EventCall::Blocking(EventCallBlocking::OneOffDelayRequest(OneOffDelayRequest {
                 join_set_id,
                 delay_id: _,
                 schedule_at: _,
                 expires_at_if_new: _,
                 wasm_backtrace: _,
-            }) => Some(JoinNextVariant::Delay(join_set_id.clone())),
-            EventCall::JoinNext(JoinNext {
+            })) => Some(JoinNextVariant::Delay(join_set_id.clone())),
+            EventCall::Blocking(EventCallBlocking::JoinNext(JoinNext {
                 join_set_id,
                 closing,
                 wasm_backtrace: _,
-            }) => Some(JoinNextVariant::Opaque {
+            })) => Some(JoinNextVariant::Opaque {
                 join_set_id: join_set_id.clone(),
                 closing: *closing,
             }),
 
-            EventCall::JoinSetCreate { .. }
-            | EventCall::SubmitChildExecution { .. }
-            | EventCall::SubmitDelay { .. }
-            | EventCall::Schedule { .. }
-            | EventCall::Persist { .. }
-            | EventCall::Stub { .. } => None, // No response polling is needed.
+            EventCall::NonBlocking(_) => None, // No response polling is needed.
         }
     }
 }
@@ -2622,64 +2659,72 @@ enum JoinNextChildKind {
 impl EventCall {
     fn as_keys(&self) -> Vec<DeterministicKey> {
         match self {
-            EventCall::JoinSetCreate(JoinSetCreate {
+            EventCall::NonBlocking(EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
                 join_set_id,
                 closing_strategy,
                 ..
-            }) => {
+            })) => {
                 vec![DeterministicKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: *closing_strategy,
                 }]
             }
-            EventCall::Persist(Persist { value, kind, .. }) => {
+            EventCall::NonBlocking(EventCallNonBlocking::Persist(Persist {
+                value, kind, ..
+            })) => {
                 vec![DeterministicKey::Persist {
                     value: value.clone(),
                     kind: *kind,
                 }]
             }
-            EventCall::SubmitChildExecution(SubmitChildExecution {
-                join_set_id,
-                child_execution_id,
-                target_ffqn,
-                params,
-                fn_component_id: _,
-                wasm_backtrace: _,
-            }) => vec![DeterministicKey::ChildExecutionRequest {
+            EventCall::NonBlocking(EventCallNonBlocking::SubmitChildExecution(
+                SubmitChildExecution {
+                    join_set_id,
+                    child_execution_id,
+                    target_ffqn,
+                    params,
+                    fn_component_id: _,
+                    wasm_backtrace: _,
+                },
+            )) => vec![DeterministicKey::ChildExecutionRequest {
                 join_set_id: join_set_id.clone(),
                 child_execution_id: child_execution_id.clone(),
                 target_ffqn: target_ffqn.clone(),
                 params: params.clone(),
             }],
-            EventCall::SubmitDelay(SubmitDelay {
+            EventCall::NonBlocking(EventCallNonBlocking::SubmitDelay(SubmitDelay {
                 delay_id,
                 join_set_id,
                 schedule_at: timeout,
                 ..
-            }) => vec![DeterministicKey::DelayRequest {
+            })) => vec![DeterministicKey::DelayRequest {
                 join_set_id: join_set_id.clone(),
                 delay_id: delay_id.clone(),
                 schedule_at: *timeout,
             }],
-            EventCall::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
-                join_set_id,
-                requested_ffqn,
-                ..
-            }) => {
+            EventCall::Blocking(EventCallBlocking::JoinNextRequestingFfqn(
+                JoinNextRequestingFfqn {
+                    join_set_id,
+                    requested_ffqn,
+                    ..
+                },
+            )) => {
                 vec![DeterministicKey::JoinNextChild {
                     join_set_id: join_set_id.clone(),
                     kind: JoinNextChildKind::AwaitNext,
                     requested_ffqn: requested_ffqn.clone(),
                 }]
             }
-            EventCall::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
-                join_set_id,
-                child_execution_id,
-                ffqn,
-                params,
-                fn_component_id: _,
-                wasm_backtrace: _,
-            }) => vec![
+            EventCall::Blocking(EventCallBlocking::OneOffChildExecutionRequest(
+                OneOffChildExecutionRequest {
+                    join_set_id,
+                    child_execution_id,
+                    ffqn,
+                    params,
+                    fn_component_id: _,
+                    wasm_backtrace: _,
+                },
+            )) => vec![
                 DeterministicKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::default(),
@@ -2696,12 +2741,12 @@ impl EventCall {
                     requested_ffqn: ffqn.clone(),
                 },
             ],
-            EventCall::OneOffDelayRequest(OneOffDelayRequest {
+            EventCall::Blocking(EventCallBlocking::OneOffDelayRequest(OneOffDelayRequest {
                 join_set_id,
                 delay_id,
                 schedule_at,
                 ..
-            }) => vec![
+            })) => vec![
                 DeterministicKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::default(),
@@ -2715,29 +2760,29 @@ impl EventCall {
                     join_set_id: join_set_id.clone(),
                 },
             ],
-            EventCall::JoinNext(JoinNext {
+            EventCall::Blocking(EventCallBlocking::JoinNext(JoinNext {
                 join_set_id,
                 closing,
                 wasm_backtrace: _,
-            }) => vec![DeterministicKey::JoinNext {
+            })) => vec![DeterministicKey::JoinNext {
                 join_set_id: join_set_id.clone(),
                 closing: *closing,
             }],
-            EventCall::Schedule(Schedule {
+            EventCall::NonBlocking(EventCallNonBlocking::Schedule(Schedule {
                 execution_id,
                 schedule_at,
                 ..
-            }) => {
+            })) => {
                 vec![DeterministicKey::Schedule {
                     target_execution_id: execution_id.clone(),
                     schedule_at: *schedule_at,
                 }]
             }
-            EventCall::Stub(Stub {
+            EventCall::NonBlocking(EventCallNonBlocking::Stub(Stub {
                 target_execution_id,
                 result: return_value,
                 ..
-            }) => {
+            })) => {
                 vec![DeterministicKey::Stub {
                     target_execution_id: target_execution_id.clone(),
                     return_value: return_value.clone(),
@@ -2749,7 +2794,9 @@ impl EventCall {
 
 #[cfg(test)]
 mod tests {
-    use super::super::event_history::{EventCall, EventHistory};
+    use super::super::event_history::{
+        EventCall, EventCallBlocking, EventCallNonBlocking, EventHistory,
+    };
     use super::super::host_exports::execution_id_into_wast_val;
     use super::super::workflow_worker::JoinNextBlockingStrategy;
     use super::SubmitChildExecution;
@@ -2969,11 +3016,13 @@ mod tests {
         // issue BlockingChildJoinNext
         let res = event_history
             .apply(
-                EventCall::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
-                    join_set_id,
-                    wasm_backtrace: None,
-                    requested_ffqn: MOCK_FFQN,
-                }),
+                EventCall::Blocking(EventCallBlocking::JoinNextRequestingFfqn(
+                    JoinNextRequestingFfqn {
+                        join_set_id,
+                        wasm_backtrace: None,
+                        requested_ffqn: MOCK_FFQN,
+                    },
+                )),
                 db_pool.connection().as_ref(),
                 &mut version,
                 sim_clock.now(),
@@ -3159,11 +3208,13 @@ mod tests {
             // second child result should be found
             let res = event_history
                 .apply(
-                    EventCall::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
-                        join_set_id,
-                        wasm_backtrace: None,
-                        requested_ffqn: submit_ffqn_2.clone(),
-                    }),
+                    EventCall::Blocking(EventCallBlocking::JoinNextRequestingFfqn(
+                        JoinNextRequestingFfqn {
+                            join_set_id,
+                            wasm_backtrace: None,
+                            requested_ffqn: submit_ffqn_2.clone(),
+                        },
+                    )),
                     db_pool.connection().as_ref(),
                     &mut version,
                     sim_clock.now(),
@@ -3212,7 +3263,7 @@ mod tests {
 
         event_history
             .apply(
-                EventCall::Schedule(Schedule {
+                EventCall::NonBlocking(EventCallNonBlocking::Schedule(Schedule {
                     schedule_at: HistoryEventScheduleAt::Now,
                     scheduled_at_if_new: sim_clock.now(),
                     execution_id: ExecutionId::generate(),
@@ -3220,7 +3271,7 @@ mod tests {
                     fn_component_id: ComponentId::dummy_activity(),
                     params: Params::empty(),
                     wasm_backtrace: None,
-                }),
+                })),
                 db_connection,
                 &mut version,
                 sim_clock.now(),
@@ -3232,11 +3283,11 @@ mod tests {
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         event_history
             .apply(
-                EventCall::JoinSetCreate(JoinSetCreate {
+                EventCall::NonBlocking(EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::Complete,
                     wasm_backtrace: None,
-                }),
+                })),
                 db_connection,
                 &mut version,
                 sim_clock.now(),
@@ -3295,14 +3346,14 @@ mod tests {
 
             event_history
                 .apply(
-                    EventCall::Stub(Stub {
+                    EventCall::NonBlocking(EventCallNonBlocking::Stub(Stub {
                         target_ffqn: MOCK_FFQN,
                         target_execution_id: child_execution_id.clone(),
                         parent_id: execution_id.clone(),
                         join_set_id: join_set_id.clone(),
                         result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         wasm_backtrace: None,
-                    }),
+                    })),
                     db_connection,
                     &mut version,
                     sim_clock.now(),
@@ -3312,11 +3363,13 @@ mod tests {
 
             let child_return_value = event_history
                 .apply(
-                    EventCall::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
-                        join_set_id: join_set_id.clone(),
-                        wasm_backtrace: None,
-                        requested_ffqn: MOCK_FFQN,
-                    }),
+                    EventCall::Blocking(EventCallBlocking::JoinNextRequestingFfqn(
+                        JoinNextRequestingFfqn {
+                            join_set_id: join_set_id.clone(),
+                            wasm_backtrace: None,
+                            requested_ffqn: MOCK_FFQN,
+                        },
+                    )),
                     db_connection,
                     &mut version,
                     sim_clock.now(),
@@ -3383,14 +3436,14 @@ mod tests {
                 // In the same execution we can ask many times to stub the same value to target_activity_stub
                 event_history
                     .apply(
-                        EventCall::Stub(Stub {
+                        EventCall::NonBlocking(EventCallNonBlocking::Stub(Stub {
                             target_ffqn: MOCK_FFQN,
                             target_execution_id: target_activity_stub.clone(),
                             parent_id: execution_id.clone(),
                             join_set_id: join_set_id.clone(),
                             result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                             wasm_backtrace: None,
-                        }),
+                        })),
                         db_connection,
                         &mut version,
                         sim_clock.now(),
@@ -3426,14 +3479,14 @@ mod tests {
                 // In the same execution we can ask many times to stub the same value to target_activity_stub
                 event_history
                     .apply(
-                        EventCall::Stub(Stub {
+                        EventCall::NonBlocking(EventCallNonBlocking::Stub(Stub {
                             target_ffqn: MOCK_FFQN,
                             target_execution_id: target_activity_stub.clone(),
                             parent_id: execution_id.clone(),
                             join_set_id: join_set_id.clone(),
                             result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                             wasm_backtrace: None,
-                        }),
+                        })),
                         db_connection,
                         &mut version,
                         sim_clock.now(),
@@ -3622,11 +3675,13 @@ mod tests {
         .await;
         event_history
             .apply_inner(
-                EventCall::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
-                    join_set_id,
-                    wasm_backtrace: None,
-                    requested_ffqn: ffqn,
-                }),
+                EventCall::Blocking(EventCallBlocking::JoinNextRequestingFfqn(
+                    JoinNextRequestingFfqn {
+                        join_set_id,
+                        wasm_backtrace: None,
+                        requested_ffqn: ffqn,
+                    },
+                )),
                 db_connection,
                 version,
                 called_at,
@@ -3645,11 +3700,11 @@ mod tests {
     ) {
         event_history
             .apply(
-                EventCall::JoinSetCreate(JoinSetCreate {
+                EventCall::NonBlocking(EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
                     join_set_id: join_set_id.clone(),
                     closing_strategy: ClosingStrategy::Complete,
                     wasm_backtrace: None,
-                }),
+                })),
                 db_connection,
                 version,
                 called_at,
@@ -3658,14 +3713,16 @@ mod tests {
             .unwrap();
         event_history
             .apply(
-                EventCall::SubmitChildExecution(SubmitChildExecution {
-                    target_ffqn: ffqn,
-                    fn_component_id: ComponentId::dummy_activity(),
-                    join_set_id,
-                    child_execution_id,
-                    params: Params::empty(),
-                    wasm_backtrace: None,
-                }),
+                EventCall::NonBlocking(EventCallNonBlocking::SubmitChildExecution(
+                    SubmitChildExecution {
+                        target_ffqn: ffqn,
+                        fn_component_id: ComponentId::dummy_activity(),
+                        join_set_id,
+                        child_execution_id,
+                        params: Params::empty(),
+                        wasm_backtrace: None,
+                    },
+                )),
                 db_connection,
                 version,
                 called_at,
@@ -3698,14 +3755,16 @@ mod tests {
         .await;
         event_history
             .apply(
-                EventCall::SubmitChildExecution(SubmitChildExecution {
-                    target_ffqn: ffqn_b,
-                    fn_component_id: ComponentId::dummy_activity(),
-                    join_set_id: join_set_id.clone(),
-                    child_execution_id: child_execution_id_b,
-                    params: Params::empty(),
-                    wasm_backtrace: None,
-                }),
+                EventCall::NonBlocking(EventCallNonBlocking::SubmitChildExecution(
+                    SubmitChildExecution {
+                        target_ffqn: ffqn_b,
+                        fn_component_id: ComponentId::dummy_activity(),
+                        join_set_id: join_set_id.clone(),
+                        child_execution_id: child_execution_id_b,
+                        params: Params::empty(),
+                        wasm_backtrace: None,
+                    },
+                )),
                 db_connection,
                 version,
                 called_at,
@@ -3714,11 +3773,13 @@ mod tests {
             .unwrap();
         event_history
             .apply_inner(
-                EventCall::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
-                    join_set_id,
-                    wasm_backtrace: None,
-                    requested_ffqn: ffqn_a,
-                }),
+                EventCall::Blocking(EventCallBlocking::JoinNextRequestingFfqn(
+                    JoinNextRequestingFfqn {
+                        join_set_id,
+                        wasm_backtrace: None,
+                        requested_ffqn: ffqn_a,
+                    },
+                )),
                 db_connection,
                 version,
                 called_at,
