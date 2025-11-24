@@ -46,6 +46,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
 
 #[cfg(test)]
 impl DeadlineTrackerFactoryTokio {
+    #[must_use]
     pub fn zero() -> Arc<DeadlineTrackerFactoryTokio> {
         Arc::new(DeadlineTrackerFactoryTokio {
             leeway: Duration::ZERO,

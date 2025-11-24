@@ -226,7 +226,6 @@ impl ActivitiesGlobalConfigToml {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-
 pub(crate) struct WorkflowsGlobalConfigToml {
     #[serde(default = "default_workflows_locking_leeway")]
     pub(crate) locking_leeway: DurationConfig,
