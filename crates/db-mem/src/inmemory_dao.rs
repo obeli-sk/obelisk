@@ -11,7 +11,7 @@ use concepts::prefixed_ulid::{ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendEventsToExecution, AppendRequest, AppendResponse,
     AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest, DbConnection,
-    DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWritePermanent,
+    DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
     DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionEventInner,
     ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredDelay, ExpiredLock,
     ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution,
@@ -579,8 +579,8 @@ impl DbHolder {
 
     fn create(&mut self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         if self.journals.contains_key(&req.execution_id) {
-            return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::IllegalState(
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::IllegalState(
                     "execution already exists with the same id".into(),
                 ),
             ));
@@ -648,8 +648,8 @@ impl DbHolder {
         };
         let expected_version = journal.version();
         if appending_version != expected_version {
-            return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::VersionConflict(expected_version),
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::VersionConflict(expected_version),
             ));
         }
         let next_version = journal.append(created_at, event)?;
@@ -735,8 +735,8 @@ impl DbHolder {
                 // Rollback
                 journal.truncate_and_update_pending_state(truncate_len);
                 self.index.update(journal);
-                return Err(DbErrorWrite::Permanent(
-                    DbErrorWritePermanent::VersionConflict(expected_version),
+                return Err(DbErrorWrite::NonRetriable(
+                    DbErrorWriteNonRetriable::VersionConflict(expected_version),
                 ));
             }
             match journal.append(append_request.created_at, append_request.event) {

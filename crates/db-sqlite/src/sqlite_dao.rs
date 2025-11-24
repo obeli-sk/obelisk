@@ -10,9 +10,9 @@ use concepts::{
         AppendBatchResponse, AppendEventsToExecution, AppendRequest, AppendResponse,
         AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest, DUMMY_CREATED,
         DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
-        DbErrorWrite, DbErrorWritePermanent, DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent,
-        ExecutionEventInner, ExecutionListPagination, ExecutionWithState, ExpiredDelay,
-        ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool, DbPoolCloseable,
+        ExecutionEvent, ExecutionEventInner, ExecutionListPagination, ExecutionWithState,
+        ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution,
         Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
         ResponseWithCursor, Version, VersionType,
@@ -968,8 +968,8 @@ impl SqlitePool {
             debug!(
                 "Version conflict - expected: {expected_version:?}, appending: {appending_version:?}"
             );
-            return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::VersionConflict(expected_version.clone()),
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::VersionConflict(expected_version.clone()),
             ));
         }
         Ok(())
@@ -991,7 +991,7 @@ impl SqlitePool {
         let event = ExecutionEventInner::from(req);
         let event_ser = serde_json::to_string(&event).map_err(|err| {
             error!("Cannot serialize {event:?} - {err:?}");
-            DbErrorWritePermanent::ValidationFailed("parameter serialization error".into())
+            DbErrorWriteNonRetriable::ValidationFailed("parameter serialization error".into())
         })?;
         tx.prepare(
                 "INSERT INTO t_execution_log (execution_id, created_at, version, json_value, variant, join_set_id ) \
@@ -1610,7 +1610,7 @@ impl SqlitePool {
         };
         let event_ser = serde_json::to_string(&event).map_err(|err| {
             warn!("Cannot serialize {event:?} - {err:?}");
-            DbErrorWritePermanent::ValidationFailed("parameter serialization error".into())
+            DbErrorWriteNonRetriable::ValidationFailed("parameter serialization error".into())
         })?;
         let mut stmt = tx
             .prepare_cached(
@@ -1629,7 +1629,7 @@ impl SqlitePool {
         })
         .map_err(|err| {
             warn!("Cannot lock execution - {err:?}");
-            DbErrorWrite::Permanent(DbErrorWritePermanent::IllegalState("cannot lock".into()))
+            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState("cannot lock".into()))
         })?;
 
         // Update `t_state`
@@ -1738,8 +1738,8 @@ impl SqlitePool {
         appending_version: Version,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
         if matches!(req.event, ExecutionEventInner::Created { .. }) {
-            return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::ValidationFailed(
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::ValidationFailed(
                     "cannot append `Created` event - use `create` instead".into(),
                 ),
             ));
@@ -1773,8 +1773,8 @@ impl SqlitePool {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         if combined_state.pending_state.is_finished() {
             debug!("Execution is already finished");
-            return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::IllegalState("already finished".into()),
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::IllegalState("already finished".into()),
             ));
         }
 
@@ -1784,7 +1784,7 @@ impl SqlitePool {
         )?;
         let event_ser = serde_json::to_string(&req.event).map_err(|err| {
             error!("Cannot serialize {:?} - {err:?}", req.event);
-            DbErrorWritePermanent::ValidationFailed("parameter serialization error".into())
+            DbErrorWriteNonRetriable::ValidationFailed("parameter serialization error".into())
         })?;
 
         let mut stmt = tx.prepare(
@@ -2041,7 +2041,7 @@ impl SqlitePool {
                 "Cannot serialize backtrace {:?} - {err:?}",
                 backtrace_info.wasm_backtrace
             );
-            DbErrorWritePermanent::ValidationFailed("cannot serialize backtrace".into())
+            DbErrorWriteNonRetriable::ValidationFailed("cannot serialize backtrace".into())
         })?;
         let mut stmt = tx
             .prepare(
@@ -2624,16 +2624,16 @@ impl DbExecutor for SqlitePool {
         if events.execution_id == response.parent_execution_id {
             // Pending state would be wrong.
             // This is not a panic because it depends on DB state.
-            return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::ValidationFailed(
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::ValidationFailed(
                     "Parameters `execution_id` and `parent_execution_id` cannot be the same".into(),
                 ),
             ));
         }
         if events.batch.is_empty() {
             error!("Batch cannot be empty");
-            return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::ValidationFailed("batch cannot be empty".into()),
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::ValidationFailed("batch cannot be empty".into()),
             ));
         }
         let (version, notifiers) = {

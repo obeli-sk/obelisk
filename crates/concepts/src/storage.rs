@@ -477,7 +477,7 @@ pub enum DbErrorGeneric {
 }
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-pub enum DbErrorWritePermanent {
+pub enum DbErrorWriteNonRetriable {
     #[error("validation failed: {0}")]
     ValidationFailed(StrVariant),
     #[error("illegal state: {0}")]
@@ -491,9 +491,8 @@ pub enum DbErrorWritePermanent {
 pub enum DbErrorWrite {
     #[error("cannot write - row not found")]
     NotFound,
-    /// Retrying will not resolve the error, the execution is in an incorrect state.
-    #[error("permanent error: {0}")]
-    Permanent(#[from] DbErrorWritePermanent),
+    #[error("non-retriable error: {0}")]
+    NonRetriable(#[from] DbErrorWriteNonRetriable),
     #[error(transparent)]
     DbErrorGeneric(#[from] DbErrorGeneric),
 }
@@ -1124,9 +1123,9 @@ impl PendingState {
         executor_id: ExecutorId,
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockKind, DbErrorWritePermanent> {
+    ) -> Result<LockKind, DbErrorWriteNonRetriable> {
         if lock_expires_at <= created_at {
-            return Err(DbErrorWritePermanent::ValidationFailed(
+            return Err(DbErrorWriteNonRetriable::ValidationFailed(
                 "invalid expiry date".into(),
             ));
         }
@@ -1136,7 +1135,7 @@ impl PendingState {
                     // pending now, ok to lock
                     Ok(LockKind::CreatingNewLock)
                 } else {
-                    Err(DbErrorWritePermanent::ValidationFailed(
+                    Err(DbErrorWriteNonRetriable::ValidationFailed(
                         "cannot lock, not yet pending".into(),
                     ))
                 }
@@ -1152,15 +1151,15 @@ impl PendingState {
                     // Original executor is extending the lock.
                     Ok(LockKind::Extending)
                 } else {
-                    Err(DbErrorWritePermanent::IllegalState(
+                    Err(DbErrorWriteNonRetriable::IllegalState(
                         "cannot lock, already locked".into(),
                     ))
                 }
             }
-            PendingState::BlockedByJoinSet { .. } => Err(DbErrorWritePermanent::IllegalState(
+            PendingState::BlockedByJoinSet { .. } => Err(DbErrorWriteNonRetriable::IllegalState(
                 "cannot append Locked event when in BlockedByJoinSet state".into(),
             )),
-            PendingState::Finished { .. } => Err(DbErrorWritePermanent::IllegalState(
+            PendingState::Finished { .. } => Err(DbErrorWriteNonRetriable::IllegalState(
                 "already finished".into(),
             )),
         }

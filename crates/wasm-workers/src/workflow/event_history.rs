@@ -29,7 +29,7 @@ use concepts::storage::BacktraceInfo;
 use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbErrorReadWithTimeout;
 use concepts::storage::DbErrorWrite;
-use concepts::storage::DbErrorWritePermanent;
+use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::JoinSetResponseEventOuter;
 use concepts::storage::PersistKind;
@@ -1595,8 +1595,8 @@ impl EventHistory {
                         .await?
                         .ffqn
                 {
-                    return Err(DbErrorWrite::Permanent(
-                        DbErrorWritePermanent::ValidationFailed("ffqn mismatch".into()),
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::ValidationFailed("ffqn mismatch".into()),
                     ));
                 }
                 let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.

@@ -2,7 +2,7 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::JoinSetId;
 use concepts::storage::{
-    CreateRequest, DbErrorWrite, DbErrorWritePermanent, ExecutionEvent, ExecutionEventInner,
+    CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionEventInner,
     HistoryEvent, JoinSetRequest, JoinSetResponseEvent, JoinSetResponseEventOuter,
     PendingStateFinished, PendingStateFinishedResultKind, VersionType,
 };
@@ -96,8 +96,8 @@ impl ExecutionJournal {
         event: ExecutionEventInner,
     ) -> Result<Version, DbErrorWrite> {
         if self.pending_state.is_finished() {
-            return Err(DbErrorWrite::Permanent(
-                DbErrorWritePermanent::IllegalState("already finished".into()),
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::IllegalState("already finished".into()),
             ));
         }
 
