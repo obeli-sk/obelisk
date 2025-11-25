@@ -276,15 +276,16 @@ impl EventHistory {
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, ApplyError> {
         debug!("applying {event_call:?}");
-        if let Some(resp) = self.find_matching_atomic(&event_call)? {
-            trace!("found_atomic: {resp:?}");
-            return Ok(resp);
-        }
 
         if self.deadline_tracker.close_to_expired() && self.lock_extension > Duration::ZERO {
             self.extend_lock(db_connection, version, called_at)
                 .await
                 .map_err(ApplyError::DbError)?;
+        }
+
+        if let Some(resp) = self.find_matching_atomic(&event_call)? {
+            trace!("found_atomic: {resp:?}");
+            return Ok(resp);
         }
 
         match event_call {
