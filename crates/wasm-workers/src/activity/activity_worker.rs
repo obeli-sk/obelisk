@@ -338,11 +338,12 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
             }
         };
         let started_at = self.clock_fn.now();
-        let deadline_delta = ctx.execution_deadline - started_at;
+        let deadline_delta = ctx.locked_event.lock_expires_at - started_at;
         let Ok(deadline_duration) = deadline_delta.to_std() else {
-            ctx.worker_span.in_scope(||
-                info!(execution_deadline = %ctx.execution_deadline, %started_at, "Timed out - started_at later than execution_deadline")
-            );
+            ctx.worker_span.in_scope(|| {
+                info!(execution_deadline = %ctx.locked_event.lock_expires_at, %started_at,
+                    "Timed out - started_at later than execution_deadline")
+            });
             return WorkerResult::Err(WorkerError::TemporaryTimeout {
                 http_client_traces: None,
                 version: ctx.version,
@@ -355,15 +356,19 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                 ctx.worker_span
                     .in_scope(||{
                 if let WorkerResult::Err(err) = &res {
-                    info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an error");
+                    info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.locked_event.lock_expires_at,
+                    "Finished with an error");
                 } else {
-                    info!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration,  execution_deadline = %ctx.execution_deadline, "Finished");
+                    info!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration,  execution_deadline = %ctx.locked_event.lock_expires_at,
+                    "Finished");
                 }});
                 return res;
             },
             ()  = self.sleep.sleep(deadline_duration) => {
                 ctx.worker_span.in_scope(||
-                        info!(duration = ?stopwatch_for_reporting.elapsed(), %started_at, ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %self.clock_fn.now(), "Timed out")
+                        info!(duration = ?stopwatch_for_reporting.elapsed(), %started_at, ?deadline_duration,
+                        execution_deadline = %ctx.locked_event.lock_expires_at, now = %self.clock_fn.now(),
+                        "Timed out")
                     );
                 let http_client_traces = Some(http_client_traces
                     .lock()
@@ -586,8 +591,8 @@ pub(crate) mod tests {
     pub mod wasmtime_nosim {
         use super::*;
         use crate::engines::PoolingOptions;
-        use concepts::storage::PendingState;
         use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
+        use concepts::storage::{Locked, PendingState};
         use concepts::time::Now;
         use concepts::{
             ComponentRetryConfig, FinishedExecutionError, PermanentFailureKind,
@@ -643,7 +648,6 @@ pub(crate) mod tests {
                 Now,
                 TokioSleep,
             );
-            let execution_deadline = Now.now() + lock_expiry;
             // create executions
             let join_handles = (0..tasks)
                 .map(|_| {
@@ -657,10 +661,15 @@ pub(crate) mod tests {
                         event_history: Vec::new(),
                         responses: Vec::new(),
                         version: Version::new(0),
-                        execution_deadline,
                         can_be_retried: false,
-                        run_id: RunId::generate(),
                         worker_span: info_span!("worker-test"),
+                        locked_event: Locked {
+                            component_id: ComponentId::dummy_activity(),
+                            executor_id: ExecutorId::generate(),
+                            run_id: RunId::generate(),
+                            lock_expires_at: Now.now() + lock_expiry,
+                            retry_config: ComponentRetryConfig::ZERO,
+                        },
                     };
                     tokio::spawn(async move { fibo_worker.run(ctx).await })
                 })
@@ -816,10 +825,15 @@ pub(crate) mod tests {
                 event_history: Vec::new(),
                 responses: Vec::new(),
                 version: version.clone(),
-                execution_deadline: executed_at + TIMEOUT,
                 can_be_retried: false,
-                run_id: RunId::generate(),
                 worker_span: info_span!("worker-test"),
+                locked_event: Locked {
+                    component_id: ComponentId::dummy_activity(),
+                    executor_id: ExecutorId::generate(),
+                    run_id: RunId::generate(),
+                    lock_expires_at: executed_at + TIMEOUT,
+                    retry_config: ComponentRetryConfig::ZERO,
+                },
             };
             let WorkerResult::Err(err) = worker.run(ctx).await else {
                 panic!()
@@ -865,10 +879,15 @@ pub(crate) mod tests {
                 event_history: Vec::new(),
                 responses: Vec::new(),
                 version: version.clone(),
-                execution_deadline,
                 can_be_retried: false,
-                run_id: RunId::generate(),
                 worker_span: info_span!("worker-test"),
+                locked_event: Locked {
+                    component_id: ComponentId::dummy_activity(),
+                    executor_id: ExecutorId::generate(),
+                    run_id: RunId::generate(),
+                    lock_expires_at: execution_deadline,
+                    retry_config: ComponentRetryConfig::ZERO,
+                },
             };
             let WorkerResult::Err(err) = worker.run(ctx).await else {
                 panic!()

@@ -32,6 +32,7 @@ use concepts::storage::DbErrorWrite;
 use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::JoinSetResponseEventOuter;
+use concepts::storage::Locked;
 use concepts::storage::PersistKind;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, JoinSetResponse,
@@ -49,6 +50,7 @@ use itertools::Itertools;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::sync::Arc;
+use std::time::Duration;
 use strum::IntoStaticStr;
 use tracing::Level;
 use tracing::Span;
@@ -87,9 +89,7 @@ pub(crate) enum ApplyError {
 #[expect(clippy::struct_field_names)]
 pub(crate) struct EventHistory {
     execution_id: ExecutionId,
-    component_id: ComponentId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
-    deadline: DateTime<Utc>,
     // Contains requests (events produced by the workflow)
     event_history: Vec<(HistoryEvent, ProcessingStatus)>, // FIXME: Add version
     // Used for `-get`ting the processed response by Execution Id.
@@ -105,7 +105,9 @@ pub(crate) struct EventHistory {
     non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     worker_span: Span,
-    deadline_tracker: Arc<dyn DeadlineTracker>,
+    deadline_tracker: Box<dyn DeadlineTracker>,
+    lock_extension: Duration,
+    locked_event: Locked,
     fn_registry: Arc<dyn FunctionRegistry>,
 }
 
@@ -129,14 +131,14 @@ impl EventHistory {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
-        component_id: ComponentId,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        deadline: DateTime<Utc>,
-        worker_span: Span,
-        deadline_tracker: Arc<dyn DeadlineTracker>,
         fn_registry: Arc<dyn FunctionRegistry>,
+        deadline_tracker: Box<dyn DeadlineTracker>,
+        locked_event: Locked,
+        lock_extension: Duration,
+        worker_span: Span,
     ) -> EventHistory {
         let non_blocking_event_batch_size = match join_next_blocking_strategy {
             JoinNextBlockingStrategy::Await {
@@ -161,7 +163,6 @@ impl EventHistory {
             .counts();
         EventHistory {
             execution_id,
-            component_id,
             index_child_exe_to_processed_response_idx: HashMap::default(),
             index_child_exe_to_ffqn: HashMap::default(),
             index_join_set_to_created_child_requests: IndexMap::default(),
@@ -183,7 +184,6 @@ impl EventHistory {
                 .map(|event| (event, Unprocessed))
                 .collect(),
             join_next_blocking_strategy,
-            deadline,
             non_blocking_event_batch_size,
             non_blocking_event_batch: if non_blocking_event_batch_size == 0 {
                 None
@@ -193,6 +193,8 @@ impl EventHistory {
             worker_span,
             deadline_tracker,
             fn_registry,
+            locked_event,
+            lock_extension,
         }
     }
 
@@ -279,6 +281,12 @@ impl EventHistory {
             return Ok(resp);
         }
 
+        if self.deadline_tracker.close_to_expired() && self.lock_extension > Duration::ZERO {
+            self.extend_lock(db_connection, version, called_at)
+                .await
+                .map_err(ApplyError::DbError)?;
+        }
+
         match event_call {
             EventCall::NonBlocking(event_call) => {
                 // Events that cannot block, e.g. creating new join sets, persisting random value, getting processed responses.
@@ -301,7 +309,7 @@ impl EventHistory {
                     if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
                         called_at
                     } else {
-                        self.deadline
+                        self.locked_event.lock_expires_at
                     };
                 self.apply_blocking(
                     event_call,
@@ -313,6 +321,24 @@ impl EventHistory {
                 .await
             }
         }
+    }
+
+    async fn extend_lock(
+        &mut self,
+        db_connection: &dyn DbConnection,
+        version: &mut Version,
+        called_at: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        self.locked_event.lock_expires_at = self.deadline_tracker.extend_by(self.lock_extension);
+        let append_req = AppendRequest {
+            created_at: called_at,
+            event: ExecutionEventInner::Locked(self.locked_event.clone()),
+        };
+        info!("Extending the lock at version {version}");
+        *version = db_connection
+            .append(self.execution_id.clone(), version.clone(), append_req)
+            .await?;
+        Ok(())
     }
 
     async fn apply_blocking(
@@ -1192,7 +1218,7 @@ impl EventHistory {
                             child_req,
                             backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
                                 execution_id: self.execution_id.clone(),
-                                component_id: self.component_id.clone(),
+                                component_id: self.locked_event.component_id.clone(),
                                 wasm_backtrace,
                                 version_min_including: version.clone(),
                                 version_max_excluding: next_version.clone(),
@@ -1215,7 +1241,7 @@ impl EventHistory {
                             && let Err(err) = db_connection
                                 .append_backtrace(BacktraceInfo {
                                     execution_id: self.execution_id.clone(),
-                                    component_id: self.component_id.clone(),
+                                    component_id: self.locked_event.component_id.clone(),
                                     version_min_including: version.clone(),
                                     version_max_excluding: next_version.clone(),
                                     wasm_backtrace,
@@ -1317,7 +1343,7 @@ impl EventHistory {
                             child_req,
                             backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
                                 execution_id: self.execution_id.clone(),
-                                component_id: self.component_id.clone(),
+                                component_id: self.locked_event.component_id.clone(),
                                 wasm_backtrace,
                                 version_min_including: version.clone(),
                                 version_max_excluding: next_version.clone(),
@@ -1340,7 +1366,7 @@ impl EventHistory {
                             && let Err(err) = db_connection
                                 .append_backtrace(BacktraceInfo {
                                     execution_id: self.execution_id.clone(),
-                                    component_id: self.component_id.clone(),
+                                    component_id: self.locked_event.component_id.clone(),
                                     version_min_including: version.clone(),
                                     version_max_excluding: next_version.clone(),
                                     wasm_backtrace,
@@ -1755,7 +1781,7 @@ impl EventHistory {
             if let Err(err) = db_connection
                 .append_backtrace(BacktraceInfo {
                     execution_id: self.execution_id.clone(),
-                    component_id: self.component_id.clone(),
+                    component_id: self.locked_event.component_id.clone(),
                     version_min_including: version.clone(),
                     version_max_excluding: next_version.clone(),
                     wasm_backtrace,
@@ -2821,22 +2847,23 @@ mod tests {
     use super::super::workflow_worker::JoinNextBlockingStrategy;
     use super::SubmitChildExecution;
     use crate::testing_fn_registry::TestingFnRegistry;
-    use crate::workflow::deadline_tracker::{DeadlineTrackerFactory, DeadlineTrackerFactoryTokio};
+    use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
+    use crate::workflow::deadline_tracker::deadline_tracker_factory_test;
     use crate::workflow::event_history::{
         ApplyError, ChildReturnValue, JoinNextRequestingFfqn, JoinSetCreate, Schedule, Stub,
     };
     use crate::workflow::host_exports::ffqn_into_wast_val;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
-    use concepts::prefixed_ulid::ExecutionIdDerived;
-    use concepts::storage::{CreateRequest, HistoryEventScheduleAt};
+    use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
+    use concepts::storage::{CreateRequest, HistoryEventScheduleAt, Locked};
     use concepts::storage::{
         DbConnection, DbPoolCloseable, JoinSetResponse, JoinSetResponseEvent, Version,
     };
     use concepts::time::ClockFn;
     use concepts::{
-        ClosingStrategy, ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params,
-        SUPPORTED_RETURN_VALUE_OK_EMPTY, SupportedFunctionReturnValue,
+        ClosingStrategy, ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn,
+        FunctionRegistry, Params, SUPPORTED_RETURN_VALUE_OK_EMPTY, SupportedFunctionReturnValue,
     };
     use concepts::{JoinSetId, StrVariant};
     use db_tests::Database;
@@ -2873,7 +2900,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            DeadlineTrackerFactoryTokio::zero(),
+            deadline_tracker_factory_test(sim_clock.clone()),
             JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
             fn_registry.clone(),
         )
@@ -2920,7 +2947,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            DeadlineTrackerFactoryTokio::zero(),
+            deadline_tracker_factory_test(sim_clock.clone()),
             second_run_strategy,
             fn_registry,
         )
@@ -2972,7 +2999,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            DeadlineTrackerFactoryTokio::zero(),
+            deadline_tracker_factory_test(sim_clock.clone()),
             join_next_blocking_strategy,
             fn_registry.clone(),
         )
@@ -3017,7 +3044,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            DeadlineTrackerFactoryTokio::zero(),
+            deadline_tracker_factory_test(sim_clock.clone()),
             join_next_blocking_strategy,
             fn_registry,
         )
@@ -3110,7 +3137,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            DeadlineTrackerFactoryTokio::zero(),
+            deadline_tracker_factory_test(sim_clock.clone()),
             JoinNextBlockingStrategy::Interrupt, // First blocking strategy is always Interrupt
             fn_registry.clone(),
         )
@@ -3186,7 +3213,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::ZERO, // deadline
-            DeadlineTrackerFactoryTokio::zero(),
+            deadline_tracker_factory_test(sim_clock.clone()),
             JoinNextBlockingStrategy::Interrupt,
             fn_registry,
         )
@@ -3275,7 +3302,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            DeadlineTrackerFactoryTokio::zero(),
+            deadline_tracker_factory_test(sim_clock.clone()),
             JoinNextBlockingStrategy::Interrupt, // does not matter, there are no blocking events
             fn_registry,
         )
@@ -3345,7 +3372,7 @@ mod tests {
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1), // execution deadline
-                DeadlineTrackerFactoryTokio::zero(),
+                deadline_tracker_factory_test(sim_clock.clone()),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3435,7 +3462,7 @@ mod tests {
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1),
-                DeadlineTrackerFactoryTokio::zero(),
+                deadline_tracker_factory_test(sim_clock.clone()),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3488,7 +3515,7 @@ mod tests {
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1),
-                DeadlineTrackerFactoryTokio::zero(),
+                deadline_tracker_factory_test(sim_clock.clone()),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3547,7 +3574,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            DeadlineTrackerFactoryTokio::zero(),
+            deadline_tracker_factory_test(sim_clock.clone()),
             JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
             fn_registry.clone(),
         )
@@ -3594,7 +3621,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            DeadlineTrackerFactoryTokio::zero(),
+            deadline_tracker_factory_test(sim_clock.clone()),
             second_run_strategy,
             fn_registry,
         )
@@ -3647,18 +3674,17 @@ mod tests {
         db_connection: &dyn DbConnection,
         execution_id: ExecutionId,
         now: DateTime<Utc>,
-        deadline_duration: Duration,
+        lock_expires_at: Duration,
         deadline_factory: Arc<dyn DeadlineTrackerFactory>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> (EventHistory, Version) {
-        let execution_deadline = now + deadline_duration;
-        let deadline_tracker = deadline_factory.create(deadline_duration);
+        let execution_deadline = now + lock_expires_at;
+        let deadline_tracker = deadline_factory.create(execution_deadline).unwrap();
 
         let exec_log = db_connection.get(&execution_id).await.unwrap();
         let event_history = EventHistory::new(
             execution_id.clone(),
-            ComponentId::dummy_activity(),
             exec_log.event_history().collect(),
             exec_log
                 .responses
@@ -3666,10 +3692,17 @@ mod tests {
                 .map(|event| event.event)
                 .collect(),
             join_next_blocking_strategy,
-            execution_deadline,
-            info_span!("worker-test"),
-            deadline_tracker,
             fn_registry,
+            deadline_tracker,
+            Locked {
+                component_id: ComponentId::dummy_activity(),
+                executor_id: ExecutorId::generate(),
+                run_id: RunId::generate(),
+                lock_expires_at: execution_deadline,
+                retry_config: ComponentRetryConfig::ZERO,
+            },
+            Duration::ZERO, /* lock_extension */
+            info_span!("worker-test"),
         );
         (event_history, exec_log.next_version)
     }

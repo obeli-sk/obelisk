@@ -639,6 +639,8 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) backtrace: WorkflowComponentBacktraceConfig,
     #[serde(default)]
     pub(crate) stub_wasi: bool,
+    #[serde(default = "default_lock_extension")]
+    lock_extension: DurationConfig,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
@@ -786,6 +788,7 @@ impl WorkflowComponentConfigToml {
             backtrace_persist: global_backtrace_persist,
             stub_wasi: self.stub_wasi,
             fuel,
+            lock_extension: self.lock_extension.into(),
         };
         let frame_files_to_sources =
             verify_frame_files_to_sources(self.backtrace.frame_files_to_sources, &path_prefixes);
@@ -1352,6 +1355,10 @@ const fn default_tick_sleep() -> DurationConfig {
 
 const fn default_convert_core_module() -> bool {
     true
+}
+
+const fn default_lock_extension() -> DurationConfig {
+    DurationConfig::Seconds(1)
 }
 
 fn default_out_style() -> LoggingStyle {

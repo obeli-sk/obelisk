@@ -1,13 +1,12 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use concepts::ExecutionId;
 use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
 use concepts::PermanentFailureKind;
 use concepts::TrapKind;
-use concepts::prefixed_ulid::RunId;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::HistoryEvent;
+use concepts::storage::Locked;
 use concepts::storage::Version;
 use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::{FinishedExecutionError, StrVariant, storage::JoinSetResponseEvent};
@@ -41,16 +40,15 @@ pub enum WorkerResult {
 #[derive(Debug)]
 pub struct WorkerContext {
     pub execution_id: ExecutionId,
-    pub run_id: RunId,
     pub metadata: ExecutionMetadata,
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub event_history: Vec<HistoryEvent>,
     pub responses: Vec<JoinSetResponseEvent>,
     pub version: Version,
-    pub execution_deadline: DateTime<Utc>,
     pub can_be_retried: bool,
     pub worker_span: Span,
+    pub locked_event: Locked,
 }
 
 #[derive(Debug, thiserror::Error)]

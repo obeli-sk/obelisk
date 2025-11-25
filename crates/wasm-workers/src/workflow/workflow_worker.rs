@@ -20,9 +20,9 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{Span, debug, error, info, instrument, trace, warn};
 use utils::wasm_tools::DecodeError;
+use wasmtime::Store;
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{Engine, component::Val};
-use wasmtime::{Store, UpdateDeadline};
 
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Hash)]
@@ -42,6 +42,7 @@ pub struct WorkflowConfig {
     pub backtrace_persist: bool,
     pub stub_wasi: bool,
     pub fuel: Option<u64>,
+    pub lock_extension: Duration,
 }
 
 pub struct WorkflowWorkerCompiled<C: ClockFn> {
@@ -353,19 +354,26 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         ctx: WorkerContext,
     ) -> Result<(Store<WorkflowCtx<C>>, wasmtime::component::Func, Arc<[Val]>), PrepareFuncErr>
     {
-        let started_at = self.clock_fn.now();
-        let Ok(deadline_duration) = (ctx.execution_deadline - started_at).to_std() else {
-            ctx.worker_span.in_scope(||
-                info!(execution_deadline = %ctx.execution_deadline, %started_at, "Timed out - started_at later than execution_deadline")
-            );
-            return Err(PrepareFuncErr::DbUpdatedByWorkerOrWatcher);
-        };
-        let deadline_tracker = self.deadline_factory.create(deadline_duration);
+        assert_eq!(
+            self.config.component_id.clone(),
+            ctx.locked_event.component_id
+        );
+
+        let deadline_tracker = self
+            .deadline_factory
+            .create(ctx.locked_event.lock_expires_at)
+            .map_err(|lock_already_expired| {
+                ctx.worker_span.in_scope(|| {
+                    info!(execution_deadline = %ctx.locked_event.lock_expires_at, started_at = %lock_already_expired.started_at,
+                        "Lock is already expired")
+                });
+                PrepareFuncErr::DbUpdatedByWorkerOrWatcher
+            })?;
+
         let version_at_start = ctx.version.clone();
         let seed = ctx.execution_id.random_seed();
         let workflow_ctx = WorkflowCtx::new(
             ctx.execution_id,
-            self.config.component_id.clone(),
             ctx.event_history,
             ctx.responses,
             seed,
@@ -373,11 +381,12 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             self.config.join_next_blocking_strategy,
             self.db_pool.clone(),
             ctx.version,
-            ctx.execution_deadline,
             ctx.worker_span,
             self.config.backtrace_persist,
             deadline_tracker,
             self.fn_registry.clone(),
+            ctx.locked_event,
+            self.config.lock_extension,
         );
 
         let mut store = Store::new(&self.engine, workflow_ctx);
@@ -391,7 +400,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
 
         // Configure epoch callback before running the initialization to avoid interruption
         store.epoch_deadline_callback(|_store_ctx| {
-            Ok(UpdateDeadline::YieldCustom(
+            Ok(wasmtime::UpdateDeadline::YieldCustom(
                 1,
                 Box::pin(tokio::task::yield_now()),
             ))
@@ -670,7 +679,7 @@ impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
             );
         }
         let worker_span = ctx.worker_span.clone();
-        let execution_deadline = ctx.execution_deadline;
+        let execution_deadline = ctx.locked_event.lock_expires_at;
         match self.prepare_func(ctx).await {
             Ok((store, func, params)) => {
                 Self::call_func_convert_result(
@@ -708,7 +717,7 @@ pub(crate) mod tests {
     use chrono::DateTime;
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::{
-        AppendEventsToExecution, AppendResponseToExecution, PendingStateFinishedError,
+        AppendEventsToExecution, AppendResponseToExecution, Locked, PendingStateFinishedError,
     };
     use concepts::storage::{
         AppendRequest, DbConnection, DbExecutor, ExecutionEventInner, JoinSetResponse,
@@ -805,6 +814,7 @@ pub(crate) mod tests {
                     backtrace_persist: false,
                     stub_wasi: false,
                     fuel: None,
+                    lock_extension: Duration::ZERO,
                 },
                 workflow_engine,
                 clock_fn.clone(),
@@ -816,6 +826,7 @@ pub(crate) mod tests {
                 db_pool,
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: Duration::ZERO,
+                    clock_fn: clock_fn.clone(),
                 }),
             ),
         );
@@ -1020,9 +1031,10 @@ pub(crate) mod tests {
                     backtrace_persist: false,
                     stub_wasi: false,
                     fuel: None,
+                    lock_extension: Duration::ZERO,
                 },
                 workflow_engine,
-                clock_fn,
+                clock_fn.clone(),
             )
             .unwrap()
             .link(fn_registry.clone())
@@ -1031,6 +1043,7 @@ pub(crate) mod tests {
                 db_pool,
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: Duration::ZERO,
+                    clock_fn,
                 }),
             ),
         )
@@ -1070,10 +1083,15 @@ pub(crate) mod tests {
             event_history: Vec::new(),
             responses: Vec::new(),
             version: Version::new(0),
-            execution_deadline,
             can_be_retried: false,
-            run_id: RunId::generate(),
             worker_span: info_span!("worker-test"),
+            locked_event: Locked {
+                component_id: ComponentId::dummy_workflow(),
+                executor_id: ExecutorId::generate(),
+                run_id: RunId::generate(),
+                lock_expires_at: execution_deadline,
+                retry_config: ComponentRetryConfig::ZERO,
+            },
         };
         let worker_result = worker.run(ctx).await;
         assert_matches!(worker_result, WorkerResult::DbUpdatedByWorkerOrWatcher); // Do not write anything, let the watcher mark execution as timed out.

@@ -1,55 +1,105 @@
-use std::{pin::Pin, sync::Arc, time::Duration};
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use concepts::time::ClockFn;
+use std::{pin::Pin, time::Duration};
 use tracing::warn;
+
+#[async_trait]
 pub trait DeadlineTracker: Send + Sync {
     fn track(&self) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>>;
+
+    fn close_to_expired(&self) -> bool;
+
+    /// Return new lock expiry date (now + duration). Internally track that time minus leeway.
+    fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc>;
 }
 
 pub trait DeadlineTrackerFactory: Send + Sync {
-    fn create(&self, deadline_duration: Duration) -> Arc<dyn DeadlineTracker>;
+    fn create(
+        &self,
+        lock_expires_at: DateTime<Utc>,
+    ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired>;
 }
 
-pub(crate) struct DeadlineTrackerTokio {
-    deadline: tokio::time::Instant,
+#[derive(Debug, thiserror::Error)]
+#[error("lock already expired before {started_at}")]
+pub struct LockAlreadyExpired {
+    pub started_at: DateTime<Utc>,
 }
-impl DeadlineTrackerTokio {
-    pub(crate) fn new(deadline_duration: Duration) -> DeadlineTrackerTokio {
-        let deadline = tokio::time::Instant::now() + deadline_duration;
-        DeadlineTrackerTokio { deadline }
-    }
+
+pub(crate) struct DeadlineTrackerTokio<C: ClockFn> {
+    pub(crate) deadline: tokio::time::Instant, // Tracked as instant because calling track happens later after creation.
+    pub(crate) clock_fn: C,
+    pub(crate) leeway: Duration, // Fire this much sooner than requested.
 }
-impl DeadlineTracker for DeadlineTrackerTokio {
+
+#[async_trait]
+impl<C: ClockFn> DeadlineTracker for DeadlineTrackerTokio<C> {
     fn track(&self) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>> {
-        if self.deadline <= tokio::time::Instant::now() {
+        if self.close_to_expired() {
             None
         } else {
             Some(Box::pin(tokio::time::sleep_until(self.deadline)))
         }
     }
+
+    fn close_to_expired(&self) -> bool {
+        self.deadline <= tokio::time::Instant::now()
+    }
+
+    fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc> {
+        let now = self.clock_fn.now();
+        let lock_expires_at = now + lock_extension;
+        let lock_duration = if lock_extension > self.leeway {
+            lock_extension - self.leeway
+        } else {
+            warn!("Not setting the leeway as deadline duration is too short");
+            lock_extension
+        };
+        self.deadline = tokio::time::Instant::now() + lock_duration;
+        lock_expires_at
+    }
 }
 
-#[derive(Clone, Copy)]
-pub struct DeadlineTrackerFactoryTokio {
+#[derive(Clone)]
+pub struct DeadlineTrackerFactoryTokio<C: ClockFn> {
     pub leeway: Duration, // Fire this much sooner than requested.
+    pub clock_fn: C,
 }
 
-impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
-    fn create(&self, deadline_duration: Duration) -> Arc<dyn DeadlineTracker> {
+impl<C: ClockFn> DeadlineTrackerFactory for DeadlineTrackerFactoryTokio<C> {
+    fn create(
+        &self,
+        lock_expires_at: DateTime<Utc>,
+    ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
+        let started_at = self.clock_fn.now();
+        let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
+            return Err(LockAlreadyExpired { started_at });
+        };
         let deadline_duration = if deadline_duration > self.leeway {
             deadline_duration - self.leeway
         } else {
             warn!("Not setting the leeway as deadline duration is too short");
             deadline_duration
         };
-        Arc::new(DeadlineTrackerTokio::new(deadline_duration))
+        tracing::info!("Setting deadline to now + {deadline_duration:?}");
+        let deadline = tokio::time::Instant::now() + deadline_duration;
+        let tracker = DeadlineTrackerTokio {
+            deadline,
+            clock_fn: self.clock_fn.clone(),
+            leeway: self.leeway,
+        };
+        Ok(Box::new(tracker))
     }
 }
 
 #[cfg(test)]
-impl DeadlineTrackerFactoryTokio {
-    #[must_use]
-    pub fn zero() -> Arc<DeadlineTrackerFactoryTokio> {
-        Arc::new(DeadlineTrackerFactoryTokio {
-            leeway: Duration::ZERO,
-        })
-    }
+#[must_use]
+pub fn deadline_tracker_factory_test(
+    sim_clock: test_utils::sim_clock::SimClock,
+) -> std::sync::Arc<impl DeadlineTrackerFactory> {
+    std::sync::Arc::new(DeadlineTrackerFactoryTokio {
+        leeway: Duration::ZERO,
+        clock_fn: sim_clock,
+    })
 }

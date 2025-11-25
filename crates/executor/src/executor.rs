@@ -265,7 +265,6 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             assert_eq!(permits.len(), locked_executions.len());
             locked_executions.into_iter().zip(permits)
         };
-        let execution_deadline = executed_at + self.config.lock_expiry;
 
         let mut executions = Vec::with_capacity(locked_executions.len());
         for (locked_execution, permit) in locked_executions {
@@ -274,7 +273,6 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 let worker = self.worker.clone();
                 let db = self.db_exec.clone();
                 let clock_fn = self.clock_fn.clone();
-                let run_id = locked_execution.run_id;
                 let worker_span = info_span!(parent: None, "worker",
                     "otel.name" = format!("worker {}", locked_execution.ffqn),
                     %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.config.executor_id, component_id = %self.config.component_id);
@@ -287,7 +285,6 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         let res = Self::run_worker(
                             worker,
                             db.as_ref(),
-                            execution_deadline,
                             clock_fn,
                             locked_execution,
                             retry_config,
@@ -309,7 +306,6 @@ impl<C: ClockFn + 'static> ExecTask<C> {
     async fn run_worker(
         worker: Arc<dyn Worker>,
         db_exec: &dyn DbExecutor,
-        execution_deadline: DateTime<Utc>,
         clock_fn: C,
         locked_execution: LockedExecution,
         retry_config: ComponentRetryConfig,
@@ -344,9 +340,8 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 .map(|outer| outer.event)
                 .collect(),
             version: locked_execution.next_version,
-            execution_deadline,
             can_be_retried: can_be_retried.is_some(),
-            run_id: locked_execution.run_id,
+            locked_event: locked_execution.locked_event,
             worker_span,
         };
         let worker_result = worker.run(ctx).await;

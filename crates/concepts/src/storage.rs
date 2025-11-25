@@ -546,7 +546,7 @@ pub struct LockedExecution {
     pub execution_id: ExecutionId,
     pub next_version: Version,
     pub metadata: ExecutionMetadata,
-    pub run_id: RunId,
+    pub locked_event: Locked,
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub event_history: Vec<HistoryEvent>, // FIXME: Add version
@@ -1142,10 +1142,17 @@ impl PendingState {
                 if *scheduled_at <= created_at {
                     // pending now, ok to lock
                     Ok(LockKind::CreatingNewLock)
-                } else {
-                    Err(DbErrorWriteNonRetriable::ValidationFailed(
-                        "cannot lock, not yet pending".into(),
-                    ))
+                } else
+                // FIXME
+                // if executor_id == *current_pending_state_executor_id
+                // && run_id == *current_pending_state_run_id
+                {
+                    // Original executor is extending the lock.
+                    Ok(LockKind::Extending)
+                    // } else {
+                    //     Err(DbErrorWriteNonRetriable::ValidationFailed(
+                    //         "cannot lock, not yet pending".into(),
+                    //     ))
                 }
             }
             PendingState::Locked {

@@ -2299,6 +2299,7 @@ impl WorkerLinked {
                 db_pool.clone(),
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: workflow_linked.workflows_locking_leeway,
+                    clock_fn: Now,
                 }),
             )),
         };

@@ -174,6 +174,7 @@ mod bench {
                     backtrace_persist: false,
                     stub_wasi: false,
                     fuel: None,
+                    lock_extension: Duration::ZERO,
                 },
                 workflow_engine,
                 clock_fn.clone(),
@@ -185,6 +186,7 @@ mod bench {
                 db_pool,
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: Duration::ZERO,
+                    clock_fn: clock_fn.clone(),
                 }),
             ),
         );

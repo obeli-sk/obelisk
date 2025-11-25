@@ -773,6 +773,10 @@ impl SqlitePool {
                     let _ = ltx.commit_ack_sender.send(commit_result.clone());
                 }
             } else {
+                warn!(
+                    "Bulk transaction failed, committing {} transactions serially",
+                    ltx_list.len()
+                );
                 // Bulk transaction failed. Replay each ltx in its own physical transaction.
                 for ltx in ltx_list {
                     Self::ltx_commit_single(ltx, conn, shutdown_requested, histograms)?;
@@ -1601,13 +1605,14 @@ impl SqlitePool {
         Self::check_expected_next_and_appending_version(&expected_version, appending_version)?;
 
         // Append to `execution_log` table.
-        let event = ExecutionEventInner::Locked(Locked {
+        let locked_event = Locked {
             component_id: component_id.clone(),
             executor_id,
             lock_expires_at,
             run_id,
             retry_config,
-        });
+        };
+        let event = ExecutionEventInner::Locked(locked_event.clone());
         let event_ser = serde_json::to_string(&event).map_err(|err| {
             warn!("Cannot serialize {event:?} - {err:?}");
             DbErrorWriteNonRetriable::ValidationFailed("parameter serialization error".into())
@@ -1696,10 +1701,10 @@ impl SqlitePool {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
+
         Ok(LockedExecution {
             execution_id: execution_id.clone(),
             metadata,
-            run_id,
             next_version: appending_version.increment(),
             ffqn,
             params,
@@ -1707,6 +1712,7 @@ impl SqlitePool {
             responses,
             parent,
             intermittent_event_count,
+            locked_event,
         })
     }
 

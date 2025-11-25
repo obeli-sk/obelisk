@@ -17,7 +17,7 @@ use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_S
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::{
-    self, DbErrorWrite, DbPool, HistoryEventScheduleAt, Version, WasmBacktrace,
+    self, DbErrorWrite, DbPool, HistoryEventScheduleAt, Locked, Version, WasmBacktrace,
 };
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
@@ -32,6 +32,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{Span, error, instrument};
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, Val};
@@ -892,7 +893,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
-        component_id: ComponentId,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         seed: u64,
@@ -900,11 +900,12 @@ impl<C: ClockFn> WorkflowCtx<C> {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         db_pool: Arc<dyn DbPool>,
         version: Version,
-        deadline: DateTime<Utc>,
         worker_span: Span,
         backtrace_persist: bool,
-        deadline_tracker: Arc<dyn DeadlineTracker>,
+        deadline_tracker: Box<dyn DeadlineTracker>,
         fn_registry: Arc<dyn FunctionRegistry>,
+        locked_event: Locked,
+        lock_extension: Duration,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -915,14 +916,14 @@ impl<C: ClockFn> WorkflowCtx<C> {
             execution_id: execution_id.clone(),
             event_history: EventHistory::new(
                 execution_id,
-                component_id,
                 event_history,
                 responses,
                 join_next_blocking_strategy,
-                deadline,
-                worker_span.clone(),
-                deadline_tracker,
                 fn_registry,
+                deadline_tracker,
+                locked_event,
+                lock_extension,
+                worker_span.clone(),
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -1604,7 +1605,9 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::testing_fn_registry::fn_registry_dummy;
-    use crate::workflow::deadline_tracker::DeadlineTrackerTokio;
+    use crate::workflow::deadline_tracker::{
+        DeadlineTrackerFactory as _, DeadlineTrackerFactoryTokio,
+    };
     use crate::workflow::event_history::ApplyError;
     use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
     use crate::workflow::workflow_ctx::{
@@ -1620,7 +1623,7 @@ pub(crate) mod tests {
     use concepts::storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest,
         DbExecutor, DbPool, ExecutionEvent, ExecutionEventInner, HistoryEvent,
-        HistoryEventScheduleAt, JoinSetRequest, JoinSetResponse, PendingState,
+        HistoryEventScheduleAt, JoinSetRequest, JoinSetResponse, Locked, PendingState,
         PendingStateFinished, PendingStateFinishedResultKind,
     };
     use concepts::storage::{
@@ -1749,14 +1752,8 @@ pub(crate) mod tests {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             info!("Starting");
             let seed = ctx.execution_id.random_seed();
-
-            let deadline_duration = (ctx.execution_deadline - self.clock_fn.now())
-                .to_std()
-                .unwrap();
-
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id.clone(),
-                ComponentId::dummy_activity(),
                 ctx.event_history,
                 ctx.responses,
                 seed,
@@ -1764,11 +1761,17 @@ pub(crate) mod tests {
                 JoinNextBlockingStrategy::Interrupt, // Cannot Await: when moving time forward both worker and timers watcher would race.
                 self.db_pool.clone(),
                 ctx.version,
-                ctx.execution_deadline,
                 tracing::info_span!("workflow-test"),
                 false,
-                Arc::new(DeadlineTrackerTokio::new(deadline_duration)),
+                DeadlineTrackerFactoryTokio {
+                    leeway: Duration::ZERO,
+                    clock_fn: self.clock_fn.clone(),
+                }
+                .create(ctx.locked_event.lock_expires_at)
+                .unwrap(),
                 self.fn_registry.clone(),
+                ctx.locked_event,
+                Duration::from_secs(1),
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");
@@ -2216,10 +2219,15 @@ pub(crate) mod tests {
                     event_history: vec![],
                     responses: vec![],
                     version,
-                    execution_deadline: sim_clock.now() + Duration::from_secs(1),
                     can_be_retried: false,
-                    run_id: RunId::generate(),
                     worker_span: info_span!("check_determinism"),
+                    locked_event: Locked {
+                        component_id: ComponentId::dummy_activity(),
+                        executor_id: ExecutorId::generate(),
+                        run_id: RunId::generate(),
+                        lock_expires_at: sim_clock.now() + Duration::from_secs(1),
+                        retry_config: ComponentRetryConfig::ZERO,
+                    },
                 })
                 .await;
             assert_matches!(
@@ -2305,10 +2313,15 @@ pub(crate) mod tests {
                             .map(|outer| outer.event)
                             .collect(),
                         version: execution_log.next_version,
-                        execution_deadline: sim_clock.now() + Duration::from_secs(1),
                         can_be_retried: false,
-                        run_id: RunId::generate(),
                         worker_span: info_span!("check_determinism"),
+                        locked_event: Locked {
+                            component_id: ComponentId::dummy_activity(),
+                            executor_id: ExecutorId::generate(),
+                            run_id: RunId::generate(),
+                            lock_expires_at: sim_clock.now() + Duration::from_secs(1),
+                            retry_config: ComponentRetryConfig::ZERO,
+                        },
                     })
                     .await;
                 if run + 1 < SUBMITS {
@@ -2369,10 +2382,15 @@ pub(crate) mod tests {
                     .map(|outer| outer.event)
                     .collect(),
                 version: execution_log.next_version.clone(),
-                execution_deadline: sim_clock.now() + Duration::from_secs(1),
                 can_be_retried: false,
-                run_id: RunId::generate(),
                 worker_span: info_span!("check_determinism"),
+                locked_event: Locked {
+                    component_id: ComponentId::dummy_activity(),
+                    executor_id: ExecutorId::generate(),
+                    run_id: RunId::generate(),
+                    lock_expires_at: sim_clock.now() + Duration::from_secs(1),
+                    retry_config: ComponentRetryConfig::ZERO,
+                },
             })
             .await;
         assert_matches!(worker_result, WorkerResult::Ok(..), "should be finished");

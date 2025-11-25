@@ -73,16 +73,18 @@ impl DbExecutor for InMemoryDbConnection {
         lock_expires_at: DateTime<Utc>,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite> {
-        let (next_version, event_history) = self.0.lock().unwrap().lock(
-            created_at,
+        let locked_event = Locked {
             component_id,
-            execution_id,
-            run_id,
-            version,
             executor_id,
+            run_id,
             lock_expires_at,
             retry_config,
-        )?;
+        };
+        let (next_version, event_history) =
+            self.0
+                .lock()
+                .unwrap()
+                .lock(created_at, execution_id, version, locked_event.clone())?;
         let db_holder_guard = self.0.lock().unwrap();
         let journal = db_holder_guard
             .journals
@@ -96,7 +98,7 @@ impl DbExecutor for InMemoryDbConnection {
             params: journal.params(),
             event_history,
             responses: journal.responses.clone(),
-            run_id,
+            locked_event,
             parent: journal.parent(),
             intermittent_event_count: journal.temporary_event_count(),
         })
@@ -543,6 +545,13 @@ impl DbHolder {
                 .fetch_pending(&self.journals, batch_size, pending_at_or_sooner, ffqns);
         let mut resp = Vec::with_capacity(pending.len());
         for (journal, _scheduled_at) in pending {
+            let locked_event = Locked {
+                component_id: component_id.clone(),
+                executor_id,
+                lock_expires_at,
+                run_id,
+                retry_config,
+            };
             let row = LockedExecution {
                 execution_id: journal.execution_id().clone(),
                 metadata: journal.metadata().clone(),
@@ -551,7 +560,7 @@ impl DbHolder {
                 params: journal.params(),
                 event_history: Vec::default(), // updated later
                 responses: journal.responses.clone(),
-                run_id,
+                locked_event,
                 parent: journal.parent(),
                 intermittent_event_count: journal.temporary_event_count(),
             };
@@ -562,13 +571,9 @@ impl DbHolder {
             let (next_version, new_event_history) = self
                 .lock(
                     created_at,
-                    component_id.clone(),
                     &row.execution_id,
-                    row.run_id,
                     row.next_version.clone(),
-                    executor_id,
-                    lock_expires_at,
-                    retry_config,
+                    row.locked_event.clone(),
                 )
                 .expect("must be lockable within the same transaction");
             row.next_version = next_version;
@@ -608,21 +613,11 @@ impl DbHolder {
     fn lock(
         &mut self,
         created_at: DateTime<Utc>,
-        component_id: ComponentId,
         execution_id: &ExecutionId,
-        run_id: RunId,
         version: Version,
-        executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
-        retry_config: ComponentRetryConfig,
+        locked_event: Locked,
     ) -> Result<(Version /* next version */, Vec<HistoryEvent>), DbErrorWrite> {
-        let event = ExecutionEventInner::Locked(Locked {
-            component_id,
-            executor_id,
-            lock_expires_at,
-            run_id,
-            retry_config,
-        });
+        let event = ExecutionEventInner::Locked(locked_event);
         self.append(created_at, execution_id, version, event)
             .map(|next_version| {
                 let journal = self.journals.get(execution_id).unwrap();
