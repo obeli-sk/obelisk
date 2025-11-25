@@ -4,7 +4,7 @@ use concepts::JoinSetId;
 use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionEventInner,
     HistoryEvent, JoinSetRequest, JoinSetResponseEvent, JoinSetResponseEventOuter, Locked,
-    PendingStateFinished, PendingStateFinishedResultKind, VersionType,
+    PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked, VersionType,
 };
 use concepts::storage::{ExecutionLog, PendingState, Version};
 use concepts::{ExecutionId, ExecutionMetadata};
@@ -170,11 +170,11 @@ impl ExecutionJournal {
                     run_id,
                     component_id: _,
                     retry_config: _,
-                }) => Some(PendingState::Locked {
+                }) => Some(PendingState::Locked(PendingStateLocked {
                     executor_id: *executor_id,
                     lock_expires_at: *lock_expires_at,
                     run_id: *run_id,
-                }),
+                })),
 
                 ExecutionEventInner::TemporarilyFailed {
                     backoff_expires_at: expires_at,

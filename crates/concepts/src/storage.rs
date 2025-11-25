@@ -1053,14 +1053,11 @@ pub struct ExpiredDelay {
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum PendingState {
-    #[display("Locked(`{lock_expires_at}`, {executor_id}, {run_id})")]
-    Locked {
-        executor_id: ExecutorId,
-        run_id: RunId,
-        lock_expires_at: DateTime<Utc>,
-    },
+    Locked(PendingStateLocked),
     #[display("PendingAt(`{scheduled_at}`)")]
-    PendingAt { scheduled_at: DateTime<Utc> }, // e.g. created with a schedule, temporary timeout/failure
+    PendingAt {
+        scheduled_at: DateTime<Utc>,
+    }, // e.g. created with a schedule, temporary timeout/failure
     #[display("BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
     /// Caused by [`HistoryEvent::JoinNext`]
     BlockedByJoinSet {
@@ -1071,7 +1068,17 @@ pub enum PendingState {
         closing: bool,
     },
     #[display("Finished({finished})")]
-    Finished { finished: PendingStateFinished },
+    Finished {
+        finished: PendingStateFinished,
+    },
+}
+
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[display("Locked(`{lock_expires_at}`, {executor_id}, {run_id})")]
+pub struct PendingStateLocked {
+    pub executor_id: ExecutorId,
+    pub run_id: RunId,
+    pub lock_expires_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
@@ -1155,11 +1162,11 @@ impl PendingState {
                     //     ))
                 }
             }
-            PendingState::Locked {
+            PendingState::Locked(PendingStateLocked {
                 executor_id: current_pending_state_executor_id,
                 run_id: current_pending_state_run_id,
                 ..
-            } => {
+            }) => {
                 if executor_id == *current_pending_state_executor_id
                     && run_id == *current_pending_state_run_id
                 {

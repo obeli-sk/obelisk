@@ -15,7 +15,8 @@ use concepts::{
         ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, Locked,
         LockedExecution, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, ResponseWithCursor, Version, VersionType,
+        PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor, Version,
+        VersionType,
     },
 };
 use conversions::{FromStrWrapper, JsonWrapper, consistency_db_err, consistency_rusqlite};
@@ -423,11 +424,11 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-            } if state == STATE_LOCKED => Ok(PendingState::Locked {
+            } if state == STATE_LOCKED => Ok(PendingState::Locked(PendingStateLocked {
                 executor_id: *executor_id,
                 run_id: *run_id,
                 lock_expires_at: *lock_expires_at,
-            }),
+            })),
             CombinedStateDTO {
                 state,
                 ffqn: _,

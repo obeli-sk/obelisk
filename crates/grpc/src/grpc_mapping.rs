@@ -7,7 +7,8 @@ use concepts::{
         DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent, ExecutionEventInner,
         ExecutionListPagination, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, Locked,
         Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
-        PendingStateFinishedResultKind, VersionType, http_client_trace::HttpClientTrace,
+        PendingStateFinishedResultKind, PendingStateLocked, VersionType,
+        http_client_trace::HttpClientTrace,
     },
 };
 use concepts::{JoinSetId, JoinSetKind};
@@ -198,11 +199,11 @@ impl From<PendingState> for grpc_gen::ExecutionStatus {
         use grpc_gen::execution_status::{BlockedByJoinSet, Finished, Locked, PendingAt, Status};
         grpc_gen::ExecutionStatus {
             status: Some(match pending_state {
-                PendingState::Locked {
+                PendingState::Locked(PendingStateLocked {
                     executor_id: _,
                     run_id,
                     lock_expires_at,
-                } => Status::Locked(Locked {
+                }) => Status::Locked(Locked {
                     run_id: Some(run_id.into()),
                     lock_expires_at: Some(lock_expires_at.into()),
                 }),

@@ -347,7 +347,7 @@ mod index {
     use super::{BTreeMap, DateTime, ExecutionId, HashMap, HashSet, JoinSetId, PendingState, Utc};
     use crate::journal::ExecutionJournal;
     use concepts::prefixed_ulid::DelayId;
-    use concepts::storage::{HistoryEvent, JoinSetRequest, JoinSetResponse};
+    use concepts::storage::{HistoryEvent, JoinSetRequest, JoinSetResponse, PendingStateLocked};
     use tracing::trace;
 
     #[derive(Debug, Default)]
@@ -419,9 +419,9 @@ mod index {
                     self.pending_scheduled_rev
                         .insert(execution_id.clone(), scheduled_at);
                 }
-                PendingState::Locked {
+                PendingState::Locked(PendingStateLocked {
                     lock_expires_at, ..
-                } => {
+                }) => {
                     self.timers
                         .entry(lock_expires_at)
                         .or_default()
