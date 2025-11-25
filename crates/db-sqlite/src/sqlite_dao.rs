@@ -13,9 +13,9 @@ use concepts::{
         DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool, DbPoolCloseable,
         ExecutionEvent, ExecutionEventInner, ExecutionListPagination, ExecutionWithState,
         ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution,
-        Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
-        ResponseWithCursor, Version, VersionType,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, Locked,
+        LockedExecution, Pagination, PendingState, PendingStateFinished,
+        PendingStateFinishedResultKind, ResponseWithCursor, Version, VersionType,
     },
 };
 use conversions::{FromStrWrapper, JsonWrapper, consistency_db_err, consistency_rusqlite};
@@ -1601,13 +1601,13 @@ impl SqlitePool {
         Self::check_expected_next_and_appending_version(&expected_version, appending_version)?;
 
         // Append to `execution_log` table.
-        let event = ExecutionEventInner::Locked {
+        let event = ExecutionEventInner::Locked(Locked {
             component_id: component_id.clone(),
             executor_id,
             lock_expires_at,
             run_id,
             retry_config,
-        };
+        });
         let event_ser = serde_json::to_string(&event).map_err(|err| {
             warn!("Cannot serialize {event:?} - {err:?}");
             DbErrorWriteNonRetriable::ValidationFailed("parameter serialization error".into())
@@ -1746,13 +1746,13 @@ impl SqlitePool {
         }
         if let AppendRequest {
             event:
-                ExecutionEventInner::Locked {
+                ExecutionEventInner::Locked(Locked {
                     component_id,
                     executor_id,
                     run_id,
                     lock_expires_at,
                     retry_config,
-                },
+                }),
             created_at,
         } = req
         {

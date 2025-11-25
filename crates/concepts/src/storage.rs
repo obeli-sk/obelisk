@@ -239,16 +239,7 @@ pub enum ExecutionEventInner {
         metadata: ExecutionMetadata,
         scheduled_by: Option<ExecutionId>,
     },
-    #[display("Locked(`{lock_expires_at}`, {component_id})")]
-    Locked {
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
-        component_id: ComponentId,
-        executor_id: ExecutorId,
-        run_id: RunId,
-        lock_expires_at: DateTime<Utc>,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentRetryConfig::ZERO))]
-        retry_config: ComponentRetryConfig,
-    },
+    Locked(Locked),
     /// Returns execution to [`PendingState::PendingNow`] state
     /// without timing out. This can happen when the executor is running
     /// out of resources like [`WorkerError::LimitReached`] or when
@@ -290,7 +281,9 @@ pub enum ExecutionEventInner {
     },
 
     #[display("HistoryEvent({event})")]
-    HistoryEvent { event: HistoryEvent },
+    HistoryEvent {
+        event: HistoryEvent,
+    },
 }
 
 impl ExecutionEventInner {
@@ -323,6 +316,21 @@ impl ExecutionEventInner {
             _ => None,
         }
     }
+}
+
+#[derive(
+    Clone, derive_more::Debug, derive_more::Display, PartialEq, Eq, Serialize, Deserialize,
+)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
+#[display("Locked(`{lock_expires_at}`, {component_id})")]
+pub struct Locked {
+    #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
+    pub component_id: ComponentId,
+    pub executor_id: ExecutorId,
+    pub run_id: RunId,
+    pub lock_expires_at: DateTime<Utc>,
+    #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentRetryConfig::ZERO))]
+    pub retry_config: ComponentRetryConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]

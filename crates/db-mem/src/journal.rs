@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use concepts::JoinSetId;
 use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionEventInner,
-    HistoryEvent, JoinSetRequest, JoinSetResponseEvent, JoinSetResponseEventOuter,
+    HistoryEvent, JoinSetRequest, JoinSetResponseEvent, JoinSetResponseEventOuter, Locked,
     PendingStateFinished, PendingStateFinishedResultKind, VersionType,
 };
 use concepts::storage::{ExecutionLog, PendingState, Version};
@@ -101,13 +101,13 @@ impl ExecutionJournal {
             ));
         }
 
-        if let ExecutionEventInner::Locked {
+        if let ExecutionEventInner::Locked(Locked {
             executor_id,
             lock_expires_at,
             run_id,
             component_id: _,
             retry_config: _,
-        } = &event
+        }) = &event
         {
             self.pending_state.can_append_lock(
                 created_at,
@@ -164,13 +164,13 @@ impl ExecutionJournal {
                     })
                 }
 
-                ExecutionEventInner::Locked {
+                ExecutionEventInner::Locked(Locked {
                     executor_id,
                     lock_expires_at,
                     run_id,
                     component_id: _,
                     retry_config: _,
-                } => Some(PendingState::Locked {
+                }) => Some(PendingState::Locked {
                     executor_id: *executor_id,
                     lock_expires_at: *lock_expires_at,
                     run_id: *run_id,

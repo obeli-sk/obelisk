@@ -14,8 +14,8 @@ use concepts::storage::{
     DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
     DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionEventInner,
     ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredDelay, ExpiredLock,
-    ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse, LockedExecution,
-    Pagination, ResponseWithCursor, Version, VersionType,
+    ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse, Locked,
+    LockedExecution, Pagination, ResponseWithCursor, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
@@ -616,13 +616,13 @@ impl DbHolder {
         lock_expires_at: DateTime<Utc>,
         retry_config: ComponentRetryConfig,
     ) -> Result<(Version /* next version */, Vec<HistoryEvent>), DbErrorWrite> {
-        let event = ExecutionEventInner::Locked {
+        let event = ExecutionEventInner::Locked(Locked {
             component_id,
             executor_id,
             lock_expires_at,
             run_id,
             retry_config,
-        };
+        });
         self.append(created_at, execution_id, version, event)
             .map(|next_version| {
                 let journal = self.journals.get(execution_id).unwrap();
@@ -688,7 +688,9 @@ impl DbHolder {
                     .enumerate()
                     .rev()
                     .find_map(|(idx, outer)| {
-                        if let ExecutionEventInner::Locked { retry_config, .. } = outer.event {
+                        if let ExecutionEventInner::Locked(Locked { retry_config, .. }) =
+                            outer.event
+                        {
                             Some((
                                 Version::new(VersionType::try_from(idx).unwrap()),
                                 retry_config,

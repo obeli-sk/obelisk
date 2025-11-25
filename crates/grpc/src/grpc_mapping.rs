@@ -5,8 +5,8 @@ use concepts::{
     prefixed_ulid::{DelayId, RunId},
     storage::{
         DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent, ExecutionEventInner,
-        ExecutionListPagination, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, Pagination,
-        PendingState, PendingStateFinished, PendingStateFinishedError,
+        ExecutionListPagination, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, Locked,
+        Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
         PendingStateFinishedResultKind, VersionType, http_client_trace::HttpClientTrace,
     },
 };
@@ -405,13 +405,13 @@ pub fn from_execution_event_to_grpc(
                     component_id: Some(component_id.into()),
                     scheduled_by: scheduled_by.map(|id| grpc_gen::ExecutionId { id: id.to_string() }),
                 }),
-                ExecutionEventInner::Locked {
+                ExecutionEventInner::Locked(Locked{
                     component_id,
                     executor_id: _,
                     run_id,
                     lock_expires_at,
                     retry_config: _,
-                } => grpc_gen::execution_event::Event::Locked(grpc_gen::execution_event::Locked {
+                }) => grpc_gen::execution_event::Event::Locked(grpc_gen::execution_event::Locked {
                     component_id: Some(component_id.into()),
                     run_id: run_id.to_string(),
                     lock_expires_at: Some(prost_wkt_types::Timestamp::from(lock_expires_at)),
