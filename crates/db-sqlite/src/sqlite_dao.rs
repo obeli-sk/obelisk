@@ -3147,7 +3147,8 @@ impl DbConnection for SqlitePool {
                     .collect::<Result<Vec<_>, _>>()?;
                 // Extend with expired locks
                 let expired = conn.prepare(&format!(r#"
-                    SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis
+                    SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis,
+                    executor_id, run_id
                     FROM t_state
                     WHERE pending_expires_finished <= :at AND state = "{STATE_LOCKED}"
                     "#
@@ -3164,6 +3165,8 @@ impl DbConnection for SqlitePool {
                             let intermittent_event_count = row.get("intermittent_event_count")?;
                             let max_retries = row.get("max_retries")?;
                             let retry_exp_backoff_millis = row.get("retry_exp_backoff_millis")?;
+                            let executor_id = row.get("executor_id")?;
+                            let run_id = row.get("run_id")?;
                             let lock = ExpiredLock {
                                 execution_id,
                                 locked_at_version,
@@ -3171,6 +3174,7 @@ impl DbConnection for SqlitePool {
                                 intermittent_event_count,
                                 max_retries,
                                 retry_exp_backoff: Duration::from_millis(retry_exp_backoff_millis),
+                                locked_by: LockedBy { executor_id, run_id },
                             };
                             Ok(ExpiredTimer::Lock(lock))
                         }

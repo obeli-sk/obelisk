@@ -108,11 +108,12 @@ pub(crate) async fn tick(
                 intermittent_event_count,
                 max_retries,
                 retry_exp_backoff,
+                locked_by,
             }) => {
                 let append = if max_retries == u32::MAX && locked_at_version.0 + 1 < next_version.0
                 {
                     // Workflow that made progress is unlocked and immediately available for locking.
-                    info!(%execution_id, "Unlocking workflow execution");
+                    info!(%execution_id, run_id = %locked_by.run_id, executor_id = %locked_by.executor_id, "Unlocking workflow execution");
                     Append {
                         created_at: executed_at,
                         primary_event: AppendRequest {
@@ -132,7 +133,8 @@ pub(crate) async fn tick(
                     retry_exp_backoff,
                 ) {
                     let backoff_expires_at = executed_at + duration;
-                    info!(%execution_id, "Retrying execution with expired lock after {duration:?} at {backoff_expires_at}");
+                    info!(%execution_id, run_id = %locked_by.run_id, executor_id = %locked_by.executor_id,
+                        "Retrying execution with expired lock after {duration:?} at {backoff_expires_at}");
                     Append {
                         created_at: executed_at,
                         primary_event: AppendRequest {
@@ -147,7 +149,8 @@ pub(crate) async fn tick(
                         child_finished: None,
                     }
                 } else {
-                    info!(%execution_id, "Marking execution with expired lock as permanently timed out");
+                    info!(%execution_id, run_id = %locked_by.run_id, executor_id = %locked_by.executor_id,
+                        "Marking execution with expired lock as permanently timed out");
                     let finished_exec_result = SupportedFunctionReturnValue::ExecutionError(
                         FinishedExecutionError::PermanentTimeout,
                     );

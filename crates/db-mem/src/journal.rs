@@ -143,7 +143,7 @@ impl ExecutionJournal {
         self.pending_state = self.calculate_pending_state();
     }
 
-    fn find_last_lock(&self) -> Option<LockedBy> {
+    pub(crate) fn find_last_lock(&self) -> Option<LockedBy> {
         self.execution_events
             .iter()
             .rev()

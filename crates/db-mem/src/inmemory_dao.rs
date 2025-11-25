@@ -705,6 +705,9 @@ impl DbHolder {
                     max_retries: retry_config.max_retries,
                     intermittent_event_count: journal.temporary_event_count(),
                     retry_exp_backoff: retry_config.retry_exp_backoff,
+                    locked_by: journal
+                        .find_last_lock()
+                        .expect("must have been locked in order to expire"),
                 };
                 ExpiredTimer::Lock(lock)
             });

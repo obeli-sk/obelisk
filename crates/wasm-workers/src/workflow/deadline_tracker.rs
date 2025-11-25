@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::time::ClockFn;
 use std::{pin::Pin, time::Duration};
-use tracing::warn;
+use tracing::{trace, warn};
 
 #[async_trait]
 pub trait DeadlineTracker: Send + Sync {
@@ -82,7 +82,7 @@ impl<C: ClockFn> DeadlineTrackerFactory for DeadlineTrackerFactoryTokio<C> {
             warn!("Not setting the leeway as deadline duration is too short");
             deadline_duration
         };
-        tracing::info!("Setting deadline to now + {deadline_duration:?}");
+        trace!("Setting deadline to now + {deadline_duration:?}");
         let deadline = tokio::time::Instant::now() + deadline_duration;
         let tracker = DeadlineTrackerTokio {
             deadline,

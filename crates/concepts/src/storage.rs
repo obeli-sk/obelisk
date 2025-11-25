@@ -1041,6 +1041,7 @@ pub struct ExpiredLock {
     pub intermittent_event_count: u32,
     pub max_retries: u32,
     pub retry_exp_backoff: Duration,
+    pub locked_by: LockedBy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
