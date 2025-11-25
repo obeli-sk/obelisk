@@ -763,8 +763,8 @@ mod tests {
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::storage::DbPoolCloseable;
     use concepts::storage::{CreateRequest, DbConnection, JoinSetRequest};
+    use concepts::storage::{DbPoolCloseable, LockedBy};
     use concepts::storage::{ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState};
     use concepts::time::Now;
     use concepts::{
@@ -1242,6 +1242,7 @@ mod tests {
             })
             .await
             .unwrap();
+        let parent_executor_id = ExecutorId::generate();
         tick_fn(
             ExecConfig {
                 batch_size: 1,
@@ -1249,7 +1250,7 @@ mod tests {
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
-                executor_id: ExecutorId::generate(),
+                executor_id: parent_executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
             },
             sim_clock.clone(),
@@ -1375,8 +1376,9 @@ mod tests {
         assert_matches!(
             parent_log.pending_state,
             PendingState::PendingAt {
-                scheduled_at
-            } if scheduled_at == sim_clock.now(),
+                scheduled_at,
+                last_lock: Some(LockedBy { executor_id: found_executor_id, run_id: _}),
+            } if scheduled_at == sim_clock.now() && found_executor_id == parent_executor_id,
             "parent should be back to pending"
         );
         let (found_join_set_id, found_child_execution_id, child_finished_version, found_result) = assert_matches!(
@@ -1478,7 +1480,7 @@ mod tests {
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
         let executor = ExecTask::new_test(
             worker,
-            exec_config,
+            exec_config.clone(),
             sim_clock.clone(),
             db_exec.clone(),
             ffqns,
@@ -1529,11 +1531,15 @@ mod tests {
                 backtrace_id: None,
             } if *at == now_after_first_lock_expiry && *backoff_expires_at == expected_first_timeout_expiry
         );
-        assert_eq!(
+        assert_matches!(
+            execution_log.pending_state,
             PendingState::PendingAt {
-                scheduled_at: expected_first_timeout_expiry
-            },
-            execution_log.pending_state
+                scheduled_at: found_scheduled_by,
+                last_lock: Some(LockedBy {
+                    executor_id: found_executor_id,
+                    run_id: _,
+                }),
+            } if found_scheduled_by == expected_first_timeout_expiry && found_executor_id == exec_config.executor_id
         );
         sim_clock.move_time_forward(timeout_duration);
         let now_after_first_timeout = sim_clock.now();

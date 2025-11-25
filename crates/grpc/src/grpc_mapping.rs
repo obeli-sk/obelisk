@@ -6,7 +6,7 @@ use concepts::{
     storage::{
         DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent, ExecutionEventInner,
         ExecutionListPagination, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, Locked,
-        Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
+        LockedBy, Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
         PendingStateFinishedResultKind, PendingStateLocked, VersionType,
         http_client_trace::HttpClientTrace,
     },
@@ -200,14 +200,20 @@ impl From<PendingState> for grpc_gen::ExecutionStatus {
         grpc_gen::ExecutionStatus {
             status: Some(match pending_state {
                 PendingState::Locked(PendingStateLocked {
-                    executor_id: _,
-                    run_id,
+                    locked_by:
+                        LockedBy {
+                            executor_id: _,
+                            run_id,
+                        },
                     lock_expires_at,
                 }) => Status::Locked(Locked {
                     run_id: Some(run_id.into()),
                     lock_expires_at: Some(lock_expires_at.into()),
                 }),
-                PendingState::PendingAt { scheduled_at } => Status::PendingAt(PendingAt {
+                PendingState::PendingAt {
+                    scheduled_at,
+                    last_lock: _,
+                } => Status::PendingAt(PendingAt {
                     scheduled_at: Some(scheduled_at.into()),
                 }),
                 PendingState::BlockedByJoinSet {

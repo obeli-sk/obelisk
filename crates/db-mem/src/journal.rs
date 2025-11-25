@@ -4,7 +4,8 @@ use concepts::JoinSetId;
 use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionEventInner,
     HistoryEvent, JoinSetRequest, JoinSetResponseEvent, JoinSetResponseEventOuter, Locked,
-    PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked, VersionType,
+    LockedBy, PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
+    VersionType,
 };
 use concepts::storage::{ExecutionLog, PendingState, Version};
 use concepts::{ExecutionId, ExecutionMetadata};
@@ -27,6 +28,7 @@ impl ExecutionJournal {
     pub fn new(req: CreateRequest) -> Self {
         let pending_state = PendingState::PendingAt {
             scheduled_at: req.scheduled_at,
+            last_lock: None,
         };
         let execution_id = req.execution_id.clone();
         let created_at = req.created_at;
@@ -141,6 +143,25 @@ impl ExecutionJournal {
         self.pending_state = self.calculate_pending_state();
     }
 
+    fn find_last_lock(&self) -> Option<LockedBy> {
+        self.execution_events
+            .iter()
+            .rev()
+            .find_map(|event| match &event.event {
+                ExecutionEventInner::Locked(Locked {
+                    executor_id,
+                    lock_expires_at: _,
+                    run_id,
+                    component_id: _,
+                    retry_config: _,
+                }) => Some(LockedBy {
+                    executor_id: *executor_id,
+                    run_id: *run_id,
+                }),
+                _ => None,
+            })
+    }
+
     fn calculate_pending_state(&self) -> PendingState {
         self.execution_events
             .iter()
@@ -150,6 +171,7 @@ impl ExecutionJournal {
                 ExecutionEventInner::Created { scheduled_at, .. } => {
                     Some(PendingState::PendingAt {
                         scheduled_at: *scheduled_at,
+                        last_lock: None,
                     })
                 }
 
@@ -171,9 +193,11 @@ impl ExecutionJournal {
                     component_id: _,
                     retry_config: _,
                 }) => Some(PendingState::Locked(PendingStateLocked {
-                    executor_id: *executor_id,
+                    locked_by: LockedBy {
+                        executor_id: *executor_id,
+                        run_id: *run_id,
+                    },
                     lock_expires_at: *lock_expires_at,
-                    run_id: *run_id,
                 })),
 
                 ExecutionEventInner::TemporarilyFailed {
@@ -189,6 +213,7 @@ impl ExecutionJournal {
                     ..
                 } => Some(PendingState::PendingAt {
                     scheduled_at: *expires_at,
+                    last_lock: self.find_last_lock(),
                 }),
 
                 ExecutionEventInner::HistoryEvent {
@@ -229,7 +254,10 @@ impl ExecutionJournal {
                     if let Some(nth_created_at) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
                         let scheduled_at = max(*lock_expires_at, *nth_created_at);
-                        Some(PendingState::PendingAt { scheduled_at })
+                        Some(PendingState::PendingAt {
+                            scheduled_at,
+                            last_lock: self.find_last_lock(),
+                        })
                     } else {
                         // Still waiting for response
                         Some(PendingState::BlockedByJoinSet {

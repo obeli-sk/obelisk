@@ -592,7 +592,7 @@ pub(crate) mod tests {
         use super::*;
         use crate::engines::PoolingOptions;
         use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
-        use concepts::storage::{Locked, PendingState};
+        use concepts::storage::{Locked, LockedBy, PendingState};
         use concepts::time::Now;
         use concepts::{
             ComponentRetryConfig, FinishedExecutionError, PermanentFailureKind,
@@ -1363,18 +1363,20 @@ pub(crate) mod tests {
                 })
                 .await
                 .unwrap();
-            let executed = exec
-                .tick_test_await(sim_clock.now(), RunId::generate())
-                .await;
+            let run_id = RunId::generate();
+            let executed = exec.tick_test_await(sim_clock.now(), run_id).await;
             assert_eq!(vec![execution_id.clone()], executed);
             // First execution should have failed
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
                 .unwrap();
-            let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
+            let (scheduled_at, found_run_id) = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at, last_lock: Some(LockedBy { executor_id: _, run_id }) }
+            => (scheduled_at, run_id));
             // retry_exp_backoff is 0
             assert_eq!(sim_clock.now(), scheduled_at);
+            assert_eq!(run_id, found_run_id);
+
             let executed = exec
                 .tick_test_await(sim_clock.now(), RunId::generate())
                 .await;

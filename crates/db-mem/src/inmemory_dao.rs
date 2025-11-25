@@ -411,7 +411,10 @@ mod index {
             self.purge(execution_id);
             // Add it again if needed
             match journal.pending_state {
-                PendingState::PendingAt { scheduled_at } => {
+                PendingState::PendingAt {
+                    scheduled_at,
+                    last_lock: _,
+                } => {
                     self.pending_scheduled
                         .entry(scheduled_at)
                         .or_default()

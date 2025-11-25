@@ -1057,6 +1057,7 @@ pub enum PendingState {
     #[display("PendingAt(`{scheduled_at}`)")]
     PendingAt {
         scheduled_at: DateTime<Utc>,
+        last_lock: Option<LockedBy>, // Needed for lock extension
     }, // e.g. created with a schedule, temporary timeout/failure
     #[display("BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
     /// Caused by [`HistoryEvent::JoinNext`]
@@ -1074,11 +1075,16 @@ pub enum PendingState {
 }
 
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
-#[display("Locked(`{lock_expires_at}`, {executor_id}, {run_id})")]
+#[display("Locked(`{lock_expires_at}`, {}, {})", locked_by.executor_id, locked_by.run_id)]
 pub struct PendingStateLocked {
+    pub locked_by: LockedBy,
+    pub lock_expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockedBy {
     pub executor_id: ExecutorId,
     pub run_id: RunId,
-    pub lock_expires_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
@@ -1145,27 +1151,35 @@ impl PendingState {
             ));
         }
         match self {
-            PendingState::PendingAt { scheduled_at } => {
+            PendingState::PendingAt {
+                scheduled_at,
+                last_lock,
+            } => {
                 if *scheduled_at <= created_at {
                     // pending now, ok to lock
                     Ok(LockKind::CreatingNewLock)
-                } else
-                // FIXME
-                // if executor_id == *current_pending_state_executor_id
-                // && run_id == *current_pending_state_run_id
+                } else if let Some(LockedBy {
+                    executor_id: last_executor_id,
+                    run_id: last_run_id,
+                }) = last_lock
+                    && executor_id == *last_executor_id
+                    && run_id == *last_run_id
                 {
                     // Original executor is extending the lock.
                     Ok(LockKind::Extending)
-                    // } else {
-                    //     Err(DbErrorWriteNonRetriable::ValidationFailed(
-                    //         "cannot lock, not yet pending".into(),
-                    //     ))
+                } else {
+                    Err(DbErrorWriteNonRetriable::ValidationFailed(
+                        "cannot lock, not yet pending".into(),
+                    ))
                 }
             }
             PendingState::Locked(PendingStateLocked {
-                executor_id: current_pending_state_executor_id,
-                run_id: current_pending_state_run_id,
-                ..
+                locked_by:
+                    LockedBy {
+                        executor_id: current_pending_state_executor_id,
+                        run_id: current_pending_state_run_id,
+                    },
+                lock_expires_at: _,
             }) => {
                 if executor_id == *current_pending_state_executor_id
                     && run_id == *current_pending_state_run_id

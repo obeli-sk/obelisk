@@ -906,7 +906,8 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
         assert_matches!(
             parent_log.pending_state,
             PendingState::PendingAt {
-                scheduled_at
+                scheduled_at,
+                last_lock: None,
             } if scheduled_at == sim_clock.now()
         );
         // Create child 1

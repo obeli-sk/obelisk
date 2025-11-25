@@ -717,7 +717,8 @@ pub(crate) mod tests {
     use chrono::DateTime;
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::{
-        AppendEventsToExecution, AppendResponseToExecution, Locked, PendingStateFinishedError,
+        AppendEventsToExecution, AppendResponseToExecution, Locked, LockedBy,
+        PendingStateFinishedError,
     };
     use concepts::storage::{
         AppendRequest, DbConnection, DbExecutor, ExecutionEventInner, JoinSetResponse,
@@ -1241,6 +1242,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
+        let executor_id = ExecutorId::generate();
         let sleep_exec = {
             let worker = compile_workflow_worker(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
@@ -1255,15 +1257,23 @@ pub(crate) mod tests {
                 tick_sleep: Duration::ZERO, // irrelevant here as we call tick manually
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
-                executor_id: ExecutorId::generate(),
+                executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
             };
             let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
-            ExecTask::new_test(worker, exec_config, sim_clock.clone(), db_exec, ffqns)
+            ExecTask::new_test(
+                worker,
+                exec_config.clone(),
+                sim_clock.clone(),
+                db_exec,
+                ffqns,
+            )
         };
+
+        let run_id_first = RunId::generate();
         {
             let worker_tasks = sleep_exec
-                .tick_test(sim_clock.now(), RunId::generate())
+                .tick_test(sim_clock.now(), run_id_first)
                 .await
                 .wait_for_tasks()
                 .await
@@ -1310,13 +1320,16 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
 
-            let actual_pending_at = assert_matches!(
+            let (actual_pending_at, found_executor_id, found_run_id) = assert_matches!(
                 pending_state,
                 PendingState::PendingAt {
-                    scheduled_at
+                    scheduled_at,
+                    last_lock: Some(LockedBy { executor_id, run_id })
                 }
-                => scheduled_at
+                => (scheduled_at, executor_id, run_id)
             );
+            assert_eq!(executor_id, found_executor_id);
+            assert_eq!(run_id_first, found_run_id);
             match join_next_blocking_strategy {
                 JoinNextBlockingStrategy::Interrupt => {
                     assert_eq!(sim_clock.now(), actual_pending_at);
@@ -1876,6 +1889,7 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
+        let executor_id = ExecutorId::generate();
         let exec_task = ExecTask::new_test(
             worker,
             ExecConfig {
@@ -1884,7 +1898,7 @@ pub(crate) mod tests {
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
-                executor_id: ExecutorId::generate(),
+                executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
             },
             sim_clock.clone(),
@@ -1892,9 +1906,10 @@ pub(crate) mod tests {
             Arc::new([FFQN_WORKFLOW_STUB]),
         );
 
+        let run_id = RunId::generate();
         {
             let task_count = exec_task
-                .tick_test(sim_clock.now(), RunId::generate())
+                .tick_test(sim_clock.now(), run_id)
                 .await
                 .wait_for_tasks()
                 .await
@@ -1906,8 +1921,11 @@ pub(crate) mod tests {
             .get_pending_state(&execution_id)
             .await
             .unwrap();
-        let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
+        let (scheduled_at, found_executor_id, found_run_id) = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at, last_lock: Some(LockedBy { executor_id, run_id }) }
+            => (scheduled_at, executor_id, run_id));
         assert_eq!(sim_clock.now(), scheduled_at);
+        assert_eq!(executor_id, found_executor_id);
+        assert_eq!(run_id, found_run_id);
 
         // another tick + await should mark the execution finished.
         assert_eq!(

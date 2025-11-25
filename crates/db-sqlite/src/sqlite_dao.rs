@@ -1,5 +1,4 @@
 use crate::histograms::Histograms;
-use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -13,7 +12,7 @@ use concepts::{
         DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool, DbPoolCloseable,
         ExecutionEvent, ExecutionEventInner, ExecutionListPagination, ExecutionWithState,
         ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, Locked,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedBy,
         LockedExecution, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor, Version,
         VersionType,
@@ -137,7 +136,7 @@ CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_id ON t_join_set
 
 /// Stores executions in `PendingState`
 /// `state` to column mapping:
-/// `PendingAt`:            (nothing but required columns)
+/// `PendingAt`:            (nothing but required columns), optionally contains all `Locked` columns.
 /// `Locked`:               `max_retries`, `retry_exp_backoff_millis`, `last_lock_version`, `executor_id`, `run_id`
 /// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
 /// `Finished` :            `result_kind`.
@@ -401,6 +400,7 @@ impl CombinedState {
         corresponding_version: Version,
     ) -> Result<Self, rusqlite::Error> {
         let pending_state = match dto {
+            // Pending - just created
             CombinedStateDTO {
                 state,
                 ffqn: _,
@@ -413,6 +413,25 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_PENDING_AT => Ok(PendingState::PendingAt {
                 scheduled_at: *scheduled_at,
+                last_lock: None,
+            }),
+            // Pending, previously locked
+            CombinedStateDTO {
+                state,
+                ffqn: _,
+                pending_expires_finished: scheduled_at,
+                last_lock_version: None,
+                executor_id: Some(executor_id),
+                run_id: Some(run_id),
+                join_set_id: None,
+                join_set_closing: None,
+                result_kind: None,
+            } if state == STATE_PENDING_AT => Ok(PendingState::PendingAt {
+                scheduled_at: *scheduled_at,
+                last_lock: Some(LockedBy {
+                    executor_id: *executor_id,
+                    run_id: *run_id,
+                }),
             }),
             CombinedStateDTO {
                 state,
@@ -425,8 +444,10 @@ impl CombinedState {
                 join_set_closing: None,
                 result_kind: None,
             } if state == STATE_LOCKED => Ok(PendingState::Locked(PendingStateLocked {
-                executor_id: *executor_id,
-                run_id: *run_id,
+                locked_by: LockedBy {
+                    executor_id: *executor_id,
+                    run_id: *run_id,
+                },
                 lock_expires_at: *lock_expires_at,
             })),
             CombinedStateDTO {
@@ -434,8 +455,8 @@ impl CombinedState {
                 ffqn: _,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: None,
-                executor_id: None,
-                run_id: None,
+                executor_id: _,
+                run_id: _,
                 join_set_id: Some(join_set_id),
                 join_set_closing: Some(join_set_closing),
                 result_kind: None,
@@ -1011,9 +1032,7 @@ impl SqlitePool {
             ":join_set_id": event.join_set_id().map(std::string::ToString::to_string),
         })
         ?;
-        let pending_state = PendingState::PendingAt { scheduled_at };
         let pending_at = {
-            let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
             debug!("Creating with `Pending(`{scheduled_at:?}`)");
             tx.prepare(
                 r"
@@ -1083,8 +1102,6 @@ impl SqlitePool {
                     updated_at = CURRENT_TIMESTAMP,
 
                     last_lock_version = NULL,
-                    executor_id = NULL,
-                    run_id = NULL,
 
                     join_set_id = NULL,
                     join_set_closing = NULL,
@@ -1138,8 +1155,6 @@ impl SqlitePool {
                     intermittent_event_count = intermittent_event_count + :intermittent_delta,
 
                     last_lock_version = NULL,
-                    executor_id = NULL,
-                    run_id = NULL,
 
                     join_set_id = NULL,
                     join_set_closing = NULL,
@@ -1270,8 +1285,6 @@ impl SqlitePool {
                     updated_at = CURRENT_TIMESTAMP,
 
                     last_lock_version = NULL,
-                    executor_id = NULL,
-                    run_id = NULL,
 
                     join_set_id = :join_set_id,
                     join_set_closing = :join_set_closing,
