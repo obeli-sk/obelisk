@@ -365,7 +365,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             .map_err(|lock_already_expired| {
                 ctx.worker_span.in_scope(|| {
                     info!(execution_deadline = %ctx.locked_event.lock_expires_at, started_at = %lock_already_expired.started_at,
-                        "Lock is already expired")
+                        "Lock is already expired");
                 });
                 PrepareFuncErr::DbUpdatedByWorkerOrWatcher
             })?;

@@ -612,7 +612,6 @@ impl DbHolder {
         Ok(version)
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn lock(
         &mut self,
         created_at: DateTime<Utc>,

@@ -342,7 +342,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
         let Ok(deadline_duration) = deadline_delta.to_std() else {
             ctx.worker_span.in_scope(|| {
                 info!(execution_deadline = %ctx.locked_event.lock_expires_at, %started_at,
-                    "Timed out - started_at later than execution_deadline")
+                    "Timed out - started_at later than execution_deadline");
             });
             return WorkerResult::Err(WorkerError::TemporaryTimeout {
                 http_client_traces: None,
