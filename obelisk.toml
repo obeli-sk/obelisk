@@ -201,7 +201,7 @@ backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/tes
 enabled = true
 ## Defaults:
 # level = "info,app=trace"
-# style = "plain_compact" # One of "plain","plain_compact","json"
+# style = "plain" # One of "plain","plain_compact","json"
 # span = "none" # One of "none","new","enter","exit","close","active","full"
 # target = false
 
@@ -209,10 +209,10 @@ enabled = true
 # [log.file]
 # enabled = true
 # level = "info,obeli=debug,app=trace"
-# style = "json"
-# span = "close"
-# target = true
-# rotation = "daily"  # One of "minutely"|"hourly"|"daily"|"never"
+# style = "plain"                           # One of "plain","plain_compact","json"
+# span = "none"                             # One of "none","new","enter","exit","close","active","full"
+# target = false
+# rotation = "daily"                        # One of "minutely"|"hourly"|"daily"|"never"
 # directory = "."
 # prefix = "obelisk_server_daily" # File name prefix
 

@@ -1038,17 +1038,19 @@ pub(crate) mod log {
         pub(crate) common: AppenderCommon,
         pub(crate) directory: String,
         pub(crate) prefix: String,
+        #[serde(default)]
         pub(crate) rotation: Rotation,
         #[serde(default)]
         pub(crate) style: LoggingStyle,
     }
 
-    #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+    #[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum Rotation {
         Minutely,
         Hourly,
         Daily,
+        #[default]
         Never,
     }
     impl From<Rotation> for tracing_appender::rolling::Rotation {
