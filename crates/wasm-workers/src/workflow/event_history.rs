@@ -330,6 +330,8 @@ impl EventHistory {
         version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
+        self.flush_non_blocking_event_cache(db_connection, called_at)
+            .await?;
         self.locked_event.lock_expires_at = self.deadline_tracker.extend_by(self.lock_extension);
         let append_req = AppendRequest {
             created_at: called_at,
@@ -1059,6 +1061,7 @@ impl EventHistory {
         if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch
             && !non_blocking_event_batch.is_empty()
         {
+            debug!("Flushing the non-blocking event cache started");
             let mut batches = Vec::with_capacity(non_blocking_event_batch.len());
             let mut childs = Vec::with_capacity(non_blocking_event_batch.len());
             let mut first_version = None;
@@ -1096,6 +1099,7 @@ impl EventHistory {
                     debug!("Ignoring error while appending backtrace: {err:?}");
                 }
             }
+            debug!("Flushing the non-blocking event cache finished");
         }
         Ok(())
     }
