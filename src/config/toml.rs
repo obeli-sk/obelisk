@@ -227,13 +227,13 @@ impl ActivitiesGlobalConfigToml {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
-    #[serde(default = "default_workflows_locking_leeway")]
-    pub(crate) locking_leeway: DurationConfig,
+    #[serde(default = "default_workflows_lock_extension_leeway")]
+    pub(crate) lock_extension_leeway: DurationConfig,
 }
 impl Default for WorkflowsGlobalConfigToml {
     fn default() -> WorkflowsGlobalConfigToml {
         WorkflowsGlobalConfigToml {
-            locking_leeway: default_workflows_locking_leeway(),
+            lock_extension_leeway: default_workflows_lock_extension_leeway(),
         }
     }
 }
@@ -1368,8 +1368,8 @@ fn default_out_style() -> LoggingStyle {
 fn default_sqlite_queue_capacity() -> usize {
     SqliteConfig::default().queue_capacity
 }
-fn default_workflows_locking_leeway() -> DurationConfig {
-    DurationConfig::Milliseconds(50)
+fn default_workflows_lock_extension_leeway() -> DurationConfig {
+    DurationConfig::Milliseconds(100)
 }
 fn default_activities_directories_enabled() -> bool {
     false

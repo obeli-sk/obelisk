@@ -980,7 +980,7 @@
     "WorkflowsGlobalConfigToml": {
       "type": "object",
       "properties": {
-        "locking_leeway": {
+        "lock_extension_leeway": {
           "$ref": "#/$defs/DurationConfig"
         }
       },
