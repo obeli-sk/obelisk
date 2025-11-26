@@ -627,7 +627,6 @@ impl DbHolder {
             })
     }
 
-    #[expect(clippy::needless_pass_by_value)]
     fn append(
         &mut self,
         created_at: DateTime<Utc>,
@@ -646,7 +645,10 @@ impl DbHolder {
         let expected_version = journal.version();
         if appending_version != expected_version {
             return Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::VersionConflict(expected_version),
+                DbErrorWriteNonRetriable::VersionConflict {
+                    expected: expected_version,
+                    requested: appending_version,
+                },
             ));
         }
         let next_version = journal.append(created_at, event)?;
@@ -738,7 +740,10 @@ impl DbHolder {
                 journal.truncate_and_update_pending_state(truncate_len);
                 self.index.update(journal);
                 return Err(DbErrorWrite::NonRetriable(
-                    DbErrorWriteNonRetriable::VersionConflict(expected_version),
+                    DbErrorWriteNonRetriable::VersionConflict {
+                        expected: expected_version,
+                        requested: appending_version,
+                    },
                 ));
             }
             match journal.append(append_request.created_at, append_request.event) {

@@ -491,8 +491,11 @@ pub enum DbErrorWriteNonRetriable {
     ValidationFailed(StrVariant),
     #[error("illegal state: {0}")]
     IllegalState(StrVariant),
-    #[error("version conflict: {0}")]
-    VersionConflict(Version),
+    #[error("version conflict: expected: {expected}, got: {requested}")]
+    VersionConflict {
+        expected: Version,
+        requested: Version,
+    },
 }
 
 /// Write error tied to an execution

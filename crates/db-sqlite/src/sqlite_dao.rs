@@ -995,7 +995,10 @@ impl SqlitePool {
                 "Version conflict - expected: {expected_version:?}, appending: {appending_version:?}"
             );
             return Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::VersionConflict(expected_version.clone()),
+                DbErrorWriteNonRetriable::VersionConflict {
+                    expected: expected_version.clone(),
+                    requested: appending_version.clone(),
+                },
             ));
         }
         Ok(())
