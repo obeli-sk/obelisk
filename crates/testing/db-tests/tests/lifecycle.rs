@@ -4,7 +4,7 @@ use concepts::prefixed_ulid::{DelayId, RunId};
 use concepts::storage::{
     AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest, DbConnection,
     ExecutionEventInner, ExpiredDelay, ExpiredLock, ExpiredTimer, JoinSetRequest, JoinSetResponse,
-    JoinSetResponseEventOuter, LockedExecution, PendingState, Version,
+    JoinSetResponseEventOuter, LockedBy, LockedExecution, PendingState, Version,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
@@ -176,6 +176,7 @@ async fn append_after_finish_should_not_be_possible(
         &execution_id,
         sim_clock.now() + lock_expiry,
         exec1,
+        RunId::generate(),
         &component_id,
         db_connection.as_ref(),
         &sim_clock,
@@ -225,6 +226,7 @@ async fn lock_pending(
     execution_id: &ExecutionId,
     lock_expires_at: DateTime<Utc>,
     executor_id: ExecutorId,
+    run_id: RunId,
     component_id: &ComponentId,
     db_connection: &dyn DbConnection,
     sim_clock: &SimClock,
@@ -240,7 +242,7 @@ async fn lock_pending(
             component_id.clone(),
             executor_id,
             lock_expires_at,
-            RunId::generate(),
+            run_id,
             ComponentRetryConfig {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -292,6 +294,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
         &execution_id,
         sim_clock.now() + lock_expiry,
         exec1,
+        RunId::generate(),
         &component_id,
         db_connection.as_ref(),
         &sim_clock,
@@ -1229,6 +1232,7 @@ pub async fn test_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
         &sim_clock,
         executor_id,
         sim_clock.now() + Duration::from_millis(100), // lock expires at
+        RunId::generate(),
     )
     .await;
 }
@@ -1239,6 +1243,7 @@ async fn lock(
     sim_clock: &SimClock,
     executor_id: ExecutorId,
     lock_expires_at: DateTime<Utc>,
+    run_id: RunId,
 ) -> Version {
     let lock_pending_res = db_connection
         .lock_pending(
@@ -1249,7 +1254,7 @@ async fn lock(
             ComponentId::dummy_activity(),
             executor_id,
             lock_expires_at,
-            RunId::generate(),
+            run_id,
             ComponentRetryConfig {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1283,13 +1288,14 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
         .await
         .unwrap();
     let lock_expiry = Duration::from_millis(100);
-
+    let run_id = RunId::generate();
     let version = lock(
         db_connection,
         &execution_id,
         &sim_clock,
         executor_id,
         sim_clock.now() + lock_expiry,
+        run_id,
     )
     .await;
 
@@ -1316,6 +1322,10 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
         intermittent_event_count: 0,
         max_retries: 0,
         retry_exp_backoff: Duration::ZERO,
+        locked_by: LockedBy {
+            executor_id,
+            run_id,
+        },
     });
     assert_eq!(expected, actual);
 }
@@ -1345,6 +1355,7 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
         &sim_clock,
         executor_id,
         sim_clock.now() + lock_expiry * 2, // lock expires at
+        RunId::generate(),
     )
     .await;
 
@@ -1446,10 +1457,12 @@ async fn get_expired_times_with_execution_that_made_progress(
         .unwrap();
 
     // Lock = Version(1)
+    let run_id = RunId::generate();
     lock_pending(
         &execution_id,
         sim_clock.now() + lock_expiry,
         exec1,
+        run_id,
         &component_id,
         db_connection.as_ref(),
         &sim_clock,
@@ -1498,6 +1511,10 @@ async fn get_expired_times_with_execution_that_made_progress(
         intermittent_event_count: 0,
         max_retries: 0,
         retry_exp_backoff: Duration::ZERO,
+        locked_by: LockedBy {
+            executor_id: exec1,
+            run_id,
+        },
     };
     assert_eq!(expected_lock, expired_lock);
 
