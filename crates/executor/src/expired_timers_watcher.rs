@@ -11,7 +11,6 @@ use concepts::storage::DbErrorWrite;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionLog;
 use concepts::storage::ExpiredDelay;
-use concepts::storage::ExpiredLock;
 use concepts::storage::JoinSetResponseEvent;
 use concepts::time::ClockFn;
 use concepts::{
@@ -101,19 +100,16 @@ pub(crate) async fn tick(
     let mut expired_async_timers = 0;
     for expired_timer in db_connection.get_expired_timers(executed_at).await? {
         match expired_timer {
-            ExpiredTimer::Lock(ExpiredLock {
-                execution_id,
-                locked_at_version,
-                next_version,
-                intermittent_event_count,
-                max_retries,
-                retry_exp_backoff,
-                locked_by,
-            }) => {
-                let append = if max_retries == u32::MAX && locked_at_version.0 + 1 < next_version.0
+            ExpiredTimer::Lock(expired) => {
+                let execution_id = expired.execution_id.clone();
+                let append = if expired.max_retries == u32::MAX
+                    && expired.locked_at_version.0 + 1 < expired.next_version.0
                 {
                     // Workflow that made progress is unlocked and immediately available for locking.
-                    info!(%execution_id, run_id = %locked_by.run_id, executor_id = %locked_by.executor_id, "Unlocking workflow execution");
+                    info!(%execution_id, run_id = %expired.locked_by.run_id,
+                        executor_id = %expired.locked_by.executor_id,
+                        created_at = %executed_at,
+                        "Unlocking workflow execution - {expired:?}");
                     Append {
                         created_at: executed_at,
                         primary_event: AppendRequest {
@@ -124,17 +120,18 @@ pub(crate) async fn tick(
                             },
                         },
                         execution_id: execution_id.clone(),
-                        version: next_version,
+                        version: expired.next_version,
                         child_finished: None,
                     }
                 } else if let Some(duration) = ExecutionLog::can_be_retried_after(
-                    intermittent_event_count + 1,
-                    max_retries,
-                    retry_exp_backoff,
+                    expired.intermittent_event_count + 1,
+                    expired.max_retries,
+                    expired.retry_exp_backoff,
                 ) {
                     let backoff_expires_at = executed_at + duration;
-                    info!(%execution_id, run_id = %locked_by.run_id, executor_id = %locked_by.executor_id,
-                        "Retrying execution with expired lock after {duration:?} at {backoff_expires_at}");
+                    info!(%execution_id, run_id = %expired.locked_by.run_id, executor_id = %expired.locked_by.executor_id,
+                        created_at = %executed_at,
+                        "Retrying execution with expired lock after {duration:?} at {backoff_expires_at} - {expired:?}");
                     Append {
                         created_at: executed_at,
                         primary_event: AppendRequest {
@@ -145,12 +142,13 @@ pub(crate) async fn tick(
                             },
                         },
                         execution_id: execution_id.clone(),
-                        version: next_version,
+                        version: expired.next_version,
                         child_finished: None,
                     }
                 } else {
-                    info!(%execution_id, run_id = %locked_by.run_id, executor_id = %locked_by.executor_id,
-                        "Marking execution with expired lock as permanently timed out");
+                    info!(%execution_id, run_id = %expired.locked_by.run_id, executor_id = %expired.locked_by.executor_id,
+                        created_at = %executed_at,
+                        "Marking execution with expired lock as permanently timed out - {expired:?}");
                     let finished_exec_result = SupportedFunctionReturnValue::ExecutionError(
                         FinishedExecutionError::PermanentTimeout,
                     );
@@ -158,7 +156,7 @@ pub(crate) async fn tick(
                         derived
                             .split_to_parts()
                             .inspect_err(|err| {
-                                error!("cannot split execution {execution_id} to parts: {err:?}");
+                                error!(%execution_id, "Cannot split execution to parts: {err:?}");
                             })
                             .ok()
                     } else {
@@ -181,7 +179,7 @@ pub(crate) async fn tick(
                             },
                         },
                         execution_id: execution_id.clone(),
-                        version: next_version,
+                        version: expired.next_version,
                         child_finished,
                     }
                 };
@@ -197,7 +195,7 @@ pub(crate) async fn tick(
                 join_set_id,
                 delay_id,
             }) => {
-                debug!(%execution_id, %join_set_id, %delay_id, "Appending DelayFinishedAsyncResponse");
+                debug!(%execution_id, %join_set_id, %delay_id, created_at = %executed_at, "Appending DelayFinishedAsyncResponse");
                 let event = JoinSetResponse::DelayFinished { delay_id };
                 let res = db_connection
                     .append_response(
