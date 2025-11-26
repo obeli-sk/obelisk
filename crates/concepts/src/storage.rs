@@ -29,7 +29,8 @@ use strum::IntoStaticStr;
 use tracing::error;
 
 /// Remote client representation of the execution journal.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 pub struct ExecutionLog {
     pub execution_id: ExecutionId,
     pub events: Vec<ExecutionEvent>,
@@ -1051,8 +1052,9 @@ pub struct ExpiredDelay {
     pub delay_id: DelayId,
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
+#[cfg_attr(feature = "test", derive(Serialize))]
+#[cfg_attr(feature = "test", serde(tag = "type"))]
 pub enum PendingState {
     Locked(PendingStateLocked),
     #[display("PendingAt(`{scheduled_at}`)")]
@@ -1075,7 +1077,8 @@ pub enum PendingState {
     },
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 #[display("Locked(`{lock_expires_at}`, {}, {})", locked_by.executor_id, locked_by.run_id)]
 pub struct PendingStateLocked {
     pub locked_by: LockedBy,
