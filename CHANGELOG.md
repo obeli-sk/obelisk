@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0](https://github.com/obeli-sk/obelisk/compare/v0.26.2...v0.28.0)
+This release adds support for extending the lock of running workflows.
+
+### Added
+- Workflows now automatically extend the execution lock when they are not blocked by waiting for a response.
+
+### Changed
+- Pending state representation stored in SQLite has changed.
+
+
 ## [0.27.0](https://github.com/obeli-sk/obelisk/compare/v0.26.2...v0.27.0)
 
 ### Fixed
