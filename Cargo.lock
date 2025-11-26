@@ -274,7 +274,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bench"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "assert_matches",
  "codspeed-divan-compat",
@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "db-mem"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "arbitrary",
  "assert_matches",
@@ -1074,7 +1074,7 @@ dependencies = [
 
 [[package]]
 name = "db-tests"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "arbitrary",
  "assert_matches",
@@ -2980,7 +2980,7 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-concepts"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "arbitrary",
  "assert_matches",
@@ -3014,7 +3014,7 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-db-sqlite"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "arbitrary",
  "assert_matches",
@@ -3038,7 +3038,7 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-executor"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3067,7 +3067,7 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-grpc"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "http 1.3.1",
  "obeli-sk-concepts",
@@ -3087,7 +3087,7 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-utils"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3126,7 +3126,7 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-val-json"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -3144,7 +3144,7 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-wasm-workers"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "arbitrary",
  "assert_matches",
@@ -3204,7 +3204,7 @@ dependencies = [
 
 [[package]]
 name = "obelisk"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3262,7 +3262,7 @@ dependencies = [
 
 [[package]]
 name = "obelisk-component-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "cargo_metadata",
  "indexmap 2.12.1",
@@ -4848,35 +4848,35 @@ dependencies = [
 
 [[package]]
 name = "test-programs-dir-activity"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "wit-bindgen 0.47.0",
 ]
 
 [[package]]
 name = "test-programs-dir-activity-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-fibo-activity"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "wit-bindgen 0.47.0",
 ]
 
 [[package]]
 name = "test-programs-fibo-activity-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-fibo-webhook"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "waki",
  "waki-macros",
@@ -4885,42 +4885,42 @@ dependencies = [
 
 [[package]]
 name = "test-programs-fibo-webhook-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-fibo-workflow"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "wit-bindgen 0.47.0",
 ]
 
 [[package]]
 name = "test-programs-fibo-workflow-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-fibo-workflow-outer"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "wit-bindgen 0.47.0",
 ]
 
 [[package]]
 name = "test-programs-fibo-workflow-outer-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-http-get-activity"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "anyhow",
  "waki",
@@ -4929,28 +4929,28 @@ dependencies = [
 
 [[package]]
 name = "test-programs-http-get-activity-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-http-get-workflow"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "wit-bindgen 0.47.0",
 ]
 
 [[package]]
 name = "test-programs-http-get-workflow-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-process-activity"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "anyhow",
  "futures-concurrency",
@@ -4961,98 +4961,98 @@ dependencies = [
 
 [[package]]
 name = "test-programs-process-activity-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-serde-activity"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "wit-bindgen 0.47.0",
 ]
 
 [[package]]
 name = "test-programs-serde-activity-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-serde-workflow"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "wit-bindgen 0.47.0",
 ]
 
 [[package]]
 name = "test-programs-serde-workflow-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-sleep-activity"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "wit-bindgen 0.47.0",
 ]
 
 [[package]]
 name = "test-programs-sleep-activity-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-sleep-workflow"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "wit-bindgen 0.47.0",
 ]
 
 [[package]]
 name = "test-programs-sleep-workflow-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-stub-activity"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "wit-bindgen 0.47.0",
 ]
 
 [[package]]
 name = "test-programs-stub-activity-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-programs-stub-workflow"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "wit-bindgen 0.47.0",
 ]
 
 [[package]]
 name = "test-programs-stub-workflow-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "obelisk-component-builder",
 ]
 
 [[package]]
 name = "test-utils"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "arbitrary",
  "chrono",
@@ -6526,7 +6526,7 @@ dependencies = [
 
 [[package]]
 name = "webui"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -6565,7 +6565,7 @@ dependencies = [
 
 [[package]]
 name = "webui-builder"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "cargo_metadata",
  "yewprint-css",
@@ -6573,7 +6573,7 @@ dependencies = [
 
 [[package]]
 name = "webui-proxy"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "futures-concurrency",
  "webui-builder",

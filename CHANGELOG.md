@@ -6,7 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.28.0](https://github.com/obeli-sk/obelisk/compare/v0.26.2...v0.28.0)
+## [0.28.1](https://github.com/obeli-sk/obelisk/compare/v0.28.0...v0.28.1)
+
+### Fixed
+- Fixed a bug in lock extension. Non-blocking event cache is now flushed before the lock is extened.
+
+## [0.28.0](https://github.com/obeli-sk/obelisk/compare/v0.27.0...v0.28.0)
 This release adds support for extending the lock of running workflows.
 
 ### Added
