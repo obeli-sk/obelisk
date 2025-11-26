@@ -281,8 +281,7 @@
       "required": [
         "enabled",
         "directory",
-        "prefix",
-        "rotation"
+        "prefix"
       ]
     },
     "BlockingStrategyConfigCustomized": {
