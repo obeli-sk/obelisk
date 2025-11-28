@@ -1,3 +1,4 @@
+pub(crate) mod caching_db_connection;
 pub mod deadline_tracker;
 pub(crate) mod event_history;
 pub mod host_exports;

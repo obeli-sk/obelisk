@@ -1,3 +1,4 @@
+use super::caching_db_connection::{CachingBuffer, CachingDbConnection};
 use super::deadline_tracker::DeadlineTracker;
 use super::event_history::{
     ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
@@ -113,7 +114,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn> {
     event_history: EventHistory,
     rng: StdRng,
     pub(crate) clock_fn: C,
-    pub(crate) db_pool: Arc<dyn DbPool>,
+    pub(crate) db_connection: CachingDbConnection,
     pub(crate) version: Version,
     component_logger: ComponentLogger,
     pub(crate) resource_table: wasmtime::component::ResourceTable,
@@ -158,7 +159,7 @@ impl DirectFnCall<'_> {
             Params::from_wasmtime(Arc::from(params)),
             wasm_backtrace,
             &mut ctx.event_history,
-            ctx.db_pool.connection().as_ref(),
+            &mut ctx.db_connection,
             &mut ctx.version,
             called_at,
         )
@@ -262,7 +263,7 @@ impl ScheduleFnCall<'_> {
         }
         .apply(
             &mut ctx.event_history,
-            ctx.db_pool.connection().as_ref(),
+            &mut ctx.db_connection,
             &mut ctx.version,
             called_at,
         )
@@ -329,7 +330,7 @@ impl SubmitExecutionFnCall<'_> {
         }
         .apply(
             &mut ctx.event_history,
-            ctx.db_pool.connection().as_ref(),
+            &mut ctx.db_connection,
             &mut ctx.version,
             called_at,
         )
@@ -397,7 +398,7 @@ impl AwaitNextFnCall {
         }
         .apply(
             &mut ctx.event_history,
-            ctx.db_pool.connection().as_ref(),
+            &mut ctx.db_connection,
             &mut ctx.version,
             called_at,
         )
@@ -511,7 +512,7 @@ impl StubFnCall<'_> {
         }
         .apply(
             &mut ctx.event_history,
-            ctx.db_pool.connection().as_ref(),
+            &mut ctx.db_connection,
             &mut ctx.version,
             called_at,
         )
@@ -639,7 +640,7 @@ impl InvokeFnCall<'_> {
             Params::from_wasmtime(Arc::from(params)),
             wasm_backtrace,
             &mut ctx.event_history,
-            ctx.db_pool.connection().as_ref(),
+            &mut ctx.db_connection,
             &mut ctx.version,
             called_at,
         )
@@ -898,7 +899,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         seed: u64,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        db_pool: Arc<dyn DbPool>,
+        db_pool: &Arc<dyn DbPool>,
         version: Version,
         worker_span: Span,
         backtrace_persist: bool,
@@ -913,6 +914,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
         wasi_ctx_builder.insecure_random_seed(0);
 
         Self {
+            db_connection: CachingDbConnection {
+                db_connection: db_pool.connection(),
+                execution_id: execution_id.clone(),
+                caching_buffer: CachingBuffer::new(join_next_blocking_strategy),
+            },
             execution_id: execution_id.clone(),
             event_history: EventHistory::new(
                 execution_id,
@@ -927,7 +933,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
-            db_pool,
             version,
             component_logger: ComponentLogger { span: worker_span },
             resource_table: wasmtime::component::ResourceTable::default(),
@@ -938,7 +943,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     pub(crate) async fn flush(&mut self) -> Result<(), DbErrorWrite> {
         self.event_history
-            .flush(self.db_pool.connection().as_ref(), self.clock_fn.now())
+            .flush(&mut self.db_connection, self.clock_fn.now())
             .await
     }
 
@@ -963,7 +968,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             expires_at_if_new,
             wasm_backtrace,
             &mut self.event_history,
-            self.db_pool.connection().as_ref(),
+            &mut self.db_connection,
             &mut self.version,
             self.clock_fn.now(),
         )
@@ -1001,7 +1006,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             }
             .apply(
                 &mut self.event_history,
-                self.db_pool.connection().as_ref(),
+                &mut self.db_connection,
                 &mut self.version,
                 self.clock_fn.now(),
             )
@@ -1244,7 +1249,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
     pub(crate) async fn join_sets_close_on_finish(&mut self) -> Result<(), ApplyError> {
         self.event_history
             .join_sets_close_on_finish(
-                self.db_pool.connection().as_ref(),
+                &mut self.db_connection,
                 &mut self.version,
                 self.clock_fn.now(),
             )
@@ -1338,7 +1343,7 @@ mod workflow_support {
             self.event_history
                 .join_set_close(
                     join_set_id,
-                    self.db_pool.connection().as_ref(),
+                    &mut self.db_connection,
                     &mut self.version,
                     self.clock_fn.now(),
                     wasm_backtrace,
@@ -1380,7 +1385,7 @@ mod workflow_support {
                 max_inclusive,
                 wasm_backtrace,
                 &mut self.event_history,
-                self.db_pool.connection().as_ref(),
+                &mut self.db_connection,
                 &mut self.version,
                 self.clock_fn.now(),
             )
@@ -1420,7 +1425,7 @@ mod workflow_support {
                 u64::from(max_length_exclusive),
                 wasm_backtrace,
                 &mut self.event_history,
-                self.db_pool.connection().as_ref(),
+                &mut self.db_connection,
                 &mut self.version,
                 self.clock_fn.now(),
             )
@@ -1457,7 +1462,7 @@ mod workflow_support {
             }
             .apply(
                 &mut self.event_history,
-                self.db_pool.connection().as_ref(),
+                &mut self.db_connection,
                 &mut self.version,
                 self.clock_fn.now(),
             )
@@ -1551,7 +1556,7 @@ mod workflow_support {
             }
             .apply(
                 &mut self.event_history,
-                self.db_pool.connection().as_ref(),
+                &mut self.db_connection,
                 &mut self.version,
                 self.clock_fn.now(),
             )
@@ -1759,7 +1764,7 @@ pub(crate) mod tests {
                 seed,
                 self.clock_fn.clone(),
                 JoinNextBlockingStrategy::Interrupt, // Cannot Await: when moving time forward both worker and timers watcher would race.
-                self.db_pool.clone(),
+                &self.db_pool,
                 ctx.version,
                 tracing::info_span!("workflow-test"),
                 false,

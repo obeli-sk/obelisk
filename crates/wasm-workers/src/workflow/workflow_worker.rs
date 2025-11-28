@@ -379,7 +379,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             seed,
             self.clock_fn.clone(),
             self.config.join_next_blocking_strategy,
-            self.db_pool.clone(),
+            &self.db_pool,
             ctx.version,
             ctx.worker_span,
             self.config.backtrace_persist,
