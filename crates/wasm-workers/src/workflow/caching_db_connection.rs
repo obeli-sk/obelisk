@@ -1,5 +1,4 @@
-use std::pin::Pin;
-
+use super::workflow_worker::JoinNextBlockingStrategy;
 use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ExecutionId,
@@ -9,9 +8,8 @@ use concepts::{
         DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, JoinSetResponseEventOuter, Version,
     },
 };
+use std::pin::Pin;
 use tracing::{debug, instrument};
-
-use super::workflow_worker::JoinNextBlockingStrategy;
 
 pub(crate) struct CachingDbConnection {
     pub(crate) db_connection: Box<dyn DbConnection>,
@@ -74,6 +72,7 @@ impl CachingDbConnection {
                 .await?;
             *version = next_version;
         } else {
+            // No caching_buffer here, so no flushing before the write.
             let next_version = match non_blocking_event {
                 NonBlockingCache::Schedule {
                     batch,
@@ -115,30 +114,35 @@ impl CachingDbConnection {
         execution_id: ExecutionId,
         version: Version,
         req: AppendRequest,
+        called_at: DateTime<Utc>,
     ) -> Result<AppendResponse, DbErrorWrite> {
+        self.flush_non_blocking_event_cache(called_at).await?;
         self.db_connection.append(execution_id, version, req).await
     }
 
     pub(crate) async fn append_batch(
-        &self,
+        &mut self,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
+        called_at: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        self.flush_non_blocking_event_cache(called_at).await?;
         self.db_connection
             .append_batch(current_time, batch, execution_id, version)
             .await
     }
 
     pub(crate) async fn append_batch_create_new_execution(
-        &self,
+        &mut self,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        self.flush_non_blocking_event_cache(current_time).await?;
         self.db_connection
             .append_batch_create_new_execution(
                 current_time,
@@ -151,11 +155,12 @@ impl CachingDbConnection {
     }
 
     pub(crate) async fn append_batch_respond_to_parent(
-        &self,
+        &mut self,
         events: AppendEventsToExecution,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        self.flush_non_blocking_event_cache(current_time).await?;
         self.db_connection
             .append_batch_respond_to_parent(events, response, current_time)
             .await
@@ -189,7 +194,7 @@ impl CachingDbConnection {
             .await
     }
 
-    pub(crate) async fn flush_non_blocking_event_cache_if_full(
+    async fn flush_non_blocking_event_cache_if_full(
         &mut self,
         current_time: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {

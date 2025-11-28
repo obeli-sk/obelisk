@@ -942,8 +942,8 @@ impl<C: ClockFn> WorkflowCtx<C> {
     }
 
     pub(crate) async fn flush(&mut self) -> Result<(), DbErrorWrite> {
-        self.event_history
-            .flush(&mut self.db_connection, self.clock_fn.now())
+        self.db_connection
+            .flush_non_blocking_event_cache(self.clock_fn.now())
             .await
     }
 

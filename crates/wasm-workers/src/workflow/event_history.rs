@@ -309,9 +309,6 @@ impl EventHistory {
         version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
-        db_connection
-            .flush_non_blocking_event_cache(called_at)
-            .await?;
         self.locked_event.lock_expires_at = self.deadline_tracker.extend_by(self.lock_extension);
         let append_req = AppendRequest {
             created_at: called_at,
@@ -319,7 +316,12 @@ impl EventHistory {
         };
         info!("Extending the lock at version {version}");
         *version = db_connection
-            .append_blocking(self.execution_id.clone(), version.clone(), append_req)
+            .append_blocking(
+                self.execution_id.clone(),
+                version.clone(),
+                append_req,
+                called_at,
+            )
             .await?;
         Ok(())
     }
@@ -1008,16 +1010,6 @@ impl EventHistory {
         }
     }
 
-    pub(crate) async fn flush(
-        &mut self,
-        db_connection: &mut CachingDbConnection,
-        called_at: DateTime<Utc>,
-    ) -> Result<(), DbErrorWrite> {
-        db_connection
-            .flush_non_blocking_event_cache(called_at)
-            .await
-    }
-
     #[instrument(level = Level::DEBUG, skip_all, fields(%version))]
     async fn append_to_db_non_blocking(
         &mut self,
@@ -1045,12 +1037,14 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
                 *version = {
                     let next_version = db_connection
-                        .append_blocking(self.execution_id.clone(), version.clone(), join_set) // FIXME: non-blocking
+                        .append_blocking(
+                            self.execution_id.clone(),
+                            version.clone(),
+                            join_set,
+                            called_at,
+                        ) // FIXME: non-blocking
                         .await?;
 
                     db_connection
@@ -1078,12 +1072,14 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
                 *version = {
                     let next_version = db_connection
-                        .append_blocking(self.execution_id.clone(), version.clone(), join_set) // FIXME: non-blocking
+                        .append_blocking(
+                            self.execution_id.clone(),
+                            version.clone(),
+                            join_set,
+                            called_at,
+                        ) // FIXME: non-blocking
                         .await?;
                     db_connection
                         .persist_backtrace_blocking(
@@ -1160,9 +1156,6 @@ impl EventHistory {
             }) => {
                 // Non-cacheable event.
                 debug!(%delay_id, %join_set_id, "SubmitDelay");
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
 
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id: join_set_id.clone(),
@@ -1186,6 +1179,7 @@ impl EventHistory {
                             vec![delay_req],
                             self.execution_id.clone(),
                             version.clone(),
+                            called_at,
                         )
                         .await?;
                     db_connection
@@ -1265,6 +1259,8 @@ impl EventHistory {
                 // Non-cacheable event. (could be turned into one)
                 // The idempotent write is needed to avoid race with stub requests originating from gRPC.
                 debug!(%target_execution_id, "StubRequest: Flushing and appending");
+
+                // Flush the cache before getting the stub's create request, because it might be this execution's child.
                 db_connection
                     .flush_non_blocking_event_cache(called_at)
                     .await?;
@@ -1367,6 +1363,7 @@ impl EventHistory {
                             vec![history_event_req],
                             self.execution_id.clone(),
                             version.clone(),
+                            called_at,
                         )
                         .await?;
                     db_connection
@@ -1404,9 +1401,6 @@ impl EventHistory {
             }) => {
                 // Non-cacheable event.
                 debug!(%join_set_id, "JoinNext(closing:{closing}): Flushing and appending JoinNext");
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
                 let event =
                     if self.count_submissions(&join_set_id) > self.count_join_nexts(&join_set_id) {
                         HistoryEvent::JoinNext {
@@ -1428,7 +1422,12 @@ impl EventHistory {
                 };
                 *version = {
                     let next_version = db_connection
-                        .append_blocking(self.execution_id.clone(), version.clone(), join_next)
+                        .append_blocking(
+                            self.execution_id.clone(),
+                            version.clone(),
+                            join_next,
+                            called_at,
+                        )
                         .await?;
                     db_connection
                         .persist_backtrace_blocking(
@@ -1450,9 +1449,6 @@ impl EventHistory {
             }) => {
                 // Non-cacheable event.
                 debug!(%join_set_id, "BlockingChildAwaitNext: Flushing and appending JoinNext");
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
                 let event =
                     if self.count_submissions(&join_set_id) > self.count_join_nexts(&join_set_id) {
                         HistoryEvent::JoinNext {
@@ -1474,7 +1470,12 @@ impl EventHistory {
                 };
                 *version = {
                     let next_version = db_connection
-                        .append_blocking(self.execution_id.clone(), version.clone(), append_request)
+                        .append_blocking(
+                            self.execution_id.clone(),
+                            version.clone(),
+                            append_request,
+                            called_at,
+                        )
                         .await?;
                     db_connection
                         .persist_backtrace_blocking(
@@ -1500,9 +1501,6 @@ impl EventHistory {
                 // Non-cacheable event.
                 debug!(%child_execution_id, %join_set_id,
                     "OneOffChildExecutionRequest: Flushing and appending JoinSet,ChildExecutionRequest,JoinNext");
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSetCreate {
                     join_set_id: join_set_id.clone(),
@@ -1582,9 +1580,6 @@ impl EventHistory {
             }) => {
                 // Non-cacheable event.
                 debug!(%delay_id, %join_set_id, "BlockingDelayRequest: Flushing and appending JoinSet,DelayRequest,JoinNext");
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSetCreate {
                     join_set_id: join_set_id.clone(),
@@ -1627,6 +1622,7 @@ impl EventHistory {
                             vec![join_set, delay_req, join_next],
                             self.execution_id.clone(),
                             version.clone(),
+                            called_at,
                         )
                         .await?;
                     db_connection
