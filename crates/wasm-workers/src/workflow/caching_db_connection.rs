@@ -193,12 +193,13 @@ impl CachingDbConnection {
             .db_connection
             .append_batch(current_time, batch, execution_id, version.clone())
             .await?;
-        self.persist_backtrace_blocking(&version, &next_version, wasm_backtrace, component_id)
+        self.persist_backtrace_blocking(version, &next_version, wasm_backtrace, component_id)
             .await;
         *version = next_version;
         Ok(())
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn append_batch_create_new_execution(
         &mut self,
         current_time: DateTime<Utc>,
@@ -220,7 +221,7 @@ impl CachingDbConnection {
                 child_req,
             )
             .await?;
-        self.persist_backtrace_blocking(&version, &next_version, wasm_backtrace, component_id)
+        self.persist_backtrace_blocking(version, &next_version, wasm_backtrace, component_id)
             .await;
         *version = next_version;
         Ok(())
