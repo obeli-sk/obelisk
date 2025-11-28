@@ -16,7 +16,7 @@ pub(crate) struct CachingDbConnection {
     pub(crate) execution_id: ExecutionId,
     pub(crate) caching_buffer: Option<CachingBuffer>,
 }
-pub(crate) enum NonBlockingCache {
+pub(crate) enum CacheableDbEvent {
     SubmitChildExecution {
         request: AppendRequest,
         version: Version,
@@ -48,7 +48,7 @@ pub(crate) enum NonBlockingCache {
 
 pub(crate) struct CachingBuffer {
     pub(crate) non_blocking_event_batch_size: usize,
-    pub(crate) non_blocking_event_batch: Vec<NonBlockingCache>,
+    pub(crate) non_blocking_event_batch: Vec<CacheableDbEvent>,
 }
 impl CachingBuffer {
     pub(crate) fn new(
@@ -74,7 +74,7 @@ impl CachingBuffer {
 impl CachingDbConnection {
     pub(crate) async fn append_non_blocking(
         &mut self,
-        non_blocking_event: NonBlockingCache,
+        non_blocking_event: CacheableDbEvent,
         called_at: DateTime<Utc>,
         version: &mut Version,
     ) -> Result<(), DbErrorWrite> {
@@ -89,13 +89,13 @@ impl CachingDbConnection {
         } else {
             // No caching_buffer here, so no flushing before the write.
             let next_version = match non_blocking_event {
-                NonBlockingCache::Schedule {
+                CacheableDbEvent::Schedule {
                     request,
                     version,
                     child_req,
                     backtrace,
                 }
-                | NonBlockingCache::SubmitChildExecution {
+                | CacheableDbEvent::SubmitChildExecution {
                     request,
                     version,
                     child_req,
@@ -122,17 +122,17 @@ impl CachingDbConnection {
                     }
                     next_version
                 }
-                NonBlockingCache::JoinSetCreate {
+                CacheableDbEvent::JoinSetCreate {
                     request,
                     version,
                     backtrace,
                 }
-                | NonBlockingCache::Persist {
+                | CacheableDbEvent::Persist {
                     request,
                     version,
                     backtrace,
                 }
-                | NonBlockingCache::SubmitDelay {
+                | CacheableDbEvent::SubmitDelay {
                     request,
                     version,
                     backtrace,
@@ -272,13 +272,13 @@ impl CachingDbConnection {
             let mut backtraces = Vec::with_capacity(caching_buffer.non_blocking_event_batch.len());
             for non_blocking in caching_buffer.non_blocking_event_batch.drain(..) {
                 match non_blocking {
-                    NonBlockingCache::SubmitChildExecution {
+                    CacheableDbEvent::SubmitChildExecution {
                         request,
                         version,
                         child_req,
                         backtrace,
                     }
-                    | NonBlockingCache::Schedule {
+                    | CacheableDbEvent::Schedule {
                         request,
                         version,
                         child_req,
@@ -293,17 +293,17 @@ impl CachingDbConnection {
                             backtraces.push(backtrace);
                         }
                     }
-                    NonBlockingCache::JoinSetCreate {
+                    CacheableDbEvent::JoinSetCreate {
                         request,
                         version,
                         backtrace,
                     }
-                    | NonBlockingCache::Persist {
+                    | CacheableDbEvent::Persist {
                         request,
                         version,
                         backtrace,
                     }
-                    | NonBlockingCache::SubmitDelay {
+                    | CacheableDbEvent::SubmitDelay {
                         request,
                         version,
                         backtrace,

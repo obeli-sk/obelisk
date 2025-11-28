@@ -1,5 +1,5 @@
+use super::caching_db_connection::CacheableDbEvent;
 use super::caching_db_connection::CachingDbConnection;
-use super::caching_db_connection::NonBlockingCache;
 use super::deadline_tracker::DeadlineTracker;
 use super::event_history::ProcessingStatus::Processed;
 use super::event_history::ProcessingStatus::Unprocessed;
@@ -1035,7 +1035,7 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                let non_blocking_event = NonBlockingCache::JoinSetCreate {
+                let cacheable_event = CacheableDbEvent::JoinSetCreate {
                     request: join_set,
                     version: version.clone(),
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
@@ -1047,7 +1047,7 @@ impl EventHistory {
                     }),
                 };
                 db_connection
-                    .append_non_blocking(non_blocking_event, called_at, version)
+                    .append_non_blocking(cacheable_event, called_at, version)
                     .await?;
                 Ok(history_events)
             }
@@ -1064,7 +1064,7 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                let non_blocking_event = NonBlockingCache::Persist {
+                let cacheable_event = CacheableDbEvent::Persist {
                     request,
                     version: version.clone(),
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
@@ -1076,7 +1076,7 @@ impl EventHistory {
                     }),
                 };
                 db_connection
-                    .append_non_blocking(non_blocking_event, called_at, version)
+                    .append_non_blocking(cacheable_event, called_at, version)
                     .await?;
                 Ok(history_events)
             }
@@ -1115,7 +1115,7 @@ impl EventHistory {
                     component_id: fn_component_id,
                     scheduled_by: None,
                 };
-                let non_blocking_event = NonBlockingCache::SubmitChildExecution {
+                let cacheable_event = CacheableDbEvent::SubmitChildExecution {
                     request: append_req,
                     version: version.clone(),
                     child_req,
@@ -1129,7 +1129,7 @@ impl EventHistory {
                 };
 
                 db_connection
-                    .append_non_blocking(non_blocking_event, called_at, version)
+                    .append_non_blocking(cacheable_event, called_at, version)
                     .await?;
                 Ok(history_events)
             }
@@ -1158,7 +1158,7 @@ impl EventHistory {
                         event: event.clone(),
                     },
                 };
-                let cacheable = NonBlockingCache::SubmitDelay {
+                let cacheable_event = CacheableDbEvent::SubmitDelay {
                     request: delay_req,
                     version: version.clone(),
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
@@ -1170,7 +1170,7 @@ impl EventHistory {
                     }),
                 };
                 db_connection
-                    .append_non_blocking(cacheable, called_at, version)
+                    .append_non_blocking(cacheable_event, called_at, version)
                     .await?;
                 Ok(vec![event])
             }
@@ -1207,7 +1207,7 @@ impl EventHistory {
                     component_id: fn_component_id,
                     scheduled_by: Some(self.execution_id.clone()),
                 };
-                let non_blocking_event = NonBlockingCache::Schedule {
+                let non_blocking_event = CacheableDbEvent::Schedule {
                     request: append_req,
                     version: version.clone(),
                     child_req,
