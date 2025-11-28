@@ -18,15 +18,20 @@ pub(crate) struct CachingDbConnection {
 }
 pub(crate) enum NonBlockingCache {
     SubmitChildExecution {
-        batch: Vec<AppendRequest>,
+        request: AppendRequest,
         version: Version,
         child_req: CreateRequest,
         backtrace: Option<BacktraceInfo>,
     },
     Schedule {
-        batch: Vec<AppendRequest>,
+        request: AppendRequest,
         version: Version,
         child_req: CreateRequest,
+        backtrace: Option<BacktraceInfo>,
+    },
+    JoinSetCreate {
+        request: AppendRequest,
+        version: Version,
         backtrace: Option<BacktraceInfo>,
     },
 }
@@ -75,13 +80,13 @@ impl CachingDbConnection {
             // No caching_buffer here, so no flushing before the write.
             let next_version = match non_blocking_event {
                 NonBlockingCache::Schedule {
-                    batch,
+                    request,
                     version,
                     child_req,
                     backtrace,
                 }
                 | NonBlockingCache::SubmitChildExecution {
-                    batch,
+                    request,
                     version,
                     child_req,
                     backtrace,
@@ -90,16 +95,41 @@ impl CachingDbConnection {
                         .db_connection
                         .append_batch_create_new_execution(
                             called_at,
-                            batch,
+                            vec![request],
                             self.execution_id.clone(),
                             version.clone(),
                             vec![child_req],
                         )
                         .await?;
-                    if let Some(backtrace) = backtrace
-                        && let Err(err) = self.db_connection.append_backtrace(backtrace).await
-                    {
-                        debug!("Ignoring error while appending backtrace: {err:?}");
+                    if let Some(backtrace) = backtrace {
+                        let _ = self
+                            .db_connection
+                            .append_backtrace(backtrace)
+                            .await
+                            .inspect_err(|err| {
+                                debug!("Ignoring error while appending backtrace: {err:?}")
+                            });
+                    }
+                    next_version
+                }
+                NonBlockingCache::JoinSetCreate {
+                    request,
+                    version,
+                    backtrace,
+                } => {
+                    let next_version = self
+                        .db_connection
+                        .append(self.execution_id.clone(), version.clone(), request)
+                        .await?;
+
+                    if let Some(backtrace) = backtrace {
+                        let _ = self
+                            .db_connection
+                            .append_backtrace(backtrace)
+                            .await
+                            .inspect_err(|err| {
+                                debug!("Ignoring error while appending backtrace: {err:?}")
+                            });
                     }
                     next_version
                 }
@@ -219,18 +249,17 @@ impl CachingDbConnection {
             let mut batches = Vec::with_capacity(caching_buffer.non_blocking_event_batch.len());
             let mut childs = Vec::with_capacity(caching_buffer.non_blocking_event_batch.len());
             let mut first_version = None;
-            let mut wasm_backtraces =
-                Vec::with_capacity(caching_buffer.non_blocking_event_batch.len());
+            let mut backtraces = Vec::with_capacity(caching_buffer.non_blocking_event_batch.len());
             for non_blocking in caching_buffer.non_blocking_event_batch.drain(..) {
                 match non_blocking {
                     NonBlockingCache::SubmitChildExecution {
-                        batch,
+                        request,
                         version,
                         child_req,
                         backtrace,
                     }
                     | NonBlockingCache::Schedule {
-                        batch,
+                        request,
                         version,
                         child_req,
                         backtrace,
@@ -239,10 +268,22 @@ impl CachingDbConnection {
                             first_version.replace(version);
                         }
                         childs.push(child_req);
-                        assert!(!batch.is_empty());
-                        batches.extend(batch);
+                        batches.push(request);
                         if let Some(backtrace) = backtrace {
-                            wasm_backtraces.push(backtrace);
+                            backtraces.push(backtrace);
+                        }
+                    }
+                    NonBlockingCache::JoinSetCreate {
+                        request,
+                        version,
+                        backtrace,
+                    } => {
+                        if first_version.is_none() {
+                            first_version.replace(version);
+                        }
+                        batches.push(request);
+                        if let Some(backtrace) = backtrace {
+                            backtraces.push(backtrace);
                         }
                     }
                 }
@@ -257,14 +298,12 @@ impl CachingDbConnection {
                     childs,
                 )
                 .await?;
-            if !wasm_backtraces.is_empty() {
-                let res = self
+            if !backtraces.is_empty() {
+                let _ = self
                     .db_connection
-                    .append_backtrace_batch(wasm_backtraces)
-                    .await;
-                if let Err(err) = res {
-                    debug!("Ignoring error while appending backtrace: {err:?}");
-                }
+                    .append_backtrace_batch(backtraces)
+                    .await
+                    .inspect_err(|err| debug!("Ignoring error while appending backtrace: {err:?}"));
             }
             debug!("Flushing the non-blocking event cache finished");
         }
@@ -288,7 +327,7 @@ impl CachingDbConnection {
                 "persist_backtrace_blocking must be called only after flushing `non_blocking_event_batch`"
             );
 
-            if let Err(err) = self
+            let _ = self
                 .db_connection
                 .append_backtrace(BacktraceInfo {
                     execution_id: self.execution_id.clone(),
@@ -298,9 +337,7 @@ impl CachingDbConnection {
                     wasm_backtrace,
                 })
                 .await
-            {
-                debug!("Ignoring error while appending backtrace: {err:?}");
-            }
+                .inspect_err(|err| debug!("Ignoring error while appending backtrace: {err:?}"));
         }
     }
 }

@@ -1024,7 +1024,7 @@ impl EventHistory {
                 closing_strategy,
                 wasm_backtrace,
             }) => {
-                // TODO: Make cacheable
+                // Cacheable event.
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
                 let event = HistoryEvent::JoinSetCreate {
                     join_set_id,
@@ -1035,26 +1035,20 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                *version = {
-                    let next_version = db_connection
-                        .append_blocking(
-                            self.execution_id.clone(),
-                            version.clone(),
-                            join_set,
-                            called_at,
-                        )
-                        .await?;
-
-                    db_connection
-                        .persist_backtrace_blocking(
-                            version,
-                            &next_version,
-                            wasm_backtrace,
-                            self.locked_event.component_id.clone(),
-                        )
-                        .await;
-                    next_version
+                let non_blocking_event = NonBlockingCache::JoinSetCreate {
+                    request: join_set,
+                    version: version.clone(),
+                    backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
+                        execution_id: self.execution_id.clone(),
+                        component_id: self.locked_event.component_id.clone(),
+                        wasm_backtrace,
+                        version_min_including: version.clone(),
+                        version_max_excluding: Version::new(version.0 + 1),
+                    }),
                 };
+                db_connection
+                    .append_non_blocking(non_blocking_event, called_at, version)
+                    .await?;
                 Ok(history_events)
             }
 
@@ -1127,7 +1121,7 @@ impl EventHistory {
                     scheduled_by: None,
                 };
                 let non_blocking_event = NonBlockingCache::SubmitChildExecution {
-                    batch: vec![append_req],
+                    request: append_req,
                     version: version.clone(),
                     child_req,
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
@@ -1224,7 +1218,7 @@ impl EventHistory {
                     scheduled_by: Some(self.execution_id.clone()),
                 };
                 let non_blocking_event = NonBlockingCache::Schedule {
-                    batch: vec![append_req],
+                    request: append_req,
                     version: version.clone(),
                     child_req,
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
