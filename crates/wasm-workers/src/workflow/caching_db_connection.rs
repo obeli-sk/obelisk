@@ -117,7 +117,7 @@ impl CachingDbConnection {
                             .append_backtrace(backtrace)
                             .await
                             .inspect_err(|err| {
-                                debug!("Ignoring error while appending backtrace: {err:?}")
+                                debug!("Ignoring error while appending backtrace: {err:?}");
                             });
                     }
                     next_version
@@ -148,7 +148,7 @@ impl CachingDbConnection {
                             .append_backtrace(backtrace)
                             .await
                             .inspect_err(|err| {
-                                debug!("Ignoring error while appending backtrace: {err:?}")
+                                debug!("Ignoring error while appending backtrace: {err:?}");
                             });
                     }
                     next_version
