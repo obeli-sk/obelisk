@@ -1337,26 +1337,16 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                *version = {
-                    let next_version = db_connection
-                        .append_batch(
-                            called_at,
-                            vec![history_event_req],
-                            self.execution_id.clone(),
-                            version.clone(),
-                        )
-                        .await?;
-                    db_connection
-                        .persist_backtrace_blocking(
-                            version,
-                            &next_version,
-                            wasm_backtrace,
-                            self.locked_event.component_id.clone(),
-                        )
-                        .await;
-
-                    next_version
-                };
+                db_connection
+                    .append_batch(
+                        called_at,
+                        vec![history_event_req],
+                        self.execution_id.clone(),
+                        version,
+                        wasm_backtrace,
+                        &self.locked_event.component_id,
+                    )
+                    .await?;
                 Ok(history_events)
             }
         }
@@ -1412,7 +1402,7 @@ impl EventHistory {
                             version,
                             &next_version,
                             wasm_backtrace,
-                            self.locked_event.component_id.clone(),
+                            &self.locked_event.component_id,
                         )
                         .await;
                     next_version
@@ -1459,7 +1449,7 @@ impl EventHistory {
                             version,
                             &next_version,
                             wasm_backtrace,
-                            self.locked_event.component_id.clone(),
+                            &self.locked_event.component_id,
                         )
                         .await;
                     next_version
@@ -1538,7 +1528,7 @@ impl EventHistory {
                             version,
                             &next_version,
                             wasm_backtrace,
-                            self.locked_event.component_id.clone(),
+                            &self.locked_event.component_id,
                         )
                         .await;
                     next_version
@@ -1590,25 +1580,17 @@ impl EventHistory {
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
 
-                *version = {
-                    let next_version = db_connection
-                        .append_batch(
-                            called_at,
-                            vec![join_set, delay_req, join_next],
-                            self.execution_id.clone(),
-                            version.clone(),
-                        )
-                        .await?;
-                    db_connection
-                        .persist_backtrace_blocking(
-                            version,
-                            &next_version,
-                            wasm_backtrace,
-                            self.locked_event.component_id.clone(),
-                        )
-                        .await;
-                    next_version
-                };
+                db_connection
+                    .append_batch(
+                        called_at,
+                        vec![join_set, delay_req, join_next],
+                        self.execution_id.clone(),
+                        version,
+                        wasm_backtrace,
+                        &self.locked_event.component_id,
+                    )
+                    .await?;
+
                 Ok(history_events)
             }
         }

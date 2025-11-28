@@ -175,12 +175,19 @@ impl CachingDbConnection {
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        version: Version,
-    ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        version: &mut Version,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite> {
         self.flush_non_blocking_event_cache(current_time).await?;
-        self.db_connection
-            .append_batch(current_time, batch, execution_id, version)
-            .await
+        let next_version = self
+            .db_connection
+            .append_batch(current_time, batch, execution_id, version.clone())
+            .await?;
+        self.persist_backtrace_blocking(&version, &next_version, wasm_backtrace, component_id)
+            .await;
+        *version = next_version;
+        Ok(())
     }
 
     pub(crate) async fn append_batch_create_new_execution(
@@ -345,7 +352,7 @@ impl CachingDbConnection {
         version: &Version,
         next_version: &Version,
         wasm_backtrace: Option<storage::WasmBacktrace>,
-        component_id: ComponentId,
+        component_id: &ComponentId,
     ) {
         if let Some(wasm_backtrace) = wasm_backtrace {
             assert_eq!(
@@ -361,7 +368,7 @@ impl CachingDbConnection {
                 .db_connection
                 .append_backtrace(BacktraceInfo {
                     execution_id: self.execution_id.clone(),
-                    component_id,
+                    component_id: component_id.clone(),
                     version_min_including: version.clone(),
                     version_max_excluding: next_version.clone(),
                     wasm_backtrace,
