@@ -126,9 +126,8 @@ impl CachingDbConnection {
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
-        called_at: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
-        self.flush_non_blocking_event_cache(called_at).await?;
+        self.flush_non_blocking_event_cache(current_time).await?;
         self.db_connection
             .append_batch(current_time, batch, execution_id, version)
             .await

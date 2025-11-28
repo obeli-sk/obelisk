@@ -1171,11 +1171,10 @@ impl EventHistory {
                 };
                 *version = {
                     let next_version = db_connection
-                        .append_batch(
-                            called_at,
-                            vec![delay_req],
+                        .append_blocking(
                             self.execution_id.clone(),
                             version.clone(),
+                            delay_req,
                             called_at,
                         )
                         .await?;
@@ -1361,7 +1360,6 @@ impl EventHistory {
                             vec![history_event_req],
                             self.execution_id.clone(),
                             version.clone(),
-                            called_at,
                         )
                         .await?;
                     db_connection
@@ -1615,7 +1613,6 @@ impl EventHistory {
                             vec![join_set, delay_req, join_next],
                             self.execution_id.clone(),
                             version.clone(),
-                            called_at,
                         )
                         .await?;
                     db_connection
