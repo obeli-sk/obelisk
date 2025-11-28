@@ -34,6 +34,11 @@ pub(crate) enum NonBlockingCache {
         version: Version,
         backtrace: Option<BacktraceInfo>,
     },
+    Persist {
+        request: AppendRequest,
+        version: Version,
+        backtrace: Option<BacktraceInfo>,
+    },
 }
 
 pub(crate) struct CachingBuffer {
@@ -113,6 +118,11 @@ impl CachingDbConnection {
                     next_version
                 }
                 NonBlockingCache::JoinSetCreate {
+                    request,
+                    version,
+                    backtrace,
+                }
+                | NonBlockingCache::Persist {
                     request,
                     version,
                     backtrace,
@@ -274,6 +284,11 @@ impl CachingDbConnection {
                         }
                     }
                     NonBlockingCache::JoinSetCreate {
+                        request,
+                        version,
+                        backtrace,
+                    }
+                    | NonBlockingCache::Persist {
                         request,
                         version,
                         backtrace,

@@ -1057,32 +1057,27 @@ impl EventHistory {
                 kind,
                 wasm_backtrace,
             }) => {
-                // TODO: Make cacheable
+                // Cacheable event.
                 let event = HistoryEvent::Persist { value, kind };
                 let history_events = vec![event.clone()];
-                let join_set = AppendRequest {
+                let request = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                *version = {
-                    let next_version = db_connection
-                        .append_blocking(
-                            self.execution_id.clone(),
-                            version.clone(),
-                            join_set,
-                            called_at,
-                        )
-                        .await?;
-                    db_connection
-                        .persist_backtrace_blocking(
-                            version,
-                            &next_version,
-                            wasm_backtrace,
-                            self.locked_event.component_id.clone(),
-                        )
-                        .await;
-                    next_version
+                let non_blocking_event = NonBlockingCache::Persist {
+                    request,
+                    version: version.clone(),
+                    backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
+                        execution_id: self.execution_id.clone(),
+                        component_id: self.locked_event.component_id.clone(),
+                        wasm_backtrace,
+                        version_min_including: version.clone(),
+                        version_max_excluding: Version::new(version.0 + 1),
+                    }),
                 };
+                db_connection
+                    .append_non_blocking(non_blocking_event, called_at, version)
+                    .await?;
                 Ok(history_events)
             }
 
