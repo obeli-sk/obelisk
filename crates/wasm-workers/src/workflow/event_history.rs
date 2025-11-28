@@ -1498,26 +1498,17 @@ impl EventHistory {
                     component_id: fn_component_id,
                     scheduled_by: None,
                 };
-                *version = {
-                    let next_version = db_connection
-                        .append_batch_create_new_execution(
-                            called_at,
-                            vec![join_set, child_exec_req, join_next],
-                            self.execution_id.clone(),
-                            version.clone(),
-                            vec![child],
-                        )
-                        .await?;
-                    db_connection
-                        .persist_backtrace_blocking(
-                            version,
-                            &next_version,
-                            wasm_backtrace,
-                            &self.locked_event.component_id,
-                        )
-                        .await;
-                    next_version
-                };
+                db_connection
+                    .append_batch_create_new_execution(
+                        called_at,
+                        vec![join_set, child_exec_req, join_next],
+                        self.execution_id.clone(),
+                        version,
+                        vec![child],
+                        wasm_backtrace,
+                        &self.locked_event.component_id,
+                    )
+                    .await?;
 
                 Ok(history_events)
             }
