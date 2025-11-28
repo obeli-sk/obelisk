@@ -39,6 +39,11 @@ pub(crate) enum NonBlockingCache {
         version: Version,
         backtrace: Option<BacktraceInfo>,
     },
+    SubmitDelay {
+        request: AppendRequest,
+        version: Version,
+        backtrace: Option<BacktraceInfo>,
+    },
 }
 
 pub(crate) struct CachingBuffer {
@@ -123,6 +128,11 @@ impl CachingDbConnection {
                     backtrace,
                 }
                 | NonBlockingCache::Persist {
+                    request,
+                    version,
+                    backtrace,
+                }
+                | NonBlockingCache::SubmitDelay {
                     request,
                     version,
                     backtrace,
@@ -289,6 +299,11 @@ impl CachingDbConnection {
                         backtrace,
                     }
                     | NonBlockingCache::Persist {
+                        request,
+                        version,
+                        backtrace,
+                    }
+                    | NonBlockingCache::SubmitDelay {
                         request,
                         version,
                         backtrace,
