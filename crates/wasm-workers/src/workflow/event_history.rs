@@ -269,8 +269,7 @@ impl EventHistory {
 
         match event_call {
             EventCall::NonBlocking(event_call) => {
-                // Events that cannot block, e.g. creating new join sets, persisting random value, getting processed responses.
-                // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
+                // Events that cannot block waiting for response.
                 let cloned_non_blocking = event_call.clone();
                 let history_events = self
                     .append_to_db_non_blocking(event_call, db_connection, called_at, version)
@@ -1018,7 +1017,6 @@ impl EventHistory {
         called_at: DateTime<Utc>,
         version: &mut Version,
     ) -> Result<Vec<HistoryEvent>, DbErrorWrite> {
-        // NB: Flush the cache before writing to the DB.
         trace!(%version, "append_to_db");
         match event_call {
             EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
@@ -1026,7 +1024,7 @@ impl EventHistory {
                 closing_strategy,
                 wasm_backtrace,
             }) => {
-                // a non-cacheable event: Flush the cache, write the event and persist_backtrace_blocking
+                // TODO: Make cacheable
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
                 let event = HistoryEvent::JoinSetCreate {
                     join_set_id,
@@ -1044,7 +1042,7 @@ impl EventHistory {
                             version.clone(),
                             join_set,
                             called_at,
-                        ) // FIXME: non-blocking
+                        )
                         .await?;
 
                     db_connection
@@ -1065,7 +1063,7 @@ impl EventHistory {
                 kind,
                 wasm_backtrace,
             }) => {
-                // Non-cacheable event.
+                // TODO: Make cacheable
                 let event = HistoryEvent::Persist { value, kind };
                 let history_events = vec![event.clone()];
                 let join_set = AppendRequest {
@@ -1079,7 +1077,7 @@ impl EventHistory {
                             version.clone(),
                             join_set,
                             called_at,
-                        ) // FIXME: non-blocking
+                        )
                         .await?;
                     db_connection
                         .persist_backtrace_blocking(
@@ -1154,7 +1152,7 @@ impl EventHistory {
                 expires_at_if_new,
                 wasm_backtrace,
             }) => {
-                // Non-cacheable event.
+                // TODO: Make cacheable
                 debug!(%delay_id, %join_set_id, "SubmitDelay");
 
                 let event = HistoryEvent::JoinSetRequest {
@@ -1174,7 +1172,6 @@ impl EventHistory {
                 *version = {
                     let next_version = db_connection
                         .append_batch(
-                            // FIXME: non-blocking
                             called_at,
                             vec![delay_req],
                             self.execution_id.clone(),
@@ -1255,6 +1252,7 @@ impl EventHistory {
                 result,
                 wasm_backtrace,
             }) => {
+                // Cannot be cacheable.
                 // Attempt to write to target_execution_id, will continue on conflict.
                 // Non-cacheable event. (could be turned into one)
                 // The idempotent write is needed to avoid race with stub requests originating from gRPC.
@@ -1391,7 +1389,6 @@ impl EventHistory {
         lock_expires_at: DateTime<Utc>,
         version: &mut Version,
     ) -> Result<Vec<HistoryEvent>, DbErrorWrite> {
-        // NB: Flush the cache before writing to the DB.
         trace!(%version, "append_to_db");
         match event_call {
             EventCallBlocking::JoinNext(JoinNext {
@@ -1399,7 +1396,6 @@ impl EventHistory {
                 closing,
                 wasm_backtrace,
             }) => {
-                // Non-cacheable event.
                 debug!(%join_set_id, "JoinNext(closing:{closing}): Flushing and appending JoinNext");
                 let event =
                     if self.count_submissions(&join_set_id) > self.count_join_nexts(&join_set_id) {
@@ -1447,7 +1443,6 @@ impl EventHistory {
                 requested_ffqn,
                 wasm_backtrace,
             }) => {
-                // Non-cacheable event.
                 debug!(%join_set_id, "BlockingChildAwaitNext: Flushing and appending JoinNext");
                 let event =
                     if self.count_submissions(&join_set_id) > self.count_join_nexts(&join_set_id) {
@@ -1498,7 +1493,6 @@ impl EventHistory {
                 params,
                 wasm_backtrace,
             }) => {
-                // Non-cacheable event.
                 debug!(%child_execution_id, %join_set_id,
                     "OneOffChildExecutionRequest: Flushing and appending JoinSet,ChildExecutionRequest,JoinNext");
                 let mut history_events = Vec::with_capacity(3);
@@ -1578,7 +1572,6 @@ impl EventHistory {
                 expires_at_if_new,
                 wasm_backtrace,
             }) => {
-                // Non-cacheable event.
                 debug!(%delay_id, %join_set_id, "BlockingDelayRequest: Flushing and appending JoinSet,DelayRequest,JoinNext");
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSetCreate {
