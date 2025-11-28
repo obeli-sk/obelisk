@@ -314,12 +314,14 @@ impl EventHistory {
             event: ExecutionEventInner::Locked(self.locked_event.clone()),
         };
         info!("Extending the lock at version {version}");
-        *version = db_connection
+        db_connection
             .append_blocking(
                 self.execution_id.clone(),
-                version.clone(),
+                version,
                 append_req,
                 called_at,
+                None,
+                &self.locked_event.component_id,
             )
             .await?;
         Ok(())
@@ -1388,25 +1390,16 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                *version = {
-                    let next_version = db_connection
-                        .append_blocking(
-                            self.execution_id.clone(),
-                            version.clone(),
-                            join_next,
-                            called_at,
-                        )
-                        .await?;
-                    db_connection
-                        .persist_backtrace_blocking(
-                            version,
-                            &next_version,
-                            wasm_backtrace,
-                            &self.locked_event.component_id,
-                        )
-                        .await;
-                    next_version
-                };
+                db_connection
+                    .append_blocking(
+                        self.execution_id.clone(),
+                        version,
+                        join_next,
+                        called_at,
+                        wasm_backtrace,
+                        &self.locked_event.component_id,
+                    )
+                    .await?;
                 Ok(history_events)
             }
 
@@ -1435,25 +1428,17 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
-                *version = {
-                    let next_version = db_connection
-                        .append_blocking(
-                            self.execution_id.clone(),
-                            version.clone(),
-                            append_request,
-                            called_at,
-                        )
-                        .await?;
-                    db_connection
-                        .persist_backtrace_blocking(
-                            version,
-                            &next_version,
-                            wasm_backtrace,
-                            &self.locked_event.component_id,
-                        )
-                        .await;
-                    next_version
-                };
+                db_connection
+                    .append_blocking(
+                        self.execution_id.clone(),
+                        version,
+                        append_request,
+                        called_at,
+                        wasm_backtrace,
+                        &self.locked_event.component_id,
+                    )
+                    .await?;
+
                 Ok(history_events)
             }
 

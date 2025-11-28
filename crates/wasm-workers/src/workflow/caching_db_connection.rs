@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ExecutionId,
     storage::{
-        self, AppendBatchResponse, AppendEventsToExecution, AppendRequest, AppendResponse,
+        self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
         AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, JoinSetResponseEventOuter, Version,
     },
@@ -162,12 +162,21 @@ impl CachingDbConnection {
     pub(crate) async fn append_blocking(
         &mut self,
         execution_id: ExecutionId,
-        version: Version,
+        version: &mut Version,
         req: AppendRequest,
         called_at: DateTime<Utc>,
-    ) -> Result<AppendResponse, DbErrorWrite> {
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite> {
         self.flush_non_blocking_event_cache(called_at).await?;
-        self.db_connection.append(execution_id, version, req).await
+        let next_version = self
+            .db_connection
+            .append(execution_id, version.clone(), req)
+            .await?;
+        self.persist_backtrace_blocking(version, &next_version, wasm_backtrace, component_id)
+            .await;
+        *version = next_version;
+        Ok(())
     }
 
     pub(crate) async fn append_batch(
