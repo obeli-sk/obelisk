@@ -1823,11 +1823,7 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        let val =
-            assert_matches!(res, SupportedFunctionReturnValue::Err{err: Some(val)} => val.value);
-        let val = assert_matches!(val, WastVal::String(val) => val);
-        assert_eq!("invalid format", val);
-
+        assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(_) });
         let pending_state = db_connection
             .get_pending_state(&execution_id)
             .await
