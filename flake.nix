@@ -192,17 +192,6 @@
                 wasmtime.out
               ];
           };
-          devShells.web = pkgs.mkShell {
-            nativeBuildInputs = with pkgs;
-              [
-                (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
-                binaryen # wasm-opt
-                protobuf
-                trunk
-                wasm-bindgen-cli
-              ];
-          };
-
           packages = rec {
             obeliskLibcNixDev = makeObelisk "dev" null ./rust-toolchain.toml;
             obeliskLibcNix = makeObelisk "release" null ./rust-toolchain.toml;

@@ -37,12 +37,6 @@ rustc --version >> dev-deps.txt
 wasm-tools --version >> dev-deps.txt
 wasmtime --version >> dev-deps.txt
 cargo-zigbuild --version >> dev-deps.txt
-# web
-nix develop .#web --command wasm-opt --version >> dev-deps.txt # binaryen
-echo "trunk $(grep wasm_opt crates/webui/Trunk.toml)" >> dev-deps.txt
-nix develop .#web --command trunk --version >> dev-deps.txt
-nix develop .#web --command wasm-bindgen --version >> dev-deps.txt
-echo "trunk $(grep wasm_bindgen crates/webui/Trunk.toml)" >> dev-deps.txt
 
 # docker deps
 echo "litestream $(get_litestream_version)" >> dev-deps.txt

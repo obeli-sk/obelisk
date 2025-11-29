@@ -2,7 +2,5 @@
 /.direnv/
 /.envrc
 test-codegen-cache
-/crates/webui/dist/
-/crates/webui/dist-dev/
 /assets/unpublishable-packages.txt
 /.vscode/

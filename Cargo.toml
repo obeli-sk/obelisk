@@ -135,9 +135,6 @@ members = [
     "crates/utils",
     "crates/val-json",
     "crates/wasm-workers",
-    "crates/webui",
-    "crates/webui/builder",
-    "crates/webui-proxy",
 ]
 
 [workspace.package]
@@ -175,7 +172,6 @@ test-utils = { path = "crates/testing/test-utils" }
 utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.28.1" }
 val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.28.1" }
 wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.28.1" }
-webui-builder = { path = "crates/webui/builder" }
 
 anyhow = { version = "1.0", features = ["backtrace"] }
 axum = { version = "0.8.7", features = ["http2"] }
@@ -219,6 +215,7 @@ http = "1.4.0"
 http-body-util = "0.1"
 hyper = "1.8.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
+id-arena = "2.2.1"
 indexmap = { version = "2.12", features = ["serde"] }
 insta = { version = "1.44.3", features = ["json"] }
 itertools = "0.14"
@@ -245,6 +242,7 @@ rusqlite = { version = "0.37.0", features = [
     "serde_json",
 ] }
 schemars = "1.1.0"
+semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_with = "3.16.1"
@@ -289,26 +287,6 @@ waki-macros = "0.5.1"
 wasm-logger = "0.2.0"
 wiremock = "0.6"
 
-# webui
-gloo = "0.11.0"
-id-arena = "2.2.1"
-log = "0.4.28"
-semver = "1.0.27"
-tonic-web-wasm-client = "0.8.0"
-wasm-bindgen = "=0.2.104" # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml.
-wasm-bindgen-futures = "=0.4.54" # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/futures/Cargo.toml
-web-sys = { version = "=0.3.81", features = [
-    "HtmlInputElement",
-    "Performance",
-    "Window",
-] } # Must match https://github.com/rustwasm/wasm-bindgen/blob/$WASM_BINDGEN_VERSION/crates/web-sys/Cargo.toml
-yew = { version = "0.21.0", features = ["csr"] }
-yew_icons = { version = "0.8.0", features = ["LucideBox", "LucideFileDiff"] }
-yew-router = "0.18.0"
-yewprint = "0.5.0"
-yewprint-css = "0.4.0"
-wstd = "0.6.3"
-
 # wasmtime
 wasmtime = { version = "38.0.4", features = ["memory-protection-keys"] }
 wasmtime-wasi = "38.0.4"
@@ -324,6 +302,7 @@ wit-component = "0.240.0"
 # testing components
 wasip2 = "1.0.1"
 wit-bindgen = "0.47.0"
+wstd = "0.6.3"
 
 # otlp
 opentelemetry = "0.31.0"
