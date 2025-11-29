@@ -18,14 +18,14 @@ pub(crate) mod process_support_outer {
                 }",
             world: "any:any/bindings",
             with: {
-                "obelisk:activity/process/child-process": crate::activity::process::HostChildProcess,
+                "obelisk:activity/process.child-process": crate::activity::process::HostChildProcess,
                 "wasi:io": wasmtime_wasi_io::bindings::wasi::io,
             },
             imports: {
-                "obelisk:activity/process/[method]child-process.kill": async | trappable,
+                "obelisk:activity/process.[method]child-process.kill": async | trappable,
                 default: trappable,
             },
-            trappable_error_type: { "obelisk:activity/process/spawn-error" => SpawnErrorTrappable },
+            trappable_error_type: { "obelisk:activity/process.spawn-error" => SpawnErrorTrappable },
 
         });
 

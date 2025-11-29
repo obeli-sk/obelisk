@@ -945,7 +945,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     // Must be persisted by the caller.
     fn next_u128(&mut self) -> u128 {
-        rand::Rng::r#gen(&mut self.rng)
+        rand::Rng::random(&mut self.rng)
     }
 
     pub(crate) fn resource_to_join_set_id(
@@ -1339,7 +1339,7 @@ mod workflow_support {
                 // Panic in host function would kill the worker task.
                 return Err(wasmtime::Error::msg("range must not be empty"));
             }
-            let value = rand::Rng::gen_range(&mut self.rng, range);
+            let value = rand::Rng::random_range(&mut self.rng, range);
 
             let value = Persist::apply_u64(
                 value,
@@ -1367,11 +1367,11 @@ mod workflow_support {
                     // Panic in host function would kill the worker task.
                     return Err(wasmtime::Error::msg("range must not be empty"));
                 }
-                let length_inclusive = rand::Rng::gen_range(&mut self.rng, range);
+                let length_inclusive = rand::Rng::random_range(&mut self.rng, range);
                 (0..=length_inclusive)
                     .map(|_| {
                         let idx =
-                            rand::Rng::gen_range(&mut self.rng, 0..CHARSET_ALPHANUMERIC.len());
+                            rand::Rng::random_range(&mut self.rng, 0..CHARSET_ALPHANUMERIC.len());
                         CHARSET_ALPHANUMERIC
                             .chars()
                             .nth(idx)
@@ -1927,7 +1927,7 @@ pub(crate) mod tests {
             let closure = |steps, mut sim_clock, seed| async move {
                 let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
                 let mut seedable_rng = StdRng::seed_from_u64(seed);
-                let next_u128 = || rand::Rng::r#gen(&mut seedable_rng);
+                let next_u128 = || rand::Rng::random(&mut seedable_rng);
                 let res =
                     execute_steps(steps, db_pool.clone(), db_exec, &mut sim_clock, next_u128).await;
                 db_close.close().await;
@@ -1951,7 +1951,7 @@ pub(crate) mod tests {
             let (execution_id, execution_log) = {
                 let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
                 let mut seedable_rng = StdRng::seed_from_u64(seed);
-                let next_u128 = || rand::Rng::r#gen(&mut seedable_rng);
+                let next_u128 = || rand::Rng::random(&mut seedable_rng);
                 let (execution_id, execution_log) = execute_steps(
                     steps.clone(),
                     db_pool.clone(),

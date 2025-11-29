@@ -225,7 +225,8 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                     .expect("exported function must be found")
             };
 
-            let params = match ctx.params.as_vals(func.params(&store)) {
+            let component_func = func.ty(&store);
+            let params = match ctx.params.as_vals(component_func.params()) {
                 Ok(params) => params,
                 Err(err) => {
                     return WorkerResult::Err(WorkerError::FatalError(
@@ -234,7 +235,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                     ));
                 }
             };
-            let result_types = func.results(&mut store);
+            let result_types = component_func.results().collect::<Vec<_>>(); // TODO: investigate using the iterator directly.
             let mut results = vec![Val::Bool(false); result_types.len()];
             let retry_on_err = self.config.retry_on_err;
             let worker_span = ctx.worker_span.clone();
@@ -294,7 +295,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                     );
                 }
                 let result = match SupportedFunctionReturnValue::new(
-                    results.into_iter().zip(result_types.iter().cloned()),
+                    results.into_iter().zip(result_types),
                 ) {
                     Ok(result) => result,
                     Err(err) => {
@@ -1319,7 +1320,7 @@ pub(crate) mod tests {
             let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let db_connection = db_pool.connection();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
-            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
+            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
             let retry_config = ComponentRetryConfig {
                 max_retries: 1, // should fail in first try
                 retry_exp_backoff: Duration::ZERO,
@@ -1409,7 +1410,7 @@ pub(crate) mod tests {
             let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let db_connection = db_pool.connection();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
-            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
+            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
             let exec = new_activity_with_config(
                 db_exec,
                 test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
@@ -1483,7 +1484,7 @@ pub(crate) mod tests {
             let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
             let db_connection = db_pool.connection();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
-            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.into_path().as_ref());
+            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
             let exec = new_activity_with_config(
                 db_exec,
                 test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,

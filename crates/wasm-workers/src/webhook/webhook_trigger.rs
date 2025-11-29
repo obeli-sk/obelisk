@@ -34,6 +34,7 @@ use types_v3_0_0::obelisk::types::execution::HostJoinSet;
 use utils::wasm_tools::ExIm;
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
+use wasmtime::component::types::ComponentFunc;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
@@ -59,7 +60,7 @@ pub(crate) mod types_v3_0_0 {
             default: trappable | async,
         },
         with: {
-            "obelisk:types/execution/join-set": concepts::JoinSetId,
+            "obelisk:types/execution.join-set": concepts::JoinSetId,
         }
     });
 }
@@ -158,6 +159,7 @@ impl WebhookEndpointCompiled {
                             '_,
                             WebhookEndpointCtx<C>,
                         >,
+                              _component_func: ComponentFunc,
                               params: &[Val],
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();

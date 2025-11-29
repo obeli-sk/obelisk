@@ -100,7 +100,7 @@ pub fn get_seed() -> Box<dyn Iterator<Item = u64>> {
             let count = env_or_default("TEST_SEED_NUM", 1);
             let mut vec = Vec::with_capacity(count);
             for _ in 0..count {
-                let seed = StdRng::from_entropy().r#gen();
+                let seed = StdRng::from_rng(&mut rand::rng()).random();
                 vec.push(seed);
             }
             Box::new(vec.into_iter().inspect(|&seed| {

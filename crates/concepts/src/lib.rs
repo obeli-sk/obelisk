@@ -1029,9 +1029,9 @@ impl Params {
         Ok(())
     }
 
-    pub fn as_vals(
+    pub fn as_vals<'a>(
         &self,
-        param_types: Box<[(String, Type)]>,
+        param_types: impl ExactSizeIterator<Item = (&'a str, Type)>,
     ) -> Result<Arc<[wasmtime::component::Val]>, ParamsParsingError> {
         if param_types.len() != self.len() {
             return Err(ParamsParsingError::ParameterCardinalityMismatch {
@@ -1042,8 +1042,6 @@ impl Params {
         match &self.0 {
             ParamsInternal::JsonValues(json_vec) => {
                 let param_types = param_types
-                    .into_vec()
-                    .into_iter()
                     .enumerate()
                     .map(|(idx, (_param_name, ty))| {
                         TypeWrapper::try_from(ty).map_err(|err| (idx, err))

@@ -22,6 +22,7 @@ use std::{fmt::Debug, sync::Arc};
 use tracing::{Span, debug, error, info, instrument, trace, warn};
 use utils::wasm_tools::DecodeError;
 use wasmtime::Store;
+use wasmtime::component::types::ComponentFunc;
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{Engine, component::Val};
 
@@ -208,6 +209,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                         let ffqn = ffqn.clone();
                         let fn_registry = fn_registry.clone();
                         move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                              _component_func: ComponentFunc,
                               params: &[Val],
                               results: &mut [Val]| {
                             let imported_fn_call = match ImportedFnCall::new(
@@ -353,8 +355,15 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
     async fn prepare_func(
         &self,
         ctx: WorkerContext,
-    ) -> Result<(Store<WorkflowCtx<C>>, wasmtime::component::Func, Arc<[Val]>), PrepareFuncErr>
-    {
+    ) -> Result<
+        (
+            Store<WorkflowCtx<C>>,
+            wasmtime::component::Func,
+            ComponentFunc,
+            Arc<[Val]>,
+        ),
+        PrepareFuncErr,
+    > {
         assert_eq!(
             self.config.component_id.clone(),
             ctx.locked_event.component_id
@@ -441,8 +450,8 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                 .get_func(&mut store, fn_export_index)
                 .expect("exported function must be found")
         };
-
-        let params = match ctx.params.as_vals(func.params(&store)) {
+        let component_func = func.ty(&store);
+        let params = match ctx.params.as_vals(component_func.params()) {
             Ok(params) => params,
             Err(err) => {
                 return Err(PrepareFuncErr::WorkerError(WorkerError::FatalError(
@@ -451,16 +460,17 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                 )));
             }
         };
-        Ok((store, func, params))
+        Ok((store, func, component_func, params))
     }
 
     async fn call_func(
         mut store: Store<WorkflowCtx<C>>,
         func: wasmtime::component::Func,
+        component_func: ComponentFunc,
         params: Arc<[Val]>,
         assigned_fuel: Option<u64>,
     ) -> CallFuncResult<C> {
-        let result_types = func.results(&mut store);
+        let result_types = component_func.results();
         let mut results = vec![Val::Bool(false); result_types.len()];
         let func_call_result = func.call_async(&mut store, &params, &mut results).await;
         if func_call_result.is_ok()
@@ -477,9 +487,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
 
         match func_call_result {
             Ok(()) => {
-                match SupportedFunctionReturnValue::new(
-                    results.into_iter().zip(result_types.iter().cloned()),
-                ) {
+                match SupportedFunctionReturnValue::new(results.into_iter().zip(result_types)) {
                     Ok(result) => Ok((result, workflow_ctx)),
                     Err(err) => Err(RunError::ResultParsingError(err, workflow_ctx)),
                 }
@@ -535,6 +543,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
     async fn call_func_convert_result(
         store: Store<WorkflowCtx<C>>,
         func: wasmtime::component::Func,
+        component_func: ComponentFunc,
         params: Arc<[Val]>,
         worker_span: &Span,
         execution_deadline: DateTime<Utc>,
@@ -542,7 +551,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
     ) -> WorkerResult {
         // call_func
         let elapsed = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
-        let res = Self::call_func(store, func, params, assigned_fuel).await;
+        let res = Self::call_func(store, func, component_func, params, assigned_fuel).await;
         let elapsed = elapsed.elapsed();
         let worker_result_refactored =
             Self::convert_result(res, worker_span, elapsed, execution_deadline).await;
@@ -689,10 +698,11 @@ impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.locked_event.lock_expires_at;
         match self.prepare_func(ctx).await {
-            Ok((store, func, params)) => {
+            Ok((store, func, component_func, params)) => {
                 Self::call_func_convert_result(
                     store,
                     func,
+                    component_func,
                     params,
                     &worker_span,
                     execution_deadline,
