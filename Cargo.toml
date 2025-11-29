@@ -248,13 +248,6 @@ serde_json = "1.0.145"
 serde_with = "3.16.1"
 sha2 = "0.10.9"
 strum = { version = "0.27.2", features = ["derive"] }
-syntect = { version = "5.3.0", default-features = false, features = [
-    "parsing",
-    "default-syntaxes",
-    "default-themes",
-    "regex-fancy",
-    "yaml-load",
-] }
 tempfile = "3.23" # yew 0.21 needs getrandom 0.2
 thiserror = "2.0"
 tokio = { version = "1", features = [
@@ -284,7 +277,6 @@ ulid = { version = "=1.1.4", features = ["serde"] }
 url = "2.5.7"
 waki = "0.5.1"
 waki-macros = "0.5.1"
-wasm-logger = "0.2.0"
 wiremock = "0.6"
 
 # wasmtime
