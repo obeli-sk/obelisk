@@ -1982,7 +1982,6 @@ pub(crate) struct Schedule {
     pub(crate) execution_id: ExecutionId,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) fn_component_id: ComponentId,
-    // pub(crate) fn_retry_config: ComponentRetryConfig,
     #[debug(skip)]
     pub(crate) params: Params,
     #[debug(skip)]
