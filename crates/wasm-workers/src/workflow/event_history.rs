@@ -236,11 +236,10 @@ impl EventHistory {
         &mut self,
         event_call: EventCall,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, WorkflowFunctionError> {
         Ok(self
-            .apply_inner(event_call, db_connection, version, called_at)
+            .apply_inner(event_call, db_connection, called_at)
             .await?)
     }
 
@@ -251,13 +250,12 @@ impl EventHistory {
         &mut self,
         event_call: EventCall,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, ApplyError> {
-        debug!("applying {event_call:?}");
+        debug!("applying {event_call:?} {}", db_connection.version);
 
         if self.deadline_tracker.close_to_expired() && self.lock_extension > Duration::ZERO {
-            self.extend_lock(db_connection, version, called_at)
+            self.extend_lock(db_connection, called_at)
                 .await
                 .map_err(ApplyError::DbError)?;
         }
@@ -272,7 +270,7 @@ impl EventHistory {
                 // Events that cannot block waiting for response.
                 let cloned_non_blocking = event_call.clone();
                 let history_events = self
-                    .append_to_db_non_blocking(event_call, db_connection, called_at, version)
+                    .append_to_db_non_blocking(event_call, db_connection, called_at)
                     .await
                     .map_err(ApplyError::DbError)?;
                 self.event_history
@@ -290,14 +288,8 @@ impl EventHistory {
                     } else {
                         self.locked_event.lock_expires_at
                     };
-                self.apply_blocking(
-                    event_call,
-                    db_connection,
-                    lock_expires_at,
-                    version,
-                    called_at,
-                )
-                .await
+                self.apply_blocking(event_call, db_connection, lock_expires_at, called_at)
+                    .await
             }
         }
     }
@@ -305,7 +297,6 @@ impl EventHistory {
     async fn extend_lock(
         &mut self,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
         self.locked_event.lock_expires_at = self.deadline_tracker.extend_by(self.lock_extension);
@@ -313,11 +304,13 @@ impl EventHistory {
             created_at: called_at,
             event: ExecutionEventInner::Locked(self.locked_event.clone()),
         };
-        info!("Extending the lock at version {version}");
+        info!(
+            "Extending the lock at version {version}",
+            version = db_connection.version
+        );
         db_connection
             .append_blocking(
                 self.execution_id.clone(),
-                version,
                 append_req,
                 called_at,
                 None,
@@ -332,20 +325,13 @@ impl EventHistory {
         event_call: EventCallBlocking,
         db_connection: &mut CachingDbConnection,
         lock_expires_at: DateTime<Utc>,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, ApplyError> {
         let join_next_variant = event_call.join_next_variant();
         let keys = event_call.as_keys();
         // Create and append HistoryEvents.
         let history_events = self
-            .append_to_db_blocking(
-                event_call,
-                db_connection,
-                called_at,
-                lock_expires_at,
-                version,
-            )
+            .append_to_db_blocking(event_call, db_connection, called_at, lock_expires_at)
             .await
             .map_err(ApplyError::DbError)?;
         assert!(
@@ -426,19 +412,12 @@ impl EventHistory {
         &mut self,
         join_set_id: JoinSetId,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), WorkflowFunctionError> {
-        self.join_set_close_inner(
-            join_set_id,
-            db_connection,
-            version,
-            called_at,
-            wasm_backtrace,
-        )
-        .await
-        .map_err(WorkflowFunctionError::from)
+        self.join_set_close_inner(join_set_id, db_connection, called_at, wasm_backtrace)
+            .await
+            .map_err(WorkflowFunctionError::from)
     }
 
     /// For each open join set deterministically emit `JoinNext` and wait for the response.
@@ -446,7 +425,6 @@ impl EventHistory {
         &mut self,
         join_set_id: JoinSetId,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), ApplyError> {
@@ -477,7 +455,6 @@ impl EventHistory {
                     wasm_backtrace: wasm_backtrace.clone(),
                 })),
                 db_connection,
-                version,
                 called_at,
             )
             .await?;
@@ -510,13 +487,12 @@ impl EventHistory {
     pub(crate) async fn join_sets_close_on_finish(
         &mut self,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<usize /* number of closed join sets */, ApplyError> {
         debug!("close_forgotten_join_sets");
         let mut closed_count = 0;
         while let Some(join_set_id) = self.last_join_set() {
-            self.join_set_close_inner(join_set_id, db_connection, version, called_at, None)
+            self.join_set_close_inner(join_set_id, db_connection, called_at, None)
                 .await?;
             // No action was needed, continue with next join set.
             closed_count += 1;
@@ -1011,15 +987,14 @@ impl EventHistory {
         }
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, fields(%version))]
+    #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_to_db_non_blocking(
         &mut self,
         event_call: EventCallNonBlocking,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
-        version: &mut Version,
     ) -> Result<Vec<HistoryEvent>, DbErrorWrite> {
-        trace!(%version, "append_to_db");
+        trace!("append_to_db_non_blocking {}", db_connection.version);
         match event_call {
             EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
                 join_set_id,
@@ -1039,17 +1014,17 @@ impl EventHistory {
                 };
                 let cacheable_event = CacheableDbEvent::JoinSetCreate {
                     request: join_set,
-                    version: version.clone(),
+                    version: db_connection.version.clone(),
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
                         execution_id: self.execution_id.clone(),
                         component_id: self.locked_event.component_id.clone(),
                         wasm_backtrace,
-                        version_min_including: version.clone(),
-                        version_max_excluding: Version::new(version.0 + 1),
+                        version_min_including: db_connection.version.clone(),
+                        version_max_excluding: Version::new(db_connection.version.0 + 1),
                     }),
                 };
                 db_connection
-                    .append_non_blocking(cacheable_event, called_at, version)
+                    .append_non_blocking(cacheable_event, called_at)
                     .await?;
                 Ok(history_events)
             }
@@ -1068,17 +1043,17 @@ impl EventHistory {
                 };
                 let cacheable_event = CacheableDbEvent::Persist {
                     request,
-                    version: version.clone(),
+                    version: db_connection.version.clone(),
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
                         execution_id: self.execution_id.clone(),
                         component_id: self.locked_event.component_id.clone(),
                         wasm_backtrace,
-                        version_min_including: version.clone(),
-                        version_max_excluding: Version::new(version.0 + 1),
+                        version_min_including: db_connection.version.clone(),
+                        version_max_excluding: Version::new(db_connection.version.0 + 1),
                     }),
                 };
                 db_connection
-                    .append_non_blocking(cacheable_event, called_at, version)
+                    .append_non_blocking(cacheable_event, called_at)
                     .await?;
                 Ok(history_events)
             }
@@ -1119,19 +1094,19 @@ impl EventHistory {
                 };
                 let cacheable_event = CacheableDbEvent::SubmitChildExecution {
                     request: append_req,
-                    version: version.clone(),
+                    version: db_connection.version.clone(),
                     child_req,
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
                         execution_id: self.execution_id.clone(),
                         component_id: self.locked_event.component_id.clone(),
                         wasm_backtrace,
-                        version_min_including: version.clone(),
-                        version_max_excluding: Version::new(version.0 + 1),
+                        version_min_including: db_connection.version.clone(),
+                        version_max_excluding: Version::new(db_connection.version.0 + 1),
                     }),
                 };
 
                 db_connection
-                    .append_non_blocking(cacheable_event, called_at, version)
+                    .append_non_blocking(cacheable_event, called_at)
                     .await?;
                 Ok(history_events)
             }
@@ -1162,17 +1137,17 @@ impl EventHistory {
                 };
                 let cacheable_event = CacheableDbEvent::SubmitDelay {
                     request: delay_req,
-                    version: version.clone(),
+                    version: db_connection.version.clone(),
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
                         execution_id: self.execution_id.clone(),
                         component_id: self.locked_event.component_id.clone(),
                         wasm_backtrace,
-                        version_min_including: version.clone(),
-                        version_max_excluding: Version::new(version.0 + 1),
+                        version_min_including: db_connection.version.clone(),
+                        version_max_excluding: Version::new(db_connection.version.0 + 1),
                     }),
                 };
                 db_connection
-                    .append_non_blocking(cacheable_event, called_at, version)
+                    .append_non_blocking(cacheable_event, called_at)
                     .await?;
                 Ok(vec![event])
             }
@@ -1211,19 +1186,19 @@ impl EventHistory {
                 };
                 let non_blocking_event = CacheableDbEvent::Schedule {
                     request: append_req,
-                    version: version.clone(),
+                    version: db_connection.version.clone(),
                     child_req,
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
                         execution_id: self.execution_id.clone(),
                         component_id: self.locked_event.component_id.clone(),
                         wasm_backtrace,
-                        version_min_including: version.clone(),
-                        version_max_excluding: Version::new(version.0 + 1),
+                        version_min_including: db_connection.version.clone(),
+                        version_max_excluding: Version::new(db_connection.version.0 + 1),
                     }),
                 };
 
                 db_connection
-                    .append_non_blocking(non_blocking_event, called_at, version)
+                    .append_non_blocking(non_blocking_event, called_at)
                     .await?;
 
                 Ok(history_events)
@@ -1344,7 +1319,6 @@ impl EventHistory {
                         called_at,
                         vec![history_event_req],
                         self.execution_id.clone(),
-                        version,
                         wasm_backtrace,
                         &self.locked_event.component_id,
                     )
@@ -1354,16 +1328,15 @@ impl EventHistory {
         }
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, fields(%version))]
+    #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_to_db_blocking(
         &mut self,
         event_call: EventCallBlocking,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
         lock_expires_at: DateTime<Utc>,
-        version: &mut Version,
     ) -> Result<Vec<HistoryEvent>, DbErrorWrite> {
-        trace!(%version, "append_to_db");
+        trace!("append_to_db_blocking {}", db_connection.version);
         match event_call {
             EventCallBlocking::JoinNext(JoinNext {
                 join_set_id,
@@ -1393,7 +1366,6 @@ impl EventHistory {
                 db_connection
                     .append_blocking(
                         self.execution_id.clone(),
-                        version,
                         join_next,
                         called_at,
                         wasm_backtrace,
@@ -1431,7 +1403,6 @@ impl EventHistory {
                 db_connection
                     .append_blocking(
                         self.execution_id.clone(),
-                        version,
                         append_request,
                         called_at,
                         wasm_backtrace,
@@ -1503,7 +1474,6 @@ impl EventHistory {
                         called_at,
                         vec![join_set, child_exec_req, join_next],
                         self.execution_id.clone(),
-                        version,
                         vec![child],
                         wasm_backtrace,
                         &self.locked_event.component_id,
@@ -1561,7 +1531,6 @@ impl EventHistory {
                         called_at,
                         vec![join_set, delay_req, join_next],
                         self.execution_id.clone(),
-                        version,
                         wasm_backtrace,
                         &self.locked_event.component_id,
                     )
@@ -1859,7 +1828,6 @@ impl JoinSetCreate {
         self,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<JoinSetId, ApplyError> {
         assert!(self.join_set_id.kind != JoinSetKind::OneOff);
@@ -1868,7 +1836,6 @@ impl JoinSetCreate {
             .apply_inner(
                 EventCall::NonBlocking(EventCallNonBlocking::JoinSetCreate(self)),
                 db_connection,
-                version,
                 called_at,
             )
             .await?;
@@ -1899,7 +1866,6 @@ impl SubmitChildExecution {
         self,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val /* ExecutionId */, WorkflowFunctionError> {
         assert!(
@@ -1912,7 +1878,6 @@ impl SubmitChildExecution {
             .apply(
                 EventCall::NonBlocking(EventCallNonBlocking::SubmitChildExecution(self)),
                 db_connection,
-                version,
                 called_at,
             )
             .await?;
@@ -1951,7 +1916,6 @@ impl SubmitDelay {
         self,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<types_execution::DelayId, WorkflowFunctionError> {
         assert!(
@@ -1963,7 +1927,6 @@ impl SubmitDelay {
             .apply(
                 EventCall::NonBlocking(EventCallNonBlocking::SubmitDelay(self)),
                 db_connection,
-                version,
                 called_at,
             )
             .await?;
@@ -1992,14 +1955,12 @@ impl Schedule {
         self,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val /* ExecutionId */, WorkflowFunctionError> {
         let value = event_history
             .apply(
                 EventCall::NonBlocking(EventCallNonBlocking::Schedule(self)),
                 db_connection,
-                version,
                 called_at,
             )
             .await?;
@@ -2032,14 +1993,12 @@ impl Stub {
         self,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let value = event_history
             .apply(
                 EventCall::NonBlocking(EventCallNonBlocking::Stub(self)),
                 db_connection,
-                version,
                 called_at,
             )
             .await?;
@@ -2068,7 +2027,6 @@ impl JoinNextRequestingFfqn {
         self,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<
         wasmtime::component::Val, /* result<?, await-next-extension-error> */
@@ -2083,7 +2041,6 @@ impl JoinNextRequestingFfqn {
             .apply(
                 EventCall::Blocking(EventCallBlocking::JoinNextRequestingFfqn(self)),
                 db_connection,
-                version,
                 called_at,
             )
             .await?;
@@ -2113,7 +2070,6 @@ impl JoinNext {
         self,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<Result<types_execution::ResponseId, workflow_support::JoinNextError>, ApplyError>
     {
@@ -2126,7 +2082,6 @@ impl JoinNext {
             .apply_inner(
                 EventCall::Blocking(EventCallBlocking::JoinNext(self)),
                 db_connection,
-                version,
                 called_at,
             )
             .await?;
@@ -2147,7 +2102,6 @@ pub(crate) struct OneOffChildExecutionRequest {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl OneOffChildExecutionRequest {
-    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn apply(
         ffqn: FunctionFqn,
         fn_component_id: ComponentId,
@@ -2155,7 +2109,6 @@ impl OneOffChildExecutionRequest {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let join_set_id = event_history
@@ -2173,9 +2126,7 @@ impl OneOffChildExecutionRequest {
             },
         ));
 
-        let value = event_history
-            .apply(event, db_connection, version, called_at)
-            .await?;
+        let value = event_history.apply(event, db_connection, called_at).await?;
         match value {
             ChildReturnValue::WastVal(wast_val) => Ok(wast_val.as_val()),
             ChildReturnValue::JoinSetCreate(_)
@@ -2195,7 +2146,6 @@ impl OneOffChildExecutionRequest {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<Val, WorkflowFunctionError> {
         let join_set_id = match event_history.next_join_set_one_off_named(label) {
@@ -2221,7 +2171,7 @@ impl OneOffChildExecutionRequest {
         ));
 
         match event_history
-            .apply_inner(event, db_connection, version, called_at)
+            .apply_inner(event, db_connection, called_at)
             .await
         {
             Ok(ChildReturnValue::WastVal(wast_val)) => {
@@ -2256,7 +2206,6 @@ impl OneOffDelayRequest {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<DateTime<Utc>, WorkflowFunctionError> {
         let join_set_id = event_history
@@ -2274,7 +2223,6 @@ impl OneOffDelayRequest {
                     wasm_backtrace,
                 })),
                 db_connection,
-                version,
                 called_at,
             )
             .await?
@@ -2294,7 +2242,6 @@ pub(crate) struct Persist {
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl Persist {
-    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn apply_string(
         value: String,
         min_length: u64,
@@ -2302,7 +2249,6 @@ impl Persist {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<String, WorkflowFunctionError> {
         let value = Vec::from_iter(value.bytes());
@@ -2317,7 +2263,6 @@ impl Persist {
                     wasm_backtrace,
                 })),
                 db_connection,
-                version,
                 called_at,
             )
             .await?;
@@ -2326,7 +2271,6 @@ impl Persist {
         Ok(value)
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn apply_u64(
         value: u64,
         min: u64,
@@ -2334,7 +2278,6 @@ impl Persist {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
-        version: &mut Version,
         called_at: DateTime<Utc>,
     ) -> Result<u64, WorkflowFunctionError> {
         let value = Vec::from(storage::from_u64_to_bytes(value));
@@ -2346,7 +2289,6 @@ impl Persist {
                     wasm_backtrace,
                 })),
                 db_connection,
-                version,
                 called_at,
             )
             .await?;
@@ -2674,7 +2616,7 @@ mod tests {
 
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
 
-        let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+        let (mut event_history, mut caching_db_connection) = load_event_history(
             db_pool.connection(),
             execution_id.clone(),
             sim_clock.now(),
@@ -2695,7 +2637,6 @@ mod tests {
                 MOCK_FFQN,
                 child_execution_id.clone(),
                 &mut event_history,
-                &mut version,
                 join_set_id.clone(),
                 sim_clock.now()
             )
@@ -2721,7 +2662,7 @@ mod tests {
             .unwrap();
 
         info!("Second run");
-        let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+        let (mut event_history, mut caching_db_connection) = load_event_history(
             db_pool.connection(),
             execution_id,
             sim_clock.now(),
@@ -2736,7 +2677,6 @@ mod tests {
             MOCK_FFQN,
             child_execution_id,
             &mut event_history,
-            &mut version,
             join_set_id,
             sim_clock.now(),
         )
@@ -2745,7 +2685,7 @@ mod tests {
 
         // finish the execution
         let closed_count = event_history
-            .join_sets_close_on_finish(&mut caching_db_connection, &mut version, sim_clock.now())
+            .join_sets_close_on_finish(&mut caching_db_connection, sim_clock.now())
             .await
             .unwrap();
         assert_eq!(0, closed_count);
@@ -2773,7 +2713,7 @@ mod tests {
         // Create an execution.
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
-        let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+        let (mut event_history, mut caching_db_connection) = load_event_history(
             db_pool.connection(),
             execution_id.clone(),
             sim_clock.now(),
@@ -2791,7 +2731,6 @@ mod tests {
         apply_create_join_set_start_async(
             &mut caching_db_connection,
             &mut event_history,
-            &mut version,
             join_set_id.clone(),
             MOCK_FFQN,
             child_execution_id.clone(),
@@ -2818,7 +2757,7 @@ mod tests {
 
         info!("Second run");
 
-        let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+        let (mut event_history, mut caching_db_connection) = load_event_history(
             db_pool.connection(),
             execution_id,
             sim_clock.now(),
@@ -2832,7 +2771,6 @@ mod tests {
         apply_create_join_set_start_async(
             &mut caching_db_connection,
             &mut event_history,
-            &mut version,
             join_set_id.clone(),
             MOCK_FFQN,
             child_execution_id.clone(),
@@ -2850,7 +2788,6 @@ mod tests {
                     },
                 )),
                 &mut caching_db_connection,
-                &mut version,
                 sim_clock.now(),
             )
             .await
@@ -2865,7 +2802,7 @@ mod tests {
 
         // finish the execution
         let closed_count = event_history
-            .join_sets_close_on_finish(&mut caching_db_connection, &mut version, sim_clock.now())
+            .join_sets_close_on_finish(&mut caching_db_connection, sim_clock.now())
             .await
             .unwrap();
         assert_eq!(0, closed_count);
@@ -2911,7 +2848,7 @@ mod tests {
         // Create an execution.
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
-        let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+        let (mut event_history, mut caching_db_connection) = load_event_history(
             db_pool.connection(),
             execution_id.clone(),
             sim_clock.now(),
@@ -2933,7 +2870,6 @@ mod tests {
             apply_create_join_set_two_start_asyncs_await_next_a(
                 &mut caching_db_connection,
                 &mut event_history,
-                &mut version,
                 join_set_id.clone(),
                 submit_ffqn_1.clone(),
                 child_execution_id_a.clone(),
@@ -2987,7 +2923,7 @@ mod tests {
 
         info!("Second run");
 
-        let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+        let (mut event_history, mut caching_db_connection) = load_event_history(
             db_pool.connection(),
             execution_id,
             sim_clock.now(),
@@ -3001,7 +2937,6 @@ mod tests {
         let res = apply_create_join_set_two_start_asyncs_await_next_a(
             &mut caching_db_connection,
             &mut event_history,
-            &mut version,
             join_set_id.clone(),
             submit_ffqn_1.clone(),
             child_execution_id_a.clone(),
@@ -3042,7 +2977,6 @@ mod tests {
                         },
                     )),
                     &mut caching_db_connection,
-                    &mut version,
                     sim_clock.now(),
                 )
                 .await
@@ -3057,7 +2991,7 @@ mod tests {
 
         // finish the execution
         let closed_count = event_history
-            .join_sets_close_on_finish(&mut caching_db_connection, &mut version, sim_clock.now())
+            .join_sets_close_on_finish(&mut caching_db_connection, sim_clock.now())
             .await
             .unwrap();
         assert_eq!(0, closed_count);
@@ -3076,7 +3010,7 @@ mod tests {
         // Create an execution.
         let execution_id = create_execution(db_connection, &sim_clock).await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
-        let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+        let (mut event_history, mut caching_db_connection) = load_event_history(
             db_pool.connection(),
             execution_id.clone(),
             sim_clock.now(),
@@ -3099,7 +3033,6 @@ mod tests {
                     wasm_backtrace: None,
                 })),
                 &mut caching_db_connection,
-                &mut version,
                 sim_clock.now(),
             )
             .await
@@ -3115,7 +3048,6 @@ mod tests {
                     wasm_backtrace: None,
                 })),
                 &mut caching_db_connection,
-                &mut version,
                 sim_clock.now(),
             )
             .await
@@ -3123,7 +3055,7 @@ mod tests {
 
         // finish the execution
         let closed_count = event_history
-            .join_sets_close_on_finish(&mut caching_db_connection, &mut version, sim_clock.now())
+            .join_sets_close_on_finish(&mut caching_db_connection, sim_clock.now())
             .await
             .unwrap();
         assert_eq!(0, closed_count);
@@ -3146,7 +3078,7 @@ mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
         for run_id in 0..=1 {
             info!("Run {run_id}");
-            let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+            let (mut event_history, mut caching_db_connection) = load_event_history(
                 db_pool.connection(),
                 execution_id.clone(),
                 sim_clock.now(),
@@ -3162,7 +3094,6 @@ mod tests {
             apply_create_join_set_start_async(
                 &mut caching_db_connection,
                 &mut event_history,
-                &mut version,
                 join_set_id.clone(),
                 MOCK_FFQN,
                 child_execution_id.clone(),
@@ -3181,7 +3112,6 @@ mod tests {
                         wasm_backtrace: None,
                     })),
                     &mut caching_db_connection,
-                    &mut version,
                     sim_clock.now(),
                 )
                 .await
@@ -3197,7 +3127,6 @@ mod tests {
                         },
                     )),
                     &mut caching_db_connection,
-                    &mut version,
                     sim_clock.now(),
                 )
                 .await
@@ -3210,11 +3139,7 @@ mod tests {
 
             // finish the execution
             let closed_count = event_history
-                .join_sets_close_on_finish(
-                    &mut caching_db_connection,
-                    &mut version,
-                    sim_clock.now(),
-                )
+                .join_sets_close_on_finish(&mut caching_db_connection, sim_clock.now())
                 .await
                 .unwrap();
             assert_eq!(0, closed_count);
@@ -3240,7 +3165,7 @@ mod tests {
         // First execution creates `target_activity_stub` and stubs its return value.
         for run_id in 0..=1 {
             info!("Run {run_id}");
-            let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+            let (mut event_history, mut caching_db_connection) = load_event_history(
                 db_pool.connection(),
                 execution_id.clone(),
                 sim_clock.now(),
@@ -3255,7 +3180,6 @@ mod tests {
             apply_create_join_set_start_async(
                 &mut caching_db_connection,
                 &mut event_history,
-                &mut version,
                 join_set_id.clone(),
                 MOCK_FFQN,
                 target_activity_stub.clone(),
@@ -3275,7 +3199,6 @@ mod tests {
                             wasm_backtrace: None,
                         })),
                         &mut caching_db_connection,
-                        &mut version,
                         sim_clock.now(),
                     )
                     .await
@@ -3284,11 +3207,7 @@ mod tests {
 
             // finish the execution
             let closed_count = event_history
-                .join_sets_close_on_finish(
-                    &mut caching_db_connection,
-                    &mut version,
-                    sim_clock.now(),
-                )
+                .join_sets_close_on_finish(&mut caching_db_connection, sim_clock.now())
                 .await
                 .unwrap();
             assert_eq!(0, closed_count);
@@ -3297,7 +3216,7 @@ mod tests {
         // Second execution
         {
             let execution_id = create_execution(db_connection, &sim_clock).await;
-            let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+            let (mut event_history, mut caching_db_connection) = load_event_history(
                 db_pool.connection(),
                 execution_id.clone(),
                 sim_clock.now(),
@@ -3322,7 +3241,6 @@ mod tests {
                             wasm_backtrace: None,
                         })),
                         &mut caching_db_connection,
-                        &mut version,
                         sim_clock.now(),
                     )
                     .await
@@ -3331,11 +3249,7 @@ mod tests {
 
             // finish the execution
             let closed_count = event_history
-                .join_sets_close_on_finish(
-                    &mut caching_db_connection,
-                    &mut version,
-                    sim_clock.now(),
-                )
+                .join_sets_close_on_finish(&mut caching_db_connection, sim_clock.now())
                 .await
                 .unwrap();
             assert_eq!(0, closed_count);
@@ -3360,7 +3274,7 @@ mod tests {
 
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
 
-        let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+        let (mut event_history, mut caching_db_connection) = load_event_history(
             db_pool.connection(),
             execution_id.clone(),
             sim_clock.now(),
@@ -3381,7 +3295,6 @@ mod tests {
                 MOCK_FFQN,
                 child_execution_id.clone(),
                 &mut event_history,
-                &mut version,
                 join_set_id.clone(),
                 sim_clock.now()
             )
@@ -3407,7 +3320,7 @@ mod tests {
             .unwrap();
 
         info!("Second run attemts to finish with no requests");
-        let (mut event_history, mut version, mut caching_db_connection) = load_event_history(
+        let (mut event_history, mut caching_db_connection) = load_event_history(
             db_pool.connection(),
             execution_id,
             sim_clock.now(),
@@ -3420,7 +3333,7 @@ mod tests {
 
         // finish the execution
         let err = event_history
-            .join_sets_close_on_finish(&mut caching_db_connection, &mut version, sim_clock.now())
+            .join_sets_close_on_finish(&mut caching_db_connection, sim_clock.now())
             .await
             .unwrap_err();
         let reason = assert_matches!(err, ApplyError::NondeterminismDetected(reason) => reason);
@@ -3469,7 +3382,7 @@ mod tests {
         deadline_factory: Arc<dyn DeadlineTrackerFactory>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
-    ) -> (EventHistory, Version, CachingDbConnection) {
+    ) -> (EventHistory, CachingDbConnection) {
         let execution_deadline = now + lock_expires_at;
         let deadline_tracker = deadline_factory.create(execution_deadline).unwrap();
 
@@ -3499,8 +3412,9 @@ mod tests {
             db_connection,
             execution_id,
             caching_buffer: CachingBuffer::new(join_next_blocking_strategy),
+            version: exec_log.next_version,
         };
-        (event_history, exec_log.next_version, caching_db_connection)
+        (event_history, caching_db_connection)
     }
 
     async fn apply_create_join_set_start_async_await_next(
@@ -3508,14 +3422,12 @@ mod tests {
         ffqn: FunctionFqn,
         child_execution_id: ExecutionIdDerived,
         event_history: &mut EventHistory,
-        version: &mut Version,
         join_set_id: JoinSetId,
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, ApplyError> {
         apply_create_join_set_start_async(
             db_connection,
             event_history,
-            version,
             join_set_id.clone(),
             ffqn.clone(),
             child_execution_id,
@@ -3532,7 +3444,6 @@ mod tests {
                     },
                 )),
                 db_connection,
-                version,
                 called_at,
             )
             .await
@@ -3541,7 +3452,6 @@ mod tests {
     async fn apply_create_join_set_start_async(
         db_connection: &mut CachingDbConnection,
         event_history: &mut EventHistory,
-        version: &mut Version,
         join_set_id: JoinSetId,
         ffqn: FunctionFqn,
         child_execution_id: ExecutionIdDerived,
@@ -3555,7 +3465,6 @@ mod tests {
                     wasm_backtrace: None,
                 })),
                 db_connection,
-                version,
                 called_at,
             )
             .await
@@ -3573,7 +3482,6 @@ mod tests {
                     },
                 )),
                 db_connection,
-                version,
                 called_at,
             )
             .await
@@ -3584,7 +3492,6 @@ mod tests {
     async fn apply_create_join_set_two_start_asyncs_await_next_a(
         db_connection: &mut CachingDbConnection,
         event_history: &mut EventHistory,
-        version: &mut Version,
         join_set_id: JoinSetId,
         ffqn_a: FunctionFqn,
         child_execution_id_a: ExecutionIdDerived,
@@ -3595,7 +3502,6 @@ mod tests {
         apply_create_join_set_start_async(
             db_connection,
             event_history,
-            version,
             join_set_id.clone(),
             ffqn_a.clone(),
             child_execution_id_a,
@@ -3615,7 +3521,6 @@ mod tests {
                     },
                 )),
                 db_connection,
-                version,
                 called_at,
             )
             .await
@@ -3630,7 +3535,6 @@ mod tests {
                     },
                 )),
                 db_connection,
-                version,
                 called_at,
             )
             .await

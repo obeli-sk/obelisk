@@ -410,7 +410,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             Ok(instance) => instance,
             Err(err) => {
                 let reason = err.to_string();
-                let version = store.into_data().version;
+                let version = store.into_data().db_connection.version;
                 if reason.starts_with("maximum concurrent") {
                     return Err(PrepareFuncErr::WorkerError(WorkerError::LimitReached {
                         reason,
@@ -487,7 +487,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                 {
                     let worker_partial_result = err
                         .clone()
-                        .into_worker_partial_result(workflow_ctx.version.clone());
+                        .into_worker_partial_result(workflow_ctx.db_connection.version.clone());
                     Err(RunError::WorkerPartialResult(
                         worker_partial_result,
                         workflow_ctx,
@@ -548,7 +548,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                         debug!("Error while closing join sets {worker_result:?}");
                         worker_result
                     }
-                    Ok(()) => WorkerResult::Ok(res, workflow_ctx.version, None),
+                    Ok(()) => WorkerResult::Ok(res, workflow_ctx.db_connection.version, None),
                 }
             }
             WorkerResultRefactored::FatalError(err, mut workflow_ctx) => {
@@ -557,7 +557,10 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                         debug!("Error while closing join sets {worker_result:?}");
                         worker_result
                     }
-                    Ok(()) => WorkerResult::Err(WorkerError::FatalError(err, workflow_ctx.version)),
+                    Ok(()) => WorkerResult::Err(WorkerError::FatalError(
+                        err,
+                        workflow_ctx.db_connection.version,
+                    )),
                 }
             }
             WorkerResultRefactored::Retriable(retriable) => retriable,
@@ -596,7 +599,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                         WorkerError::DbError(db_err),
                     ));
                 }
-                let version = workflow_ctx.version;
+                let version = workflow_ctx.db_connection.version;
                 worker_span.in_scope(|| info!("Trap handled as a fatal error"));
                 let err = WorkerError::FatalError(
                     FatalError::WorkflowTrap {
@@ -658,7 +661,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                 ApplyError::NondeterminismDetected(detail) => {
                     WorkerResult::Err(WorkerError::FatalError(
                         FatalError::NondeterminismDetected { detail },
-                        workflow_ctx.version.clone(),
+                        workflow_ctx.db_connection.version.clone(),
                     ))
                 }
             })

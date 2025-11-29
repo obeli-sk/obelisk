@@ -15,6 +15,7 @@ pub(crate) struct CachingDbConnection {
     pub(crate) db_connection: Box<dyn DbConnection>,
     pub(crate) execution_id: ExecutionId,
     pub(crate) caching_buffer: Option<CachingBuffer>,
+    pub(crate) version: Version,
 }
 pub(crate) enum CacheableDbEvent {
     SubmitChildExecution {
@@ -76,19 +77,18 @@ impl CachingDbConnection {
         &mut self,
         non_blocking_event: CacheableDbEvent,
         called_at: DateTime<Utc>,
-        version: &mut Version,
     ) -> Result<(), DbErrorWrite> {
-        if let Some(caching_buffer) = &mut self.caching_buffer {
-            let next_version = Version::new(version.0 + 1);
+        self.version = if let Some(caching_buffer) = &mut self.caching_buffer {
+            let next_version = Version::new(self.version.0 + 1);
             caching_buffer
                 .non_blocking_event_batch
                 .push(non_blocking_event);
             self.flush_non_blocking_event_cache_if_full(called_at)
                 .await?;
-            *version = next_version;
+            next_version
         } else {
             // No caching_buffer here, so no flushing before the write.
-            let next_version = match non_blocking_event {
+            match non_blocking_event {
                 CacheableDbEvent::Schedule {
                     request,
                     version,
@@ -153,16 +153,14 @@ impl CachingDbConnection {
                     }
                     next_version
                 }
-            };
-            *version = next_version;
-        }
+            }
+        };
         Ok(())
     }
 
     pub(crate) async fn append_blocking(
         &mut self,
         execution_id: ExecutionId,
-        version: &mut Version,
         req: AppendRequest,
         called_at: DateTime<Utc>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -171,11 +169,16 @@ impl CachingDbConnection {
         self.flush_non_blocking_event_cache(called_at).await?;
         let next_version = self
             .db_connection
-            .append(execution_id, version.clone(), req)
+            .append(execution_id, self.version.clone(), req)
             .await?;
-        self.persist_backtrace_blocking(version, &next_version, wasm_backtrace, component_id)
-            .await;
-        *version = next_version;
+        self.persist_backtrace_blocking(
+            &self.version.clone(),
+            &next_version,
+            wasm_backtrace,
+            component_id,
+        )
+        .await;
+        self.version = next_version;
         Ok(())
     }
 
@@ -184,28 +187,30 @@ impl CachingDbConnection {
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        version: &mut Version,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         self.flush_non_blocking_event_cache(current_time).await?;
         let next_version = self
             .db_connection
-            .append_batch(current_time, batch, execution_id, version.clone())
+            .append_batch(current_time, batch, execution_id, self.version.clone())
             .await?;
-        self.persist_backtrace_blocking(version, &next_version, wasm_backtrace, component_id)
-            .await;
-        *version = next_version;
+        self.persist_backtrace_blocking(
+            &self.version.clone(),
+            &next_version,
+            wasm_backtrace,
+            component_id,
+        )
+        .await;
+        self.version = next_version;
         Ok(())
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn append_batch_create_new_execution(
         &mut self,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        version: &mut Version,
         child_req: Vec<CreateRequest>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
@@ -217,13 +222,18 @@ impl CachingDbConnection {
                 current_time,
                 batch,
                 execution_id,
-                version.clone(),
+                self.version.clone(),
                 child_req,
             )
             .await?;
-        self.persist_backtrace_blocking(version, &next_version, wasm_backtrace, component_id)
-            .await;
-        *version = next_version;
+        self.persist_backtrace_blocking(
+            &self.version.clone(),
+            &next_version,
+            wasm_backtrace,
+            component_id,
+        )
+        .await;
+        self.version = next_version;
         Ok(())
     }
 

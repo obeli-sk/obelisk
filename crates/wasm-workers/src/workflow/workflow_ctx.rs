@@ -115,7 +115,6 @@ pub(crate) struct WorkflowCtx<C: ClockFn> {
     rng: StdRng,
     pub(crate) clock_fn: C,
     pub(crate) db_connection: CachingDbConnection,
-    pub(crate) version: Version,
     component_logger: ComponentLogger,
     pub(crate) resource_table: wasmtime::component::ResourceTable,
     backtrace_persist: bool,
@@ -160,7 +159,6 @@ impl DirectFnCall<'_> {
             wasm_backtrace,
             &mut ctx.event_history,
             &mut ctx.db_connection,
-            &mut ctx.version,
             called_at,
         )
         .await
@@ -261,12 +259,7 @@ impl ScheduleFnCall<'_> {
             params: Params::from_wasmtime(Arc::from(target_params)),
             wasm_backtrace,
         }
-        .apply(
-            &mut ctx.event_history,
-            &mut ctx.db_connection,
-            &mut ctx.version,
-            called_at,
-        )
+        .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
         .await
     }
 }
@@ -328,12 +321,7 @@ impl SubmitExecutionFnCall<'_> {
             child_execution_id,
             wasm_backtrace,
         }
-        .apply(
-            &mut ctx.event_history,
-            &mut ctx.db_connection,
-            &mut ctx.version,
-            called_at,
-        )
+        .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
         .await
     }
 }
@@ -396,12 +384,7 @@ impl AwaitNextFnCall {
             wasm_backtrace,
             requested_ffqn: target_ffqn,
         }
-        .apply(
-            &mut ctx.event_history,
-            &mut ctx.db_connection,
-            &mut ctx.version,
-            called_at,
-        )
+        .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
         .await
     }
 }
@@ -510,12 +493,7 @@ impl StubFnCall<'_> {
             result: return_value,
             wasm_backtrace,
         }
-        .apply(
-            &mut ctx.event_history,
-            &mut ctx.db_connection,
-            &mut ctx.version,
-            called_at,
-        )
+        .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
         .await
     }
 }
@@ -641,7 +619,6 @@ impl InvokeFnCall<'_> {
             wasm_backtrace,
             &mut ctx.event_history,
             &mut ctx.db_connection,
-            &mut ctx.version,
             called_at,
         )
         .await
@@ -918,6 +895,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 db_connection: db_pool.connection(),
                 execution_id: execution_id.clone(),
                 caching_buffer: CachingBuffer::new(join_next_blocking_strategy),
+                version,
             },
             execution_id: execution_id.clone(),
             event_history: EventHistory::new(
@@ -933,7 +911,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
-            version,
             component_logger: ComponentLogger { span: worker_span },
             resource_table: wasmtime::component::ResourceTable::default(),
             backtrace_persist,
@@ -969,7 +946,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
             wasm_backtrace,
             &mut self.event_history,
             &mut self.db_connection,
-            &mut self.version,
             self.clock_fn.now(),
         )
         .await
@@ -1007,7 +983,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .apply(
                 &mut self.event_history,
                 &mut self.db_connection,
-                &mut self.version,
                 self.clock_fn.now(),
             )
             .await
@@ -1248,11 +1223,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     pub(crate) async fn join_sets_close_on_finish(&mut self) -> Result<(), ApplyError> {
         self.event_history
-            .join_sets_close_on_finish(
-                &mut self.db_connection,
-                &mut self.version,
-                self.clock_fn.now(),
-            )
+            .join_sets_close_on_finish(&mut self.db_connection, self.clock_fn.now())
             .await?;
         Ok(())
     }
@@ -1344,7 +1315,6 @@ mod workflow_support {
                 .join_set_close(
                     join_set_id,
                     &mut self.db_connection,
-                    &mut self.version,
                     self.clock_fn.now(),
                     wasm_backtrace,
                 )
@@ -1386,7 +1356,6 @@ mod workflow_support {
                 wasm_backtrace,
                 &mut self.event_history,
                 &mut self.db_connection,
-                &mut self.version,
                 self.clock_fn.now(),
             )
             .await?;
@@ -1426,7 +1395,6 @@ mod workflow_support {
                 wasm_backtrace,
                 &mut self.event_history,
                 &mut self.db_connection,
-                &mut self.version,
                 self.clock_fn.now(),
             )
             .await?;
@@ -1463,7 +1431,6 @@ mod workflow_support {
             .apply(
                 &mut self.event_history,
                 &mut self.db_connection,
-                &mut self.version,
                 self.clock_fn.now(),
             )
             .await
@@ -1557,7 +1524,6 @@ mod workflow_support {
             .apply(
                 &mut self.event_history,
                 &mut self.db_connection,
-                &mut self.version,
                 self.clock_fn.now(),
             )
             .await
@@ -1912,14 +1878,20 @@ pub(crate) mod tests {
                 };
                 if let Err(err) = res {
                     info!("Sending {err:?}");
-                    return err.into_worker_partial_result(workflow_ctx.version).into();
+                    return err
+                        .into_worker_partial_result(workflow_ctx.db_connection.version)
+                        .into();
                 }
             }
             info!("Closing opened join sets");
             let res = match workflow_ctx.join_sets_close_on_finish().await {
                 Ok(()) => {
                     info!("Finishing");
-                    WorkerResult::Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY, workflow_ctx.version, None)
+                    WorkerResult::Ok(
+                        SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                        workflow_ctx.db_connection.version,
+                        None,
+                    )
                 }
                 Err(ApplyError::InterruptDbUpdated) => {
                     info!("Interrupting");
