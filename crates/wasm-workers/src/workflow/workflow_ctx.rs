@@ -1,4 +1,4 @@
-use super::caching_db_connection::{CachingBuffer, CachingDbConnection};
+use super::caching_db_connection::CachingDbConnection;
 use super::deadline_tracker::DeadlineTracker;
 use super::event_history::{
     ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
@@ -18,7 +18,7 @@ use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_S
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::{
-    self, DbErrorWrite, DbPool, HistoryEventScheduleAt, Locked, Version, WasmBacktrace,
+    self, DbErrorWrite, HistoryEventScheduleAt, Locked, Version, WasmBacktrace,
 };
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
@@ -870,14 +870,12 @@ const IFC_FQN_WORKFLOW_SUPPORT_3: &str = "obelisk:workflow/workflow-support@3.0.
 impl<C: ClockFn> WorkflowCtx<C> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
-        execution_id: ExecutionId,
+        db_connection: CachingDbConnection,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         seed: u64,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        db_pool: &Arc<dyn DbPool>,
-        version: Version,
         worker_span: Span,
         backtrace_persist: bool,
         deadline_tracker: Box<dyn DeadlineTracker>,
@@ -891,15 +889,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
         wasi_ctx_builder.insecure_random_seed(0);
 
         Self {
-            db_connection: CachingDbConnection {
-                db_connection: db_pool.connection(),
-                execution_id: execution_id.clone(),
-                caching_buffer: CachingBuffer::new(join_next_blocking_strategy),
-                version,
-            },
-            execution_id: execution_id.clone(),
+            execution_id: db_connection.execution_id.clone(),
+            db_connection,
             event_history: EventHistory::new(
-                execution_id,
                 event_history,
                 responses,
                 join_next_blocking_strategy,
@@ -1407,7 +1399,9 @@ mod workflow_support {
             schedule_at: HistoryEventScheduleAt,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> Result<types_execution::DelayId, WorkflowFunctionError> {
-            let delay_id = self.event_history.next_delay_id(&join_set_id);
+            let delay_id = self
+                .event_history
+                .next_delay_id(&join_set_id, &self.db_connection.execution_id);
             let expires_at_if_new =
                 schedule_at
                     .as_date_time(self.clock_fn.now())
@@ -1576,6 +1570,7 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::testing_fn_registry::fn_registry_dummy;
+    use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
     use crate::workflow::deadline_tracker::{
         DeadlineTrackerFactory as _, DeadlineTrackerFactoryTokio,
     };
@@ -1723,15 +1718,21 @@ pub(crate) mod tests {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             info!("Starting");
             let seed = ctx.execution_id.random_seed();
+            let join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt; // Cannot Await: when moving time forward both worker and timers watcher would race.
+            let caching_db_connection = CachingDbConnection {
+                db_connection: self.db_pool.connection(),
+                execution_id: ctx.execution_id.clone(),
+                caching_buffer: CachingBuffer::new(join_next_blocking_strategy),
+                version: ctx.version,
+            };
+
             let mut workflow_ctx = WorkflowCtx::new(
-                ctx.execution_id.clone(),
+                caching_db_connection,
                 ctx.event_history,
                 ctx.responses,
                 seed,
                 self.clock_fn.clone(),
-                JoinNextBlockingStrategy::Interrupt, // Cannot Await: when moving time forward both worker and timers watcher would race.
-                &self.db_pool,
-                ctx.version,
+                join_next_blocking_strategy,
                 tracing::info_span!("workflow-test"),
                 false,
                 DeadlineTrackerFactoryTokio {

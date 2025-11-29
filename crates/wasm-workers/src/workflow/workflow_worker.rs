@@ -1,6 +1,7 @@
 use super::deadline_tracker::DeadlineTrackerFactory;
 use super::event_history::ApplyError;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
+use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
 use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
@@ -372,15 +373,19 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
 
         let version_at_start = ctx.version.clone();
         let seed = ctx.execution_id.random_seed();
+        let db_connection = CachingDbConnection {
+            db_connection: self.db_pool.connection(),
+            execution_id: ctx.execution_id.clone(),
+            caching_buffer: CachingBuffer::new(self.config.join_next_blocking_strategy),
+            version: ctx.version,
+        };
         let workflow_ctx = WorkflowCtx::new(
-            ctx.execution_id,
+            db_connection,
             ctx.event_history,
             ctx.responses,
             seed,
             self.clock_fn.clone(),
             self.config.join_next_blocking_strategy,
-            &self.db_pool,
-            ctx.version,
             ctx.worker_span,
             self.config.backtrace_persist,
             deadline_tracker,

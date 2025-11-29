@@ -90,7 +90,6 @@ pub(crate) enum ApplyError {
 
 #[expect(clippy::struct_field_names)]
 pub(crate) struct EventHistory {
-    execution_id: ExecutionId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     // Contains requests (events produced by the workflow)
     event_history: Vec<(HistoryEvent, ProcessingStatus)>, // FIXME: Add version
@@ -121,7 +120,6 @@ enum FindMatchingResponse {
 impl EventHistory {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
-        execution_id: ExecutionId,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -147,7 +145,6 @@ impl EventHistory {
             })
             .counts();
         EventHistory {
-            execution_id,
             index_child_exe_to_processed_response_idx: HashMap::default(),
             index_child_exe_to_ffqn: HashMap::default(),
             index_join_set_to_created_child_requests: IndexMap::default(),
@@ -310,7 +307,7 @@ impl EventHistory {
         );
         db_connection
             .append_blocking(
-                self.execution_id.clone(),
+                db_connection.execution_id.clone(),
                 append_req,
                 called_at,
                 None,
@@ -374,7 +371,7 @@ impl EventHistory {
             while let Some(timeout_fut) = self.deadline_tracker.track() {
                 let next_responses = match db_connection
                     .subscribe_to_next_responses(
-                        &self.execution_id,
+                        &db_connection.execution_id,
                         self.responses.len(),
                         timeout_fut,
                     )
@@ -1016,7 +1013,7 @@ impl EventHistory {
                     request: join_set,
                     version: db_connection.version.clone(),
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
-                        execution_id: self.execution_id.clone(),
+                        execution_id: db_connection.execution_id.clone(),
                         component_id: self.locked_event.component_id.clone(),
                         wasm_backtrace,
                         version_min_including: db_connection.version.clone(),
@@ -1045,7 +1042,7 @@ impl EventHistory {
                     request,
                     version: db_connection.version.clone(),
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
-                        execution_id: self.execution_id.clone(),
+                        execution_id: db_connection.execution_id.clone(),
                         component_id: self.locked_event.component_id.clone(),
                         wasm_backtrace,
                         version_min_including: db_connection.version.clone(),
@@ -1086,7 +1083,7 @@ impl EventHistory {
                     execution_id: ExecutionId::Derived(child_execution_id),
                     ffqn: target_ffqn,
                     params,
-                    parent: Some((self.execution_id.clone(), join_set_id)),
+                    parent: Some((db_connection.execution_id.clone(), join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
                     component_id: fn_component_id,
@@ -1097,7 +1094,7 @@ impl EventHistory {
                     version: db_connection.version.clone(),
                     child_req,
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
-                        execution_id: self.execution_id.clone(),
+                        execution_id: db_connection.execution_id.clone(),
                         component_id: self.locked_event.component_id.clone(),
                         wasm_backtrace,
                         version_min_including: db_connection.version.clone(),
@@ -1139,7 +1136,7 @@ impl EventHistory {
                     request: delay_req,
                     version: db_connection.version.clone(),
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
-                        execution_id: self.execution_id.clone(),
+                        execution_id: db_connection.execution_id.clone(),
                         component_id: self.locked_event.component_id.clone(),
                         wasm_backtrace,
                         version_min_including: db_connection.version.clone(),
@@ -1182,14 +1179,14 @@ impl EventHistory {
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
                     scheduled_at: scheduled_at_if_new,
                     component_id: fn_component_id,
-                    scheduled_by: Some(self.execution_id.clone()),
+                    scheduled_by: Some(db_connection.execution_id.clone()),
                 };
                 let non_blocking_event = CacheableDbEvent::Schedule {
                     request: append_req,
                     version: db_connection.version.clone(),
                     child_req,
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
-                        execution_id: self.execution_id.clone(),
+                        execution_id: db_connection.execution_id.clone(),
                         component_id: self.locked_event.component_id.clone(),
                         wasm_backtrace,
                         version_min_including: db_connection.version.clone(),
@@ -1318,7 +1315,7 @@ impl EventHistory {
                     .append_batch(
                         called_at,
                         vec![history_event_req],
-                        self.execution_id.clone(),
+                        db_connection.execution_id.clone(),
                         wasm_backtrace,
                         &self.locked_event.component_id,
                     )
@@ -1365,7 +1362,7 @@ impl EventHistory {
                 };
                 db_connection
                     .append_blocking(
-                        self.execution_id.clone(),
+                        db_connection.execution_id.clone(),
                         join_next,
                         called_at,
                         wasm_backtrace,
@@ -1402,7 +1399,7 @@ impl EventHistory {
                 };
                 db_connection
                     .append_blocking(
-                        self.execution_id.clone(),
+                        db_connection.execution_id.clone(),
                         append_request,
                         called_at,
                         wasm_backtrace,
@@ -1463,7 +1460,7 @@ impl EventHistory {
                     execution_id: ExecutionId::Derived(child_execution_id),
                     ffqn,
                     params,
-                    parent: Some((self.execution_id.clone(), join_set_id)),
+                    parent: Some((db_connection.execution_id.clone(), join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
                     component_id: fn_component_id,
@@ -1473,7 +1470,7 @@ impl EventHistory {
                     .append_batch_create_new_execution(
                         called_at,
                         vec![join_set, child_exec_req, join_next],
-                        self.execution_id.clone(),
+                        db_connection.execution_id.clone(),
                         vec![child],
                         wasm_backtrace,
                         &self.locked_event.component_id,
@@ -1530,7 +1527,7 @@ impl EventHistory {
                     .append_batch(
                         called_at,
                         vec![join_set, delay_req, join_next],
-                        self.execution_id.clone(),
+                        db_connection.execution_id.clone(),
                         wasm_backtrace,
                         &self.locked_event.component_id,
                     )
@@ -1661,7 +1658,11 @@ impl EventHistory {
             .count()
     }
 
-    pub(crate) fn next_delay_id(&self, join_set_id: &JoinSetId) -> DelayId {
+    pub(crate) fn next_delay_id(
+        &self,
+        join_set_id: &JoinSetId,
+        execution_id: &ExecutionId,
+    ) -> DelayId {
         // TODO: Optimize
         let idx = self
             .event_history
@@ -1678,7 +1679,7 @@ impl EventHistory {
             })
             .count();
         DelayId::new_with_index(
-            &self.execution_id,
+            execution_id,
             join_set_id,
             u64::try_from(idx).expect("too many delays in a join set"),
         )
@@ -2114,7 +2115,7 @@ impl OneOffChildExecutionRequest {
         let join_set_id = event_history
             .next_join_set_one_off_named(&ffqn.function_name)
             .expect("no illegal chars in fn name: only alphanumeric and dash");
-        let child_execution_id = event_history.execution_id.next_level(&join_set_id);
+        let child_execution_id = db_connection.execution_id.next_level(&join_set_id);
         let event = EventCall::Blocking(EventCallBlocking::OneOffChildExecutionRequest(
             OneOffChildExecutionRequest {
                 ffqn,
@@ -2158,7 +2159,7 @@ impl OneOffChildExecutionRequest {
                 ))))));
             }
         };
-        let child_execution_id = event_history.execution_id.next_level(&join_set_id);
+        let child_execution_id = db_connection.execution_id.next_level(&join_set_id);
         let event = EventCall::Blocking(EventCallBlocking::OneOffChildExecutionRequest(
             OneOffChildExecutionRequest {
                 ffqn,
@@ -2211,7 +2212,7 @@ impl OneOffDelayRequest {
         let join_set_id = event_history
             .next_join_set_one_off_named("sleep")
             .expect("no illegal chars in sleep");
-        let delay_id = DelayId::new(&event_history.execution_id, &join_set_id);
+        let delay_id = DelayId::new(&db_connection.execution_id, &join_set_id);
 
         let ChildReturnValue::OneOffDelay { scheduled_at } = event_history
             .apply(
@@ -3387,8 +3388,13 @@ mod tests {
         let deadline_tracker = deadline_factory.create(execution_deadline).unwrap();
 
         let exec_log = db_connection.get(&execution_id).await.unwrap();
+        let caching_db_connection = CachingDbConnection {
+            db_connection,
+            execution_id,
+            caching_buffer: CachingBuffer::new(join_next_blocking_strategy),
+            version: exec_log.next_version.clone(),
+        };
         let event_history = EventHistory::new(
-            execution_id.clone(),
             exec_log.event_history().collect(),
             exec_log
                 .responses
@@ -3408,12 +3414,7 @@ mod tests {
             Duration::ZERO, /* lock_extension */
             info_span!("worker-test"),
         );
-        let caching_db_connection = CachingDbConnection {
-            db_connection,
-            execution_id,
-            caching_buffer: CachingBuffer::new(join_next_blocking_strategy),
-            version: exec_log.next_version,
-        };
+
         (event_history, caching_db_connection)
     }
 
