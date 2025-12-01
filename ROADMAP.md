@@ -2,16 +2,10 @@
 
 # Upcoming goals
 
-## feat!: Cooperative cancellation for workflows
-Add `cancel(ExecutionId)` rpc that:
-* sends `cancel-requested` event to a workflow, or
-* stops the execution of an activity.
-
-Add cancellable / uncancellable variants for each blocking function call (`sleep`, `join-next`, `-await-next`, ...).
-Add `join-set-cancel: func(join-set)`, which marks its activities cancelled. Child workflows
-receive cancellation request using `cancel-requested` or by getting `cancelled`
-error on cancellable blocking calls.
-Add `canceling` closing strategy.
+## feat!: Cancellation
+Bottom up.
+Sleep must be fallible, cancellable via RPC
+Activities - cancel via RPC
 
 ## feat!: Return execution id in -invoke, allow in webhooks
 Similarly to `-await-next`, return a tuple of execution id and the result.
@@ -19,10 +13,9 @@ Similarly to `-await-next`, return a tuple of execution id and the result.
 ## feat: Support `-get(execution id)` in webhooks
 Enables pattern where webhook sends a signal via `-stub`, then reads the parent's result.
 
-## fix: Mark `-stub` execution as cancelled after its join set has been cancelled.
-
 ## feat: KV host activity
 Allow using the underlying database.
+Also a conf KV backed by toml file to configure workflows.
 
 ## feat: Retention
 Perform a cascading delete of top-level executions that finished more than a certain number of days ago.
@@ -30,10 +23,10 @@ Perform a cascading delete of top-level executions that finished more than a cer
 ## feat: Multiple execution queues
 Allow specifying queue ID when submitting, and when configuring an executor.
 
-## feat: Expose network configuration for activities, webhooks
-Enable allow/deny lists of remote hosts.
+## feat: Configurable network access for activities, webhooks
+Enable allow/deny lists of remote hosts for HTTP client.
 
-## feat: generate extensions with specified interface(s)
+## feat: `generate extensions` with specified interface(s)
 Allows self referential exports, also enables generating on import side.
 
 ## feat: Add `obelisk generate`
