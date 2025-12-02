@@ -1,5 +1,5 @@
 use exports::testing::fibo_workflow::workflow::Guest;
-use obelisk::workflow::workflow_support::{ClosingStrategy, new_join_set_generated};
+use obelisk::workflow::workflow_support::join_set_create;
 use testing::{
     fibo::fibo::fibo as fibo_activity,
     fibo_obelisk_ext::fibo::{fibo_await_next, fibo_submit},
@@ -36,7 +36,7 @@ impl Guest for Component {
     }
 
     fn fiboa_concurrent(n: u8, iterations: u32) -> Result<u64, ()> {
-        let join_set = new_join_set_generated(ClosingStrategy::Complete);
+        let join_set = join_set_create();
         for _ in 0..iterations {
             fibo_submit(&join_set, n);
         }

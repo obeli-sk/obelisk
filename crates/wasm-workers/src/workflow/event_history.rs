@@ -6,12 +6,12 @@ use super::event_history::ProcessingStatus::Unprocessed;
 use super::host_exports::delay_id_into_wast_val;
 use super::host_exports::execution_id_derived_into_wast_val;
 use super::host_exports::execution_id_into_wast_val;
-use super::host_exports::v3_0_0::obelisk::types::execution::GetExtensionError;
-use super::host_exports::v3_0_0::obelisk::workflow::workflow_support;
+use super::host_exports::v4_0_0::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::workflow::host_exports::ffqn_into_wast_val;
-use crate::workflow::host_exports::v3_0_0::obelisk::types::execution as types_execution;
+use crate::workflow::host_exports::v4_0_0::obelisk::types::execution as types_execution;
+use crate::workflow::host_exports::v4_0_0::obelisk::types::join_set as types_join_set;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::ClosingStrategy;
@@ -66,7 +66,7 @@ use wasmtime::component::Val;
 pub(crate) enum ChildReturnValue {
     WastVal(WastVal),
     JoinSetCreate(JoinSetId),
-    JoinNext(Result<types_execution::ResponseId, workflow_support::JoinNextError>),
+    JoinNext(Result<(types_execution::ResponseId, Result<(), ()>), types_join_set::JoinNextError>),
     OneOffDelay { scheduled_at: DateTime<Utc> },
 }
 
@@ -892,22 +892,29 @@ impl EventHistory {
                     Some(JoinSetResponseEnriched::ChildExecutionFinished(
                         ChildExecutionFinished {
                             child_execution_id,
-                            result: _,
+                            result: res,
                             response_ffqn: _,
                         },
                     )) => {
                         trace!(%join_set_id, %child_execution_id, "DeterministicKey::JoinNext: Matched ChildExecutionFinished");
-                        Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(Ok(
-                            types_execution::ResponseId::ExecutionId(child_execution_id.into()),
-                        ))))
+                        Ok(FindMatchingResponse::Found(
+                            (ChildReturnValue::JoinNext(Ok((
+                                types_execution::ResponseId::ExecutionId(child_execution_id.into()),
+                                res.as_pending_state_finished_result().0.map_err(|_| ()),
+                            )))),
+                        ))
                     }
                     Some(JoinSetResponseEnriched::DelayFinished {
                         delay_id,
                         expires_at: _,
                     }) => {
+                        let is_cancelled_warning = (); // FIXME: implement cancelation
                         trace!(%join_set_id, %delay_id, "DeterministicKey::JoinNext: Matched DelayFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(Ok(
-                            types_execution::ResponseId::DelayId(delay_id.into()),
+                            (
+                                types_execution::ResponseId::DelayId(delay_id.into()),
+                                Ok(()),
+                            ),
                         ))))
                     }
                     None => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
@@ -927,7 +934,7 @@ impl EventHistory {
                 trace!(%join_set_id, "matched JoinNext with JoinNextTooMany");
                 self.event_history[found_idx].1 = Processed;
                 Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(
-                    Err(workflow_support::JoinNextError::AllProcessed),
+                    Err(types_join_set::JoinNextError::AllProcessed),
                 )))
             }
 
@@ -2072,8 +2079,10 @@ impl JoinNext {
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
-    ) -> Result<Result<types_execution::ResponseId, workflow_support::JoinNextError>, ApplyError>
-    {
+    ) -> Result<
+        Result<(types_execution::ResponseId, Result<(), ()>), types_join_set::JoinNextError>,
+        ApplyError,
+    > {
         assert!(
             self.join_set_id.kind != JoinSetKind::OneOff,
             "one-off join set cannot be constructed outside of OneOff*Request"

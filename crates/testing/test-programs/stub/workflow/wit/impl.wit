@@ -5,6 +5,6 @@ world any {
     import testing:stub-activity-obelisk-ext/activity;  // for submitting the execution
     import testing:stub-activity-obelisk-stub/activity; // for submitting the execution result
     import testing:stub-activity/activity;              // for direct call
-    import obelisk:workflow/workflow-support@3.0.0;
+    import obelisk:workflow/workflow-support@4.0.0;
     import obelisk:log/log@1.0.0;
 }

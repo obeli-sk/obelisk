@@ -2,8 +2,8 @@
 package testing:fibo-obelisk-schedule;
 
 interface fibo {
-  use obelisk:types/execution@3.0.0.{execution-id};
-  use obelisk:types/time@3.0.0.{schedule-at};
+  use obelisk:types/execution@4.0.0.{execution-id};
+  use obelisk:types/time@4.0.0.{schedule-at};
 
   fibo-schedule: func(schedule-at: schedule-at, n: u8) -> execution-id;
 }
