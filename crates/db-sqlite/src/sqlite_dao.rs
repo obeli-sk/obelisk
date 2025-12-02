@@ -134,6 +134,16 @@ CREATE TABLE IF NOT EXISTS t_join_set_response (
 const CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_id ON t_join_set_response (execution_id, id);
 ";
+// Child execution id must be unique.
+const CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_CHILD_ID: &str = r"
+CREATE UNIQUE INDEX IF NOT EXISTS idx_join_set_response_unique_child_id
+ON t_join_set_response (child_execution_id) WHERE child_execution_id IS NOT NULL;
+";
+// Delay id must be unique.
+const CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_DELAY_ID: &str = r"
+CREATE UNIQUE INDEX IF NOT EXISTS idx_join_set_response_unique_delay_id
+ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
+";
 
 /// Stores executions in `PendingState`
 /// `state` to column mapping:
@@ -696,6 +706,16 @@ impl SqlitePool {
         conn_execute(
             &conn,
             CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID,
+            [],
+        )?;
+        conn_execute(
+            &conn,
+            CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_CHILD_ID,
+            [],
+        )?;
+        conn_execute(
+            &conn,
+            CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_DELAY_ID,
             [],
         )?;
         // t_state
@@ -2020,6 +2040,12 @@ impl SqlitePool {
             ":delay_success": delay_success,
             ":child_execution_id": child_execution_id,
             ":finished_version": finished_version,
+        })
+        .map_err(|err| match err.sqlite_error().map(|err| err.code) {
+            Some(ErrorCode::ConstraintViolation) => DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::IllegalState("conflicting response id".into()),
+            ),
+            _ => DbErrorWrite::from(err),
         })?;
 
         // if the execution is going to be unblocked by this response...

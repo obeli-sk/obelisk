@@ -808,7 +808,7 @@ impl DbHolder {
         let Some(journal) = self.journals.get_mut(execution_id) else {
             return Err(DbErrorWrite::NotFound);
         };
-        journal.append_response(response_event.created_at, response_event.event);
+        journal.append_response(response_event.created_at, response_event.event)?;
         self.index.update(journal);
         if matches!(journal.pending_state, PendingState::PendingAt { .. })
             && let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn())
