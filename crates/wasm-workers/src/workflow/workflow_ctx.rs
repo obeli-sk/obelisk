@@ -14,6 +14,7 @@ use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::workflow::event_history::JoinSetCreate;
+use crate::workflow::host_exports::v4_0_0::{ClosingStrategy_4_0_0, DelayId_4_0_0};
 use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_STUB};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
@@ -36,7 +37,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, error, instrument};
 use val_json::wast_val::WastVal;
-use wasmtime::component::{Linker, Resource, Val};
+use wasmtime::component::{Linker, Resource, ResourceType, Val};
 use wasmtime_wasi::{
     ResourceTable, ResourceTableError, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView,
 };
@@ -1024,15 +1025,135 @@ impl<C: ClockFn> WorkflowCtx<C> {
             state
         })
         .map_err(linking_err)?;
-        // link obelisk:types/join-set
-        types_4_0_0::join_set::add_to_linker::<_, WorkflowCtx<C>>(linker, |state: &mut Self| state)
-            .map_err(linking_err)?;
 
         // link obelisk:workflow/workflow-support interface
         Self::add_to_linker_workflow_support(linker)?;
+        // link obelisk:types/join-set interface
+        Self::add_to_linker_join_set(linker)?;
         if stub_wasi {
             super::wasi::add_to_linker_async(linker)?;
         }
+        Ok(())
+    }
+
+    fn add_to_linker_join_set(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
+        const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@4.0.0";
+        let mut inst_join_set_ifc =
+            linker
+                .instance(IFC_FQN_JOIN_SET)
+                .map_err(|err| WasmFileError::LinkingError {
+                    context: StrVariant::Static(IFC_FQN_JOIN_SET),
+                    err: err.into(),
+                })?;
+
+        inst_join_set_ifc
+            .resource_async(
+                "join-set",
+                ResourceType::host::<JoinSetId>(),
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>, rep: u32| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let resource: Resource<JoinSetId> =
+                            wasmtime::component::Resource::new_own(rep);
+                        host.join_set_close(resource, wasm_backtrace).await
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking resource join-set"),
+                err: err.into(),
+            })?;
+
+        // id: func() -> string;
+        inst_join_set_ifc
+            .func_wrap_async(
+                // TODO: does not have to be async
+                "[method]join-set.id",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                      (resource,): (wasmtime::component::Resource<JoinSetId>,)| {
+                    Box::new(async move {
+                        let host = caller.data_mut();
+                        let id = host.resource_to_join_set_id(&resource)?.to_string();
+                        Ok((id,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking function id"),
+                err: err.into(),
+            })?;
+
+        // set-closing-strategy: func(closing-strategy: closing-strategy)
+        inst_join_set_ifc
+            .func_wrap_async(
+                // TODO: does not have to be async
+                "[method]join-set.set-closing-strategy",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                      (resource, closing_strategy): (
+                    wasmtime::component::Resource<JoinSetId>,
+                    ClosingStrategy_4_0_0,
+                )| {
+                    Box::new(async move {
+                        let fixme_implement = (); // FIXME
+                        if true {
+                            unimplemented!()
+                        }
+                        Ok(())
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking function set-closing-strategy"),
+                err: err.into(),
+            })?;
+
+        // submit-delay: func(timeout: schedule-at) -> delay-id
+        inst_join_set_ifc
+            .func_wrap_async(
+                "[method]join-set.submit-delay",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                      (resource, schedule_at): (
+                    Resource<JoinSetId>,
+                    ScheduleAt_4_0_0,
+                )| {
+                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let join_set_id = host.resource_to_join_set_id(&resource)?.clone();
+                        let delay_id: DelayId_4_0_0 = host
+                            .submit_delay(join_set_id, schedule_at, wasm_backtrace)
+                            .await?;
+                        Ok((delay_id,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking function submit-delay"),
+                err: err.into(),
+            })?;
+
+        // join-next: func() -> result<tuple<response-id, result>, join-next-error>
+        inst_join_set_ifc
+            .func_wrap_async(
+                "[method]join-set.join-next",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                      (resource,): (wasmtime::component::Resource<JoinSetId>,)| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let join_set_id = host.resource_to_join_set_id(&resource)?.clone();
+                        let res = host.join_next(join_set_id, wasm_backtrace).await?;
+                        Ok((res,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking function join-next"),
+                err: err.into(),
+            })?;
+
         Ok(())
     }
 
@@ -1239,13 +1360,7 @@ mod workflow_support {
     use crate::workflow::event_history::{JoinNext, Persist, SubmitDelay};
     use crate::workflow::host_exports;
     use crate::workflow::host_exports::v4_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
-    use crate::workflow::host_exports::v4_0_0::obelisk::types::join_set::Host as JoinSetIfcHost;
-    use crate::workflow::host_exports::v4_0_0::obelisk::types::join_set::{
-        HostJoinSet, JoinNextError,
-    };
-    use crate::workflow::host_exports::v4_0_0::{
-        ClosingStrategy_4_0_0, DelayId_4_0_0, ResponseId_4_0_0, ScheduleAt_4_0_0,
-    };
+    use crate::workflow::host_exports::v4_0_0::obelisk::types::join_set::JoinNextError;
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4, JoinSetCreateError};
     use concepts::storage::HistoryEventScheduleAt;
     use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind};
@@ -1253,55 +1368,7 @@ mod workflow_support {
     use tracing::trace;
     use wasmtime::component::Resource;
 
-    impl<C: ClockFn> HostJoinSet for WorkflowCtx<C> {
-        async fn id(
-            &mut self,
-            resource: wasmtime::component::Resource<JoinSetId>,
-        ) -> wasmtime::Result<String> {
-            Ok(self.resource_to_join_set_id(&resource)?.to_string())
-        }
-
-        async fn set_closing_strategy(
-            &mut self,
-            resource: wasmtime::component::Resource<JoinSetId>,
-            closing_strategy: ClosingStrategy_4_0_0,
-        ) -> wasmtime::Result<()> {
-            let fixme_implement = (); // FIXME
-            unimplemented!()
-        }
-
-        async fn submit_delay(
-            &mut self,
-            resource: wasmtime::component::Resource<JoinSetId>,
-            schedule_at: ScheduleAt_4_0_0,
-        ) -> wasmtime::Result<DelayId_4_0_0> {
-            let join_set_id = self.resource_to_join_set_id(&resource)?.clone();
-            let wasm_backtrace = None; // TODO: capture backtrace
-            let delay_id = self
-                .submit_delay(join_set_id, schedule_at.into(), wasm_backtrace)
-                .await?;
-
-            Ok(delay_id)
-        }
-
-        async fn join_next(
-            &mut self,
-            resource: wasmtime::component::Resource<JoinSetId>,
-        ) -> wasmtime::Result<Result<(ResponseId_4_0_0, Result<(), ()>), JoinNextError>> {
-            let join_set_id = self.resource_to_join_set_id(&resource)?.clone();
-            let wasm_backtrace = None; // TODO: capture backtrace
-            let res = self.join_next(join_set_id, wasm_backtrace).await?;
-            Ok(res)
-        }
-
-        async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
-            self.join_set_close(resource, None).await
-        }
-    }
-
     impl<C: ClockFn> ExecutionIfcHost for WorkflowCtx<C> {}
-
-    impl<C: ClockFn> JoinSetIfcHost for WorkflowCtx<C> {}
 
     impl<C: ClockFn> WorkflowCtx<C> {
         pub(crate) async fn join_set_close(
