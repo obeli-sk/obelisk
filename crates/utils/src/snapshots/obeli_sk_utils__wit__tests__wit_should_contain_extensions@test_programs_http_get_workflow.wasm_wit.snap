@@ -11,11 +11,19 @@ world root {
   import obelisk:types/join-set@4.0.0;
   import testing:http-obelisk-ext/http-get;
   import obelisk:workflow/workflow-support@4.0.0;
+  import obelisk:log/log@1.0.0;
 
   export testing:http-workflow/workflow;
   export testing:http-workflow-obelisk-ext/workflow;
   export testing:http-workflow-obelisk-schedule/workflow;
 }
+package obelisk:log@1.0.0 {
+  interface log {
+    info: func(message: string);
+  }
+}
+
+
 package obelisk:types@4.0.0 {
   @since(version = 3.0.0)
   interface time {

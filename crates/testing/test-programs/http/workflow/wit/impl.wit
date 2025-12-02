@@ -1,8 +1,10 @@
 package any:any;
 
 world any {
+    export testing:http-workflow/workflow;
+
     import testing:http/http-get;
     import testing:http-obelisk-ext/http-get;
     import obelisk:workflow/workflow-support@4.0.0;
-    export testing:http-workflow/workflow;
+    import obelisk:log/log@1.0.0;
 }

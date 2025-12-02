@@ -1,3 +1,4 @@
+use crate::obelisk::log::log;
 use exports::testing::http_workflow::workflow::Guest;
 use obelisk::workflow::workflow_support::join_set_create;
 use testing::{
@@ -26,7 +27,6 @@ impl Guest for Component {
 
     fn get_successful_concurrently(urls: Vec<String>) -> Result<Vec<String>, String> {
         let join_set = join_set_create();
-        println!("Created join set {}", join_set.id());
         let length = urls.len();
         for url in urls {
             let _execution_id = get_successful_submit(&join_set, &url);
@@ -45,6 +45,9 @@ impl Guest for Component {
         concurrency: u32,
     ) -> Result<Vec<String>, String> {
         let join_set = join_set_create();
+        let join_set_id = join_set.id();
+        log::info(&format!("Created join set {join_set_id}"));
+        assert_eq!("g:1", join_set_id);
         for _ in 0..concurrency {
             let _execution_id = get_successful_submit(&join_set, &url);
         }
