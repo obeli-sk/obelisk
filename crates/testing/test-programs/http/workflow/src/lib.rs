@@ -1,5 +1,5 @@
 use exports::testing::http_workflow::workflow::Guest;
-use obelisk::workflow::workflow_support::{ClosingStrategy, new_join_set_generated};
+use obelisk::workflow::workflow_support::join_set_create;
 use testing::{
     http::http_get,
     http_obelisk_ext::http_get::{get_successful_await_next, get_successful_submit},
@@ -25,7 +25,7 @@ impl Guest for Component {
     }
 
     fn get_successful_concurrently(urls: Vec<String>) -> Result<Vec<String>, String> {
-        let join_set = new_join_set_generated(ClosingStrategy::Complete);
+        let join_set = join_set_create();
         println!("Created join set {}", join_set.id());
         let length = urls.len();
         for url in urls {
@@ -44,7 +44,7 @@ impl Guest for Component {
         url: String,
         concurrency: u32,
     ) -> Result<Vec<String>, String> {
-        let join_set = new_join_set_generated(ClosingStrategy::Complete);
+        let join_set = join_set_create();
         for _ in 0..concurrency {
             let _execution_id = get_successful_submit(&join_set, &url);
         }

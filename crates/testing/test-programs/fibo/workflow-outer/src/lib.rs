@@ -1,5 +1,5 @@
 use exports::testing::fibo_workflow_outer::workflow::Guest as GuestNesting;
-use obelisk::workflow::workflow_support::{ClosingStrategy, new_join_set_generated};
+use obelisk::workflow::workflow_support::join_set_create;
 use wit_bindgen::generate;
 
 generate!({ generate_all });
@@ -35,7 +35,7 @@ impl GuestNesting for Component {
         use testing::fibo_workflow_obelisk_ext::workflow::{
             fiboa_concurrent_await_next, fiboa_concurrent_submit,
         };
-        let join_set = new_join_set_generated(ClosingStrategy::Complete);
+        let join_set = join_set_create();
         for _ in 0..fiboas {
             fiboa_concurrent_submit(&join_set, n, iterations_per_fiboa);
         }

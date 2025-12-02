@@ -1,10 +1,10 @@
+use crate::obelisk::types::execution::ResponseId;
+use crate::obelisk::types::join_set::JoinNextError;
 use exports::testing::sleep_workflow::workflow::Guest;
 use obelisk::types::execution::ExecutionId;
 use obelisk::types::time::Duration as DurationEnum;
 use obelisk::types::time::ScheduleAt;
 use obelisk::workflow::workflow_support;
-use obelisk::workflow::workflow_support::ClosingStrategy;
-use obelisk::workflow::workflow_support::JoinNextError;
 use testing::sleep::sleep as sleep_activity;
 use testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
 use testing::sleep_obelisk_schedule::sleep as sleep_activity_schedule;
@@ -16,12 +16,12 @@ export!(Component);
 
 impl Guest for Component {
     fn sleep_host_activity(duration: DurationEnum) -> Result<(), ()> {
-        workflow_support::sleep(ScheduleAt::In(duration));
+        workflow_support::sleep(ScheduleAt::In(duration)).expect("not cancelled");
         Ok(())
     }
 
     fn sleep_schedule_at(schedule_at: ScheduleAt) -> Result<(), ()> {
-        workflow_support::sleep(schedule_at);
+        workflow_support::sleep(schedule_at).expect("not cancelled");
         Ok(())
     }
 
@@ -31,7 +31,7 @@ impl Guest for Component {
     }
 
     fn sleep_activity_submit(duration: DurationEnum) -> Result<ExecutionId, ()> {
-        let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+        let join_set = workflow_support::join_set_create();
         Ok(sleep_activity_ext::sleep_submit(&join_set, duration))
     }
 
@@ -39,7 +39,7 @@ impl Guest for Component {
         let random_millis =
             workflow_support::random_u64_inclusive(min_millis, max_millis_inclusive);
         let random_duration = DurationEnum::Milliseconds(random_millis);
-        workflow_support::sleep(ScheduleAt::In(random_duration));
+        workflow_support::sleep(ScheduleAt::In(random_duration)).expect("not cancelled");
         Ok(())
     }
 
@@ -49,27 +49,28 @@ impl Guest for Component {
     }
 
     fn two_delays_in_same_join_set() -> Result<(), ()> {
-        let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
-        let _long =
-            workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Seconds(10)));
-        let short = workflow_support::submit_delay(
-            &join_set,
-            ScheduleAt::In(DurationEnum::Milliseconds(10)),
-        );
-        let obelisk::types::execution::ResponseId::DelayId(first) =
-            workflow_support::join_next(&join_set).unwrap()
+        let join_set = workflow_support::join_set_create();
+        let _long = join_set.submit_delay(ScheduleAt::In(DurationEnum::Seconds(10)));
+        let short = join_set.submit_delay(ScheduleAt::In(DurationEnum::Milliseconds(10)));
+        // result<tuple<response-id, result>, join-next-error>
+        let (ResponseId::DelayId(first), res) = join_set
+            .join_next()
+            .expect("submitted two delays, joining first")
         else {
             unreachable!("only delays have been submitted");
         };
+        assert!(res.is_ok()); // or handle cancelation
+
         assert_eq!(short.id, first.id);
         Ok(())
     }
 
     fn join_next_produces_all_processed_error() -> Result<(), ()> {
-        let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
-        workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Milliseconds(10)));
-        workflow_support::join_next(&join_set).unwrap();
-        let JoinNextError::AllProcessed = workflow_support::join_next(&join_set).unwrap_err();
+        let join_set = workflow_support::join_set_create();
+        join_set.submit_delay(ScheduleAt::In(DurationEnum::Milliseconds(10)));
+        let (_delay_id, res) = join_set.join_next().expect("join set contains 1 delay");
+        res.expect("not cancelled");
+        let JoinNextError::AllProcessed = join_set.join_next().unwrap_err();
         Ok(())
     }
 }

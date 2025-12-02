@@ -1,21 +1,23 @@
 use crate::exports::testing::stub_workflow::workflow::Guest;
-use crate::obelisk::workflow::workflow_support::{self, ClosingStrategy};
+use crate::obelisk::types::join_set::JoinSet;
+use crate::obelisk::workflow::workflow_support::{self, join_set_create};
 use crate::testing::stub_activity::activity;
 use crate::testing::stub_activity_obelisk_ext::activity as activity_ext;
 use crate::testing::stub_activity_obelisk_stub::activity as activity_stub;
 use obelisk::log::log;
 use obelisk::types::execution::{
-    AwaitNextExtensionError, ExecutionId, GetExtensionError, JoinSet, ResponseId,
+    AwaitNextExtensionError, ExecutionId, GetExtensionError, ResponseId,
 };
-use obelisk::workflow::workflow_support::new_join_set_named;
+use obelisk::workflow::workflow_support::join_set_create_named;
 use wit_bindgen::generate;
+
 generate!({ generate_all });
 struct Component;
 export!(Component);
 
 impl Guest for Component {
     fn submit_stub_await(arg: String) -> Result<String, ()> {
-        let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+        let join_set = join_set_create();
         let execution_id = activity_ext::foo_submit(&join_set, &arg);
         activity_stub::foo_stub(&execution_id, Ok(&format!("stubbing {arg}")))
             .expect("stubbed activity must accept returned value once");
@@ -51,7 +53,7 @@ impl Guest for Component {
     }
 
     fn await_next_produces_all_processed_error() -> Result<(), ()> {
-        let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+        let join_set = join_set_create();
         let AwaitNextExtensionError::AllProcessed =
             activity_ext::foo_await_next(&join_set).unwrap_err()
         else {
@@ -70,17 +72,17 @@ impl Guest for Component {
             }
         }
         {
-            let join_set_a = new_join_set_named("a", ClosingStrategy::Complete).unwrap();
+            let join_set_a = join_set_create_named("a").expect("alphanumeric name is valid");
             add_exec(&join_set_a, vec!["a", "aa"]);
-            let join_set_b = new_join_set_named("b", ClosingStrategy::Complete).unwrap();
+            let join_set_b = join_set_create_named("b").expect("alphanumeric name is valid");
             add_exec(&join_set_b, vec!["b", "bb"]);
             let join_set_forgotten =
-                workflow_support::new_join_set_named("f", ClosingStrategy::Complete).unwrap();
+                workflow_support::join_set_create_named("f").expect("alphanumeric name is valid");
             add_exec(&join_set_forgotten, vec!["f", "ff"]);
             std::mem::forget(join_set_forgotten);
         }
         log::info("after scope closed");
-        let join_set_c = new_join_set_named("c", ClosingStrategy::Complete).unwrap();
+        let join_set_c = join_set_create_named("c").expect("alphanumeric name is valid");
         add_exec(&join_set_c, vec!["c", "cc"]);
         Ok(())
     }
@@ -102,12 +104,11 @@ enum RaceConfig {
 
 fn submit_race_join_next(config: RaceConfig) {
     const OK_STUB_RESP: &str = "ok";
-    let join_set = workflow_support::new_join_set_generated(ClosingStrategy::Complete);
+    let join_set = join_set_create();
     let execution_id = activity_ext::foo_submit(&join_set, "some param");
-    let delay_id = workflow_support::submit_delay(
-        &join_set,
-        obelisk::types::time::ScheduleAt::In(obelisk::types::time::Duration::Milliseconds(10)),
-    );
+    let delay_id = join_set.submit_delay(obelisk::types::time::ScheduleAt::In(
+        obelisk::types::time::Duration::Milliseconds(10),
+    ));
     match config {
         RaceConfig::Stub => {
             activity_stub::foo_stub(&execution_id, Ok(OK_STUB_RESP))
@@ -121,18 +122,21 @@ fn submit_race_join_next(config: RaceConfig) {
             // wait for timeout
         }
     }
-    match workflow_support::join_next(&join_set)
+    match join_set
+        .join_next()
         .expect("two submissions and no response was processed yet")
     {
-        ResponseId::ExecutionId(reported_id) => {
+        (ResponseId::ExecutionId(reported_id), res) => {
             assert_eq!(reported_id.id, execution_id.id);
             match activity_ext::foo_get(&execution_id) {
                 Ok(Ok(ok)) => {
                     assert_eq!(RaceConfig::Stub, config);
                     assert_eq!(OK_STUB_RESP, ok);
+                    res.expect("stub is ok");
                 }
                 Ok(Err(())) => {
                     assert_eq!(RaceConfig::StubError, config);
+                    res.expect_err("stub is err");
                 }
                 Err(GetExtensionError::FunctionMismatch(_)) => {
                     unreachable!("no other functions were submitted")
@@ -142,10 +146,12 @@ fn submit_race_join_next(config: RaceConfig) {
                 }
             }
         }
-        ResponseId::DelayId(reported_id) => {
+        (ResponseId::DelayId(reported_id), res) => {
             assert_eq!(RaceConfig::Delay, config);
             assert_eq!(delay_id.id, reported_id.id);
+            res.expect("not cancelled");
             // Cannot cancel waiting for the execution when closing join set, just mock it:
+            // FIXME: avoid once stub ignoring is in place!
             activity_stub::foo_stub(&execution_id, Ok(OK_STUB_RESP))
                 .expect("stubbed activity must accept returned value once");
         }

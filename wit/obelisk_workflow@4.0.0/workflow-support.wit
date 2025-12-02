@@ -1,0 +1,51 @@
+package obelisk:workflow@4.0.0;
+
+@since(version = 4.0.0)
+interface workflow-support {
+    use obelisk:types/time@4.0.0.{schedule-at, datetime};
+    use obelisk:types/execution@4.0.0.{delay-id, execution-id, response-id};
+    use obelisk:types/join-set@4.0.0.{join-set, closing-strategy};
+
+    /// Error variants that may occur on named join set creation.
+    @since(version = 3.0.0)
+    variant join-set-create-error {
+        conflict,
+        invalid-name(string),
+    }
+
+    /// Returns a random u64 in the range [min, max).
+    @since(version = 3.0.0)
+    random-u64: func(min: u64, max-exclusive: u64) -> u64;
+    /// Returns a random u64 in the range [min, max].
+    @since(version = 3.0.0)
+    random-u64-inclusive: func(min: u64, max-inclusive: u64) -> u64;
+
+    /// Returns a random string with a length in the range [min_length, max_length).
+    /// The string consists only of alphanumeric characters (lowercase and uppercase letters, digits).
+    @since(version = 3.0.0)
+    random-string: func(min-length: u16, max-length-exclusive: u16) -> string;
+
+    /// Block execution for given time, return `schedule-at` resolved to time when the execution is scheduled.
+    /// Returns error if the delay is cancelled.
+    @since(version = 4.0.0)
+    sleep: func(schedule-at: schedule-at) -> result<datetime>;
+
+    /// Create a new join set with a generated name.
+    @since(version = 4.0.0)
+    join-set-create: func() -> join-set;
+
+    /// Create a new join set with the specified name.
+    /// The name may only contain alphanumeric characters and the following extra characters:
+    /// * underscore `_`
+    /// * dash `-`
+    /// * forward slash `/`
+    @since(version = 4.0.0)
+    join-set-create-named: func(name: string) -> result<join-set, join-set-create-error>;
+
+    /// Explicitly close join set. All executions that were submitted and not awaited,
+    /// in other words executions with unprocessed responses, will be either
+    /// awaited or cancelled based on `closing-strategy`.
+    /// Extension function `-get` can be used to lookup the execution result.
+    @since(version = 4.0.0)
+    join-set-close: func(self: join-set);
+}

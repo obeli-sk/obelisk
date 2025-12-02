@@ -1,6 +1,7 @@
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
+use crate::webhook::webhook_trigger::types_v4_0_0::obelisk::types::join_set::JoinNextError;
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
 use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
@@ -29,8 +30,8 @@ use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::sync::OwnedSemaphorePermit;
 use tracing::{Instrument, Span, debug, debug_span, error, info, info_span, instrument, trace};
-use types_v3_0_0::obelisk::types::execution::Host as ExecutionHost;
-use types_v3_0_0::obelisk::types::execution::HostJoinSet;
+use types_v4_0_0::obelisk::types::execution::Host as ExecutionHost;
+use types_v4_0_0::obelisk::types::join_set::HostJoinSet;
 use utils::wasm_tools::ExIm;
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
@@ -47,20 +48,21 @@ use wasmtime_wasi_io::IoView;
 const HTTP_HANDLER_FFQN: FunctionFqn =
     FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
 
-pub(crate) mod types_v3_0_0 {
+pub(crate) mod types_v4_0_0 {
     wasmtime::component::bindgen!({
         path: "host-wit-webhook/",
         inline: "package any:any;
                 world bindings {
-                    import obelisk:types/time@3.0.0;
-                    import obelisk:types/execution@3.0.0;
+                    import obelisk:types/time@4.0.0;
+                    import obelisk:types/execution@4.0.0;
+                    import obelisk:types/join-set@4.0.0;
                 }",
         world: "any:any/bindings",
         exports: {
             default: trappable | async,
         },
         with: {
-            "obelisk:types/execution.join-set": concepts::JoinSetId,
+            "obelisk:types/join-set.join-set": concepts::JoinSetId,
         }
     });
 }
@@ -363,6 +365,35 @@ impl<C: ClockFn> HostJoinSet for WebhookEndpointCtx<C> {
         unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }
 
+    fn set_closing_strategy(
+        &mut self,
+        self_: wasmtime::component::Resource<JoinSetId>,
+        closing_strategy: types_v4_0_0::obelisk::types::join_set::ClosingStrategy,
+    ) -> () {
+        unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
+    }
+
+    fn submit_delay(
+        &mut self,
+        self_: wasmtime::component::Resource<JoinSetId>,
+        timeout: types_v4_0_0::obelisk::types::time::ScheduleAt,
+    ) -> types_v4_0_0::obelisk::types::execution::DelayId {
+        unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
+    }
+
+    fn join_next(
+        &mut self,
+        self_: wasmtime::component::Resource<JoinSetId>,
+    ) -> Result<
+        (
+            types_v4_0_0::obelisk::types::execution::ResponseId,
+            Result<(), ()>,
+        ),
+        JoinNextError,
+    > {
+        unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
+    }
+
     fn drop(
         &mut self,
         _resource: wasmtime::component::Resource<JoinSetId>,
@@ -655,7 +686,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 err: err.into(),
             })?;
         // link obelisk:types
-        types_v3_0_0::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<C>>(
+        types_v4_0_0::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<C>>(
             linker,
             |x| x,
         )

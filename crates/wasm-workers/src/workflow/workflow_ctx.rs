@@ -4,8 +4,8 @@ use super::event_history::{
     ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
     OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
 };
-use super::host_exports::v3_0_0::obelisk::types::execution as types_execution;
-use super::host_exports::v3_0_0::{ClosingStrategy_3_0_0, ScheduleAt_3_0_0};
+use super::host_exports::v4_0_0::ScheduleAt_4_0_0;
+use super::host_exports::v4_0_0::obelisk::types as types_4_0_0;
 use super::host_exports::{
     SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
     history_event_schedule_at_from_wast_val,
@@ -865,7 +865,7 @@ impl<C: ClockFn> WasiView for WorkflowCtx<C> {
     }
 }
 
-const IFC_FQN_WORKFLOW_SUPPORT_3: &str = "obelisk:workflow/workflow-support@3.0.0";
+const IFC_FQN_WORKFLOW_SUPPORT_4: &str = "obelisk:workflow/workflow-support@4.0.0";
 
 impl<C: ClockFn> WorkflowCtx<C> {
     #[expect(clippy::too_many_arguments)]
@@ -925,7 +925,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .as_date_time(self.clock_fn.now())
             .map_err(|err| {
                 const FFQN: FunctionFqn =
-                    FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_3, "sleep");
+                    FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4, "sleep");
                 WorkflowFunctionError::ImportedFunctionCallError {
                     ffqn: FFQN,
                     reason: "schedule-at conversion error".into(),
@@ -1018,11 +1018,16 @@ impl<C: ClockFn> WorkflowCtx<C> {
             |state: &mut Self| state,
         )
         .map_err(linking_err)?;
-        // link obelisk:types
-        types_execution::add_to_linker::<_, WorkflowCtx<C>>(linker, |state: &mut Self| state)
+        // link obelisk:types/execution
+        types_4_0_0::execution::add_to_linker::<_, WorkflowCtx<C>>(linker, |state: &mut Self| {
+            state
+        })
+        .map_err(linking_err)?;
+        // link obelisk:types/join-set
+        types_4_0_0::join_set::add_to_linker::<_, WorkflowCtx<C>>(linker, |state: &mut Self| state)
             .map_err(linking_err)?;
 
-        // link workflow-support
+        // link obelisk:workflow/workflow-support interface
         Self::add_to_linker_workflow_support(linker)?;
         if stub_wasi {
             super::wasi::add_to_linker_async(linker)?;
@@ -1032,12 +1037,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     fn add_to_linker_workflow_support(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
         let mut inst_workflow_support =
-            linker.instance(IFC_FQN_WORKFLOW_SUPPORT_3).map_err(|err| {
+            linker.instance(IFC_FQN_WORKFLOW_SUPPORT_4).map_err(|err| {
                 WasmFileError::LinkingError {
-                    context: StrVariant::Static(IFC_FQN_WORKFLOW_SUPPORT_3),
+                    context: StrVariant::Static(IFC_FQN_WORKFLOW_SUPPORT_4),
                     err: err.into(),
                 }
             })?;
+
         inst_workflow_support
             .func_wrap_async(
                 "random-u64",
@@ -1099,28 +1105,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
         inst_workflow_support
             .func_wrap_async(
-                "submit-delay",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (join_set_id, schedule_at): (Resource<JoinSetId>, ScheduleAt_3_0_0)| {
-                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
-                    Box::new(async move {
-                        let (host, wasm_backtrace) = Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let join_set_id = host.resource_to_join_set_id(&join_set_id)?.clone();
-                        let delay_id = host.submit_delay(join_set_id, schedule_at, wasm_backtrace).await?;
-                        Ok((delay_id,))
-                    })
-                },
-            )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function submit-delay"),
-                err: err.into(),
-            })?;
-
-        inst_workflow_support
-            .func_wrap_async(
                 "sleep",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (schedule_at,): (ScheduleAt_3_0_0,)| {
+                      (schedule_at,): (ScheduleAt_4_0_0,)| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
                         let (host, wasm_backtrace) =
@@ -1137,62 +1124,42 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
         inst_workflow_support
             .func_wrap_async(
-                "new-join-set-named",
+                "join-set-create-named",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (name, _closing_strategy): (String, ClosingStrategy_3_0_0)| {
+                      (name,): (String,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let resource_js = host.new_join_set_named(name, wasm_backtrace).await?;
+                        let resource_js = host.join_set_create_named(name, wasm_backtrace).await?;
                         Ok((resource_js,))
                     })
                 },
             )
             .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function new-join-set-named"),
+                context: StrVariant::Static("linking function join-set-creat-named"),
                 err: err.into(),
             })?;
 
         inst_workflow_support
             .func_wrap_async(
-                "new-join-set-generated",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (_closing_strategy,): (ClosingStrategy_3_0_0,)| {
+                "join-set-create",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>, ()| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let resource_js = host.new_join_set_generated(wasm_backtrace).await?;
+                        let resource_js = host.join_set_create_generated(wasm_backtrace).await?;
                         Ok((resource_js,))
                     })
                 },
             )
             .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function new-join-set-generated"),
+                context: StrVariant::Static("linking function join-set-create"),
                 err: err.into(),
             })?;
 
         inst_workflow_support
             .func_wrap_async(
-                "join-next",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (join_set_id,): (Resource<JoinSetId>,)| {
-                    Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let join_set_id = host.resource_to_join_set_id(&join_set_id)?.clone();
-                        let result = host.join_next(join_set_id, wasm_backtrace).await;
-                        Ok((result?,))
-                    })
-                },
-            )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function new-join-set-generated"),
-                err: err.into(),
-            })?;
-
-        inst_workflow_support
-            .func_wrap_async(
-                "close",
+                "join-set-close",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (join_set_resource,): (Resource<JoinSetId>,)| {
                     Box::new(async move {
@@ -1267,14 +1234,18 @@ enum JoinSetCreateError {
 }
 
 mod workflow_support {
-    use super::types_execution;
-    use super::{ClockFn, WorkflowCtx, WorkflowFunctionError};
+    use super::{ClockFn, WorkflowCtx, WorkflowFunctionError, types_4_0_0};
     use crate::workflow::event_history::{JoinNext, Persist, SubmitDelay};
     use crate::workflow::host_exports;
-    use crate::workflow::host_exports::v3_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
-    use crate::workflow::host_exports::v3_0_0::obelisk::types::execution::HostJoinSet;
-    use crate::workflow::host_exports::v3_0_0::obelisk::workflow::workflow_support;
-    use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_3, JoinSetCreateError};
+    use crate::workflow::host_exports::v4_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
+    use crate::workflow::host_exports::v4_0_0::obelisk::types::join_set::Host as JoinSetIfcHost;
+    use crate::workflow::host_exports::v4_0_0::obelisk::types::join_set::{
+        HostJoinSet, JoinNextError,
+    };
+    use crate::workflow::host_exports::v4_0_0::{
+        ClosingStrategy_4_0_0, DelayId_4_0_0, ResponseId_4_0_0, ScheduleAt_4_0_0,
+    };
+    use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4, JoinSetCreateError};
     use concepts::storage::HistoryEventScheduleAt;
     use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind};
     use concepts::{FunctionFqn, storage};
@@ -1289,12 +1260,47 @@ mod workflow_support {
             Ok(self.resource_to_join_set_id(&resource)?.to_string())
         }
 
+        async fn set_closing_strategy(
+            &mut self,
+            resource: wasmtime::component::Resource<JoinSetId>,
+            closing_strategy: ClosingStrategy_4_0_0,
+        ) -> wasmtime::Result<()> {
+            let fixme_implement = (); // FIXME
+            unimplemented!()
+        }
+
+        async fn submit_delay(
+            &mut self,
+            resource: wasmtime::component::Resource<JoinSetId>,
+            schedule_at: ScheduleAt_4_0_0,
+        ) -> wasmtime::Result<DelayId_4_0_0> {
+            let join_set_id = self.resource_to_join_set_id(&resource)?.clone();
+            let wasm_backtrace = None; // TODO: capture backtrace
+            let delay_id = self
+                .submit_delay(join_set_id, schedule_at.into(), wasm_backtrace)
+                .await?;
+
+            Ok(delay_id)
+        }
+
+        async fn join_next(
+            &mut self,
+            resource: wasmtime::component::Resource<JoinSetId>,
+        ) -> wasmtime::Result<Result<(ResponseId_4_0_0, Result<(), ()>), JoinNextError>> {
+            let join_set_id = self.resource_to_join_set_id(&resource)?.clone();
+            let wasm_backtrace = None; // TODO: capture backtrace
+            let res = self.join_next(join_set_id, wasm_backtrace).await?;
+            Ok(res)
+        }
+
         async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
             self.join_set_close(resource, None).await
         }
     }
 
     impl<C: ClockFn> ExecutionIfcHost for WorkflowCtx<C> {}
+
+    impl<C: ClockFn> JoinSetIfcHost for WorkflowCtx<C> {}
 
     impl<C: ClockFn> WorkflowCtx<C> {
         pub(crate) async fn join_set_close(
@@ -1398,7 +1404,7 @@ mod workflow_support {
             join_set_id: JoinSetId,
             schedule_at: HistoryEventScheduleAt,
             wasm_backtrace: Option<storage::WasmBacktrace>,
-        ) -> Result<types_execution::DelayId, WorkflowFunctionError> {
+        ) -> Result<types_4_0_0::execution::DelayId, WorkflowFunctionError> {
             let delay_id = self
                 .event_history
                 .next_delay_id(&join_set_id, &self.db_connection.execution_id);
@@ -1407,7 +1413,7 @@ mod workflow_support {
                     .as_date_time(self.clock_fn.now())
                     .map_err(|err| {
                         const FFQN: FunctionFqn =
-                            FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_3, "submit-delay");
+                            FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4, "submit-delay");
 
                         WorkflowFunctionError::ImportedFunctionCallError {
                             ffqn: FFQN,
@@ -1434,19 +1440,22 @@ mod workflow_support {
             &mut self,
             schedule_at: HistoryEventScheduleAt,
             wasm_backtrace: Option<storage::WasmBacktrace>,
-        ) -> wasmtime::Result<host_exports::v3_0_0::obelisk::types::time::Datetime> {
+        ) -> wasmtime::Result<Result<host_exports::v4_0_0::obelisk::types::time::Datetime, ()>>
+        {
             let expires_at = self.persist_sleep(schedule_at, wasm_backtrace).await?;
-            Ok(host_exports::v3_0_0::obelisk::types::time::Datetime::try_from(expires_at)?)
+            Ok(Ok(
+                host_exports::v4_0_0::obelisk::types::time::Datetime::try_from(expires_at)?,
+            ))
         }
 
-        pub(crate) async fn new_join_set_named(
+        pub(crate) async fn join_set_create_named(
             &mut self,
             name: String,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<
             Result<
                 Resource<JoinSetId>,
-                host_exports::v3_0_0::obelisk::workflow::workflow_support::JoinSetCreateError,
+                host_exports::v4_0_0::obelisk::workflow::workflow_support::JoinSetCreateError,
             >,
         > {
             match self
@@ -1460,10 +1469,10 @@ mod workflow_support {
             {
                 Ok(resource) => Ok(Ok(resource)),
                 Err(JoinSetCreateError::InvalidNameError(err)) => {
-                    Ok(Err(host_exports::v3_0_0::obelisk::workflow::workflow_support::JoinSetCreateError::InvalidName(err.to_string())))
+                    Ok(Err(host_exports::v4_0_0::obelisk::workflow::workflow_support::JoinSetCreateError::InvalidName(err.to_string())))
                 }
                 Err(JoinSetCreateError::Conflict) => {
-                    Ok(Err(host_exports::v3_0_0::obelisk::workflow::workflow_support::JoinSetCreateError::Conflict))
+                    Ok(Err(host_exports::v4_0_0::obelisk::workflow::workflow_support::JoinSetCreateError::Conflict))
                 }
                 Err(JoinSetCreateError::ApplyError(apply_err)) => {
                     // db errors etc
@@ -1476,7 +1485,7 @@ mod workflow_support {
             }
         }
 
-        pub(crate) async fn new_join_set_generated(
+        pub(crate) async fn join_set_create_generated(
             &mut self,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<Resource<JoinSetId>> {
@@ -1507,7 +1516,7 @@ mod workflow_support {
             join_set_id: JoinSetId,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> Result<
-            Result<types_execution::ResponseId, workflow_support::JoinNextError>,
+            Result<(types_4_0_0::execution::ResponseId, Result<(), ()>), JoinNextError>,
             WorkflowFunctionError,
         > {
             JoinNext {
@@ -1778,7 +1787,7 @@ pub(crate) mod tests {
                     WorkflowStep::JoinSetCreateNamed { join_set_id } => {
                         assert_eq!(JoinSetKind::Named, join_set_id.kind);
                         workflow_ctx
-                            .new_join_set_named(join_set_id.name.to_string(), None)
+                            .join_set_create_named(join_set_id.name.to_string(), None)
                             .await
                             .unwrap()
                             .unwrap();
@@ -1788,7 +1797,7 @@ pub(crate) mod tests {
                     WorkflowStep::SubmitExecution { target_ffqn } => {
                         // Create new join set
                         let join_set_resource =
-                            workflow_ctx.new_join_set_generated(None).await.unwrap();
+                            workflow_ctx.join_set_create_generated(None).await.unwrap();
                         let join_set_id = workflow_ctx
                             .resource_table
                             .get(&join_set_resource)
@@ -1837,7 +1846,7 @@ pub(crate) mod tests {
                             join_set_id.clone()
                         } else {
                             let join_set_resource =
-                                workflow_ctx.new_join_set_generated(None).await.unwrap();
+                                workflow_ctx.join_set_create_generated(None).await.unwrap();
                             workflow_ctx
                                 .resource_table
                                 .get(&join_set_resource)

@@ -6,15 +6,17 @@ package root:component;
 
 world root {
   import testing:http/http-get;
-  import obelisk:types/execution@3.0.0;
+  import obelisk:types/execution@4.0.0;
+  import obelisk:types/time@4.0.0;
+  import obelisk:types/join-set@4.0.0;
   import testing:http-obelisk-ext/http-get;
-  import obelisk:workflow/workflow-support@3.0.0;
+  import obelisk:workflow/workflow-support@4.0.0;
 
   export testing:http-workflow/workflow;
   export testing:http-workflow-obelisk-ext/workflow;
   export testing:http-workflow-obelisk-schedule/workflow;
 }
-package obelisk:types@3.0.0 {
+package obelisk:types@4.0.0 {
   @since(version = 3.0.0)
   interface time {
     @since(version = 3.0.0)
@@ -41,15 +43,8 @@ package obelisk:types@3.0.0 {
       in(duration),
     }
   }
-  @since(version = 3.0.0)
+  @since(version = 4.0.0)
   interface execution {
-    /// Join set resouce.
-    @since(version = 3.0.0)
-    resource join-set {
-      @since(version = 3.0.0)
-      id: func() -> string;
-    }
-
     @since(version = 3.0.0)
     record execution-id {
       id: string,
@@ -118,18 +113,62 @@ package obelisk:types@3.0.0 {
       conflict,
     }
   }
+  @since(version = 4.0.0)
+  interface join-set {
+    use time.{schedule-at};
+    use execution.{delay-id, response-id};
+
+    /// Join set resouce.
+    @since(version = 4.0.0)
+    resource join-set {
+      /// Get the join set identifier in the form of:
+      /// * `o:NAME` in case of a one-off join set, where `NAME` is generally an auto-incremented index optionally followed by underscode and a supplied name,
+      /// * `g:NAME` in case of a generated join set where `NAME` is generally an auto-incremented index,
+      /// * `n:NAME` in case of a named join set
+      @since(version = 4.0.0)
+      id: func() -> string;
+      @since(version = 4.0.0)
+      set-closing-strategy: func(closing-strategy: closing-strategy);
+      /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
+      @since(version = 4.0.0)
+      submit-delay: func(timeout: schedule-at) -> delay-id;
+      /// Block the workflow execution until next response associated with the join set arrives.
+      /// The response is marked as processed.
+      /// Child execution result can be obtained using `-get` extension function using the
+      /// returned execution ID.
+      /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
+      @since(version = 4.0.0)
+      join-next: func() -> result<tuple<response-id, result>, join-next-error>;
+    }
+
+    /// Error variants that may occur when calling `join-next` function.
+    @since(version = 4.0.0)
+    variant join-next-error {
+      /// All submitted requests and their responses were already processed.
+      all-processed,
+    }
+
+    /// The closing strategy of a join set. Join sets are closed when
+    /// * they get out of scope
+    /// * `join-set-close()` is called
+    /// * execution finishes
+    @since(version = 4.0.0)
+    record closing-strategy {
+      ignore-delays: bool,
+      /// default true, do not wait for unawaited delays
+      ignore-stubs: bool,
+      /// default true, do not wait for unawaited stub activity results
+      cancel-activities: bool,
+    }
+  }
 }
 
 
-package obelisk:workflow@3.0.0 {
+package obelisk:workflow@4.0.0 {
   interface workflow-support {
-    use obelisk:types/execution@3.0.0.{join-set};
+    use obelisk:types/join-set@4.0.0.{join-set};
 
-    enum closing-strategy {
-      complete,
-    }
-
-    new-join-set-generated: func(closing-strategy: closing-strategy) -> join-set;
+    join-set-create: func() -> join-set;
   }
 }
 
@@ -159,7 +198,8 @@ package testing:http {
 
 package testing:http-obelisk-ext {
   interface http-get {
-    use obelisk:types/execution@3.0.0.{join-set, execution-id, await-next-extension-error};
+    use obelisk:types/join-set@4.0.0.{join-set};
+    use obelisk:types/execution@4.0.0.{execution-id, await-next-extension-error};
 
     get-successful-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
@@ -187,7 +227,9 @@ package testing:http-workflow {
 
 package testing:http-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@3.0.0.{execution-id, join-set, await-next-extension-error, get-extension-error, invoke-extension-error};
+    use obelisk:types/execution@4.0.0.{execution-id};
+    use obelisk:types/join-set@4.0.0.{join-set};
+    use obelisk:types/execution@4.0.0.{await-next-extension-error, get-extension-error, invoke-extension-error};
 
     get-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
@@ -242,8 +284,8 @@ package testing:http-workflow-obelisk-ext {
 
 package testing:http-workflow-obelisk-schedule {
   interface workflow {
-    use obelisk:types/execution@3.0.0.{execution-id};
-    use obelisk:types/time@3.0.0.{schedule-at};
+    use obelisk:types/execution@4.0.0.{execution-id};
+    use obelisk:types/time@4.0.0.{schedule-at};
 
     get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 

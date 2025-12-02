@@ -12,7 +12,7 @@ use wit_parser::{
     Stability, Type, TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup, WorldItem, WorldKey,
 };
 
-const OBELISK_TYPES_VERSION_MAJOR: u64 = 3;
+const OBELISK_TYPES_VERSION_MAJOR: u64 = 4;
 const OBELISK_TYPES_VERSION_MINOR: u64 = 0;
 const OBELISK_TYPES_VERSION_PATCH: u64 = 0;
 const OBELISK_TYPES_VERSION: &str = formatcp!(
@@ -38,19 +38,19 @@ pub const WIT_OBELISK_LOG_PACKAGE: [&str; 3] = [
 ];
 const WIT_OBELISK_TYPES_PACKAGE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@3.0.0/types.wit"
+    "/wit/obelisk_types@4.0.0/types.wit"
 ));
 pub const WIT_OBELISK_TYPES_PACKAGE: [&str; 3] = [
-    "obelisk_types@3.0.0",
+    "obelisk_types@4.0.0",
     "types.wit",
     WIT_OBELISK_TYPES_PACKAGE_CONTENT,
 ];
 pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
-    "obelisk_workflow@3.0.0",
+    "obelisk_workflow@4.0.0",
     "workflow-support.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_workflow@3.0.0/workflow-support.wit"
+        "/wit/obelisk_workflow@4.0.0/workflow-support.wit"
     )),
 ];
 
@@ -151,7 +151,19 @@ fn add_extended_interfaces(
         resolve,
         &resolve.interfaces,
     )
-    .expect(formatcp!("{OBELISK_TYPES_PACKAGE_NAME} must be found"));
+    .expect(formatcp!(
+        "{OBELISK_TYPES_PACKAGE_NAME} with interface `execution` must be found"
+    ));
+
+    let (join_set_ifc_id, join_set_ifc) = find_interface(
+        &IfcFqnName::from_parts("obelisk", "types", "join-set", Some(OBELISK_TYPES_VERSION)),
+        resolve,
+        &resolve.interfaces,
+    )
+    .expect(formatcp!(
+        "{OBELISK_TYPES_PACKAGE_NAME} with interface `join-set` must be found"
+    ));
+
     // obelisk:types/execution@VERSION.{execution-id}
     let type_id_execution_id = {
         let actual_type_id = *execution_ifc
@@ -169,7 +181,7 @@ fn add_extended_interfaces(
     };
     // obelisk:types/execution@VERSION.{join-set}
     let (type_id_join_set_id, type_id_join_set_id_borrow_handle) = {
-        let actual_type_id = *execution_ifc
+        let actual_type_id = *join_set_ifc
             .types
             .get("join-set")
             .expect("`join-set` must exist");
@@ -177,7 +189,7 @@ fn add_extended_interfaces(
         let type_id_join_set_id = resolve.types.alloc(TypeDef {
             name: Some("join-set".to_string()),
             kind: TypeDefKind::Type(Type::Id(actual_type_id)),
-            owner: TypeOwner::Interface(execution_ifc_id),
+            owner: TypeOwner::Interface(join_set_ifc_id),
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
         });
@@ -185,7 +197,7 @@ fn add_extended_interfaces(
         let type_id_join_set_id_borrow_handle = resolve.types.alloc(TypeDef {
             name: None,
             kind: TypeDefKind::Handle(Handle::Borrow(type_id_join_set_id)),
-            owner: TypeOwner::Interface(execution_ifc_id),
+            owner: TypeOwner::Interface(join_set_ifc_id),
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
         });
