@@ -1570,10 +1570,11 @@ async fn append_same_delay_id_twice_should_fail(
     .await;
 
     // Create joinset
-    let join_set_id = create_join_set(
+    let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+    create_join_set(
         &execution_id,
         &mut version,
-        JoinSetKind::OneOff,
+        join_set_id.clone(),
         sim_clock.now(),
         db_connection,
     )
@@ -1627,11 +1628,10 @@ async fn append_same_delay_id_twice_should_fail(
 async fn create_join_set(
     execution_id: &ExecutionId,
     version: &mut Version,
-    kind: JoinSetKind,
+    join_set_id: JoinSetId,
     created_at: DateTime<Utc>,
     db_connection: &dyn DbConnection,
-) -> JoinSetId {
-    let join_set_id = JoinSetId::new(kind, StrVariant::empty()).unwrap();
+) {
     let new_version = db_connection
         .append(
             execution_id.clone(),
@@ -1640,7 +1640,7 @@ async fn create_join_set(
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
-                        join_set_id: join_set_id.clone(),
+                        join_set_id,
                         closing_strategy: ClosingStrategy::Complete,
                     },
                 },
@@ -1649,5 +1649,159 @@ async fn create_join_set(
         .await
         .unwrap();
     *version = new_version;
-    join_set_id
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_append_response_with_same_delay_id_twice_should_fail(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection();
+    let execution_id = ExecutionId::generate();
+    let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+    let delay_id = DelayId::new(&execution_id, &join_set_id);
+    let request = JoinSetRequest::DelayRequest {
+        delay_id: delay_id.clone(),
+        expires_at: sim_clock.now(),
+        schedule_at: HistoryEventScheduleAt::Now,
+    };
+    let response = JoinSetResponse::DelayFinished {
+        delay_id: delay_id.clone(),
+        result: Ok(()),
+    };
+    append_response_with_same_id_twice_should_fail(
+        db_connection.as_ref(),
+        sim_clock,
+        execution_id,
+        join_set_id,
+        request,
+        response,
+    )
+    .await;
+    db_close.close().await;
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_append_response_with_same_child_id_twice_should_fail(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection();
+    let execution_id = ExecutionId::generate();
+    let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+    let child_execution_id = execution_id.next_level(&join_set_id);
+    let request = JoinSetRequest::ChildExecutionRequest {
+        child_execution_id: child_execution_id.clone(),
+        target_ffqn: SOME_FFQN,
+        params: Params::empty(),
+    };
+    let response = JoinSetResponse::ChildExecutionFinished {
+        child_execution_id,
+        finished_version: Version(1),
+        result: concepts::SupportedFunctionReturnValue::Ok { ok: None },
+    };
+    append_response_with_same_id_twice_should_fail(
+        db_connection.as_ref(),
+        sim_clock,
+        execution_id,
+        join_set_id,
+        request,
+        response,
+    )
+    .await;
+    db_close.close().await;
+}
+
+async fn append_response_with_same_id_twice_should_fail(
+    db_connection: &dyn DbConnection,
+    sim_clock: SimClock,
+    execution_id: ExecutionId,
+    join_set_id: JoinSetId,
+    request: JoinSetRequest,
+    response: JoinSetResponse,
+) {
+    let executor_id = ExecutorId::generate();
+    // Create
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+    let lock_expiry = Duration::from_millis(100);
+    let mut version = lock(
+        db_connection,
+        &execution_id,
+        &sim_clock,
+        executor_id,
+        sim_clock.now() + lock_expiry, // lock expires at
+        RunId::generate(),
+    )
+    .await;
+
+    // Create joinset
+    create_join_set(
+        &execution_id,
+        &mut version,
+        join_set_id.clone(),
+        sim_clock.now(),
+        db_connection,
+    )
+    .await;
+
+    db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: Now.now(),
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id: join_set_id.clone(),
+                        request,
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    db_connection
+        .append_response(
+            sim_clock.now(),
+            execution_id.clone(),
+            JoinSetResponseEvent {
+                join_set_id: join_set_id.clone(),
+                event: response.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    let err = db_connection
+        .append_response(
+            sim_clock.now(),
+            execution_id.clone(),
+            JoinSetResponseEvent {
+                join_set_id: join_set_id.clone(),
+                event: response,
+            },
+        )
+        .await
+        .unwrap_err();
+    let err = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState(str)) => str.to_string());
+    assert_eq!("conflicting response id", err);
 }

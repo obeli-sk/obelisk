@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use concepts::JoinSetId;
 use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionEventInner,
-    HistoryEvent, JoinSetRequest, JoinSetResponseEvent, JoinSetResponseEventOuter, Locked,
-    LockedBy, PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
+    HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
+    Locked, LockedBy, PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
     VersionType,
 };
 use concepts::storage::{ExecutionLog, PendingState, Version};
@@ -159,14 +159,70 @@ impl ExecutionJournal {
         Ok(self.version())
     }
 
-    pub fn append_response(&mut self, created_at: DateTime<Utc>, event: JoinSetResponseEvent) {
+    pub fn append_response(
+        &mut self,
+        created_at: DateTime<Utc>,
+        event: JoinSetResponseEvent,
+    ) -> Result<(), DbErrorWrite> {
         let event = JoinSetResponseEventOuter { created_at, event };
+        {
+            // Check child id uniqueness
+            if let JoinSetResponseEvent {
+                event:
+                    JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id, ..
+                    },
+                ..
+            } = &event.event
+            {
+                if self.responses.iter().any(|event| match &event.event {
+                    JoinSetResponseEvent {
+                        event:
+                            JoinSetResponse::ChildExecutionFinished {
+                                child_execution_id: found_id,
+                                ..
+                            },
+                        ..
+                    } if child_execution_id == found_id => true,
+                    _ => false,
+                }) {
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::IllegalState("conflicting response id".into()),
+                    ));
+                }
+            }
+        }
+        {
+            // Check delay id uniqueness
+            if let JoinSetResponseEvent {
+                event: JoinSetResponse::DelayFinished { delay_id, .. },
+                ..
+            } = &event.event
+            {
+                if self.responses.iter().any(|event| match &event.event {
+                    JoinSetResponseEvent {
+                        event:
+                            JoinSetResponse::DelayFinished {
+                                delay_id: found_id, ..
+                            },
+                        ..
+                    } if delay_id == found_id => true,
+                    _ => false,
+                }) {
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::IllegalState("conflicting response id".into()),
+                    ));
+                }
+            }
+        }
+
         self.responses.push(event.clone());
         // update the state
         self.update_pending_state();
         if let Some(subscriber) = self.response_subscriber.take() {
             let _ = subscriber.send(event);
         }
+        Ok(())
     }
 
     fn update_pending_state(&mut self) {
