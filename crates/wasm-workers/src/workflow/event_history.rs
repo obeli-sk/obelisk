@@ -252,7 +252,7 @@ impl EventHistory {
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, ApplyError> {
-        debug!("applying {event_call:?} {}", db_connection.version);
+        debug!("applying {event_call:?}, Version:{}", db_connection.version);
 
         if self.deadline_tracker.close_to_expired() && self.lock_extension > Duration::ZERO {
             self.extend_lock(db_connection, called_at)
