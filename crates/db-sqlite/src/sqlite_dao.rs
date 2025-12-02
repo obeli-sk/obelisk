@@ -111,8 +111,8 @@ CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_variant  ON t_execut
 ";
 
 /// Stores child execution return values for the parent (`execution_id`). Append only.
-/// For `JoinSetResponse::DelayFinished`, column `delay_id` must not be null.
-/// For `JoinSetResponse::ChildExecutionFinished`, column `child_execution_id`,`finished_version`
+/// For `JoinSetResponse::DelayFinished`, columns `delay_id`,`delay_success` must not not null.
+/// For `JoinSetResponse::ChildExecutionFinished`, columns `child_execution_id`,`finished_version`
 /// must not be null.
 const CREATE_TABLE_T_JOIN_SET_RESPONSE: &str = r"
 CREATE TABLE IF NOT EXISTS t_join_set_response (
@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS t_join_set_response (
     join_set_id TEXT NOT NULL,
 
     delay_id TEXT,
+    delay_success INTEGER,
 
     child_execution_id TEXT,
     finished_version INTEGER,
@@ -1983,13 +1984,15 @@ impl SqlitePool {
         response_outer: JoinSetResponseEventOuter,
     ) -> Result<AppendNotifier, DbErrorWrite> {
         let mut stmt = tx.prepare(
-            "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, child_execution_id, finished_version) \
-                    VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :child_execution_id, :finished_version)",
+            "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, delay_success, child_execution_id, finished_version) \
+                    VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :delay_success, :child_execution_id, :finished_version)",
         )?;
         let join_set_id = &response_outer.event.join_set_id;
-        let delay_id = match &response_outer.event.event {
-            JoinSetResponse::DelayFinished { delay_id } => Some(delay_id.to_string()),
-            JoinSetResponse::ChildExecutionFinished { .. } => None,
+        let (delay_id, delay_success) = match &response_outer.event.event {
+            JoinSetResponse::DelayFinished { delay_id, result } => {
+                (Some(delay_id.to_string()), Some(result.is_ok()))
+            }
+            JoinSetResponse::ChildExecutionFinished { .. } => (None, None),
         };
         let (child_execution_id, finished_version) = match &response_outer.event.event {
             JoinSetResponse::ChildExecutionFinished {
@@ -2008,6 +2011,7 @@ impl SqlitePool {
             ":created_at": response_outer.created_at,
             ":join_set_id": join_set_id.to_string(),
             ":delay_id": delay_id,
+            ":delay_success": delay_success,
             ":child_execution_id": child_execution_id,
             ":finished_version": finished_version,
         })?;
@@ -2038,7 +2042,11 @@ impl SqlitePool {
         };
         if let JoinSetResponseEvent {
             join_set_id,
-            event: JoinSetResponse::DelayFinished { delay_id },
+            event:
+                JoinSetResponse::DelayFinished {
+                    delay_id,
+                    result: _,
+                },
         } = &response_outer.event
         {
             debug!(%join_set_id, %delay_id, "Deleting from `t_delay`");
@@ -2235,7 +2243,7 @@ impl SqlitePool {
         // TODO: Add test
         let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
         let mut sql = "SELECT \
-            r.id, r.created_at, r.join_set_id,  r.delay_id, r.child_execution_id, r.finished_version, l.json_value \
+            r.id, r.created_at, r.join_set_id,  r.delay_id, r.delay_success, r.child_execution_id, r.finished_version, l.json_value \
             FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
             WHERE \
             r.execution_id = :execution_id \
@@ -2282,12 +2290,19 @@ impl SqlitePool {
         let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
         let event = match (
             row.get::<_, Option<DelayId>>("delay_id")?,
+            row.get::<_, Option<bool>>("delay_success")?,
             row.get::<_, Option<ExecutionIdDerived>>("child_execution_id")?,
             row.get::<_, Option<VersionType>>("finished_version")?,
             row.get::<_, Option<JsonWrapper<ExecutionEventInner>>>("json_value")?,
         ) {
-            (Some(delay_id), None, None, None) => JoinSetResponse::DelayFinished { delay_id },
+            (Some(delay_id), Some(delay_success), None, None, None) => {
+                JoinSetResponse::DelayFinished {
+                    delay_id,
+                    result: delay_success.then_some(()).ok_or(()),
+                }
+            }
             (
+                None,
                 None,
                 Some(child_execution_id),
                 Some(finished_version),
@@ -2297,10 +2312,9 @@ impl SqlitePool {
                 finished_version: Version(finished_version),
                 result,
             },
-            (delay, child, finished, result) => {
+            (delay, delay_success, child, finished, result) => {
                 error!(
-                    "Invalid row in t_join_set_response {id} - {:?} {child:?} {finished:?} {:?}",
-                    delay,
+                    "Invalid row in t_join_set_response {id} - {delay:?} {delay_success:?} {child:?} {finished:?} {:?}",
                     result.map(|it| it.0)
                 );
                 return Err(consistency_rusqlite("invalid row in t_join_set_response"));
@@ -2325,7 +2339,7 @@ impl SqlitePool {
         tx
             .prepare(
                 "SELECT r.id, r.created_at, r.join_set_id, \
-                    r.delay_id, \
+                    r.delay_id, r.delay_success, \
                     r.child_execution_id, r.finished_version, l.json_value \
                     FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
                     WHERE \
@@ -2361,7 +2375,7 @@ impl SqlitePool {
         // TODO: Add test
         tx.prepare(
             "SELECT r.id, r.created_at, r.join_set_id, \
-            r.delay_id, \
+            r.delay_id, r.delay_success, \
             r.child_execution_id, r.finished_version, l.json_value \
             FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
             WHERE \

@@ -437,6 +437,7 @@ message ListExecutionEventsResponse {
 message JoinSetResponseEvent {
     message DelayFinished {
         DelayId delay_id = 1;
+        bool success = 2; // Set to `false` if delay was cancelled.
     }
 
     message ChildExecutionFinished {
