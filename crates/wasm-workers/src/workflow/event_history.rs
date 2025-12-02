@@ -67,7 +67,10 @@ pub(crate) enum ChildReturnValue {
     WastVal(WastVal),
     JoinSetCreate(JoinSetId),
     JoinNext(Result<(types_execution::ResponseId, Result<(), ()>), types_join_set::JoinNextError>),
-    OneOffDelay { scheduled_at: DateTime<Utc> },
+    OneOffDelay {
+        scheduled_at: DateTime<Utc>,
+        result: Result<(), ()>,
+    },
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -595,7 +598,7 @@ impl EventHistory {
                             response_ffqn,
                         })
                     }
-                    JoinSetResponse::DelayFinished { delay_id } => {
+                    JoinSetResponse::DelayFinished { delay_id, result } => {
                         // Find matching DelayRequest to extract expires_at
                         let expires_at = *self
                             .index_delay_id_to_expires_at
@@ -604,6 +607,7 @@ impl EventHistory {
                         JoinSetResponseEnriched::DelayFinished {
                             delay_id,
                             expires_at,
+                            result: *result,
                         }
                     }
                 }
@@ -831,6 +835,7 @@ impl EventHistory {
                     }
                     Some(JoinSetResponseEnriched::DelayFinished {
                         delay_id,
+                        result: _,
                         expires_at: _,
                     }) => {
                         let function_mismatch = ExecutionErrorVariant::FunctionMismatch {
@@ -860,12 +865,14 @@ impl EventHistory {
                     %join_set_id, "Peeked at JoinNext - Delay");
                 match self.mark_next_unprocessed_response(found_idx, join_set_id) {
                     Some(JoinSetResponseEnriched::DelayFinished {
-                        delay_id: _, // one-shot
                         expires_at: scheduled_at,
+                        result,
+                        delay_id: _, // one-shot
                     }) => {
                         trace!(%join_set_id, "Matched JoinNext & DelayFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::OneOffDelay {
                             scheduled_at,
+                            result,
                         }))
                     }
                     None => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
@@ -906,14 +913,14 @@ impl EventHistory {
                     }
                     Some(JoinSetResponseEnriched::DelayFinished {
                         delay_id,
+                        result,
                         expires_at: _,
                     }) => {
-                        let is_cancelled_warning = (); // FIXME: implement cancelation
                         trace!(%join_set_id, %delay_id, "DeterministicKey::JoinNext: Matched DelayFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(Ok(
                             (
                                 types_execution::ResponseId::DelayId(delay_id.into()),
-                                Ok(()),
+                                result,
                             ),
                         ))))
                     }
@@ -1741,6 +1748,7 @@ enum JoinSetResponseEnriched<'a> {
     DelayFinished {
         delay_id: &'a DelayId,
         expires_at: DateTime<Utc>,
+        result: Result<(), ()>,
     },
     ChildExecutionFinished(ChildExecutionFinished<'a>),
 }
@@ -2217,13 +2225,16 @@ impl OneOffDelayRequest {
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
-    ) -> Result<DateTime<Utc>, WorkflowFunctionError> {
+    ) -> Result<Result<DateTime<Utc>, ()>, WorkflowFunctionError> {
         let join_set_id = event_history
             .next_join_set_one_off_named("sleep")
             .expect("no illegal chars in sleep");
         let delay_id = DelayId::new(&db_connection.execution_id, &join_set_id);
 
-        let ChildReturnValue::OneOffDelay { scheduled_at } = event_history
+        let ChildReturnValue::OneOffDelay {
+            scheduled_at,
+            result,
+        } = event_history
             .apply(
                 EventCall::Blocking(EventCallBlocking::OneOffDelayRequest(OneOffDelayRequest {
                     join_set_id,
@@ -2239,7 +2250,7 @@ impl OneOffDelayRequest {
         else {
             unreachable!()
         };
-        Ok(scheduled_at)
+        Ok(result.map(|()| scheduled_at))
     }
 }
 

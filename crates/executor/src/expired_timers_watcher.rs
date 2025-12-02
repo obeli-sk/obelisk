@@ -196,7 +196,10 @@ pub(crate) async fn tick(
                 delay_id,
             }) => {
                 debug!(%execution_id, %join_set_id, %delay_id, created_at = %executed_at, "Appending DelayFinishedAsyncResponse");
-                let event = JoinSetResponse::DelayFinished { delay_id };
+                let event = JoinSetResponse::DelayFinished {
+                    delay_id,
+                    result: Ok(()),
+                };
                 let res = db_connection
                     .append_response(
                         executed_at,

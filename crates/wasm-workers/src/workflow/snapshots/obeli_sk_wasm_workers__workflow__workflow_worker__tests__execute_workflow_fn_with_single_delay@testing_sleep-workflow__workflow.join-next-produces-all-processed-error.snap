@@ -147,7 +147,10 @@ expression: execution_log
         "join_set_id": "g:1",
         "event": {
           "type": "DelayFinished",
-          "delay_id": "Delay_00000000000000000000000000.g:1_0"
+          "delay_id": "Delay_00000000000000000000000000.g:1_0",
+          "result": {
+            "Ok": null
+          }
         }
       }
     }

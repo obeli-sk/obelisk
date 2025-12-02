@@ -916,11 +916,12 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .await
     }
 
+    /// Return durable sleep expiry time.
     async fn persist_sleep(
         &mut self,
         schedule_at: HistoryEventScheduleAt,
         wasm_backtrace: Option<storage::WasmBacktrace>,
-    ) -> Result<DateTime<Utc>, WorkflowFunctionError> {
+    ) -> Result<Result<DateTime<Utc>, ()>, WorkflowFunctionError> {
         let expires_at_if_new = schedule_at
             .as_date_time(self.clock_fn.now())
             .map_err(|err| {
@@ -1442,10 +1443,14 @@ mod workflow_support {
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<Result<host_exports::v4_0_0::obelisk::types::time::Datetime, ()>>
         {
-            let expires_at = self.persist_sleep(schedule_at, wasm_backtrace).await?;
-            Ok(Ok(
-                host_exports::v4_0_0::obelisk::types::time::Datetime::try_from(expires_at)?,
-            ))
+            Ok(
+                match self.persist_sleep(schedule_at, wasm_backtrace).await? {
+                    Ok(expires_at) => Ok(
+                        host_exports::v4_0_0::obelisk::types::time::Datetime::try_from(expires_at)?,
+                    ),
+                    Err(()) => Err(()),
+                },
+            )
         }
 
         pub(crate) async fn join_set_create_named(

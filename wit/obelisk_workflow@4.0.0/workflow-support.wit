@@ -25,7 +25,7 @@ interface workflow-support {
     @since(version = 3.0.0)
     random-string: func(min-length: u16, max-length-exclusive: u16) -> string;
 
-    /// Block execution for given time, return `schedule-at` resolved to time when the execution is scheduled.
+    /// Block execution for given time, return the time when the durable sleep expires.
     /// Returns error if the delay is cancelled.
     @since(version = 4.0.0)
     sleep: func(schedule-at: schedule-at) -> result<datetime>;

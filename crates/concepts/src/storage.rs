@@ -184,6 +184,7 @@ pub struct JoinSetResponseEvent {
 pub enum JoinSetResponse {
     DelayFinished {
         delay_id: DelayId,
+        result: Result<(), ()>,
     },
     ChildExecutionFinished {
         child_execution_id: ExecutionIdDerived,

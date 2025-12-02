@@ -554,10 +554,11 @@ pub mod response {
     impl From<JoinSetResponseEventOuter> for grpc_gen::JoinSetResponseEvent {
         fn from(event: JoinSetResponseEventOuter) -> Self {
             let response = match event.event.event {
-                JoinSetResponse::DelayFinished { delay_id } => {
+                JoinSetResponse::DelayFinished { delay_id, result } => {
                     grpc_gen::join_set_response_event::Response::DelayFinished(
                         grpc_gen::join_set_response_event::DelayFinished {
                             delay_id: Some(delay_id.into()),
+                            success: result.is_ok(),
                         },
                     )
                 }
