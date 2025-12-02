@@ -18,7 +18,7 @@ use tokio::sync::oneshot;
 pub(crate) struct ExecutionJournal {
     pub(crate) execution_id: ExecutionId,
     pub(crate) pending_state: PendingState,
-    pub(crate) execution_events: VecDeque<ExecutionEvent>,
+    pub(crate) execution_events: VecDeque<ExecutionEvent>, // TODO: Use Vec instead
     pub(crate) responses: Vec<JoinSetResponseEventOuter>,
     pub(crate) response_subscriber: Option<oneshot::Sender<JoinSetResponseEventOuter>>,
 }
@@ -117,6 +117,36 @@ impl ExecutionJournal {
                 *run_id,
                 *lock_expires_at,
             )?;
+        }
+
+        // Make sure delay id is unique
+        if let ExecutionEventInner::HistoryEvent {
+            event:
+                HistoryEvent::JoinSetRequest {
+                    request: JoinSetRequest::DelayRequest { delay_id, .. },
+                    ..
+                },
+        } = &event
+            && self
+                .execution_events
+                .iter()
+                .any(|event| match &event.event {
+                    ExecutionEventInner::HistoryEvent {
+                        event:
+                            HistoryEvent::JoinSetRequest {
+                                request:
+                                    JoinSetRequest::DelayRequest {
+                                        delay_id: found_id, ..
+                                    },
+                                ..
+                            },
+                    } if delay_id == found_id => true,
+                    _ => false,
+                })
+        {
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::IllegalState("conflicting delay id".into()),
+            ));
         }
 
         self.execution_events.push_back(ExecutionEvent {

@@ -21,8 +21,8 @@ use concepts::{
 use conversions::{FromStrWrapper, JsonWrapper, consistency_db_err, consistency_rusqlite};
 use hashbrown::HashMap;
 use rusqlite::{
-    CachedStatement, Connection, OpenFlags, OptionalExtension, Params, ToSql, Transaction,
-    TransactionBehavior, named_params, types::ToSqlOutput,
+    CachedStatement, Connection, ErrorCode, OpenFlags, OptionalExtension, Params, ToSql,
+    Transaction, TransactionBehavior, named_params, types::ToSqlOutput,
 };
 use std::{
     cmp::max,
@@ -1397,6 +1397,12 @@ impl SqlitePool {
                 ":join_set_id": join_set_id.to_string(),
                 ":delay_id": delay_id.to_string(),
                 ":expires_at": expires_at,
+            })
+            .map_err(|err| match err.sqlite_error().map(|err| err.code) {
+                Some(ErrorCode::ConstraintViolation) => DbErrorWrite::NonRetriable(
+                    DbErrorWriteNonRetriable::IllegalState("conflicting delay id".into()),
+                ),
+                _ => DbErrorWrite::from(err),
             })?;
         }
         Ok(appending_version.increment())

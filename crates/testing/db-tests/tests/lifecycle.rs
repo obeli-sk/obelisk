@@ -11,11 +11,14 @@ use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
-use concepts::{ClosingStrategy, ComponentRetryConfig, JoinSetId, SUPPORTED_RETURN_VALUE_OK_EMPTY};
+use concepts::{
+    ClosingStrategy, ComponentRetryConfig, JoinSetId, JoinSetKind, SUPPORTED_RETURN_VALUE_OK_EMPTY,
+};
 use concepts::{ComponentId, Params, StrVariant};
 use concepts::{ExecutionId, prefixed_ulid::ExecutorId};
 use db_tests::Database;
 use db_tests::SOME_FFQN;
+use rstest::rstest;
 use std::sync::Arc;
 use std::time::Duration;
 use test_utils::set_up;
@@ -143,7 +146,7 @@ async fn test_get_expired_delay_sqlite() {
 }
 
 #[tokio::test]
-#[rstest::rstest]
+#[rstest]
 async fn append_after_finish_should_not_be_possible(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
@@ -260,7 +263,7 @@ async fn lock_pending(
 }
 
 #[tokio::test]
-#[rstest::rstest]
+#[rstest]
 async fn locking_in_unlock_backoff_should_not_be_possible(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
@@ -372,7 +375,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
 }
 
 #[tokio::test]
-#[rstest::rstest]
+#[rstest]
 async fn lock_extended_with_the_same_executor_should_work(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
@@ -388,7 +391,7 @@ async fn lock_extended_with_the_same_executor_should_work(
     db_close.close().await;
 }
 #[tokio::test]
-#[rstest::rstest]
+#[rstest]
 async fn lock_extended_with_another_executor_should_fail(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
@@ -498,7 +501,7 @@ async fn lock_and_attept_to_extend(
 }
 
 #[tokio::test]
-#[rstest::rstest]
+#[rstest]
 async fn locking_in_timeout_backoff_should_not_be_possible(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
@@ -603,8 +606,8 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
 }
 
 #[tokio::test]
-#[rstest::rstest]
-async fn lock_pending_while_nothing_is_stored_should_work(
+#[rstest]
+async fn lock_pending_while_nothing_is_pending_should_be_noop(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
@@ -639,7 +642,7 @@ async fn lock_pending_while_nothing_is_stored_should_work(
 }
 
 #[tokio::test]
-#[rstest::rstest]
+#[rstest]
 async fn creating_execution_twice_should_fail(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
@@ -708,7 +711,7 @@ async fn creating_execution_twice_should_fail(
 }
 
 #[tokio::test]
-#[rstest::rstest]
+#[rstest]
 async fn lock_pending_while_expired_lock_should_return_nothing(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
@@ -867,7 +870,7 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
     }
 }
 
-pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_clock: SimClock) {
+async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let parent_id = ExecutionId::generate();
 
     // Create parent
@@ -1103,7 +1106,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, si
     assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
 }
 
-pub async fn lock_pending_should_sort_by_scheduled_at(
+async fn lock_pending_should_sort_by_scheduled_at(
     db_connection: &dyn DbConnection,
     sim_clock: SimClock,
 ) {
@@ -1182,7 +1185,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
     assert_eq!(vec![older_id, newer_id, newest_id], locked_ids);
 }
 
-pub async fn test_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
+async fn test_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let executor_id = ExecutorId::generate();
     // Create
@@ -1269,7 +1272,7 @@ async fn lock(
     lock_pending_res.next_version
 }
 
-pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
+async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let executor_id = ExecutorId::generate();
     // Create
@@ -1330,7 +1333,7 @@ pub async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimCl
     assert_eq!(expected, actual);
 }
 
-pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock) {
+async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let executor_id = ExecutorId::generate();
     // Create
@@ -1425,7 +1428,7 @@ pub async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimC
 }
 
 #[tokio::test]
-#[rstest::rstest]
+#[rstest]
 async fn get_expired_times_with_execution_that_made_progress(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
@@ -1519,4 +1522,132 @@ async fn get_expired_times_with_execution_that_made_progress(
     assert_eq!(expected_lock, expired_lock);
 
     db_close.close().await;
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_append_same_delay_id_twice_should_fail(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection();
+    append_same_delay_id_twice_should_fail(db_connection.as_ref(), sim_clock).await;
+    db_close.close().await;
+}
+
+async fn append_same_delay_id_twice_should_fail(
+    db_connection: &dyn DbConnection,
+    sim_clock: SimClock,
+) {
+    let execution_id = ExecutionId::generate();
+    let executor_id = ExecutorId::generate();
+    // Create
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+    let lock_expiry = Duration::from_millis(100);
+    let mut version = lock(
+        db_connection,
+        &execution_id,
+        &sim_clock,
+        executor_id,
+        sim_clock.now() + lock_expiry, // lock expires at
+        RunId::generate(),
+    )
+    .await;
+
+    // Create joinset
+    let join_set_id = create_join_set(
+        &execution_id,
+        &mut version,
+        JoinSetKind::OneOff,
+        sim_clock.now(),
+        db_connection,
+    )
+    .await;
+    let delay_id = DelayId::new(&execution_id, &join_set_id);
+    let version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: Now.now(),
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id: join_set_id.clone(),
+                        request: JoinSetRequest::DelayRequest {
+                            delay_id: delay_id.clone(),
+                            expires_at: sim_clock.now() + lock_expiry,
+                            schedule_at: HistoryEventScheduleAt::In(lock_expiry),
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    let err = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: Now.now(),
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id: join_set_id.clone(),
+                        request: JoinSetRequest::DelayRequest {
+                            delay_id: delay_id.clone(),
+                            expires_at: sim_clock.now() + lock_expiry,
+                            schedule_at: HistoryEventScheduleAt::In(lock_expiry),
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap_err();
+    let err = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState(str)) => str.to_string());
+    assert_eq!("conflicting delay id", err);
+}
+
+async fn create_join_set(
+    execution_id: &ExecutionId,
+    version: &mut Version,
+    kind: JoinSetKind,
+    created_at: DateTime<Utc>,
+    db_connection: &dyn DbConnection,
+) -> JoinSetId {
+    let join_set_id = JoinSetId::new(kind, StrVariant::empty()).unwrap();
+    let new_version = db_connection
+        .append(
+            execution_id.clone(),
+            version.clone(),
+            AppendRequest {
+                created_at,
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetCreate {
+                        join_set_id: join_set_id.clone(),
+                        closing_strategy: ClosingStrategy::Complete,
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+    *version = new_version;
+    join_set_id
 }
