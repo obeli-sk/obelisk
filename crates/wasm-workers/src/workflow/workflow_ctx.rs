@@ -1067,16 +1067,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
         // id: func() -> string;
         inst_join_set_ifc
-            .func_wrap_async(
-                // TODO: does not have to be async
+            .func_wrap(
                 "[method]join-set.id",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (resource,): (wasmtime::component::Resource<JoinSetId>,)| {
-                    Box::new(async move {
-                        let host = caller.data_mut();
-                        let id = host.resource_to_join_set_id(&resource)?.to_string();
-                        Ok((id,))
-                    })
+                    let host = caller.data_mut();
+                    let id = host.resource_to_join_set_id(&resource)?.to_string();
+                    Ok((id,))
                 },
             )
             .map_err(|err| WasmFileError::LinkingError {
@@ -1087,7 +1084,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
         // set-closing-strategy: func(closing-strategy: closing-strategy)
         inst_join_set_ifc
             .func_wrap_async(
-                // TODO: does not have to be async
                 "[method]join-set.set-closing-strategy",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (resource, closing_strategy): (
@@ -1095,7 +1091,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     ClosingStrategy_4_0_0,
                 )| {
                     Box::new(async move {
-                        let fixme_implement = (); // FIXME
+                        let fixme_implement = (); // FIXME: Store to event log as well!
                         if true {
                             unimplemented!()
                         }
