@@ -174,8 +174,7 @@ impl ExecutionJournal {
                     },
                 ..
             } = &event.event
-            {
-                if self.responses.iter().any(|event| match &event.event {
+                && self.responses.iter().any(|event| match &event.event {
                     JoinSetResponseEvent {
                         event:
                             JoinSetResponse::ChildExecutionFinished {
@@ -185,11 +184,11 @@ impl ExecutionJournal {
                         ..
                     } if child_execution_id == found_id => true,
                     _ => false,
-                }) {
-                    return Err(DbErrorWrite::NonRetriable(
-                        DbErrorWriteNonRetriable::IllegalState("conflicting response id".into()),
-                    ));
-                }
+                })
+            {
+                return Err(DbErrorWrite::NonRetriable(
+                    DbErrorWriteNonRetriable::IllegalState("conflicting response id".into()),
+                ));
             }
         }
         {
@@ -198,8 +197,7 @@ impl ExecutionJournal {
                 event: JoinSetResponse::DelayFinished { delay_id, .. },
                 ..
             } = &event.event
-            {
-                if self.responses.iter().any(|event| match &event.event {
+                && self.responses.iter().any(|event| match &event.event {
                     JoinSetResponseEvent {
                         event:
                             JoinSetResponse::DelayFinished {
@@ -208,11 +206,11 @@ impl ExecutionJournal {
                         ..
                     } if delay_id == found_id => true,
                     _ => false,
-                }) {
-                    return Err(DbErrorWrite::NonRetriable(
-                        DbErrorWriteNonRetriable::IllegalState("conflicting response id".into()),
-                    ));
-                }
+                })
+            {
+                return Err(DbErrorWrite::NonRetriable(
+                    DbErrorWriteNonRetriable::IllegalState("conflicting response id".into()),
+                ));
             }
         }
 
