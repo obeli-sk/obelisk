@@ -934,7 +934,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                             }],
                         },
                         AppendResponseToExecution {
-                            parent_execution_id: parent_execution_id,
+                            parent_execution_id,
                             created_at: executed_at,
                             join_set_id,
                             child_execution_id,
@@ -971,7 +971,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     .await
                     .to_status()?;
             }
-        };
+        }
 
         Ok(tonic::Response::new(grpc_gen::CancelResponse {}))
     }

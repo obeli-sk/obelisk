@@ -447,7 +447,7 @@ impl EventHistory {
                 if join_set_id == found)).count();
         let mut close_count = self
             .close_requests
-            .get(&join_set_id)
+            .get(join_set_id)
             .copied()
             .unwrap_or_default();
         debug!(%join_set_id, created_child_request_count, processed_child_response_count,  close_count, "join_set_close");

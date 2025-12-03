@@ -1314,12 +1314,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             };
             debug!("Closing {join_set:?}");
             self.event_history
-                .join_set_close_inner(
-                    &join_set,
-                    &mut self.db_connection,
-                    self.clock_fn.now(),
-                    None,
-                )
+                .join_set_close_inner(join_set, &mut self.db_connection, self.clock_fn.now(), None)
                 .await?;
         }
         // Clean the table, although `join_sets_close_on_finish` should be called just once.
