@@ -1935,6 +1935,16 @@ pub enum ComponentType {
     Workflow,
     WebhookEndpoint,
 }
+impl ComponentType {
+    pub fn is_activity(&self) -> bool {
+        matches!(
+            self,
+            ComponentType::ActivityWasm
+                | ComponentType::ActivityStub
+                | ComponentType::ActivityExternal
+        )
+    }
+}
 
 #[derive(
     derive_more::Debug,

@@ -898,8 +898,17 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         "child_execution_id must be a derived execution id",
                     ));
                 };
+                let conn = self.db_pool.connection();
+                let child_create_req = conn
+                    .get_create_request(&ExecutionId::Derived(child_execution_id.clone()))
+                    .await
+                    .to_status()?;
+                if !child_create_req.component_id.component_type.is_activity() {
+                    return Err(tonic::Status::invalid_argument(
+                        "cancelled execution must be an activity",
+                    ));
+                }
 
-                // FIXME: check that this is an activity + version!
                 let (parent_execution_id, join_set_id) =
                     child_execution_id.split_to_parts().map_err(|err| {
                         tonic::Status::invalid_argument(format!(
@@ -919,32 +928,30 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     },
                 );
                 let finished_version = Version(activity_req.version);
-                self.db_pool
-                    .connection()
-                    .append_batch_respond_to_parent(
-                        AppendEventsToExecution {
-                            execution_id: ExecutionId::Derived(child_execution_id.clone()),
-                            version: finished_version.clone(),
-                            batch: vec![AppendRequest {
-                                created_at: executed_at,
-                                event: ExecutionEventInner::Finished {
-                                    result: child_result.clone(),
-                                    http_client_traces: None,
-                                },
-                            }],
-                        },
-                        AppendResponseToExecution {
-                            parent_execution_id,
+                conn.append_batch_respond_to_parent(
+                    AppendEventsToExecution {
+                        execution_id: ExecutionId::Derived(child_execution_id.clone()),
+                        version: finished_version.clone(),
+                        batch: vec![AppendRequest {
                             created_at: executed_at,
-                            join_set_id,
-                            child_execution_id,
-                            finished_version,
-                            result: child_result,
-                        },
-                        executed_at,
-                    )
-                    .await
-                    .to_status()?;
+                            event: ExecutionEventInner::Finished {
+                                result: child_result.clone(),
+                                http_client_traces: None,
+                            },
+                        }],
+                    },
+                    AppendResponseToExecution {
+                        parent_execution_id,
+                        created_at: executed_at,
+                        join_set_id,
+                        child_execution_id,
+                        finished_version,
+                        result: child_result,
+                    },
+                    executed_at,
+                )
+                .await
+                .to_status()?;
             }
             grpc_gen::cancel_request::Request::Delay(delay_req) => {
                 let delay_id = delay_req.delay_id.argument_must_exist("delay_id")?;
