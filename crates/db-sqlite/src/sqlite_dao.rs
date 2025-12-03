@@ -2724,7 +2724,17 @@ impl DbExecutor for SqlitePool {
                     let pending_at_parent = Self::append_response(
                         tx,
                         &response.parent_execution_id,
-                        response.parent_response_event.clone(),
+                        JoinSetResponseEventOuter {
+                            created_at: response.created_at,
+                            event: JoinSetResponseEvent {
+                                join_set_id: response.join_set_id.clone(),
+                                event: JoinSetResponse::ChildExecutionFinished {
+                                    child_execution_id: response.child_execution_id.clone(),
+                                    finished_version: response.finished_version.clone(),
+                                    result: response.result.clone(),
+                                },
+                            },
+                        },
                     )?;
                     Ok::<_, DbErrorWrite>((
                         version,

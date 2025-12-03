@@ -642,7 +642,7 @@ impl Append {
                     ..
                 }
             );
-            let derived = assert_matches!(self.execution_id.clone(), ExecutionId::Derived(derived) => derived);
+            let child_execution_id = assert_matches!(self.execution_id.clone(), ExecutionId::Derived(derived) => derived);
             let events = AppendEventsToExecution {
                 execution_id: self.execution_id,
                 version: self.version.clone(),
@@ -650,18 +650,11 @@ impl Append {
             };
             let response = AppendResponseToExecution {
                 parent_execution_id: child_finished.parent_execution_id,
-                parent_response_event: JoinSetResponseEventOuter {
-                    created_at: self.created_at,
-                    event: JoinSetResponseEvent {
-                        join_set_id: child_finished.parent_join_set,
-                        event: JoinSetResponse::ChildExecutionFinished {
-                            child_execution_id: derived,
-                            // Since self.primary_event is a finished event, the version will remain the same.
-                            finished_version: self.version,
-                            result: child_finished.result,
-                        },
-                    },
-                },
+                created_at: self.created_at,
+                join_set_id: child_finished.parent_join_set,
+                child_execution_id,
+                finished_version: self.version, // Since self.primary_event is a finished event, the version will remain the same.
+                result: child_finished.result,
             };
 
             db_exec
