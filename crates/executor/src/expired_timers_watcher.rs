@@ -11,11 +11,10 @@ use concepts::storage::DbErrorWrite;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionLog;
 use concepts::storage::ExpiredDelay;
-use concepts::storage::JoinSetResponseEvent;
 use concepts::time::ClockFn;
 use concepts::{
     FinishedExecutionError,
-    storage::{ExecutionEventInner, ExpiredTimer, JoinSetResponse},
+    storage::{ExecutionEventInner, ExpiredTimer},
 };
 use std::{
     sync::{
@@ -195,20 +194,18 @@ pub(crate) async fn tick(
                 join_set_id,
                 delay_id,
             }) => {
-                debug!(%execution_id, %join_set_id, %delay_id, created_at = %executed_at, "Appending DelayFinishedAsyncResponse");
-                let event = JoinSetResponse::DelayFinished {
-                    delay_id,
-                    result: Ok(()),
-                };
+                debug!(%execution_id, %join_set_id, %delay_id, created_at = %executed_at, "Appending delay response");
                 let res = db_connection
-                    .append_response(
+                    .append_delay_response(
                         executed_at,
                         execution_id.clone(),
-                        JoinSetResponseEvent { join_set_id, event },
+                        join_set_id,
+                        delay_id,
+                        Ok(()),
                     )
                     .await;
                 if let Err(err) = res {
-                    debug!(%execution_id, "Failed to update expired async timer - {err:?}");
+                    debug!(%execution_id, "Failed to append delay response - {err:?}");
                 } else {
                     expired_async_timers += 1;
                 }

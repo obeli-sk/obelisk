@@ -7,15 +7,15 @@ use self::index::JournalsIndex;
 use crate::journal::ExecutionJournal;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{ExecutorId, RunId};
+use concepts::prefixed_ulid::{DelayId, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendEventsToExecution, AppendRequest, AppendResponse,
     AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest, DbConnection,
     DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
     DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionEventInner,
     ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredDelay, ExpiredLock,
-    ExpiredTimer, HistoryEvent, JoinSetResponseEventOuter, LockPendingResponse, Locked,
-    LockedExecution, Pagination, ResponseWithCursor, Version, VersionType,
+    ExpiredTimer, HistoryEvent, JoinSetResponse, JoinSetResponseEventOuter, LockPendingResponse,
+    Locked, LockedExecution, Pagination, ResponseWithCursor, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
@@ -241,6 +241,7 @@ impl DbConnection for InMemoryDbConnection {
         }
     }
 
+    #[cfg(feature = "test")]
     #[instrument(skip_all, %execution_id)]
     async fn append_response(
         &self,
@@ -253,6 +254,27 @@ impl DbConnection for InMemoryDbConnection {
             JoinSetResponseEventOuter {
                 created_at,
                 event: response_event,
+            },
+        )
+    }
+
+    #[instrument(skip_all, %execution_id)]
+    async fn append_delay_response(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
+        result: Result<(), ()>,
+    ) -> Result<(), DbErrorWrite> {
+        self.0.lock().unwrap().append_response(
+            &execution_id,
+            JoinSetResponseEventOuter {
+                created_at,
+                event: JoinSetResponseEvent {
+                    join_set_id,
+                    event: JoinSetResponse::DelayFinished { delay_id, result },
+                },
             },
         )
     }

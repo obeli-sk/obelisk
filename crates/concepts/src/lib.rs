@@ -97,6 +97,8 @@ pub enum PermanentFailureKind {
     StubbedError,
     /// Applicable to Webhook, Workflow, WASM Activity
     OutOfFuel,
+    /// Applicable to WASM and Stub activities
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
@@ -1398,12 +1400,12 @@ pub mod prefixed_ulid {
             )
         }
 
-        // Two cases:
-        // A. infix does not contain dots -> first level, will be split into the top level, the whole infix must be JoinSetId.
-        // B. infix must be split into old_infix _ old_idx . JoinSetId
         pub fn split_to_parts(
             &self,
         ) -> Result<(ExecutionId, JoinSetId), ExecutionIdDerivedSplitError> {
+            // Two cases:
+            // A. infix contains a `.` => infix must be split into old_infix _ old_idx . JoinSetId
+            // B. else => child of a top level, will be split into the top level, the whole infix must be JoinSetId.
             if let Some((old_infix_and_index, join_set_id)) =
                 self.infix.rsplit_once(EXECUTION_ID_INFIX)
             {
@@ -1422,7 +1424,6 @@ pub mod prefixed_ulid {
                 };
                 Ok((ExecutionId::Derived(parent), join_set_id))
             } else {
-                // This was the first level
                 Ok((
                     ExecutionId::TopLevel(self.top_level),
                     JoinSetId::from_str(&self.infix)?,
@@ -1703,6 +1704,37 @@ pub mod prefixed_ulid {
                 top_level: self.top_level,
                 infix: self.infix.clone(),
                 idx: self.idx + 1,
+            }
+        }
+
+        pub fn split_to_parts(
+            &self,
+        ) -> Result<(ExecutionId, JoinSetId), ExecutionIdDerivedSplitError> {
+            // Two cases:
+            // A. infix contains a `.` => infix must be split into old_infix _ old_idx . JoinSetId
+            // B. else => child of a top level, will be split into the top level, the whole infix must be JoinSetId.
+            if let Some((old_infix_and_index, join_set_id)) =
+                self.infix.rsplit_once(EXECUTION_ID_INFIX)
+            {
+                let join_set_id = JoinSetId::from_str(join_set_id)?;
+                let Some((old_infix, old_idx)) =
+                    old_infix_and_index.rsplit_once(EXECUTION_ID_JOIN_SET_INFIX)
+                else {
+                    return Err(ExecutionIdDerivedSplitError::CannotFindJoinSetDelimiter);
+                };
+                let parent = ExecutionIdDerived {
+                    top_level: ExecutionIdTopLevel::new(self.top_level.ulid),
+                    infix: Arc::from(old_infix),
+                    idx: old_idx
+                        .parse()
+                        .map_err(ExecutionIdDerivedSplitError::CannotParseOldIndex)?,
+                };
+                Ok((ExecutionId::Derived(parent), join_set_id))
+            } else {
+                Ok((
+                    ExecutionId::TopLevel(ExecutionIdTopLevel::new(self.top_level.ulid)),
+                    JoinSetId::from_str(&self.infix)?,
+                ))
             }
         }
 
