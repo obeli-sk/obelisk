@@ -1306,6 +1306,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
     pub(crate) async fn join_sets_close_on_finish(&mut self) -> Result<(), ApplyError> {
         debug!("join_sets_close_on_finish {:?}", self.resource_table);
         for join_set in self.resource_table.iter_mut() {
+            // FIXME: is/will this be deterministic?
             debug!("Attempting to convert {join_set:?}");
             let Some(join_set) = join_set.downcast_ref::<JoinSetResource>() else {
                 // Must be `Tombstone`:
