@@ -1936,6 +1936,7 @@ pub enum ComponentType {
     WebhookEndpoint,
 }
 impl ComponentType {
+    #[must_use]
     pub fn is_activity(&self) -> bool {
         matches!(
             self,
