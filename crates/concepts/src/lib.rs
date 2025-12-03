@@ -1813,16 +1813,21 @@ pub struct JoinSetId {
     pub name: StrVariant,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, Default,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
-#[serde(rename_all = "snake_case")]
-pub enum ClosingStrategy {
-    /// All submitted child execution requests that were not awaited by the workflow are awaited during join set close.
-    /// Delay requests are not awaited.
-    #[default]
-    Complete,
+pub struct ClosingStrategy {
+    pub ignore_delays: bool,
+    pub ignore_stubs: bool,
+    pub cancel_activities: bool,
+}
+impl Default for ClosingStrategy {
+    fn default() -> Self {
+        ClosingStrategy {
+            ignore_delays: true,
+            ignore_stubs: true,
+            cancel_activities: true,
+        }
+    }
 }
 
 impl JoinSetId {

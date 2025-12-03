@@ -1,8 +1,9 @@
+use crate::workflow::host_exports::v4_0_0::ClosingStrategy_4_0_0;
 use assert_matches::assert_matches;
 use chrono::DateTime;
-use concepts::FunctionFqn;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::HistoryEventScheduleAt;
+use concepts::{ClosingStrategy, FunctionFqn};
 use concepts::{ExecutionId, prefixed_ulid::DelayId};
 use indexmap::indexmap;
 use std::ops::Deref as _;
@@ -42,7 +43,7 @@ pub(crate) mod v4_0_0 {
             }",
         world: "any:any/bindings",
         with: {
-            "obelisk:types/join-set.join-set": concepts::JoinSetId,
+            "obelisk:types/join-set.join-set": crate::workflow::JoinSetResource,
         },
         imports: {
             default: trappable | async
@@ -276,4 +277,20 @@ pub(crate) fn ffqn_into_wast_val(ffqn: &FunctionFqn) -> WastVal {
         "interface-name".to_string() => WastVal::String(ffqn.ifc_fqn.to_string()),
         "function-name".to_string() => WastVal::String(ffqn.function_name.to_string()),
     })
+}
+
+impl From<ClosingStrategy_4_0_0> for ClosingStrategy {
+    fn from(
+        ClosingStrategy_4_0_0 {
+            ignore_delays,
+            ignore_stubs,
+            cancel_activities,
+        }: ClosingStrategy_4_0_0,
+    ) -> Self {
+        ClosingStrategy {
+            ignore_delays,
+            ignore_stubs,
+            cancel_activities,
+        }
+    }
 }

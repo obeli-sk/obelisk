@@ -1,6 +1,6 @@
 use crate::grpc_gen::{self, execution_event::history_event};
 use concepts::{
-    ClosingStrategy, ComponentId, ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn,
+    ComponentId, ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn,
     SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, RunId},
     storage::{

@@ -11,10 +11,8 @@ use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
-use concepts::{
-    ClosingStrategy, ComponentRetryConfig, JoinSetId, JoinSetKind, SUPPORTED_RETURN_VALUE_OK_EMPTY,
-};
 use concepts::{ComponentId, Params, StrVariant};
+use concepts::{ComponentRetryConfig, JoinSetId, JoinSetKind, SUPPORTED_RETURN_VALUE_OK_EMPTY};
 use concepts::{ExecutionId, prefixed_ulid::ExecutorId};
 use db_tests::Database;
 use db_tests::SOME_FFQN;

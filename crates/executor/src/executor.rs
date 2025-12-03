@@ -4,8 +4,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::{
     AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbErrorGeneric,
-    DbErrorWrite, DbExecutor, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
-    LockedExecution,
+    DbErrorWrite, DbExecutor, ExecutionLog, LockedExecution,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -14,7 +13,7 @@ use concepts::{
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use concepts::{
     FinishedExecutionError,
-    storage::{ExecutionEventInner, JoinSetResponse, Version},
+    storage::{ExecutionEventInner, Version},
 };
 use concepts::{JoinSetId, PermanentFailureKind};
 use std::fmt::Display;
@@ -756,12 +755,14 @@ mod tests {
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::storage::{CreateRequest, DbConnection, JoinSetRequest};
+    use concepts::storage::{
+        CreateRequest, DbConnection, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+    };
     use concepts::storage::{DbPoolCloseable, LockedBy};
     use concepts::storage::{ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState};
     use concepts::time::Now;
     use concepts::{
-        ClosingStrategy, FunctionMetadata, JoinSetKind, ParameterTypes, Params, RETURN_TYPE_DUMMY,
+        FunctionMetadata, JoinSetKind, ParameterTypes, Params, RETURN_TYPE_DUMMY,
         SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant, SupportedFunctionReturnValue, TrapKind,
     };
     use db_tests::Database;

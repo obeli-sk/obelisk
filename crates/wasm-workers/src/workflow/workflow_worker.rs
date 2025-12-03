@@ -738,10 +738,7 @@ pub(crate) mod tests {
         AppendEventsToExecution, AppendResponseToExecution, Locked, LockedBy,
         PendingStateFinishedError,
     };
-    use concepts::storage::{
-        AppendRequest, DbConnection, DbExecutor, ExecutionEventInner, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter,
-    };
+    use concepts::storage::{AppendRequest, DbConnection, DbExecutor, ExecutionEventInner};
     use concepts::time::TokioSleep;
     use concepts::{ComponentRetryConfig, ExecutionId, Params, SupportedFunctionReturnValue};
     use concepts::{
