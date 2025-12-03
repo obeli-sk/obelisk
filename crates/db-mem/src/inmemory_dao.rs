@@ -127,7 +127,7 @@ impl DbExecutor for InMemoryDbConnection {
         self.0
             .lock()
             .unwrap()
-            .append_batch_respond_to_parent(events, response)
+            .append_batch_respond_to_parent(events, &response)
     }
 
     async fn wait_for_pending(
@@ -811,7 +811,7 @@ impl DbHolder {
     fn append_batch_respond_to_parent(
         &mut self,
         events: AppendEventsToExecution,
-        response: AppendResponseToExecution,
+        response: &AppendResponseToExecution,
     ) -> Result<Version, DbErrorWrite> {
         let child_version =
             self.append_batch(events.batch, &events.execution_id, events.version)?;

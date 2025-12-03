@@ -127,11 +127,8 @@ impl ExecutionJournal {
                     ..
                 },
         } = &event
-            && self
-                .execution_events
-                .iter()
-                .any(|event| match &event.event {
-                    ExecutionEventInner::HistoryEvent {
+            && self.execution_events.iter().any(|event| {
+                matches!(&event.event, ExecutionEventInner::HistoryEvent {
                         event:
                             HistoryEvent::JoinSetRequest {
                                 request:
@@ -140,9 +137,8 @@ impl ExecutionJournal {
                                     },
                                 ..
                             },
-                    } if delay_id == found_id => true,
-                    _ => false,
-                })
+                    } if delay_id == found_id)
+            })
         {
             return Err(DbErrorWrite::NonRetriable(
                 DbErrorWriteNonRetriable::IllegalState("conflicting delay id".into()),
@@ -174,16 +170,15 @@ impl ExecutionJournal {
                     },
                 ..
             } = &event.event
-                && self.responses.iter().any(|event| match &event.event {
-                    JoinSetResponseEvent {
+                && self.responses.iter().any(|event| {
+                    matches!(&event.event, JoinSetResponseEvent {
                         event:
                             JoinSetResponse::ChildExecutionFinished {
                                 child_execution_id: found_id,
                                 ..
                             },
                         ..
-                    } if child_execution_id == found_id => true,
-                    _ => false,
+                    } if child_execution_id == found_id)
                 })
             {
                 return Err(DbErrorWrite::NonRetriable(
@@ -197,15 +192,14 @@ impl ExecutionJournal {
                 event: JoinSetResponse::DelayFinished { delay_id, .. },
                 ..
             } = &event.event
-                && self.responses.iter().any(|event| match &event.event {
-                    JoinSetResponseEvent {
+                && self.responses.iter().any(|event| {
+                    matches!(&event.event, JoinSetResponseEvent {
                         event:
                             JoinSetResponse::DelayFinished {
                                 delay_id: found_id, ..
                             },
                         ..
-                    } if delay_id == found_id => true,
-                    _ => false,
+                    } if delay_id == found_id)
                 })
             {
                 return Err(DbErrorWrite::NonRetriable(
