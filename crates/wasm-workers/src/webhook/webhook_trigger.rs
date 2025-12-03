@@ -12,10 +12,10 @@ use concepts::storage::{
 };
 use concepts::time::ClockFn;
 use concepts::{
-    ClosingStrategy, ComponentId, ComponentType, ExecutionId, ExecutionMetadata,
-    FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName,
-    JoinSetKind, Params, PermanentFailureKind, ReturnType, SUFFIX_PKG_SCHEDULE,
-    SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant, TrapKind,
+    ComponentId, ComponentType, ExecutionId, ExecutionMetadata, FinishedExecutionError,
+    FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, JoinSetKind, Params,
+    PermanentFailureKind, ReturnType, SUFFIX_PKG_SCHEDULE, SUPPORTED_RETURN_VALUE_OK_EMPTY,
+    StrVariant, TrapKind,
 };
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use http_body_util::combinators::BoxBody;
@@ -367,23 +367,23 @@ impl<C: ClockFn> HostJoinSet for WebhookEndpointCtx<C> {
 
     fn set_closing_strategy(
         &mut self,
-        self_: wasmtime::component::Resource<JoinSetId>,
-        closing_strategy: types_v4_0_0::obelisk::types::join_set::ClosingStrategy,
+        _self_: wasmtime::component::Resource<JoinSetId>,
+        _closing_strategy: types_v4_0_0::obelisk::types::join_set::ClosingStrategy,
     ) -> () {
         unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }
 
     fn submit_delay(
         &mut self,
-        self_: wasmtime::component::Resource<JoinSetId>,
-        timeout: types_v4_0_0::obelisk::types::time::ScheduleAt,
+        _self_: wasmtime::component::Resource<JoinSetId>,
+        _timeout: types_v4_0_0::obelisk::types::time::ScheduleAt,
     ) -> types_v4_0_0::obelisk::types::execution::DelayId {
         unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }
 
     fn join_next(
         &mut self,
-        self_: wasmtime::component::Resource<JoinSetId>,
+        _self_: wasmtime::component::Resource<JoinSetId>,
     ) -> Result<
         (
             types_v4_0_0::obelisk::types::execution::ResponseId,
