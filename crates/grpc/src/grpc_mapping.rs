@@ -12,7 +12,7 @@ use concepts::{
     },
 };
 use concepts::{JoinSetId, JoinSetKind};
-use std::borrow::Borrow;
+use std::{borrow::Borrow, str::FromStr};
 use tracing::error;
 
 impl<T: Borrow<ExecutionId>> From<T> for grpc_gen::ExecutionId {
@@ -28,6 +28,15 @@ impl From<DelayId> for grpc_gen::DelayId {
         Self {
             id: value.to_string(),
         }
+    }
+}
+impl TryFrom<grpc_gen::DelayId> for DelayId {
+    type Error = tonic::Status;
+
+    fn try_from(value: grpc_gen::DelayId) -> Result<Self, Self::Error> {
+        DelayId::from_str(&value.id).map_err(|err| {
+            tonic::Status::invalid_argument(format!("DelayId cannot be parsed - {err}"))
+        })
     }
 }
 

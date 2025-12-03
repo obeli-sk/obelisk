@@ -3077,6 +3077,7 @@ impl DbConnection for SqlitePool {
         }
     }
 
+    #[cfg(feature = "test")]
     #[instrument(level = Level::DEBUG, skip(self, response_event), fields(join_set_id = %response_event.join_set_id))]
     async fn append_response(
         &self,
@@ -3093,6 +3094,33 @@ impl DbConnection for SqlitePool {
             .transaction(
                 move |tx| Self::append_response(tx, &execution_id, event.clone()),
                 "append_response",
+            )
+            .await?;
+        self.notify_all(vec![notifier], created_at);
+        Ok(())
+    }
+
+    #[instrument(level = Level::DEBUG, skip_all, fields(%join_set_id, %execution_id))]
+    async fn append_delay_response(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
+        result: Result<(), ()>,
+    ) -> Result<(), DbErrorWrite> {
+        debug!("append_delay_response");
+        let event = JoinSetResponseEventOuter {
+            created_at,
+            event: JoinSetResponseEvent {
+                join_set_id,
+                event: JoinSetResponse::DelayFinished { delay_id, result },
+            },
+        };
+        let notifier = self
+            .transaction(
+                move |tx| Self::append_response(tx, &execution_id, event.clone()),
+                "append_delay_response",
             )
             .await?;
         self.notify_all(vec![notifier], created_at);

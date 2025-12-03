@@ -682,11 +682,21 @@ pub trait DbExecutor: Send + Sync {
 
 #[async_trait]
 pub trait DbConnection: DbExecutor {
+    #[cfg(feature = "test")]
     async fn append_response(
         &self,
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
         response_event: JoinSetResponseEvent,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_delay_response(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
+        result: Result<(), ()>,
     ) -> Result<(), DbErrorWrite>;
 
     /// Append a batch of events to an existing execution log, and append a response to a parent execution.

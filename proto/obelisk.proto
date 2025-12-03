@@ -19,6 +19,7 @@ service ExecutionRepository {
     rpc GetBacktrace(GetBacktraceRequest) returns (GetBacktraceResponse);
     rpc GetBacktraceSource(GetBacktraceSourceRequest) returns (GetBacktraceSourceResponse);
     rpc Stub(StubRequest) returns (StubResponse);
+    rpc Cancel(CancelRequest) returns (CancelResponse);
 }
 
 service FunctionRepository {
@@ -536,4 +537,22 @@ message GetBacktraceSourceRequest {
 
 message GetBacktraceSourceResponse {
     string content = 1;
+}
+
+message CancelRequest {
+    message CancelRequestActivity {
+        ExecutionId child_execution_id = 1;
+        uint32 version = 2;
+    }
+    message CancelRequestDelay {
+        DelayId delay_id = 1;
+    }
+    oneof request {
+        CancelRequestActivity activity = 1;
+        CancelRequestDelay delay = 2;
+    }
+}
+
+message CancelResponse {
+
 }

@@ -45,9 +45,11 @@ use concepts::IfcFqnName;
 use concepts::PackageIfcFns;
 use concepts::ParameterType;
 use concepts::Params;
+use concepts::PermanentFailureKind;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
 use concepts::SupportedFunctionReturnValue;
+use concepts::prefixed_ulid::DelayId;
 use concepts::storage::AppendEventsToExecution;
 use concepts::storage::AppendRequest;
 use concepts::storage::AppendResponseToExecution;
@@ -883,6 +885,107 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             warn!("Component {component_id} not found");
             Err(tonic::Status::not_found("component not found"))
         }
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn cancel(
+        &self,
+        request: tonic::Request<grpc_gen::CancelRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::CancelResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let executed_at = Now.now();
+        let response_id = request.request.argument_must_exist("request")?;
+        match response_id {
+            grpc_gen::cancel_request::Request::Activity(activity_req) => {
+                let child_execution_id = activity_req
+                    .child_execution_id
+                    .argument_must_exist("child_execution_id")?;
+                let ExecutionId::Derived(child_execution_id) =
+                    ExecutionId::try_from(child_execution_id)?
+                else {
+                    return Err(tonic::Status::invalid_argument(
+                        "child_execution_id must be a derived execution id",
+                    ));
+                };
+
+                // FIXME: check that this is an activity + version!
+                let (parent_execution_id, join_set_id) =
+                    child_execution_id.split_to_parts().map_err(|err| {
+                        tonic::Status::invalid_argument(format!(
+                            "cannot split child_execution_id to parts - {err}"
+                        ))
+                    })?;
+                tracing::Span::current().record(
+                    "execution_id",
+                    tracing::field::display(&parent_execution_id),
+                );
+                let child_result = SupportedFunctionReturnValue::ExecutionError(
+                    concepts::FinishedExecutionError::PermanentFailure {
+                        reason_inner: String::new(),
+                        reason_full: String::new(),
+                        kind: PermanentFailureKind::Cancelled,
+                        detail: None,
+                    },
+                );
+                let event = JoinSetResponse::ChildExecutionFinished {
+                    child_execution_id: child_execution_id.clone(),
+                    finished_version: Version(activity_req.version),
+                    result: child_result.clone(),
+                };
+                self.db_pool
+                    .connection()
+                    .append_batch_respond_to_parent(
+                        AppendEventsToExecution {
+                            execution_id: ExecutionId::Derived(child_execution_id),
+                            version: Version(activity_req.version),
+                            batch: vec![AppendRequest {
+                                created_at: executed_at,
+                                event: ExecutionEventInner::Finished {
+                                    result: child_result,
+                                    http_client_traces: None,
+                                },
+                            }],
+                        },
+                        AppendResponseToExecution {
+                            parent_execution_id: parent_execution_id,
+                            parent_response_event: JoinSetResponseEventOuter {
+                                created_at: executed_at,
+                                event: JoinSetResponseEvent { join_set_id, event },
+                            },
+                        },
+                        executed_at,
+                    )
+                    .await
+                    .to_status()?;
+            }
+            grpc_gen::cancel_request::Request::Delay(delay_req) => {
+                let delay_id = delay_req.delay_id.argument_must_exist("delay_id")?;
+                let delay_id = DelayId::try_from(delay_id)?;
+                let (parent_execution_id, join_set_id) =
+                    delay_id.split_to_parts().map_err(|err| {
+                        tonic::Status::invalid_argument(format!(
+                            "cannot split delay_id to parts - {err}"
+                        ))
+                    })?;
+                tracing::Span::current().record(
+                    "execution_id",
+                    tracing::field::display(&parent_execution_id),
+                );
+                self.db_pool
+                    .connection()
+                    .append_delay_response(
+                        executed_at,
+                        parent_execution_id,
+                        join_set_id,
+                        delay_id,
+                        Ok(()),
+                    )
+                    .await
+                    .to_status()?;
+            }
+        };
+
+        Ok(tonic::Response::new(grpc_gen::CancelResponse {}))
     }
 }
 
