@@ -1813,23 +1813,6 @@ pub struct JoinSetId {
     pub name: StrVariant,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
-pub struct ClosingStrategy {
-    pub ignore_delays: bool,
-    pub ignore_stubs: bool,
-    pub cancel_activities: bool,
-}
-impl Default for ClosingStrategy {
-    fn default() -> Self {
-        ClosingStrategy {
-            ignore_delays: true,
-            ignore_stubs: true,
-            cancel_activities: true,
-        }
-    }
-}
-
 impl JoinSetId {
     pub fn new(kind: JoinSetKind, name: StrVariant) -> Result<Self, InvalidNameError<JoinSetId>> {
         Ok(Self {

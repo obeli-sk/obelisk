@@ -140,8 +140,6 @@ package obelisk:types@4.0.0 {
       /// * `n:NAME` in case of a named join set
       @since(version = 4.0.0)
       id: func() -> string;
-      @since(version = 4.0.0)
-      set-closing-strategy: func(closing-strategy: closing-strategy);
       /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
       @since(version = 4.0.0)
       submit-delay: func(timeout: schedule-at) -> delay-id;
@@ -159,19 +157,6 @@ package obelisk:types@4.0.0 {
     variant join-next-error {
       /// All submitted requests and their responses were already processed.
       all-processed,
-    }
-
-    /// The closing strategy of a join set. Join sets are closed when
-    /// * they get out of scope
-    /// * `join-set-close()` is called
-    /// * execution finishes
-    @since(version = 4.0.0)
-    record closing-strategy {
-      ignore-delays: bool,
-      /// default true, do not wait for unawaited delays
-      ignore-stubs: bool,
-      /// default true, do not wait for unawaited stub activity results
-      cancel-activities: bool,
     }
   }
 }

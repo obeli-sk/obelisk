@@ -9,7 +9,6 @@ use super::host_exports::execution_id_into_wast_val;
 use super::host_exports::v4_0_0::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
-use crate::workflow::JoinSetResource;
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::v4_0_0::obelisk::types::execution as types_execution;
 use crate::workflow::host_exports::v4_0_0::obelisk::types::join_set as types_join_set;
@@ -412,30 +411,27 @@ impl EventHistory {
     // that the interrupt can be properly interpreted.
     pub(crate) async fn join_set_close(
         &mut self,
-        join_set: &JoinSetResource,
+        join_set_id: &JoinSetId,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), WorkflowFunctionError> {
-        self.join_set_close_inner(join_set, db_connection, called_at, wasm_backtrace)
+        self.join_set_close_inner(join_set_id, db_connection, called_at, wasm_backtrace)
             .await
             .map_err(WorkflowFunctionError::from)
     }
     /// For each open join set deterministically emit `JoinNext` and wait for the response.
-    pub(crate) async fn join_set_close_inner(
+    async fn join_set_close_inner(
         &mut self,
-        join_set: &JoinSetResource,
+        join_set_id: &JoinSetId,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), ApplyError> {
         // Keep submitting JoinNext-s until the created child requests == processed(paired) join nexts + closing join nexts.
         // After closing a join set, it must not be possible for code to add more join nexts.
-        let JoinSetResource {
-            join_set_id,
-            closing_strategy,
-        } = join_set;
-        debug!("Closing {join_set_id} with {closing_strategy:?}");
+
+        debug!("Closing {join_set_id}");
         let created_child_request_count = *self
             .index_join_set_to_created_child_requests
             .get(join_set_id)
@@ -487,17 +483,23 @@ impl EventHistory {
             })
     }
 
-    /// There must be no more open join sets. Final determinism check: there must be no unprocessed requests.
+    /// Final determinism check: there must be no unprocessed requests, otherwise the
+    /// code is trimming previous run.
     #[instrument(skip_all)]
-    pub(crate) fn finalize(&mut self) -> Result<(), ApplyError> {
+    pub(crate) async fn finalize(
+        &mut self,
+        db_connection: &mut CachingDbConnection,
+        called_at: DateTime<Utc>,
+    ) -> Result<(), ApplyError> {
         debug!("finalize");
-        if let Some(join_set_id) = self.last_unclosed_join_set() {
-            error!("Found unclosed join set in finalize: {join_set_id}");
-            panic!("found unclosed join set in finalize: {join_set_id}")
+
+        while let Some(join_set_id) = self.last_unclosed_join_set() {
+            self.join_set_close_inner(&join_set_id, db_connection, called_at, None)
+                .await?;
         }
         if let Some((found_idx, first_unprocessed)) = self.first_unprocessed_request() {
             return Err(ApplyError::NondeterminismDetected(format!(
-                // FIXME: Add version
+                // TODO: Add version
                 "found unprocessed request stored at index {found_idx}: event: {first_unprocessed}",
             )));
         }
@@ -2675,7 +2677,10 @@ mod tests {
         .await
         .expect("response was appended, should finish successfuly");
 
-        event_history.finalize().unwrap();
+        event_history
+            .finalize(&mut caching_db_connection, sim_clock.now())
+            .await
+            .unwrap();
 
         drop(db_connection);
         db_close.close().await;
@@ -2787,7 +2792,10 @@ mod tests {
         let res = assert_matches!(res, ChildReturnValue::WastVal(res) => res);
         assert_eq!(child_resp_wrapped, res);
 
-        event_history.finalize().unwrap();
+        event_history
+            .finalize(&mut caching_db_connection, sim_clock.now())
+            .await
+            .unwrap();
 
         db_close.close().await;
     }
@@ -2971,7 +2979,10 @@ mod tests {
             assert_eq!(kid_b, res);
         }
 
-        event_history.finalize().unwrap();
+        event_history
+            .finalize(&mut caching_db_connection, sim_clock.now())
+            .await
+            .unwrap();
         db_close.close().await;
     }
 
@@ -3028,7 +3039,10 @@ mod tests {
             .await
             .unwrap();
 
-        event_history.finalize().unwrap();
+        event_history
+            .finalize(&mut caching_db_connection, sim_clock.now())
+            .await
+            .unwrap();
         db_close.close().await;
     }
 
@@ -3106,7 +3120,10 @@ mod tests {
                 ChildReturnValue::WastVal(_child_execution_id)
             );
 
-            event_history.finalize().unwrap();
+            event_history
+                .finalize(&mut caching_db_connection, sim_clock.now())
+                .await
+                .unwrap();
         }
 
         db_close.close().await;
@@ -3169,7 +3186,10 @@ mod tests {
                     .unwrap();
             }
 
-            event_history.finalize().unwrap();
+            event_history
+                .finalize(&mut caching_db_connection, sim_clock.now())
+                .await
+                .unwrap();
         }
         drop(execution_id);
         // Second execution
@@ -3206,7 +3226,10 @@ mod tests {
                     .unwrap();
             }
 
-            event_history.finalize().unwrap();
+            event_history
+                .finalize(&mut caching_db_connection, sim_clock.now())
+                .await
+                .unwrap();
         }
 
         db_close.close().await;
@@ -3286,7 +3309,10 @@ mod tests {
         .await;
 
         // finish the execution
-        let err = event_history.finalize().unwrap_err();
+        let err = event_history
+            .finalize(&mut caching_db_connection, sim_clock.now())
+            .await
+            .unwrap_err();
         let reason = assert_matches!(err, ApplyError::NondeterminismDetected(reason) => reason);
         assert_eq!(
             "found unprocessed request stored at index 0: event: JoinSetCreate(o:)",
