@@ -821,6 +821,7 @@ impl SqlitePool {
                     ltx_list.len()
                 );
                 // Bulk transaction failed. Replay each ltx in its own physical transaction.
+                // TODO: Use SAVEPOINT + RELEASE SAVEPOINT, ROLLBACK savepoint instead.
                 for ltx in ltx_list {
                     Self::ltx_commit_single(ltx, conn, shutdown_requested, histograms)?;
                 }
