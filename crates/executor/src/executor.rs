@@ -1275,7 +1275,6 @@ mod tests {
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id.clone(),
-                        closing_strategy: ClosingStrategy::Complete,
                     },
                 },
             };

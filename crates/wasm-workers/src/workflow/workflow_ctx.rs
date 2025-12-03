@@ -963,7 +963,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
         &mut self,
         name: String,
         kind: JoinSetKind,
-        closing_strategy: ClosingStrategy,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<Resource<JoinSetId>, JoinSetCreateError> {
         if !self.event_history.join_set_name_exists(&name, kind) {
@@ -971,7 +970,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 .map_err(JoinSetCreateError::InvalidNameError)?;
             let join_set_id = JoinSetCreate {
                 join_set_id,
-                closing_strategy,
                 wasm_backtrace,
             }
             .apply(
@@ -1530,7 +1528,6 @@ mod workflow_support {
                 .persist_join_set_with_kind(
                     name,
                     JoinSetKind::Named,
-                    concepts::ClosingStrategy::Complete,
                     wasm_backtrace,
                 )
                 .await
@@ -1559,24 +1556,19 @@ mod workflow_support {
         ) -> wasmtime::Result<Resource<JoinSetId>> {
             let name = self.event_history.next_join_set_name_generated();
             trace!("new_join_set_generated: {name}");
-            self.persist_join_set_with_kind(
-                name,
-                JoinSetKind::Generated,
-                concepts::ClosingStrategy::Complete,
-                wasm_backtrace,
-            )
-            .await
-            .map_err(|err| match err {
-                JoinSetCreateError::InvalidNameError(_) | JoinSetCreateError::Conflict => {
-                    unreachable!("generated index has been incremented")
-                }
-                JoinSetCreateError::ApplyError(apply_err) => {
-                    wasmtime::Error::new(WorkflowFunctionError::from(apply_err))
-                }
-                JoinSetCreateError::ResourceTableError(resource_table_error) => {
-                    wasmtime::Error::new(resource_table_error)
-                }
-            })
+            self.persist_join_set_with_kind(name, JoinSetKind::Generated, wasm_backtrace)
+                .await
+                .map_err(|err| match err {
+                    JoinSetCreateError::InvalidNameError(_) | JoinSetCreateError::Conflict => {
+                        unreachable!("generated index has been incremented")
+                    }
+                    JoinSetCreateError::ApplyError(apply_err) => {
+                        wasmtime::Error::new(WorkflowFunctionError::from(apply_err))
+                    }
+                    JoinSetCreateError::ResourceTableError(resource_table_error) => {
+                        wasmtime::Error::new(resource_table_error)
+                    }
+                })
         }
 
         pub(crate) async fn join_next(

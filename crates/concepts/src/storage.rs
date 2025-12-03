@@ -1,4 +1,3 @@
-use crate::ClosingStrategy;
 use crate::ComponentId;
 use crate::ComponentRetryConfig;
 use crate::ExecutionId;
@@ -210,7 +209,6 @@ pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::Histor
             kind: crate::JoinSetKind::OneOff,
             name: StrVariant::empty(),
         },
-        closing_strategy: ClosingStrategy::Complete,
     },
 };
 
@@ -373,10 +371,7 @@ pub enum HistoryEvent {
         kind: PersistKind,
     },
     #[display("JoinSetCreate({join_set_id})")]
-    JoinSetCreate {
-        join_set_id: JoinSetId,
-        closing_strategy: ClosingStrategy,
-    },
+    JoinSetCreate { join_set_id: JoinSetId },
     #[display("JoinSetRequest({request})")]
     // join_set_id is part of ExecutionId or DelayId in the `request`
     JoinSetRequest {

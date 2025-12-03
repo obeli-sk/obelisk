@@ -483,12 +483,9 @@ pub fn from_execution_event_to_grpc(
                                     history_event::persist::persist_kind::RandomString {  }),
                             }) })
                         }),
-                        HistoryEvent::JoinSetCreate { join_set_id, closing_strategy } =>
+                        HistoryEvent::JoinSetCreate { join_set_id } =>
                             history_event::Event::JoinSetCreated(history_event::JoinSetCreated {
                                 join_set_id: Some(join_set_id.into()),
-                                closing_strategy: match closing_strategy {
-                                    ClosingStrategy::Complete => history_event::join_set_created::ClosingStrategy::Complete.into()
-                                }
                             }),
                         HistoryEvent::JoinSetRequest { join_set_id, request } => history_event::Event::JoinSetRequest(history_event::JoinSetRequest {
                             join_set_id: Some(join_set_id.into()),

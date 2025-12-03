@@ -585,7 +585,6 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id_direct.clone(),
-                        closing_strategy: ClosingStrategy::Complete,
                     },
                 },
             };

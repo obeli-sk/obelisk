@@ -48,8 +48,7 @@ expression: execution_log
         "HistoryEvent": {
           "event": {
             "type": "JoinSetCreate",
-            "join_set_id": "n:a",
-            "closing_strategy": "complete"
+            "join_set_id": "n:a"
           }
         }
       },
@@ -153,8 +152,7 @@ expression: execution_log
         "HistoryEvent": {
           "event": {
             "type": "JoinSetCreate",
-            "join_set_id": "n:b",
-            "closing_strategy": "complete"
+            "join_set_id": "n:b"
           }
         }
       },
@@ -258,8 +256,7 @@ expression: execution_log
         "HistoryEvent": {
           "event": {
             "type": "JoinSetCreate",
-            "join_set_id": "n:f",
-            "closing_strategy": "complete"
+            "join_set_id": "n:f"
           }
         }
       },
@@ -442,8 +439,7 @@ expression: execution_log
         "HistoryEvent": {
           "event": {
             "type": "JoinSetCreate",
-            "join_set_id": "n:c",
-            "closing_strategy": "complete"
+            "join_set_id": "n:c"
           }
         }
       },
