@@ -628,17 +628,11 @@ impl EventHistory {
         trace!("Finding match for {key:?}, [{found_idx}] {found_request_event:?}");
         match (key, found_request_event) {
             (
-                DeterministicKey::CreateJoinSet {
-                    join_set_id,
-                    closing_strategy,
-                },
+                DeterministicKey::CreateJoinSet { join_set_id },
                 HistoryEvent::JoinSetCreate {
                     join_set_id: found_join_set_id,
-                    closing_strategy: found_closing_strategy,
                 },
-            ) if *join_set_id == *found_join_set_id
-                && closing_strategy == found_closing_strategy =>
-            {
+            ) if *join_set_id == *found_join_set_id => {
                 trace!(%join_set_id, "Matched JoinSet");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
@@ -1009,15 +1003,11 @@ impl EventHistory {
         match event_call {
             EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
                 join_set_id,
-                closing_strategy,
                 wasm_backtrace,
             }) => {
                 // Cacheable event.
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
-                let event = HistoryEvent::JoinSetCreate {
-                    join_set_id,
-                    closing_strategy,
-                };
+                let event = HistoryEvent::JoinSetCreate { join_set_id };
                 let history_events = vec![event.clone()];
                 let join_set = AppendRequest {
                     created_at: called_at,
@@ -1431,7 +1421,6 @@ impl EventHistory {
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSetCreate {
                     join_set_id: join_set_id.clone(),
-                    closing_strategy: ClosingStrategy::Complete,
                 };
                 history_events.push(event.clone());
                 let join_set = AppendRequest {
@@ -1499,7 +1488,6 @@ impl EventHistory {
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSetCreate {
                     join_set_id: join_set_id.clone(),
-                    closing_strategy: ClosingStrategy::Complete,
                 };
                 history_events.push(event.clone());
                 let join_set = AppendRequest {
@@ -1829,7 +1817,6 @@ pub(crate) enum EventCallNonBlocking {
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct JoinSetCreate {
     pub(crate) join_set_id: JoinSetId,
-    pub(crate) closing_strategy: ClosingStrategy,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
@@ -2378,11 +2365,8 @@ enum DeterministicKey {
         kind: PersistKind,
     },
 
-    #[display("CreateJoinSet({join_set_id}, {closing_strategy})")]
-    CreateJoinSet {
-        join_set_id: JoinSetId,
-        closing_strategy: ClosingStrategy,
-    },
+    #[display("CreateJoinSet({join_set_id})")]
+    CreateJoinSet { join_set_id: JoinSetId },
 
     #[display("ChildExecutionRequest({child_execution_id}, {target_ffqn}, params: {params})")]
     // join_set_id is part of child_execution_id
@@ -2468,7 +2452,6 @@ impl EventCallBlocking {
             }) => vec![
                 DeterministicKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
-                    closing_strategy: ClosingStrategy::default(),
                 },
                 DeterministicKey::ChildExecutionRequest {
                     join_set_id: join_set_id.clone(),
@@ -2490,7 +2473,6 @@ impl EventCallBlocking {
             }) => vec![
                 DeterministicKey::CreateJoinSet {
                     join_set_id: join_set_id.clone(),
-                    closing_strategy: ClosingStrategy::default(),
                 },
                 DeterministicKey::DelayRequest {
                     join_set_id: join_set_id.clone(),
@@ -2516,14 +2498,11 @@ impl EventCallBlocking {
 impl EventCallNonBlocking {
     fn as_key(&self) -> DeterministicKey {
         match self {
-            EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
-                join_set_id,
-                closing_strategy,
-                ..
-            }) => DeterministicKey::CreateJoinSet {
-                join_set_id: join_set_id.clone(),
-                closing_strategy: *closing_strategy,
-            },
+            EventCallNonBlocking::JoinSetCreate(JoinSetCreate { join_set_id, .. }) => {
+                DeterministicKey::CreateJoinSet {
+                    join_set_id: join_set_id.clone(),
+                }
+            }
             EventCallNonBlocking::Persist(Persist { value, kind, .. }) => {
                 DeterministicKey::Persist {
                     value: value.clone(),
@@ -3059,7 +3038,6 @@ mod tests {
             .apply(
                 EventCall::NonBlocking(EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
                     join_set_id: join_set_id.clone(),
-                    closing_strategy: ClosingStrategy::Complete,
                     wasm_backtrace: None,
                 })),
                 &mut caching_db_connection,
@@ -3476,7 +3454,6 @@ mod tests {
             .apply(
                 EventCall::NonBlocking(EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
                     join_set_id: join_set_id.clone(),
-                    closing_strategy: ClosingStrategy::Complete,
                     wasm_backtrace: None,
                 })),
                 db_connection,

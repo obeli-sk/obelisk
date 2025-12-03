@@ -899,7 +899,6 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_cl
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id.clone(),
-                        closing_strategy: ClosingStrategy::Complete,
                     },
                 },
             },
@@ -1361,7 +1360,6 @@ async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id.clone(),
-                        closing_strategy: ClosingStrategy::Complete,
                     },
                 },
             },
@@ -1471,7 +1469,6 @@ async fn get_expired_times_with_execution_that_made_progress(
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id.clone(),
-                        closing_strategy: ClosingStrategy::Complete,
                     },
                 },
             },
@@ -1627,10 +1624,7 @@ async fn create_join_set(
             AppendRequest {
                 created_at,
                 event: ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinSetCreate {
-                        join_set_id,
-                        closing_strategy: ClosingStrategy::Complete,
-                    },
+                    event: HistoryEvent::JoinSetCreate { join_set_id },
                 },
             },
         )

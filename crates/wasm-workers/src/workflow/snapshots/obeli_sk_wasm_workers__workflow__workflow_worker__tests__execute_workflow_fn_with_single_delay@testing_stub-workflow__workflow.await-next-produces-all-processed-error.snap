@@ -48,8 +48,7 @@ expression: execution_log
         "HistoryEvent": {
           "event": {
             "type": "JoinSetCreate",
-            "join_set_id": "g:1",
-            "closing_strategy": "complete"
+            "join_set_id": "g:1"
           }
         }
       },
