@@ -13,9 +13,8 @@ use super::host_exports::{
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::component_logger::{ComponentLogger, log_activities};
-use crate::workflow::JoinSetResource;
 use crate::workflow::event_history::JoinSetCreate;
-use crate::workflow::host_exports::v4_0_0::{ClosingStrategy_4_0_0, DelayId_4_0_0};
+use crate::workflow::host_exports::v4_0_0::DelayId_4_0_0;
 use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_STUB};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
@@ -25,8 +24,8 @@ use concepts::storage::{
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
-    ClosingStrategy, ComponentId, ExecutionId, FunctionMetadata, FunctionRegistry, IfcFqnName,
-    InvalidNameError, ReturnType, ReturnTypeExtendable, StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ExecutionId, FunctionMetadata, FunctionRegistry, IfcFqnName, InvalidNameError,
+    ReturnType, ReturnTypeExtendable, StrVariant, SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
@@ -640,7 +639,7 @@ impl<'a> ImportedFnCall<'a> {
             ));
         };
         if let Val::Resource(resource) = join_set_id {
-            let resource: Resource<JoinSetResource> = resource
+            let resource: Resource<JoinSetId> = resource
                 .try_into_resource(&mut *store_ctx)
                 .inspect_err(|err| error!("Cannot turn `ResourceAny` into a `Resource` - {err:?}"))
                 .map_err(|err| format!("cannot turn `ResourceAny` into a `Resource` - {err:?}"))?;
@@ -953,11 +952,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     pub(crate) fn resource_to_join_set_id(
         &self,
-        resource: &Resource<JoinSetResource>,
+        resource: &Resource<JoinSetId>,
     ) -> Result<&JoinSetId, ResourceTableError> {
         self.resource_table
             .get(resource)
-            .map(|resource| &resource.join_set_id)
             .inspect_err(|err| error!("Cannot get resource - {err:?}"))
     }
 
@@ -966,7 +964,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         name: String,
         kind: JoinSetKind,
         wasm_backtrace: Option<storage::WasmBacktrace>,
-    ) -> Result<Resource<JoinSetResource>, JoinSetCreateError> {
+    ) -> Result<Resource<JoinSetId>, JoinSetCreateError> {
         if !self.event_history.join_set_name_exists(&name, kind) {
             let join_set_id = JoinSetId::new(kind, StrVariant::from(name))
                 .map_err(JoinSetCreateError::InvalidNameError)?;
@@ -981,13 +979,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
             )
             .await
             .map_err(JoinSetCreateError::ApplyError)?;
-            let join_set = JoinSetResource {
-                join_set_id,
-                closing_strategy: ClosingStrategy::default(),
-            };
             let join_set = self
                 .resource_table
-                .push(join_set)
+                .push(join_set_id)
                 .map_err(JoinSetCreateError::ResourceTableError)?;
             Ok(join_set)
         } else {
@@ -1052,12 +1046,12 @@ impl<C: ClockFn> WorkflowCtx<C> {
         inst_join_set_ifc
             .resource_async(
                 "join-set",
-                ResourceType::host::<JoinSetResource>(),
+                ResourceType::host::<JoinSetId>(),
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>, rep: u32| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let resource: Resource<JoinSetResource> =
+                        let resource: Resource<JoinSetId> =
                             wasmtime::component::Resource::new_own(rep);
                         host.join_set_close(resource, wasm_backtrace).await
                     })
@@ -1073,7 +1067,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .func_wrap(
                 "[method]join-set.id",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (resource,): (Resource<JoinSetResource>,)| {
+                      (resource,): (Resource<JoinSetId>,)| {
                     let host = caller.data_mut();
                     let id = host.resource_to_join_set_id(&resource)?.to_string();
                     Ok((id,))
@@ -1084,38 +1078,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 err: err.into(),
             })?;
 
-        // set-closing-strategy: func(closing-strategy: closing-strategy)
-        inst_join_set_ifc
-            .func_wrap_async(
-                "[method]join-set.set-closing-strategy",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (resource, closing_strategy): (
-                    Resource<JoinSetResource>,
-                    ClosingStrategy_4_0_0,
-                )| {
-                    Box::new(async move {
-                        let host = caller.data_mut();
-                        let join_set = host
-                            .resource_table
-                            .get_mut(&resource)
-                            .inspect_err(|err| error!("Cannot get resource - {err:?}"))?;
-                        join_set.closing_strategy = ClosingStrategy::from(closing_strategy);
-                        Ok(())
-                    })
-                },
-            )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function set-closing-strategy"),
-                err: err.into(),
-            })?;
-
         // submit-delay: func(timeout: schedule-at) -> delay-id
         inst_join_set_ifc
             .func_wrap_async(
                 "[method]join-set.submit-delay",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                       (resource, schedule_at): (
-                    Resource<JoinSetResource>,
+                    Resource<JoinSetId>,
                     ScheduleAt_4_0_0,
                 )| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
@@ -1140,7 +1109,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .func_wrap_async(
                 "[method]join-set.join-next",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (resource,): (Resource<JoinSetResource>,)| {
+                      (resource,): (Resource<JoinSetId>,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
@@ -1284,7 +1253,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .func_wrap_async(
                 "join-set-close",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
-                      (join_set_resource,): (Resource<JoinSetResource>,)| {
+                      (join_set_resource,): (Resource<JoinSetId>,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
@@ -1304,23 +1273,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
     }
 
     pub(crate) async fn join_sets_close_on_finish(&mut self) -> Result<(), ApplyError> {
-        debug!("join_sets_close_on_finish {:?}", self.resource_table);
-        for join_set in self.resource_table.iter_mut() {
-            // FIXME: is/will this be deterministic?
-            debug!("Attempting to convert {join_set:?}");
-            let Some(join_set) = join_set.downcast_ref::<JoinSetResource>() else {
-                // Must be `Tombstone`:
-                // Remove once https://github.com/bytecodealliance/wasmtime/issues/12113 is resolved
-                continue;
-            };
-            debug!("Closing {join_set:?}");
-            self.event_history
-                .join_set_close_inner(join_set, &mut self.db_connection, self.clock_fn.now(), None)
-                .await?;
-        }
-        // Clean the table, although `join_sets_close_on_finish` should be called just once.
-        std::mem::take(&mut self.resource_table);
-        self.event_history.finalize()?;
+        self.event_history
+            .finalize(&mut self.db_connection, self.clock_fn.now())
+            .await?;
         Ok(())
     }
 
@@ -1373,10 +1328,10 @@ enum JoinSetCreateError {
 mod workflow_support {
     use super::{ClockFn, WorkflowCtx, WorkflowFunctionError, types_4_0_0};
     use crate::workflow::event_history::{JoinNext, Persist, SubmitDelay};
+    use crate::workflow::host_exports;
     use crate::workflow::host_exports::v4_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v4_0_0::obelisk::types::join_set::JoinNextError;
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4, JoinSetCreateError};
-    use crate::workflow::{JoinSetResource, host_exports};
     use concepts::storage::HistoryEventScheduleAt;
     use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind};
     use concepts::{FunctionFqn, storage};
@@ -1388,13 +1343,13 @@ mod workflow_support {
     impl<C: ClockFn> WorkflowCtx<C> {
         pub(crate) async fn join_set_close(
             &mut self,
-            resource: Resource<JoinSetResource>,
+            resource: Resource<JoinSetId>,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<()> {
-            let join_set = self.resource_table.delete(resource)?;
+            let join_set_id = self.resource_table.delete(resource)?;
             self.event_history
                 .join_set_close(
-                    &join_set,
+                    &join_set_id,
                     &mut self.db_connection,
                     self.clock_fn.now(),
                     wasm_backtrace,
@@ -1541,7 +1496,7 @@ mod workflow_support {
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<
             Result<
-                Resource<JoinSetResource>,
+                Resource<JoinSetId>,
                 host_exports::v4_0_0::obelisk::workflow::workflow_support::JoinSetCreateError,
             >,
         > {
@@ -1574,7 +1529,7 @@ mod workflow_support {
         pub(crate) async fn join_set_create_generated(
             &mut self,
             wasm_backtrace: Option<storage::WasmBacktrace>,
-        ) -> wasmtime::Result<Resource<JoinSetResource>> {
+        ) -> wasmtime::Result<Resource<JoinSetId>> {
             let name = self.event_history.next_join_set_name_generated();
             trace!("new_join_set_generated: {name}");
             self.persist_join_set_with_kind(name, JoinSetKind::Generated, wasm_backtrace)
@@ -1883,7 +1838,6 @@ pub(crate) mod tests {
                             .resource_table
                             .get(&join_set_resource)
                             .expect("just inserted the resource to the table")
-                            .join_set_id
                             .clone();
                         let target_ifc = target_ffqn.ifc_fqn.clone();
                         let submit_ffqn = FunctionFqn {
@@ -1933,7 +1887,6 @@ pub(crate) mod tests {
                                 .resource_table
                                 .get(&join_set_resource)
                                 .expect("just inserted the resource to the table")
-                                .join_set_id
                                 .clone()
                         };
                         workflow_ctx

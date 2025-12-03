@@ -365,14 +365,6 @@ impl<C: ClockFn> HostJoinSet for WebhookEndpointCtx<C> {
         unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }
 
-    fn set_closing_strategy(
-        &mut self,
-        _self_: wasmtime::component::Resource<JoinSetId>,
-        _closing_strategy: types_v4_0_0::obelisk::types::join_set::ClosingStrategy,
-    ) -> () {
-        unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
-    }
-
     fn submit_delay(
         &mut self,
         _self_: wasmtime::component::Resource<JoinSetId>,
