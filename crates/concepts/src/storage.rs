@@ -617,7 +617,11 @@ pub struct AppendEventsToExecution {
 #[derive(Clone, Debug)]
 pub struct AppendResponseToExecution {
     pub parent_execution_id: ExecutionId,
-    pub parent_response_event: JoinSetResponseEventOuter,
+    pub created_at: DateTime<Utc>,
+    pub join_set_id: JoinSetId,
+    pub child_execution_id: ExecutionIdDerived,
+    pub finished_version: Version,
+    pub result: SupportedFunctionReturnValue,
 }
 
 #[async_trait]

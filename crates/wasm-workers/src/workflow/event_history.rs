@@ -1263,17 +1263,11 @@ impl EventHistory {
                             },
                             AppendResponseToExecution {
                                 parent_execution_id: parent_id,
-                                parent_response_event: JoinSetResponseEventOuter {
-                                    created_at: called_at,
-                                    event: JoinSetResponseEvent {
-                                        join_set_id,
-                                        event: JoinSetResponse::ChildExecutionFinished {
-                                            child_execution_id: target_execution_id.clone(),
-                                            finished_version: stub_finished_version.clone(),
-                                            result: result.clone(),
-                                        },
-                                    },
-                                },
+                                created_at: called_at,
+                                join_set_id,
+                                child_execution_id: target_execution_id.clone(),
+                                finished_version: stub_finished_version.clone(),
+                                result: result.clone(),
                             },
                             called_at,
                         )

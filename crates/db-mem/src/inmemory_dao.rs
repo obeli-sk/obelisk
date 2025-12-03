@@ -817,7 +817,17 @@ impl DbHolder {
             self.append_batch(events.batch, &events.execution_id, events.version)?;
         self.append_response(
             &response.parent_execution_id,
-            response.parent_response_event,
+            JoinSetResponseEventOuter {
+                created_at: response.created_at,
+                event: JoinSetResponseEvent {
+                    join_set_id: response.join_set_id.clone(),
+                    event: JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id: response.child_execution_id.clone(),
+                        finished_version: response.finished_version.clone(),
+                        result: response.result.clone(),
+                    },
+                },
+            },
         )?;
         Ok(child_version)
     }

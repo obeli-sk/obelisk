@@ -2313,17 +2313,11 @@ pub(crate) mod tests {
                 },
                 AppendResponseToExecution {
                     parent_execution_id,
-                    parent_response_event: JoinSetResponseEventOuter {
-                        created_at,
-                        event: JoinSetResponseEvent {
-                            join_set_id,
-                            event: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id: stub_execution_id,
-                                finished_version: stub_finished_version.clone(),
-                                result,
-                            },
-                        },
-                    },
+                    created_at,
+                    join_set_id,
+                    child_execution_id: stub_execution_id,
+                    finished_version: stub_finished_version.clone(),
+                    result,
                 },
                 created_at,
             )

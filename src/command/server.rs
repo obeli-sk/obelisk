@@ -500,17 +500,11 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     },
                     AppendResponseToExecution {
                         parent_execution_id,
-                        parent_response_event: JoinSetResponseEventOuter {
-                            created_at,
-                            event: JoinSetResponseEvent {
-                                join_set_id,
-                                event: JoinSetResponse::ChildExecutionFinished {
-                                    child_execution_id: execution_id.clone(),
-                                    finished_version: stub_finished_version.clone(),
-                                    result: return_value.clone(),
-                                },
-                            },
-                        },
+                        created_at,
+                        join_set_id,
+                        child_execution_id: execution_id.clone(),
+                        finished_version: stub_finished_version.clone(),
+                        result: return_value.clone(),
                     },
                     created_at,
                 )
@@ -927,31 +921,28 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         detail: None,
                     },
                 );
-                let event = JoinSetResponse::ChildExecutionFinished {
-                    child_execution_id: child_execution_id.clone(),
-                    finished_version: Version(activity_req.version),
-                    result: child_result.clone(),
-                };
+                let finished_version = Version(activity_req.version);
                 self.db_pool
                     .connection()
                     .append_batch_respond_to_parent(
                         AppendEventsToExecution {
-                            execution_id: ExecutionId::Derived(child_execution_id),
-                            version: Version(activity_req.version),
+                            execution_id: ExecutionId::Derived(child_execution_id.clone()),
+                            version: finished_version.clone(),
                             batch: vec![AppendRequest {
                                 created_at: executed_at,
                                 event: ExecutionEventInner::Finished {
-                                    result: child_result,
+                                    result: child_result.clone(),
                                     http_client_traces: None,
                                 },
                             }],
                         },
                         AppendResponseToExecution {
                             parent_execution_id: parent_execution_id,
-                            parent_response_event: JoinSetResponseEventOuter {
-                                created_at: executed_at,
-                                event: JoinSetResponseEvent { join_set_id, event },
-                            },
+                            created_at: executed_at,
+                            join_set_id,
+                            child_execution_id,
+                            finished_version,
+                            result: child_result,
                         },
                         executed_at,
                     )

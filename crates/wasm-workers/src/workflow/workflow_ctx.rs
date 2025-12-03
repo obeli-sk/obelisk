@@ -2661,17 +2661,11 @@ pub(crate) mod tests {
                 },
                 AppendResponseToExecution {
                     parent_execution_id,
-                    parent_response_event: JoinSetResponseEventOuter {
-                        created_at: sim_clock.now(),
-                        event: JoinSetResponseEvent {
-                            join_set_id,
-                            event: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id: child_execution_id.clone(),
-                                finished_version: child_log.next_version.clone(),
-                                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                            },
-                        },
-                    },
+                    created_at: sim_clock.now(),
+                    join_set_id,
+                    child_execution_id: child_execution_id.clone(),
+                    finished_version: child_log.next_version.clone(),
+                    result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 },
                 sim_clock.now(),
             )

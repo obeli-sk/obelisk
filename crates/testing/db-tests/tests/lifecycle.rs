@@ -975,17 +975,11 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_cl
                 },
                 AppendResponseToExecution {
                     parent_execution_id: parent_id.clone(),
-                    parent_response_event: JoinSetResponseEventOuter {
-                        created_at: sim_clock.now(),
-                        event: JoinSetResponseEvent {
-                            join_set_id: join_set_id.clone(),
-                            event: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id: child_id.clone(),
-                                finished_version: child_version, // will remain at 1.
-                                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                            },
-                        },
-                    },
+                    created_at: sim_clock.now(),
+                    join_set_id: join_set_id.clone(),
+                    child_execution_id: child_id.clone(),
+                    finished_version: child_version, // will remain at 1.
+                    result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 },
                 sim_clock.now(),
             )
@@ -1032,17 +1026,11 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_cl
                 },
                 AppendResponseToExecution {
                     parent_execution_id: parent_id.clone(),
-                    parent_response_event: JoinSetResponseEventOuter {
-                        created_at: sim_clock.now(),
-                        event: JoinSetResponseEvent {
-                            join_set_id: join_set_id.clone(),
-                            event: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id: child_id.clone(),
-                                finished_version: child_version,
-                                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                            },
-                        },
-                    },
+                    created_at: sim_clock.now(),
+                    join_set_id: join_set_id.clone(),
+                    child_execution_id: child_id.clone(),
+                    finished_version: child_version,
+                    result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 },
                 sim_clock.now(),
             )
