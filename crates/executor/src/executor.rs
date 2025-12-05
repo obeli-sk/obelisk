@@ -738,7 +738,13 @@ pub mod simple_worker {
                 self.worker_results_rev.lock().unwrap().pop().unwrap();
             trace!(%expected_version, version = %ctx.version, ?expected_eh, eh = ?ctx.event_history, "Running SimpleWorker");
             assert_eq!(expected_version, ctx.version);
-            assert_eq!(expected_eh, ctx.event_history);
+            assert_eq!(
+                expected_eh,
+                ctx.event_history
+                    .iter()
+                    .map(|(event, _version)| event.clone())
+                    .collect::<Vec<_>>()
+            );
             worker_result
         }
 

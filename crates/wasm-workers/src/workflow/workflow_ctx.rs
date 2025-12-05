@@ -880,7 +880,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         db_connection: CachingDbConnection,
-        event_history: Vec<HistoryEvent>,
+        event_history: Vec<(HistoryEvent, Version)>,
         responses: Vec<JoinSetResponseEvent>,
         seed: u64,
         clock_fn: C,
@@ -2322,7 +2322,7 @@ pub(crate) mod tests {
                 let execution_log = db_connection.get(&execution_id).await.unwrap();
                 let closing_join_nexts: hashbrown::HashSet<_> = execution_log
                     .event_history()
-                    .filter_map(|event| match event {
+                    .filter_map(|(event, _version)| match event {
                         HistoryEvent::JoinNext {
                             closing: true,
                             join_set_id,

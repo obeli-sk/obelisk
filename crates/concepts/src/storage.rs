@@ -98,10 +98,11 @@ impl ExecutionLog {
         }
     }
 
-    pub fn event_history(&self) -> impl Iterator<Item = HistoryEvent> + '_ {
+    #[cfg(feature = "test")]
+    pub fn event_history(&self) -> impl Iterator<Item = (HistoryEvent, Version)> + '_ {
         self.events.iter().filter_map(|event| {
             if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {
-                Some(eh.clone())
+                Some((eh.clone(), event.version.clone()))
             } else {
                 None
             }
@@ -550,7 +551,7 @@ pub struct LockedExecution {
     pub locked_event: Locked,
     pub ffqn: FunctionFqn,
     pub params: Params,
-    pub event_history: Vec<HistoryEvent>, // FIXME: Add version
+    pub event_history: Vec<(HistoryEvent, Version)>,
     pub responses: Vec<JoinSetResponseEventOuter>,
     pub parent: Option<(ExecutionId, JoinSetId)>,
     pub intermittent_event_count: u32,

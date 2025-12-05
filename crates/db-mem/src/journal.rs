@@ -310,9 +310,9 @@ impl ExecutionJournal {
                 } => {
                     let join_next_count = self
                         .event_history()
-                        .filter(|e| {
+                        .filter(|(event, _version)| {
                             matches!(
-                                e,
+                                event,
                                 HistoryEvent::JoinNext {
                                     join_set_id,
                                     ..
@@ -369,10 +369,10 @@ impl ExecutionJournal {
             .expect("journal must begin with Created event")
     }
 
-    pub fn event_history(&self) -> impl Iterator<Item = HistoryEvent> + '_ {
+    pub fn event_history(&self) -> impl Iterator<Item = (HistoryEvent, Version)> + '_ {
         self.execution_events.iter().filter_map(|event| {
             if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {
-                Some(eh.clone())
+                Some((eh.clone(), event.version.clone()))
             } else {
                 None
             }

@@ -474,7 +474,7 @@ mod index {
             // Add all open async timers
             let mut delay_req_resp = journal
                 .event_history()
-                .filter_map(|e| match e {
+                .filter_map(|(event, _version)| match event {
                     HistoryEvent::JoinSetRequest {
                         join_set_id,
                         request:
@@ -657,7 +657,13 @@ impl DbHolder {
         execution_id: &ExecutionId,
         version: Version,
         locked_event: Locked,
-    ) -> Result<(Version /* next version */, Vec<HistoryEvent>), DbErrorWrite> {
+    ) -> Result<
+        (
+            Version, /* next version */
+            Vec<(HistoryEvent, Version)>,
+        ),
+        DbErrorWrite,
+    > {
         let event = ExecutionEventInner::Locked(locked_event);
         self.append(created_at, execution_id, version, event)
             .map(|next_version| {

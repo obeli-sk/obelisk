@@ -43,7 +43,7 @@ pub struct WorkerContext {
     pub metadata: ExecutionMetadata,
     pub ffqn: FunctionFqn,
     pub params: Params,
-    pub event_history: Vec<HistoryEvent>,
+    pub event_history: Vec<(HistoryEvent, Version)>,
     pub responses: Vec<JoinSetResponseEvent>,
     pub version: Version,
     pub can_be_retried: bool,

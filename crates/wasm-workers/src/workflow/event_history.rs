@@ -97,7 +97,7 @@ pub(crate) enum ApplyError {
 pub(crate) struct EventHistory {
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     // Contains requests (events produced by the workflow)
-    event_history: Vec<(HistoryEvent, ProcessingStatus)>, // TODO: Add version
+    event_history: Vec<(HistoryEvent, ProcessingStatus, Version)>,
     // Used for `-get`ting the processed response by Execution Id.
     index_child_exe_to_processed_response_idx: HashMap<ExecutionIdDerived, usize>,
     index_child_exe_to_ffqn: HashMap<ExecutionIdDerived, FunctionFqn>,
@@ -131,7 +131,7 @@ enum FindMatchingResponse {
 impl EventHistory {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
-        event_history: Vec<HistoryEvent>,
+        event_history: Vec<(HistoryEvent, Version)>,
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
@@ -146,7 +146,7 @@ impl EventHistory {
             index_delay_id_to_expires_at: IndexMap::default(),
             event_history: event_history
                 .into_iter()
-                .map(|event| (event, Unprocessed))
+                .map(|(event, version)| (event, Unprocessed, version))
                 .collect(),
             responses: responses
                 .into_iter()
@@ -169,7 +169,9 @@ impl EventHistory {
 
     pub(crate) fn join_set_name_exists(&self, join_set_name: &str, kind: JoinSetKind) -> bool {
         // TODO: optimize
-        self.event_history.iter().any(|(event, processing_status)|
+        self.event_history
+            .iter()
+            .any(|(event, processing_status, _version)|
             // Do not look into the future as it would break replay.
             *processing_status == ProcessingStatus::Processed &&
             matches!(event, HistoryEvent::JoinSetCreate { join_set_id: found, .. }
@@ -180,7 +182,7 @@ impl EventHistory {
         // TODO: optimize
         self.event_history
             .iter()
-            .filter(|(event, processing_status)| {
+            .filter(|(event, processing_status, _version)| {
                 // Do not look into the future as it would break replay.
                 *processing_status == ProcessingStatus::Processed
                     && matches!(
@@ -202,7 +204,7 @@ impl EventHistory {
         // TODO: optimize
         self.event_history
             .iter()
-            .filter(|(event, processing_status)| {
+            .filter(|(event, processing_status, _version)| {
                 // Do not look into the future as it would break replay.
                 *processing_status == ProcessingStatus::Processed
                     && matches!(
@@ -255,12 +257,11 @@ impl EventHistory {
             EventCall::NonBlocking(event_call) => {
                 // Events that cannot block waiting for response.
                 let cloned_non_blocking = event_call.clone();
-                let history_events = self
+                let (event, version) = self
                     .append_to_db_non_blocking(event_call, db_connection, called_at)
                     .await
                     .map_err(ApplyError::DbError)?;
-                self.event_history
-                    .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
+                self.event_history.push((event, Unprocessed, version));
                 trace!("find_matching_atomic must mark the non-blocking event as Processed");
                 let non_blocking_resp = self
                     .find_matching_atomic(&EventCall::NonBlocking(cloned_non_blocking))?
@@ -325,8 +326,11 @@ impl EventHistory {
             "each EventCall must produce at least one HistoryEvent"
         );
         // Extend event history.
-        self.event_history
-            .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
+        self.event_history.extend(
+            history_events
+                .into_iter()
+                .map(|(event, version)| (event, Unprocessed, version)),
+        );
 
         let last_key_idx = keys.len() - 1;
         for (idx, key) in keys.into_iter().enumerate() {
@@ -546,10 +550,9 @@ impl EventHistory {
             self.join_set_close_inner(&join_set_id, db_connection, called_at, None)
                 .await?;
         }
-        if let Some((found_idx, first_unprocessed)) = self.first_unprocessed_request() {
+        if let Some((_found_idx, first_unprocessed, version)) = self.first_unprocessed_request() {
             return Err(ApplyError::NondeterminismDetected(format!(
-                // TODO: Add version
-                "found unprocessed request stored at index {found_idx}: event: {first_unprocessed}",
+                "found unprocessed request stored at version {version}: event: {first_unprocessed}",
             )));
         }
         Ok(())
@@ -585,13 +588,13 @@ impl EventHistory {
         unreachable!()
     }
 
-    fn first_unprocessed_request(&self) -> Option<(usize, &HistoryEvent)> {
+    fn first_unprocessed_request(&self) -> Option<(usize, &HistoryEvent, &Version)> {
         self.event_history
             .iter()
             .enumerate()
-            .find_map(|(idx, (event, status))| {
+            .find_map(|(idx, (event, status, version))| {
                 if *status == Unprocessed {
-                    Some((idx, event))
+                    Some((idx, event, version))
                 } else {
                     None
                 }
@@ -671,7 +674,8 @@ impl EventHistory {
         &mut self,
         key: &DeterministicKey,
     ) -> Result<FindMatchingResponse, ApplyError> {
-        let Some((found_idx, found_request_event)) = self.first_unprocessed_request() else {
+        let Some((found_idx, found_request_event, _version)) = self.first_unprocessed_request()
+        else {
             return Ok(FindMatchingResponse::NotFound);
         };
         trace!("Finding match for {key:?}, [{found_idx}] {found_request_event:?}");
@@ -1021,10 +1025,12 @@ impl EventHistory {
                 )))
             }
 
-            (key, found) => Err(ApplyError::NondeterminismDetected(format!(
-                // TODO: Add version
-                "key does not match event stored at index {found_idx}: key: {key}, event: {found}",
-            ))),
+            (key, found) => {
+                let version = &self.event_history[found_idx].2;
+                Err(ApplyError::NondeterminismDetected(format!(
+                    "key does not match event stored at version {version}: key: {key}, event: {found}",
+                )))
+            }
         }
     }
 
@@ -1034,7 +1040,7 @@ impl EventHistory {
         event_call: EventCallNonBlocking,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
-    ) -> Result<Vec<HistoryEvent>, DbErrorWrite> {
+    ) -> Result<(HistoryEvent, Version), DbErrorWrite> {
         trace!("append_to_db_non_blocking {}", db_connection.version);
         match event_call {
             EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
@@ -1044,13 +1050,13 @@ impl EventHistory {
                 // Cacheable event.
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
                 let event = HistoryEvent::JoinSetCreate { join_set_id };
-                let history_events = vec![event.clone()];
-                let join_set = AppendRequest {
+                let history_event = (event.clone(), db_connection.version.clone());
+                let join_set_create = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
                 let cacheable_event = CacheableDbEvent::JoinSetCreate {
-                    request: join_set,
+                    request: join_set_create,
                     version: db_connection.version.clone(),
                     backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
                         execution_id: db_connection.execution_id.clone(),
@@ -1063,7 +1069,7 @@ impl EventHistory {
                 db_connection
                     .append_non_blocking(cacheable_event, called_at)
                     .await?;
-                Ok(history_events)
+                Ok(history_event)
             }
 
             EventCallNonBlocking::Persist(Persist {
@@ -1073,7 +1079,7 @@ impl EventHistory {
             }) => {
                 // Cacheable event.
                 let event = HistoryEvent::Persist { value, kind };
-                let history_events = vec![event.clone()];
+                let history_event = (event.clone(), db_connection.version.clone());
                 let request = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -1092,7 +1098,7 @@ impl EventHistory {
                 db_connection
                     .append_non_blocking(cacheable_event, called_at)
                     .await?;
-                Ok(history_events)
+                Ok(history_event)
             }
 
             EventCallNonBlocking::SubmitChildExecution(SubmitChildExecution {
@@ -1113,7 +1119,7 @@ impl EventHistory {
                         params: params.clone(),
                     },
                 };
-                let history_events = vec![event.clone()];
+                let history_event = (event.clone(), db_connection.version.clone());
                 let append_req = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -1145,7 +1151,7 @@ impl EventHistory {
                 db_connection
                     .append_non_blocking(cacheable_event, called_at)
                     .await?;
-                Ok(history_events)
+                Ok(history_event)
             }
 
             EventCallNonBlocking::SubmitDelay(SubmitDelay {
@@ -1166,11 +1172,10 @@ impl EventHistory {
                         schedule_at,
                     },
                 };
+                let history_event = (event.clone(), db_connection.version.clone());
                 let delay_req = AppendRequest {
                     created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent {
-                        event: event.clone(),
-                    },
+                    event: ExecutionEventInner::HistoryEvent { event },
                 };
                 let cacheable_event = CacheableDbEvent::SubmitDelay {
                     request: delay_req,
@@ -1186,7 +1191,7 @@ impl EventHistory {
                 db_connection
                     .append_non_blocking(cacheable_event, called_at)
                     .await?;
-                Ok(vec![event])
+                Ok(history_event)
             }
 
             EventCallNonBlocking::Schedule(Schedule {
@@ -1204,7 +1209,7 @@ impl EventHistory {
                     schedule_at,
                 };
 
-                let history_events = vec![event.clone()];
+                let history_event = (event.clone(), db_connection.version.clone());
                 let append_req = AppendRequest {
                     event: ExecutionEventInner::HistoryEvent { event },
                     created_at: called_at,
@@ -1238,7 +1243,7 @@ impl EventHistory {
                     .append_non_blocking(non_blocking_event, called_at)
                     .await?;
 
-                Ok(history_events)
+                Ok(history_event)
             }
 
             EventCallNonBlocking::Stub(Stub {
@@ -1340,7 +1345,7 @@ impl EventHistory {
                     result,
                     persist_result,
                 };
-                let history_events = vec![event.clone()];
+                let history_event = (event.clone(), db_connection.version.clone());
                 let history_event_req = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -1354,7 +1359,7 @@ impl EventHistory {
                         &self.locked_event.component_id,
                     )
                     .await?;
-                Ok(history_events)
+                Ok(history_event)
             }
         }
     }
@@ -1366,7 +1371,7 @@ impl EventHistory {
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<Vec<HistoryEvent>, DbErrorWrite> {
+    ) -> Result<Vec<(HistoryEvent, Version)>, DbErrorWrite> {
         trace!("append_to_db_blocking {}", db_connection.version);
         match event_call {
             EventCallBlocking::JoinNext(JoinNext {
@@ -1389,7 +1394,7 @@ impl EventHistory {
                             requested_ffqn: None,
                         }
                     };
-                let history_events = vec![event.clone()];
+                let history_events = vec![(event.clone(), db_connection.version.clone())];
                 let join_next = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -1426,7 +1431,7 @@ impl EventHistory {
                             requested_ffqn: Some(requested_ffqn),
                         }
                     };
-                let history_events = vec![event.clone()];
+                let history_events = vec![(event.clone(), db_connection.version.clone())];
                 let append_request = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -1458,7 +1463,8 @@ impl EventHistory {
                 let event = HistoryEvent::JoinSetCreate {
                     join_set_id: join_set_id.clone(),
                 };
-                history_events.push(event.clone());
+                let mut version = db_connection.version.clone();
+                history_events.push((event.clone(), version.clone()));
                 let join_set = AppendRequest {
                     event: ExecutionEventInner::HistoryEvent { event },
                     created_at: called_at,
@@ -1471,7 +1477,8 @@ impl EventHistory {
                         params: params.clone(),
                     },
                 };
-                history_events.push(event.clone());
+                version = version.increment();
+                history_events.push((event.clone(), version.clone()));
                 let child_exec_req = AppendRequest {
                     event: ExecutionEventInner::HistoryEvent { event },
                     created_at: called_at,
@@ -1482,7 +1489,8 @@ impl EventHistory {
                     requested_ffqn: Some(ffqn.clone()),
                     closing: false,
                 };
-                history_events.push(event.clone());
+                version = version.increment();
+                history_events.push((event.clone(), version.clone()));
                 let join_next = AppendRequest {
                     event: ExecutionEventInner::HistoryEvent { event },
                     created_at: called_at,
@@ -1525,7 +1533,8 @@ impl EventHistory {
                 let event = HistoryEvent::JoinSetCreate {
                     join_set_id: join_set_id.clone(),
                 };
-                history_events.push(event.clone());
+                let mut version = db_connection.version.clone();
+                history_events.push((event.clone(), version.clone()));
                 let join_set = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -1538,7 +1547,8 @@ impl EventHistory {
                         schedule_at,
                     },
                 };
-                history_events.push(event.clone());
+                version = version.increment();
+                history_events.push((event.clone(), version.clone()));
                 let delay_req = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -1549,7 +1559,8 @@ impl EventHistory {
                     closing: false,
                     requested_ffqn: None,
                 };
-                history_events.push(event.clone());
+                version = version.increment();
+                history_events.push((event.clone(), version.clone()));
                 let join_next = AppendRequest {
                     created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -1650,7 +1661,7 @@ impl EventHistory {
         // Processing status does matter in order to make replays make the same decisions.
         self.event_history
             .iter()
-            .filter(|(event, processing_status)| {
+            .filter(|(event, processing_status, _version)| {
                 *processing_status == Processed
                     && match event {
                         HistoryEvent::JoinSetRequest {
@@ -1672,7 +1683,7 @@ impl EventHistory {
         // Processing status does matter in order to make replays make the same decisions.
         self.event_history
             .iter()
-            .filter(|(event, processing_status)| {
+            .filter(|(event, processing_status, _version)| {
                 *processing_status == Processed
                     && match event {
                         HistoryEvent::JoinNext {
@@ -1699,7 +1710,7 @@ impl EventHistory {
         let idx = self
             .event_history
             .iter()
-            .filter(|(event, processing_status)| {
+            .filter(|(event, processing_status, _version)| {
                 // Ignore unprocessed events, which happens only on replay where we need to produce "old" ids.
                 // Applying the `EventCall::SubmitDelay` will immediately mark this as processed.
                 *processing_status == Processed &&
@@ -3422,7 +3433,7 @@ mod tests {
             .unwrap_err();
         let reason = assert_matches!(err, ApplyError::NondeterminismDetected(reason) => reason);
         assert_eq!(
-            "found unprocessed request stored at index 0: event: JoinSetCreate(o:)",
+            "found unprocessed request stored at version 1: event: JoinSetCreate(o:)",
             reason
         );
 

@@ -1699,23 +1699,33 @@ impl SqlitePool {
         // Fetch event_history and `Created` event to construct the response.
         let mut events = tx
             .prepare(
-                "SELECT json_value FROM t_execution_log WHERE \
-                execution_id = :execution_id AND (variant = :v1 OR variant = :v2) \
+                "SELECT json_value, version FROM t_execution_log WHERE \
+                execution_id = :execution_id AND (variant = :variant1 OR variant = :variant2) \
                 ORDER BY version",
             )?
             .query_map(
                 named_params! {
                     ":execution_id": execution_id.to_string(),
-                    ":v1": DUMMY_CREATED.variant(),
-                    ":v2": DUMMY_HISTORY_EVENT.variant(),
+                    ":variant1": DUMMY_CREATED.variant(),
+                    ":variant2": DUMMY_HISTORY_EVENT.variant(),
                 },
                 |row| {
-                    row.get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
-                        .map(|wrapper| wrapper.0)
+                    let created_at_fake = DateTime::from_timestamp_nanos(0); // not used
+                    let event = row
+                        .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
                         .map_err(|serde| {
                             error!("Cannot deserialize {row:?} - {serde:?}");
-                            consistency_rusqlite("cannot deserialize json value")
-                        })
+                            consistency_rusqlite("cannot deserialize event")
+                        })?
+                        .0;
+                    let version = Version(row.get("version")?);
+
+                    Ok(ExecutionEvent {
+                        created_at: created_at_fake,
+                        event,
+                        backtrace_id: None,
+                        version,
+                    })
                 },
             )?
             .collect::<Result<Vec<_>, _>>()?
@@ -1727,7 +1737,7 @@ impl SqlitePool {
             parent,
             metadata,
             ..
-        }) = events.pop_front()
+        }) = events.pop_front().map(|outer| outer.event)
         else {
             error!("Execution log must contain at least `Created` event");
             return Err(consistency_db_err("execution log must contain `Created` event").into());
@@ -1735,9 +1745,9 @@ impl SqlitePool {
 
         let event_history = events
             .into_iter()
-            .map(|event| {
+            .map(|ExecutionEvent { event, version, .. }| {
                 if let ExecutionEventInner::HistoryEvent { event } = event {
-                    Ok(event)
+                    Ok((event, version))
                 } else {
                     error!("Rows can only contain `Created` and `HistoryEvent` event kinds");
                     Err(consistency_db_err(
