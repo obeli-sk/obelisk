@@ -2,9 +2,10 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, RunId};
 use concepts::storage::{
-    AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest, DbConnection,
-    ExecutionEventInner, ExpiredDelay, ExpiredLock, ExpiredTimer, JoinSetRequest, JoinSetResponse,
-    JoinSetResponseEventOuter, LockedBy, LockedExecution, PendingState, Version,
+    self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CancelOutcome,
+    CreateRequest, DbConnection, ExecutionEventInner, ExpiredDelay, ExpiredLock, ExpiredTimer,
+    JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution,
+    PendingState, Version,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
@@ -1784,4 +1785,85 @@ async fn append_response_with_same_id_twice_should_fail(
         .unwrap_err();
     let err = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState(str)) => str.to_string());
     assert_eq!("conflicting response id", err);
+}
+
+#[rstest]
+#[tokio::test]
+async fn delay_cancellation_twice_should_report_already_finished(
+    #[values(Database::Sqlite, Database::Memory)] database: Database,
+) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection();
+
+    let execution_id = ExecutionId::generate();
+    // Create
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+    let lock_expiry = Duration::from_millis(100);
+    let mut version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + lock_expiry, // lock expires at
+        RunId::generate(),
+    )
+    .await;
+
+    // Create joinset
+    let join_set_id = JoinSetId::new(JoinSetKind::Named, "x".into()).unwrap();
+    create_join_set(
+        &execution_id,
+        &mut version,
+        join_set_id.clone(),
+        sim_clock.now(),
+        db_connection.as_ref(),
+    )
+    .await;
+
+    let delay_id = DelayId::new(&execution_id, &join_set_id);
+    db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: Now.now(),
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id: join_set_id.clone(),
+                        request: JoinSetRequest::DelayRequest {
+                            delay_id: delay_id.clone(),
+                            expires_at: sim_clock.now() + lock_expiry,
+                            schedule_at: HistoryEventScheduleAt::In(lock_expiry),
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    let res = storage::cancel_delay(db_connection.as_ref(), delay_id.clone(), sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Success, res);
+    let res = storage::cancel_delay(db_connection.as_ref(), delay_id.clone(), sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::AlreadyFinished, res);
+    db_close.close().await;
 }

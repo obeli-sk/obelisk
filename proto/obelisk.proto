@@ -548,5 +548,9 @@ message CancelRequest {
 }
 
 message CancelResponse {
-
+    enum CancelOutcome {
+        SUCCESS = 0;
+        ALREADY_FINISHED = 1;
+    }
+    CancelOutcome outcome = 1;
 }

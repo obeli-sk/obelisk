@@ -4,10 +4,10 @@ use concepts::{
     SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, RunId},
     storage::{
-        DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent, ExecutionEventInner,
-        ExecutionListPagination, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, Locked,
-        LockedBy, Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
-        PendingStateFinishedResultKind, PendingStateLocked, VersionType,
+        CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
+        ExecutionEventInner, ExecutionListPagination, HistoryEvent, HistoryEventScheduleAt,
+        JoinSetRequest, Locked, LockedBy, Pagination, PendingState, PendingStateFinished,
+        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateLocked, VersionType,
         http_client_trace::HttpClientTrace,
     },
 };
@@ -625,6 +625,17 @@ impl From<HttpClientTrace> for grpc_gen::HttpClientTrace {
                 Ok(status) => grpc_gen::http_client_trace::Result::Status(u32::from(status)),
                 Err(err) => grpc_gen::http_client_trace::Result::Error(err),
             }),
+        }
+    }
+}
+
+impl From<CancelOutcome> for grpc_gen::cancel_response::CancelOutcome {
+    fn from(value: CancelOutcome) -> Self {
+        match value {
+            CancelOutcome::Success => grpc_gen::cancel_response::CancelOutcome::Success,
+            CancelOutcome::AlreadyFinished => {
+                grpc_gen::cancel_response::CancelOutcome::AlreadyFinished
+            }
         }
     }
 }

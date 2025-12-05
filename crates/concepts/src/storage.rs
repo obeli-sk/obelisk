@@ -700,7 +700,7 @@ pub trait DbConnection: DbExecutor {
         execution_id: ExecutionId,
         join_set_id: JoinSetId,
         delay_id: DelayId,
-        result: Result<(), ()>,
+        outcome: Result<(), ()>, // Successfully awaited by the watcher - `Ok(())` or cancelled - `Err(())`
     ) -> Result<(), DbErrorWrite>;
 
     /// Append a batch of events to an existing execution log, and append a response to a parent execution.
@@ -870,7 +870,7 @@ pub async fn cancel_activity_with_retries(
     child_execution_id_derived: &ExecutionIdDerived,
     created_at: DateTime<Utc>,
     mut retries: u8,
-) -> Result<(), DbErrorWrite> {
+) -> Result<CancelOutcome, DbErrorWrite> {
     loop {
         let res = cancel_activity(db_connection, child_execution_id_derived, created_at).await;
         if res.is_ok() || retries == 0 {
@@ -880,11 +880,41 @@ pub async fn cancel_activity_with_retries(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CancelOutcome {
+    Success,
+    AlreadyFinished,
+}
+
+pub async fn cancel_delay(
+    db_connection: &dyn DbConnection,
+    delay_id: DelayId,
+    created_at: DateTime<Utc>,
+) -> Result<CancelOutcome, DbErrorWrite> {
+    let (parent_execution_id, join_set_id) = delay_id.split_to_parts();
+    let res = db_connection
+        .append_delay_response(
+            created_at,
+            parent_execution_id,
+            join_set_id,
+            delay_id,
+            Err(()), // Mark as cancelled.
+        )
+        .await;
+    match res {
+        Ok(()) => Ok(CancelOutcome::Success),
+        Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState(_))) => {
+            Ok(CancelOutcome::AlreadyFinished)
+        }
+        Err(err) => Err(err),
+    }
+}
+
 pub async fn cancel_activity(
     db_connection: &dyn DbConnection,
     child_execution_id_derived: &ExecutionIdDerived,
     created_at: DateTime<Utc>,
-) -> Result<(), DbErrorWrite> {
+) -> Result<CancelOutcome, DbErrorWrite> {
     debug!("Determining cancellation state of {child_execution_id_derived}");
     let (parent_execution_id, join_set_id) = child_execution_id_derived.split_to_parts();
     let child_execution_id = ExecutionId::Derived(child_execution_id_derived.clone());
@@ -894,7 +924,7 @@ pub async fn cancel_activity(
         .map_err(DbErrorWrite::from)?;
     if matches!(last_event.event, ExecutionEventInner::Finished { .. }) {
         debug!("Not cancelling, {child_execution_id_derived} is already finished");
-        Ok(())
+        Ok(CancelOutcome::AlreadyFinished)
     } else {
         let finished_version = last_event.version.increment();
         debug!("Cancelling activity {child_execution_id_derived} at {finished_version}");
@@ -931,7 +961,7 @@ pub async fn cancel_activity(
             )
             .await?;
         debug!("Cancelled {child_execution_id_derived}");
-        Ok(())
+        Ok(CancelOutcome::Success)
     }
 }
 

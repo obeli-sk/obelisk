@@ -883,7 +883,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let request = request.into_inner();
         let executed_at = Now.now();
         let response_id = request.request.argument_must_exist("request")?;
-        match response_id {
+        let outcome = match response_id {
             grpc_gen::cancel_request::Request::Activity(activity_req) => {
                 let child_execution_id = activity_req
                     .child_execution_id
@@ -912,31 +912,21 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     CANCEL_RETRIES,
                 )
                 .await
-                .to_status()?;
+                .to_status()?
             }
             grpc_gen::cancel_request::Request::Delay(delay_req) => {
                 let delay_id = delay_req.delay_id.argument_must_exist("delay_id")?;
                 let delay_id = DelayId::try_from(delay_id)?;
-                let (parent_execution_id, join_set_id) = delay_id.split_to_parts();
-                tracing::Span::current().record(
-                    "execution_id",
-                    tracing::field::display(&parent_execution_id),
-                );
-                self.db_pool
-                    .connection()
-                    .append_delay_response(
-                        executed_at,
-                        parent_execution_id,
-                        join_set_id,
-                        delay_id,
-                        Ok(()),
-                    )
+                let conn = self.db_pool.connection();
+                storage::cancel_delay(conn.as_ref(), delay_id, executed_at)
                     .await
-                    .to_status()?;
+                    .to_status()?
             }
-        }
+        };
 
-        Ok(tonic::Response::new(grpc_gen::CancelResponse {}))
+        Ok(tonic::Response::new(grpc_gen::CancelResponse {
+            outcome: grpc_gen::cancel_response::CancelOutcome::from(outcome).into(),
+        }))
     }
 }
 

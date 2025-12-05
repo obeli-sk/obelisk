@@ -448,16 +448,12 @@ impl EventHistory {
                 }
             } else if let ResponseId::DelayId(delay_id) = response_id {
                 debug!("Cancelling {delay_id}");
-                let res = db_connection
-                    .db_connection
-                    .append_delay_response(
-                        called_at,
-                        db_connection.execution_id.clone(),
-                        join_set_id.clone(),
-                        delay_id.clone(),
-                        Err(()),
-                    )
-                    .await;
+                let res = storage::cancel_delay(
+                    db_connection.db_connection.as_ref(),
+                    delay_id.clone(),
+                    called_at,
+                )
+                .await;
                 if let Err(err) = res {
                     // This means that the watcher expired the delay in the mean time.
                     trace!("Ignoring failure to cancel {delay_id} - {err:?}");
