@@ -22,7 +22,6 @@ use concepts::FunctionRegistry;
 use concepts::InvalidNameError;
 use concepts::JoinSetId;
 use concepts::JoinSetKind;
-use concepts::PermanentFailureKind;
 use concepts::SupportedFunctionReturnValue;
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
@@ -435,63 +434,14 @@ impl EventHistory {
             if let ResponseId::ChildExecutionId(child_execution_id_derived) = response_id
                 && component_type.is_activity()
             {
-                debug!("Determining cancellation state of {child_execution_id_derived}");
-                let child_execution_id = ExecutionId::Derived(child_execution_id_derived.clone());
-                let last_event = db_connection
-                    .db_connection
-                    .get_last_execution_event(&child_execution_id)
-                    .await
-                    .map_err(|err| ApplyError::DbError(DbErrorWrite::from(err)))?;
-                if matches!(last_event.event, ExecutionEventInner::Finished { .. }) {
-                    debug!("Not cancelling, {child_execution_id_derived} is already finished");
-                } else {
-                    let finished_version = last_event.version.increment();
-                    debug!(
-                        "Cancelling activity {child_execution_id_derived} at {finished_version}"
-                    );
-                    let child_result = SupportedFunctionReturnValue::ExecutionError(
-                        concepts::FinishedExecutionError::PermanentFailure {
-                            reason_inner: String::new(),
-                            reason_full: String::new(),
-                            kind: PermanentFailureKind::Cancelled,
-                            detail: None,
-                        },
-                    );
-                    let res = db_connection
-                        .db_connection
-                        .append_batch_respond_to_parent(
-                            AppendEventsToExecution {
-                                execution_id: child_execution_id,
-                                version: finished_version.clone(),
-                                batch: vec![AppendRequest {
-                                    created_at: called_at,
-                                    event: ExecutionEventInner::Finished {
-                                        result: child_result.clone(),
-                                        http_client_traces: None,
-                                    },
-                                }],
-                            },
-                            AppendResponseToExecution {
-                                parent_execution_id: db_connection.execution_id.clone(),
-                                created_at: called_at,
-                                join_set_id: join_set_id.clone(),
-                                child_execution_id: child_execution_id_derived.clone(),
-                                finished_version,
-                                result: child_result,
-                            },
-                            called_at,
-                        )
-                        .await;
-                    match res {
-                        Ok(_) => {
-                            debug!("Cancelled {child_execution_id_derived}");
-                        }
-                        Err(err) => {
-                            debug!(
-                                "Ignoring failure to cancel {child_execution_id_derived} - {err:?}"
-                            );
-                        }
-                    }
+                let res = storage::cancel_activity(
+                    db_connection.db_connection.as_ref(),
+                    child_execution_id_derived,
+                    called_at,
+                )
+                .await;
+                if let Err(err) = res {
+                    debug!("Ignoring failure to cancel {child_execution_id_derived} - {err:?}");
                 }
             } else if let ResponseId::DelayId(delay_id) = response_id {
                 debug!("Cancelling {delay_id}");

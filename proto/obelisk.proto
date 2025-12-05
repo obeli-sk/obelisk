@@ -537,7 +537,6 @@ message GetBacktraceSourceResponse {
 message CancelRequest {
     message CancelRequestActivity {
         ExecutionId child_execution_id = 1;
-        uint32 version = 2;
     }
     message CancelRequestDelay {
         DelayId delay_id = 1;

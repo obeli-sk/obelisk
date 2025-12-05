@@ -45,11 +45,11 @@ use concepts::IfcFqnName;
 use concepts::PackageIfcFns;
 use concepts::ParameterType;
 use concepts::Params;
-use concepts::PermanentFailureKind;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
 use concepts::SupportedFunctionReturnValue;
 use concepts::prefixed_ulid::DelayId;
+use concepts::storage;
 use concepts::storage::AppendEventsToExecution;
 use concepts::storage::AppendRequest;
 use concepts::storage::AppendResponseToExecution;
@@ -908,50 +908,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         "cancelled execution must be an activity",
                     ));
                 }
-
-                let (parent_execution_id, join_set_id) =
-                    child_execution_id.split_to_parts().map_err(|err| {
-                        tonic::Status::invalid_argument(format!(
-                            "cannot split child_execution_id to parts - {err}"
-                        ))
-                    })?;
-                tracing::Span::current().record(
-                    "execution_id",
-                    tracing::field::display(&parent_execution_id),
-                );
-                let child_result = SupportedFunctionReturnValue::ExecutionError(
-                    concepts::FinishedExecutionError::PermanentFailure {
-                        reason_inner: String::new(),
-                        reason_full: String::new(),
-                        kind: PermanentFailureKind::Cancelled,
-                        detail: None,
-                    },
-                );
-                let finished_version = Version(activity_req.version);
-                conn.append_batch_respond_to_parent(
-                    AppendEventsToExecution {
-                        execution_id: ExecutionId::Derived(child_execution_id.clone()),
-                        version: finished_version.clone(),
-                        batch: vec![AppendRequest {
-                            created_at: executed_at,
-                            event: ExecutionEventInner::Finished {
-                                result: child_result.clone(),
-                                http_client_traces: None,
-                            },
-                        }],
-                    },
-                    AppendResponseToExecution {
-                        parent_execution_id,
-                        created_at: executed_at,
-                        join_set_id,
-                        child_execution_id,
-                        finished_version,
-                        result: child_result,
-                    },
-                    executed_at,
-                )
-                .await
-                .to_status()?;
+                storage::cancel_activity(conn.as_ref(), &child_execution_id, executed_at)
+                    .await
+                    .to_status()?;
             }
             grpc_gen::cancel_request::Request::Delay(delay_req) => {
                 let delay_id = delay_req.delay_id.argument_must_exist("delay_id")?;

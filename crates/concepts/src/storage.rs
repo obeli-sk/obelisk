@@ -2,9 +2,11 @@ use crate::ComponentId;
 use crate::ComponentRetryConfig;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
+use crate::FinishedExecutionError;
 use crate::FunctionFqn;
 use crate::JoinSetId;
 use crate::Params;
+use crate::PermanentFailureKind;
 use crate::StrVariant;
 use crate::SupportedFunctionReturnValue;
 use crate::prefixed_ulid::DelayId;
@@ -25,6 +27,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoStaticStr;
+use tracing::debug;
 use tracing::error;
 
 /// Remote client representation of the execution journal.
@@ -859,6 +862,64 @@ pub trait DbConnection: DbExecutor {
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
     ) -> Result<Vec<ResponseWithCursor>, DbErrorRead>;
+}
+
+/// It is the responsibiilty of the caller to check that the execution belongs to an activity!
+pub async fn cancel_activity(
+    db_connection: &dyn DbConnection,
+    child_execution_id_derived: &ExecutionIdDerived,
+    created_at: DateTime<Utc>,
+) -> Result<(), DbErrorWrite> {
+    debug!("Determining cancellation state of {child_execution_id_derived}");
+    let (parent_execution_id, join_set_id) = child_execution_id_derived
+        .split_to_parts()
+        .expect("TODO remove result");
+    let child_execution_id = ExecutionId::Derived(child_execution_id_derived.clone());
+    let last_event = db_connection
+        .get_last_execution_event(&child_execution_id)
+        .await
+        .map_err(DbErrorWrite::from)?;
+    if matches!(last_event.event, ExecutionEventInner::Finished { .. }) {
+        debug!("Not cancelling, {child_execution_id_derived} is already finished");
+        Ok(())
+    } else {
+        let finished_version = last_event.version.increment();
+        debug!("Cancelling activity {child_execution_id_derived} at {finished_version}");
+        let child_result = SupportedFunctionReturnValue::ExecutionError(
+            FinishedExecutionError::PermanentFailure {
+                reason_inner: String::new(),
+                reason_full: String::new(),
+                kind: PermanentFailureKind::Cancelled,
+                detail: None,
+            },
+        );
+        db_connection
+            .append_batch_respond_to_parent(
+                AppendEventsToExecution {
+                    execution_id: child_execution_id,
+                    version: finished_version.clone(),
+                    batch: vec![AppendRequest {
+                        created_at,
+                        event: ExecutionEventInner::Finished {
+                            result: child_result.clone(),
+                            http_client_traces: None,
+                        },
+                    }],
+                },
+                AppendResponseToExecution {
+                    parent_execution_id,
+                    created_at,
+                    join_set_id: join_set_id.clone(),
+                    child_execution_id: child_execution_id_derived.clone(),
+                    finished_version,
+                    result: child_result,
+                },
+                created_at,
+            )
+            .await?;
+        debug!("Cancelled {child_execution_id_derived}");
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
