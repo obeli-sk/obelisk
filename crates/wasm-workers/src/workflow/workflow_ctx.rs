@@ -1273,6 +1273,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
     }
 
     pub(crate) async fn join_sets_close_on_finish(&mut self) -> Result<(), ApplyError> {
+        debug!("Closing opened join sets");
         self.event_history
             .finalize(&mut self.db_connection, self.clock_fn.now())
             .await?;
@@ -1459,7 +1460,7 @@ mod workflow_support {
                             detail: Some(format!("{err:?}")),
                         }
                     })?;
-            SubmitDelay {
+            let delay_id = SubmitDelay {
                 join_set_id,
                 delay_id,
                 schedule_at,
@@ -1471,7 +1472,8 @@ mod workflow_support {
                 &mut self.db_connection,
                 self.clock_fn.now(),
             )
-            .await
+            .await?;
+            Ok(types_4_0_0::execution::DelayId::from(&delay_id))
         }
 
         pub(crate) async fn sleep(
@@ -1634,12 +1636,10 @@ pub(crate) mod tests {
     use concepts::storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest,
         DbExecutor, DbPool, ExecutionEvent, ExecutionEventInner, HistoryEvent,
-        HistoryEventScheduleAt, JoinSetRequest, JoinSetResponse, Locked, PendingState,
-        PendingStateFinished, PendingStateFinishedResultKind,
+        HistoryEventScheduleAt, JoinSetRequest, Locked, PendingState, PendingStateFinished,
+        PendingStateFinishedResultKind,
     };
-    use concepts::storage::{
-        DbPoolCloseable, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
-    };
+    use concepts::storage::{DbPoolCloseable, ExecutionLog};
     use concepts::time::{ClockFn, Now};
     use concepts::{
         ComponentId, ComponentRetryConfig, ExecutionMetadata, FunctionRegistry, IfcFqnName,
@@ -1653,6 +1653,7 @@ pub(crate) mod tests {
         expired_timers_watcher,
         worker::{Worker, WorkerContext, WorkerResult},
     };
+    use hashbrown::HashSet;
     use rand::SeedableRng as _;
     use rand::rngs::StdRng;
     use std::{fmt::Debug, sync::Arc, time::Duration};
@@ -1690,10 +1691,11 @@ pub(crate) mod tests {
         },
         SubmitExecution {
             target_ffqn: FunctionFqn,
+            join_set_id: JoinSetId,
         },
         SubmitDelay {
             millis: u32, // Avoid ScheduleAtConversionError::OutOfRangeError
-            join_set_id: Option<JoinSetId>,
+            join_set_id: JoinSetId,
         },
         RandomU64 {
             min: u64,
@@ -1830,15 +1832,10 @@ pub(crate) mod tests {
                         Ok(())
                     }
 
-                    WorkflowStep::SubmitExecution { target_ffqn } => {
-                        // Create new join set, add it to the resource table
-                        let join_set_resource =
-                            workflow_ctx.join_set_create_generated(None).await.unwrap();
-                        let join_set_id = workflow_ctx
-                            .resource_table
-                            .get(&join_set_resource)
-                            .expect("just inserted the resource to the table")
-                            .clone();
+                    WorkflowStep::SubmitExecution {
+                        target_ffqn,
+                        join_set_id,
+                    } => {
                         let target_ifc = target_ffqn.ifc_fqn.clone();
                         let submit_ffqn = FunctionFqn {
                             ifc_fqn: IfcFqnName::from_parts(
@@ -1863,7 +1860,7 @@ pub(crate) mod tests {
                                 ImportedFnCall::SubmitExecution(SubmitExecutionFnCall {
                                     target_ffqn: target_ffqn.clone(),
                                     target_component_id,
-                                    join_set_id,
+                                    join_set_id: join_set_id.clone(),
                                     target_params: &[],
                                     wasm_backtrace: None,
                                 }),
@@ -1876,30 +1873,14 @@ pub(crate) mod tests {
                     WorkflowStep::SubmitDelay {
                         millis,
                         join_set_id,
-                    } => {
-                        let join_set_id = if let Some(join_set_id) = join_set_id {
-                            join_set_id.clone()
-                        } else {
-                            // Create new join set, insert it to the resource table.
-                            let join_set_resource =
-                                workflow_ctx.join_set_create_generated(None).await.unwrap();
-                            workflow_ctx
-                                .resource_table
-                                .get(&join_set_resource)
-                                .expect("just inserted the resource to the table")
-                                .clone()
-                        };
-                        workflow_ctx
-                            .submit_delay(
-                                join_set_id,
-                                HistoryEventScheduleAt::In(Duration::from_millis(u64::from(
-                                    *millis,
-                                ))),
-                                None,
-                            )
-                            .await
-                            .map(|_| ())
-                    }
+                    } => workflow_ctx
+                        .submit_delay(
+                            join_set_id.clone(),
+                            HistoryEventScheduleAt::In(Duration::from_millis(u64::from(*millis))),
+                            None,
+                        )
+                        .await
+                        .map(|_| ()),
                     WorkflowStep::RandomU64 { min, max_inclusive } => {
                         let value = workflow_ctx
                             .random_u64_inclusive(*min, *max_inclusive, None)
@@ -1929,7 +1910,6 @@ pub(crate) mod tests {
                         .into();
                 }
             }
-            info!("Closing opened join sets");
             let res = match workflow_ctx.join_sets_close_on_finish().await {
                 Ok(()) => {
                     info!("Finishing");
@@ -2141,12 +2121,17 @@ pub(crate) mod tests {
     async fn creating_oneoff_and_generated_join_sets_with_same_name_should_work() {
         test_utils::set_up();
         let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+        let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "".into()).unwrap();
         let steps = vec![
+            WorkflowStep::JoinSetCreateNamed {
+                join_set_id: join_set_id.clone(),
+            },
             WorkflowStep::Call {
                 ffqn: FFQN_CHILD_MOCK,
             },
             WorkflowStep::SubmitExecution {
                 target_ffqn: FFQN_CHILD_MOCK,
+                join_set_id,
             },
         ];
         execute_steps(
@@ -2172,11 +2157,11 @@ pub(crate) mod tests {
             },
             WorkflowStep::SubmitDelay {
                 millis: 1,
-                join_set_id: Some(join_set_id.clone()),
+                join_set_id: join_set_id.clone(),
             },
             WorkflowStep::SubmitDelay {
                 millis: 10,
-                join_set_id: Some(join_set_id),
+                join_set_id,
             },
         ];
         execute_steps(
@@ -2193,7 +2178,6 @@ pub(crate) mod tests {
     const FFQN_CHILD_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn-child");
 
     #[tokio::test]
-    #[expect(clippy::search_is_some)]
     async fn check_determinism_closing_multiple_join_sets() {
         const SUBMITS: usize = 10;
         test_utils::set_up();
@@ -2218,13 +2202,18 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let steps: Vec<_> = std::iter::repeat_n(
-            WorkflowStep::SubmitExecution {
+        let mut steps = Vec::new();
+        for i in 0..SUBMITS {
+            let join_set_id =
+                JoinSetId::new(concepts::JoinSetKind::Named, format!("{i}").into()).unwrap();
+            steps.push(WorkflowStep::JoinSetCreateNamed {
+                join_set_id: join_set_id.clone(),
+            });
+            steps.push(WorkflowStep::SubmitExecution {
                 target_ffqn: FFQN_CHILD_MOCK,
-            },
-            SUBMITS,
-        )
-        .collect();
+                join_set_id: join_set_id.clone(),
+            });
+        }
         let worker = Arc::new(WorkflowWorkerMock::new(
             FFQN_MOCK,
             steps_to_registry(&steps),
@@ -2253,13 +2242,9 @@ pub(crate) mod tests {
                     },
                 })
                 .await;
-            assert_matches!(
-                worker_result,
-                WorkerResult::DbUpdatedByWorkerOrWatcher,
-                "At least one -submit is expected"
-            );
             // Run it SUBMITS times to close all join sets.
             for run in 0..SUBMITS {
+                info!("Run {run}");
                 assert_matches!(worker_result, WorkerResult::DbUpdatedByWorkerOrWatcher);
                 let execution_log = db_connection.get(&execution_id).await.unwrap();
                 let closing_join_nexts: hashbrown::HashSet<_> = execution_log
@@ -2274,52 +2259,9 @@ pub(crate) mod tests {
                     })
                     .collect();
                 assert_eq!(run + 1, closing_join_nexts.len());
-                // The last execution log entry must be join next.
-                let last_join_set = assert_matches!(&execution_log.pending_state, PendingState::BlockedByJoinSet {join_set_id, ..} => join_set_id.clone());
-                // Find a child execution id that belongs to this join set and has not been executed.
-                let child_execution_id = {
-                    let mut childs: Vec<_> = execution_log
-                        .event_history()
-                        .filter_map(|hevent| match hevent {
-                            HistoryEvent::JoinSetRequest {
-                                join_set_id: found,
-                                request:
-                                    JoinSetRequest::ChildExecutionRequest {
-                                        child_execution_id,
-                                        target_ffqn: _,
-                                        params: _,
-                                    },
-                            } if last_join_set == found => Some(child_execution_id),
-                            _ => None,
-                        })
-                        .collect();
-                    childs.retain(|child| {
-                        execution_log
-                            .responses
-                            .iter()
-                            .find(|r| {
-                                matches!(
-                                    r,
-                                    JoinSetResponseEventOuter {
-                                        event: JoinSetResponseEvent {
-                                            event: JoinSetResponse::ChildExecutionFinished {
-                                                child_execution_id: found,
-                                                ..
-                                            },
-                                            ..
-                                        },
-                                        ..
-                                    }
-                                    if child == found
-                                )
-                            })
-                            .is_none() // retain only if response is not found.
-                    });
-                    assert_eq!(1, childs.len());
-                    childs.pop().unwrap()
-                };
-                info!("Found child to be executed: {child_execution_id}");
-                exec_child(child_execution_id, db_pool.clone(), sim_clock.clone()).await;
+                // Cancelled means we block on a join set but add a response => pending now
+                assert_matches!(&execution_log.pending_state, PendingState::PendingAt { .. });
+
                 info!("Advancing the worker");
                 let execution_log = db_connection.get(&execution_id).await.unwrap();
                 assert_eq!(run + 1, execution_log.responses.len());
@@ -2347,13 +2289,6 @@ pub(crate) mod tests {
                         },
                     })
                     .await;
-                if run + 1 < SUBMITS {
-                    assert_matches!(
-                        worker_result,
-                        WorkerResult::DbUpdatedByWorkerOrWatcher,
-                        "At another -submit is expected"
-                    );
-                }
             }
             let (finished_value, version) = assert_matches!(
                 worker_result,
@@ -2435,13 +2370,43 @@ pub(crate) mod tests {
             .filter(|step: &WorkflowStep| step.is_valid())
             .collect::<Vec<_>>();
         // TODO: the test harness supports a single child/delay request per join set
-        let mut join_sets = hashbrown::HashSet::new();
+        let mut ffqns = hashbrown::HashSet::new();
         steps.retain(|step| match step {
-            WorkflowStep::Call { ffqn } | WorkflowStep::SubmitExecution { target_ffqn: ffqn } => {
-                join_sets.insert(ffqn.clone()) // Retain only the first step for a given ffqn
+            WorkflowStep::Call { ffqn }
+            | WorkflowStep::SubmitExecution {
+                target_ffqn: ffqn, ..
+            } => {
+                ffqns.insert(ffqn.clone()) // Retain only the first step for a given ffqn
             }
             _ => true,
         });
+        let join_sets_already_existing: HashSet<_> = steps
+            .iter()
+            .filter_map(|step| {
+                if let WorkflowStep::JoinSetCreateNamed { join_set_id } = step {
+                    Some(join_set_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let join_sets_added: HashSet<_> = steps
+            .iter()
+            .filter_map(|step| match step {
+                WorkflowStep::SubmitDelay { join_set_id, .. }
+                | WorkflowStep::SubmitExecution { join_set_id, .. } => Some(join_set_id.clone()),
+                _ => None,
+            })
+            .filter(|join_set| {
+                // There can be a collision with CreateJoinSetNamed
+                !join_sets_already_existing.contains(join_set)
+            })
+            .collect();
+        for join_set_id in join_sets_added {
+            steps.insert(0, WorkflowStep::JoinSetCreateNamed { join_set_id });
+        }
+
         println!("Generated steps: {steps:?}");
         steps
     }
@@ -2451,7 +2416,9 @@ pub(crate) mod tests {
             .iter()
             .filter_map(|step| match step {
                 WorkflowStep::Call { ffqn }
-                | WorkflowStep::SubmitExecution { target_ffqn: ffqn } => Some(ffqn.clone()),
+                | WorkflowStep::SubmitExecution {
+                    target_ffqn: ffqn, ..
+                } => Some(ffqn.clone()),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -2474,21 +2441,16 @@ pub(crate) mod tests {
 
         let mut child_execution_count = steps
             .iter()
-            .filter(|step| {
-                matches!(
-                    step,
-                    WorkflowStep::Call { .. } | WorkflowStep::SubmitExecution { .. }
-                )
-            })
+            .filter(|step| matches!(step, WorkflowStep::Call { .. }))
             .count();
         let mut delay_request_count = steps
             .iter()
             .filter(|step| matches!(step, WorkflowStep::Sleep { .. }))
             .count();
+
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         let fn_registry = steps_to_registry(&steps);
-
         let workflow_exec = {
             let worker = Arc::new(WorkflowWorkerMock::new(
                 FFQN_MOCK,
@@ -2550,11 +2512,19 @@ pub(crate) mod tests {
                 .get_pending_state(&execution_id)
                 .await
                 .unwrap();
-            if pending_state.is_finished() {
-                break;
-            }
-
-            let join_set_id = assert_matches!(pending_state, PendingState::BlockedByJoinSet { join_set_id, .. } => join_set_id);
+            info!("Got {pending_state:?}");
+            let join_set_id = match pending_state {
+                PendingState::BlockedByJoinSet { join_set_id, .. } => join_set_id,
+                PendingState::PendingAt {
+                    scheduled_at,
+                    last_lock: _,
+                } if scheduled_at <= sim_clock.now() => {
+                    // Can happen when join set cancels delay requests.
+                    continue;
+                }
+                PendingState::Finished { .. } => break,
+                _ => unreachable!("unexpected {pending_state:?}"),
+            };
             let execution_log = db_connection.get(&execution_id).await.unwrap();
             let join_set_req = execution_log
                 .find_join_set_request(&join_set_id)
@@ -2582,6 +2552,7 @@ pub(crate) mod tests {
                         target_ffqn: _,
                         params: _,
                     } => {
+                        debug!("Got ChildExecutionRequest, executing child");
                         assert!(child_execution_count > 0);
                         exec_child(child_execution_id, db_pool.clone(), sim_clock.clone()).await;
                         child_execution_count -= 1;
@@ -2591,10 +2562,10 @@ pub(crate) mod tests {
             }
         }
         // must be finished at this point
-        assert_eq!(0, child_execution_count);
-        assert_eq!(0, delay_request_count);
         let execution_log = db_connection.get(&execution_id).await.unwrap();
         assert!(execution_log.pending_state.is_finished());
+        assert_eq!(0, child_execution_count);
+        assert_eq!(0, delay_request_count);
         drop(db_connection);
         (execution_id, execution_log)
     }

@@ -1,5 +1,5 @@
 use crate::exports::testing::stub_workflow::workflow::Guest;
-use crate::obelisk::types::join_set::JoinSet;
+use crate::obelisk::types::time::{Duration, ScheduleAt};
 use crate::obelisk::workflow::workflow_support::{self, join_set_create};
 use crate::testing::stub_activity::activity;
 use crate::testing::stub_activity_obelisk_ext::activity as activity_ext;
@@ -64,27 +64,32 @@ impl Guest for Component {
 
     // Used for testing Join Set Closing
     fn join_next_in_scope() -> Result<(), ()> {
-        fn add_exec(join_set: &JoinSet, names: Vec<&'static str>) {
-            for name in names {
-                let execution_id = activity_ext::foo_submit(join_set, name);
-                activity_stub::foo_stub(&execution_id, Ok(name))
-                    .expect("stubbed activity must accept returned value once");
-            }
-        }
         {
-            let join_set_a = join_set_create_named("a").expect("alphanumeric name is valid");
-            add_exec(&join_set_a, vec!["a", "aa"]);
-            let join_set_b = join_set_create_named("b").expect("alphanumeric name is valid");
-            add_exec(&join_set_b, vec!["b", "bb"]);
-            let join_set_forgotten =
-                workflow_support::join_set_create_named("f").expect("alphanumeric name is valid");
-            add_exec(&join_set_forgotten, vec!["f", "ff"]);
-            std::mem::forget(join_set_forgotten);
+            let join_set_a = join_set_create_named("a").expect("name is valid");
+            activity_ext::foo_submit(&join_set_a, "a");
+            join_set_a.submit_delay(ScheduleAt::In(Duration::Days(1)));
+
+            let join_set_b = join_set_create_named("b").expect("name is valid");
+            let exe_b = activity_ext::foo_submit(&join_set_b, "b");
+            activity_stub::foo_stub(&exe_b, Err(())).unwrap();
+            let (response_b, b_result) = join_set_b.join_next().unwrap();
+            b_result.unwrap_err();
+            let ResponseId::ExecutionId(found) = response_b else {
+                unreachable!()
+            };
+            assert_eq!(exe_b.id, found.id);
+
+            let join_set_f = join_set_create_named("f").expect("name is valid");
+            activity_ext::foo_submit(&join_set_f, "f");
+            join_set_f.submit_delay(ScheduleAt::In(Duration::Days(1)));
+            std::mem::forget(join_set_f);
+            // a and b are dropped here, b is already processed.
         }
         log::info("after scope closed");
-        let join_set_c = join_set_create_named("c").expect("alphanumeric name is valid");
-        add_exec(&join_set_c, vec!["c", "cc"]);
+        let join_set_c = join_set_create_named("c").expect("name is valid");
+        activity_ext::foo_submit(&join_set_c, "c");
         Ok(())
+        // f and c are dropped here
     }
 
     fn invoke_expect_execution_error() -> Result<(), ()> {
@@ -146,14 +151,26 @@ fn submit_race_join_next(config: RaceConfig) {
                 }
             }
         }
-        (ResponseId::DelayId(reported_id), res) => {
+        (ResponseId::DelayId(reported_id), delay_res) => {
             assert_eq!(RaceConfig::Delay, config);
             assert_eq!(delay_id.id, reported_id.id);
-            res.expect("not cancelled");
-            // Cannot cancel waiting for the execution when closing join set, just mock it:
-            // FIXME: avoid once stub ignoring is in place!
-            activity_stub::foo_stub(&execution_id, Ok(OK_STUB_RESP))
-                .expect("stubbed activity must accept returned value once");
+            delay_res.expect("not cancelled");
+            // activity should be cancelled on close
+            workflow_support::join_set_close(join_set);
+            match activity_ext::foo_get(&execution_id) {
+                Ok(Ok(_)) => {
+                    unreachable!("was not stubbed, should have been cancelled")
+                }
+                Ok(Err(())) => {
+                    // Expecting that close would cancel the activity.
+                }
+                Err(GetExtensionError::FunctionMismatch(_)) => {
+                    unreachable!("no other functions were submitted")
+                }
+                Err(GetExtensionError::NotFoundInProcessedResponses) => {
+                    unreachable!("should have been processed and cancelled in join set close")
+                }
+            }
         }
     }
 }

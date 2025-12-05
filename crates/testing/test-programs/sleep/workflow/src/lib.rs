@@ -59,9 +59,9 @@ impl Guest for Component {
         else {
             unreachable!("only delays have been submitted");
         };
-        assert!(res.is_ok()); // or handle cancelation
-
+        assert!(res.is_ok());
         assert_eq!(short.id, first.id);
+        // long delay will be cancelled when the join set is closed.
         Ok(())
     }
 

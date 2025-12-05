@@ -1,9 +1,9 @@
 use assert_matches::assert_matches;
 use chrono::DateTime;
+use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::HistoryEventScheduleAt;
-use concepts::{ExecutionId, prefixed_ulid::DelayId};
 use indexmap::indexmap;
 use std::ops::Deref as _;
 use std::time::Duration;
@@ -26,8 +26,8 @@ pub(crate) mod v4_0_0 {
     use concepts::storage::HistoryEventScheduleAt;
     use obelisk::types::execution as types_execution;
     pub(crate) use obelisk::types::execution::DelayId as DelayId_4_0_0;
+    pub(crate) use obelisk::types::execution::ExecutionId as ExecutionId_4_0_0;
     pub(crate) use obelisk::types::execution::ResponseId as ResponseId_4_0_0;
-
     use obelisk::types::time::Datetime;
     pub(crate) use obelisk::types::time::Duration as DurationEnum_4_0_0;
     pub(crate) use obelisk::types::time::ScheduleAt as ScheduleAt_4_0_0;
@@ -265,10 +265,6 @@ pub(crate) fn execution_id_into_wast_val(execution_id: &ExecutionId) -> WastVal 
 
 pub(crate) fn execution_id_derived_into_wast_val(execution_id: &ExecutionIdDerived) -> WastVal {
     WastVal::Record(indexmap! {"id".to_string() => WastVal::String(execution_id.to_string())})
-}
-
-pub(crate) fn delay_id_into_wast_val(delay_id: &DelayId) -> WastVal {
-    WastVal::Record(indexmap! {"id".to_string() => WastVal::String(delay_id.to_string())})
 }
 
 pub(crate) fn ffqn_into_wast_val(ffqn: &FunctionFqn) -> WastVal {

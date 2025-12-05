@@ -731,12 +731,18 @@ pub trait DbConnection: DbExecutor {
         include_backtrace_id: bool,
     ) -> Result<Vec<ExecutionEvent>, DbErrorRead>;
 
-    /// Get a single event without `backtrace_id`
+    /// Get a single event specified by version. Impls may set `ExecutionEvent::backtrace_id` to `None`.
     async fn get_execution_event(
         &self,
         execution_id: &ExecutionId,
         version: &Version,
     ) -> Result<ExecutionEvent, DbErrorRead>;
+
+    /// Get last event. Impls may set `ExecutionEvent::backtrace_id` to `None`.
+    async fn get_last_execution_event(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<(ExecutionEvent, Version), DbErrorRead>;
 
     async fn get_create_request(
         &self,

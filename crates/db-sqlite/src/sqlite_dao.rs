@@ -2268,6 +2268,40 @@ impl SqlitePool {
         .map_err(DbErrorRead::from)
     }
 
+    fn get_last_execution_event(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+    ) -> Result<(ExecutionEvent, Version), DbErrorRead> {
+        let mut stmt = tx.prepare(
+            "SELECT created_at, json_value, version FROM t_execution_log WHERE \
+                        execution_id = :execution_id ORDER BY version DESC",
+        )?;
+        stmt.query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+            },
+            |row| {
+                let created_at = row.get("created_at")?;
+                let event = row
+                    .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                    .map_err(|serde| {
+                        error!("Cannot deserialize {row:?} - {serde:?}");
+                        consistency_rusqlite("cannot deserialize event")
+                    })?;
+                let version = Version(row.get("version")?);
+                Ok((
+                    ExecutionEvent {
+                        created_at,
+                        event: event.0,
+                        backtrace_id: None,
+                    },
+                    version,
+                ))
+            },
+        )
+        .map_err(DbErrorRead::from)
+    }
+
     fn list_responses(
         tx: &Transaction,
         execution_id: &ExecutionId,
@@ -3288,6 +3322,18 @@ impl DbConnection for SqlitePool {
         self.transaction(
             move |tx| Self::get_execution_event(tx, &execution_id, version),
             "get_execution_event",
+        )
+        .await
+    }
+
+    async fn get_last_execution_event(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<(ExecutionEvent, Version), DbErrorRead> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| Self::get_last_execution_event(tx, &execution_id),
+            "get_last_execution_event",
         )
         .await
     }

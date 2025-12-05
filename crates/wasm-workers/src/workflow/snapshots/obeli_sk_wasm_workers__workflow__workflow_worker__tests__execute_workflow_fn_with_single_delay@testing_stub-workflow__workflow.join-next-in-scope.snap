@@ -82,64 +82,18 @@ expression: execution_log
       "event": {
         "HistoryEvent": {
           "event": {
-            "type": "Stub",
-            "target_execution_id": "E_00000000000000000000000000.n:a_1",
-            "result": {
-              "Ok": {
-                "ok": {
-                  "type": "string",
-                  "value": "a"
-                }
-              }
-            },
-            "persist_result": {
-              "Ok": null
-            }
-          }
-        }
-      },
-      "backtrace_id": null
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "HistoryEvent": {
-          "event": {
             "type": "JoinSetRequest",
             "join_set_id": "n:a",
             "request": {
-              "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:a_2",
-              "target_ffqn": {
-                "ifc_fqn": "testing:stub-activity/activity",
-                "function_name": "foo"
-              },
-              "params": [
-                "aa"
-              ]
-            }
-          }
-        }
-      },
-      "backtrace_id": null
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "HistoryEvent": {
-          "event": {
-            "type": "Stub",
-            "target_execution_id": "E_00000000000000000000000000.n:a_2",
-            "result": {
-              "Ok": {
-                "ok": {
-                  "type": "string",
-                  "value": "aa"
+              "type": "DelayRequest",
+              "delay_id": "Delay_00000000000000000000000000.n:a_0",
+              "expires_at": "1970-01-02T00:00:00Z",
+              "schedule_at": {
+                "In": {
+                  "secs": 86400,
+                  "nanos": 0
                 }
               }
-            },
-            "persist_result": {
-              "Ok": null
             }
           }
         }
@@ -189,11 +143,8 @@ expression: execution_log
             "type": "Stub",
             "target_execution_id": "E_00000000000000000000000000.n:b_1",
             "result": {
-              "Ok": {
-                "ok": {
-                  "type": "string",
-                  "value": "b"
-                }
+              "Err": {
+                "err": null
               }
             },
             "persist_result": {
@@ -209,19 +160,11 @@ expression: execution_log
       "event": {
         "HistoryEvent": {
           "event": {
-            "type": "JoinSetRequest",
+            "type": "JoinNext",
             "join_set_id": "n:b",
-            "request": {
-              "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:b_2",
-              "target_ffqn": {
-                "ifc_fqn": "testing:stub-activity/activity",
-                "function_name": "foo"
-              },
-              "params": [
-                "bb"
-              ]
-            }
+            "run_expires_at": "1970-01-01T00:00:00Z",
+            "requested_ffqn": null,
+            "closing": false
           }
         }
       },
@@ -230,20 +173,16 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "HistoryEvent": {
-          "event": {
-            "type": "Stub",
-            "target_execution_id": "E_00000000000000000000000000.n:b_2",
-            "result": {
-              "Ok": {
-                "ok": {
-                  "type": "string",
-                  "value": "bb"
-                }
-              }
-            },
-            "persist_result": {
-              "Ok": null
+        "Locked": {
+          "component_id": "workflow:",
+          "executor_id": "Exr_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000002",
+          "lock_expires_at": "1970-01-01T00:00:01Z",
+          "retry_config": {
+            "max_retries": 4294967295,
+            "retry_exp_backoff": {
+              "secs": 0,
+              "nanos": 0
             }
           }
         }
@@ -290,114 +229,19 @@ expression: execution_log
       "event": {
         "HistoryEvent": {
           "event": {
-            "type": "Stub",
-            "target_execution_id": "E_00000000000000000000000000.n:f_1",
-            "result": {
-              "Ok": {
-                "ok": {
-                  "type": "string",
-                  "value": "f"
-                }
-              }
-            },
-            "persist_result": {
-              "Ok": null
-            }
-          }
-        }
-      },
-      "backtrace_id": null
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "HistoryEvent": {
-          "event": {
             "type": "JoinSetRequest",
             "join_set_id": "n:f",
             "request": {
-              "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:f_2",
-              "target_ffqn": {
-                "ifc_fqn": "testing:stub-activity/activity",
-                "function_name": "foo"
-              },
-              "params": [
-                "ff"
-              ]
-            }
-          }
-        }
-      },
-      "backtrace_id": null
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "HistoryEvent": {
-          "event": {
-            "type": "Stub",
-            "target_execution_id": "E_00000000000000000000000000.n:f_2",
-            "result": {
-              "Ok": {
-                "ok": {
-                  "type": "string",
-                  "value": "ff"
+              "type": "DelayRequest",
+              "delay_id": "Delay_00000000000000000000000000.n:f_0",
+              "expires_at": "1970-01-02T00:00:00Z",
+              "schedule_at": {
+                "In": {
+                  "secs": 86400,
+                  "nanos": 0
                 }
               }
-            },
-            "persist_result": {
-              "Ok": null
             }
-          }
-        }
-      },
-      "backtrace_id": null
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "HistoryEvent": {
-          "event": {
-            "type": "JoinNext",
-            "join_set_id": "n:b",
-            "run_expires_at": "1970-01-01T00:00:00Z",
-            "requested_ffqn": null,
-            "closing": true
-          }
-        }
-      },
-      "backtrace_id": null
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "Locked": {
-          "component_id": "workflow:",
-          "executor_id": "Exr_00000000000000000000000000",
-          "run_id": "Run_00000000000000000000000002",
-          "lock_expires_at": "1970-01-01T00:00:01Z",
-          "retry_config": {
-            "max_retries": 4294967295,
-            "retry_exp_backoff": {
-              "secs": 0,
-              "nanos": 0
-            }
-          }
-        }
-      },
-      "backtrace_id": null
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "HistoryEvent": {
-          "event": {
-            "type": "JoinNext",
-            "join_set_id": "n:b",
-            "run_expires_at": "1970-01-01T00:00:00Z",
-            "requested_ffqn": null,
-            "closing": true
           }
         }
       },
@@ -413,6 +257,25 @@ expression: execution_log
             "run_expires_at": "1970-01-01T00:00:00Z",
             "requested_ffqn": null,
             "closing": true
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "Locked": {
+          "component_id": "workflow:",
+          "executor_id": "Exr_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000003",
+          "lock_expires_at": "1970-01-01T00:00:01Z",
+          "retry_config": {
+            "max_retries": 4294967295,
+            "retry_exp_backoff": {
+              "secs": 0,
+              "nanos": 0
+            }
           }
         }
       },
@@ -473,75 +336,6 @@ expression: execution_log
       "event": {
         "HistoryEvent": {
           "event": {
-            "type": "Stub",
-            "target_execution_id": "E_00000000000000000000000000.n:c_1",
-            "result": {
-              "Ok": {
-                "ok": {
-                  "type": "string",
-                  "value": "c"
-                }
-              }
-            },
-            "persist_result": {
-              "Ok": null
-            }
-          }
-        }
-      },
-      "backtrace_id": null
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "HistoryEvent": {
-          "event": {
-            "type": "JoinSetRequest",
-            "join_set_id": "n:c",
-            "request": {
-              "type": "ChildExecutionRequest",
-              "child_execution_id": "E_00000000000000000000000000.n:c_2",
-              "target_ffqn": {
-                "ifc_fqn": "testing:stub-activity/activity",
-                "function_name": "foo"
-              },
-              "params": [
-                "cc"
-              ]
-            }
-          }
-        }
-      },
-      "backtrace_id": null
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "HistoryEvent": {
-          "event": {
-            "type": "Stub",
-            "target_execution_id": "E_00000000000000000000000000.n:c_2",
-            "result": {
-              "Ok": {
-                "ok": {
-                  "type": "string",
-                  "value": "cc"
-                }
-              }
-            },
-            "persist_result": {
-              "Ok": null
-            }
-          }
-        }
-      },
-      "backtrace_id": null
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "HistoryEvent": {
-          "event": {
             "type": "JoinNext",
             "join_set_id": "n:c",
             "run_expires_at": "1970-01-01T00:00:00Z",
@@ -558,7 +352,7 @@ expression: execution_log
         "Locked": {
           "component_id": "workflow:",
           "executor_id": "Exr_00000000000000000000000000",
-          "run_id": "Run_00000000000000000000000003",
+          "run_id": "Run_00000000000000000000000004",
           "lock_expires_at": "1970-01-01T00:00:01Z",
           "retry_config": {
             "max_retries": 4294967295,
@@ -577,7 +371,7 @@ expression: execution_log
         "HistoryEvent": {
           "event": {
             "type": "JoinNext",
-            "join_set_id": "n:c",
+            "join_set_id": "n:f",
             "run_expires_at": "1970-01-01T00:00:00Z",
             "requested_ffqn": null,
             "closing": true
@@ -589,13 +383,17 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "HistoryEvent": {
-          "event": {
-            "type": "JoinNext",
-            "join_set_id": "n:f",
-            "run_expires_at": "1970-01-01T00:00:00Z",
-            "requested_ffqn": null,
-            "closing": true
+        "Locked": {
+          "component_id": "workflow:",
+          "executor_id": "Exr_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000005",
+          "lock_expires_at": "1970-01-01T00:00:01Z",
+          "retry_config": {
+            "max_retries": 4294967295,
+            "retry_exp_backoff": {
+              "secs": 0,
+              "nanos": 0
+            }
           }
         }
       },
@@ -635,55 +433,14 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "join_set_id": "n:a",
-        "event": {
-          "type": "ChildExecutionFinished",
-          "child_execution_id": "E_00000000000000000000000000.n:a_1",
-          "finished_version": 1,
-          "result": {
-            "Ok": {
-              "ok": {
-                "type": "string",
-                "value": "a"
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "join_set_id": "n:a",
-        "event": {
-          "type": "ChildExecutionFinished",
-          "child_execution_id": "E_00000000000000000000000000.n:a_2",
-          "finished_version": 1,
-          "result": {
-            "Ok": {
-              "ok": {
-                "type": "string",
-                "value": "aa"
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
         "join_set_id": "n:b",
         "event": {
           "type": "ChildExecutionFinished",
           "child_execution_id": "E_00000000000000000000000000.n:b_1",
           "finished_version": 1,
           "result": {
-            "Ok": {
-              "ok": {
-                "type": "string",
-                "value": "b"
-              }
+            "Err": {
+              "err": null
             }
           }
         }
@@ -692,18 +449,12 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "join_set_id": "n:b",
+        "join_set_id": "n:a",
         "event": {
-          "type": "ChildExecutionFinished",
-          "child_execution_id": "E_00000000000000000000000000.n:b_2",
-          "finished_version": 1,
+          "type": "DelayFinished",
+          "delay_id": "Delay_00000000000000000000000000.n:a_0",
           "result": {
-            "Ok": {
-              "ok": {
-                "type": "string",
-                "value": "bb"
-              }
-            }
+            "Err": null
           }
         }
       }
@@ -711,35 +462,18 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "join_set_id": "n:f",
+        "join_set_id": "n:a",
         "event": {
           "type": "ChildExecutionFinished",
-          "child_execution_id": "E_00000000000000000000000000.n:f_1",
+          "child_execution_id": "E_00000000000000000000000000.n:a_1",
           "finished_version": 1,
           "result": {
-            "Ok": {
-              "ok": {
-                "type": "string",
-                "value": "f"
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "created_at": "1970-01-01T00:00:00Z",
-      "event": {
-        "join_set_id": "n:f",
-        "event": {
-          "type": "ChildExecutionFinished",
-          "child_execution_id": "E_00000000000000000000000000.n:f_2",
-          "finished_version": 1,
-          "result": {
-            "Ok": {
-              "ok": {
-                "type": "string",
-                "value": "ff"
+            "ExecutionError": {
+              "PermanentFailure": {
+                "reason_inner": "",
+                "reason_full": "",
+                "kind": "cancelled",
+                "detail": null
               }
             }
           }
@@ -755,10 +489,12 @@ expression: execution_log
           "child_execution_id": "E_00000000000000000000000000.n:c_1",
           "finished_version": 1,
           "result": {
-            "Ok": {
-              "ok": {
-                "type": "string",
-                "value": "c"
+            "ExecutionError": {
+              "PermanentFailure": {
+                "reason_inner": "",
+                "reason_full": "",
+                "kind": "cancelled",
+                "detail": null
               }
             }
           }
@@ -768,16 +504,31 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "join_set_id": "n:c",
+        "join_set_id": "n:f",
+        "event": {
+          "type": "DelayFinished",
+          "delay_id": "Delay_00000000000000000000000000.n:f_0",
+          "result": {
+            "Err": null
+          }
+        }
+      }
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "join_set_id": "n:f",
         "event": {
           "type": "ChildExecutionFinished",
-          "child_execution_id": "E_00000000000000000000000000.n:c_2",
+          "child_execution_id": "E_00000000000000000000000000.n:f_1",
           "finished_version": 1,
           "result": {
-            "Ok": {
-              "ok": {
-                "type": "string",
-                "value": "cc"
+            "ExecutionError": {
+              "PermanentFailure": {
+                "reason_inner": "",
+                "reason_full": "",
+                "kind": "cancelled",
+                "detail": null
               }
             }
           }
@@ -785,11 +536,11 @@ expression: execution_log
       }
     }
   ],
-  "next_version": 32,
+  "next_version": 23,
   "pending_state": {
     "type": "Finished",
     "finished": {
-      "version": 32,
+      "version": 23,
       "finished_at": "1970-01-01T00:00:00Z",
       "result_kind": "ok"
     }

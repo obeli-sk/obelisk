@@ -216,6 +216,19 @@ impl DbConnection for InMemoryDbConnection {
             .ok_or(DbErrorRead::NotFound)?)
     }
 
+    async fn get_last_execution_event(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<(ExecutionEvent, Version), DbErrorRead> {
+        let execution_log = self.0.lock().unwrap().get(execution_id)?;
+        let last_version = execution_log.next_version.0 - 1;
+        Ok(execution_log
+            .events
+            .get(usize::try_from(last_version).unwrap())
+            .map(|event| (event.clone(), Version(last_version)))
+            .ok_or(DbErrorRead::NotFound)?)
+    }
+
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,

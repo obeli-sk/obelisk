@@ -137,6 +137,40 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00.010Z",
       "event": {
+        "HistoryEvent": {
+          "event": {
+            "type": "JoinNext",
+            "join_set_id": "g:1",
+            "run_expires_at": "1970-01-01T00:00:00.010Z",
+            "requested_ffqn": null,
+            "closing": true
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
+        "Locked": {
+          "component_id": "workflow:",
+          "executor_id": "Exr_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000003",
+          "lock_expires_at": "1970-01-01T00:00:01.010Z",
+          "retry_config": {
+            "max_retries": 4294967295,
+            "retry_exp_backoff": {
+              "secs": 0,
+              "nanos": 0
+            }
+          }
+        }
+      },
+      "backtrace_id": null
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
         "Finished": {
           "result": {
             "Ok": {
@@ -162,13 +196,26 @@ expression: execution_log
           }
         }
       }
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
+        "join_set_id": "g:1",
+        "event": {
+          "type": "DelayFinished",
+          "delay_id": "Delay_00000000000000000000000000.g:1_0",
+          "result": {
+            "Err": null
+          }
+        }
+      }
     }
   ],
-  "next_version": 7,
+  "next_version": 9,
   "pending_state": {
     "type": "Finished",
     "finished": {
-      "version": 7,
+      "version": 9,
       "finished_at": "1970-01-01T00:00:00.010Z",
       "result_kind": "ok"
     }
