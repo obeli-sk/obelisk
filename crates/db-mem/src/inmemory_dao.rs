@@ -690,7 +690,7 @@ impl DbHolder {
                 },
             ));
         }
-        let next_version = journal.append(created_at, event)?;
+        let next_version = journal.append(created_at, event, appending_version)?;
         self.index.update(journal);
         if matches!(journal.pending_state, PendingState::PendingAt { .. })
             && let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn())
@@ -785,7 +785,11 @@ impl DbHolder {
                     },
                 ));
             }
-            match journal.append(append_request.created_at, append_request.event) {
+            match journal.append(
+                append_request.created_at,
+                append_request.event,
+                appending_version,
+            ) {
                 Ok(new_version) => {
                     appending_version = new_version;
                 }

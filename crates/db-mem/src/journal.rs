@@ -36,6 +36,7 @@ impl ExecutionJournal {
             event: ExecutionEventInner::from(req),
             created_at,
             backtrace_id: None,
+            version: Version(0),
         };
         Self {
             execution_id,
@@ -92,11 +93,13 @@ impl ExecutionJournal {
         }
     }
 
-    pub fn append(
+    pub(crate) fn append(
         &mut self,
         created_at: DateTime<Utc>,
         event: ExecutionEventInner,
+        appending_version: Version,
     ) -> Result<Version, DbErrorWrite> {
+        assert_eq!(self.version(), appending_version);
         if self.pending_state.is_finished() {
             return Err(DbErrorWrite::NonRetriable(
                 DbErrorWriteNonRetriable::IllegalState("already finished".into()),
@@ -149,6 +152,7 @@ impl ExecutionJournal {
             created_at,
             event,
             backtrace_id: None,
+            version: appending_version,
         });
         // update the state
         self.update_pending_state();

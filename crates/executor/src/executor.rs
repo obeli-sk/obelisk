@@ -859,6 +859,7 @@ mod tests {
                 },
                 created_at: _,
                 backtrace_id: None,
+                version: Version(2),
             }
         );
     }
@@ -908,6 +909,7 @@ mod tests {
                 },
                 created_at: _,
                 backtrace_id: None,
+                version: Version(2),
             }
         );
         db_close.close().await;
@@ -959,6 +961,7 @@ mod tests {
                 event: ExecutionEventInner::Created { .. },
                 created_at: actually_created_at,
                 backtrace_id: None,
+                version: Version(0),
             }
             if config.created_at == *actually_created_at
         );
@@ -968,6 +971,7 @@ mod tests {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: locked_at,
                 backtrace_id: None,
+                version: Version(1),
             } if config.created_at <= *locked_at
             => *locked_at
         );
@@ -975,6 +979,7 @@ mod tests {
             event: _,
             created_at: executed_at,
             backtrace_id: None,
+            version: Version(2),
         } if *executed_at >= locked_at);
         execution_log
     }
@@ -1038,6 +1043,7 @@ mod tests {
                     },
                     created_at: at,
                     backtrace_id: None,
+                    version: Version(2),
                 }
                 => (reason_full, reason_inner, detail, *at, *backoff_expires_at)
             );
@@ -1095,6 +1101,7 @@ mod tests {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: at,
                 backtrace_id: None,
+                version: Version(3),
             } if *at == sim_clock.now()
         );
         assert_matches!(
@@ -1106,6 +1113,7 @@ mod tests {
                 },
                 created_at: finished_at,
                 backtrace_id: None,
+                version: Version(4),
             } if *finished_at == sim_clock.now()
         );
         db_close.close().await;
@@ -1162,6 +1170,7 @@ mod tests {
                 },
                 created_at: at,
                 backtrace_id: None,
+                version: Version(2),
             } if *at == created_at
             => (reason_inner, kind, detail)
         );
@@ -1522,6 +1531,7 @@ mod tests {
                 event: ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at, .. },
                 created_at: at,
                 backtrace_id: None,
+                version: Version(2),
             } if *at == now_after_first_lock_expiry && *backoff_expires_at == expected_first_timeout_expiry
         );
         assert_matches!(

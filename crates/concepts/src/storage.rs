@@ -162,6 +162,7 @@ pub struct ExecutionEvent {
     pub created_at: DateTime<Utc>,
     pub event: ExecutionEventInner,
     pub backtrace_id: Option<Version>,
+    pub version: Version,
 }
 
 /// Moves the execution to [`PendingState::PendingNow`] if it is currently blocked on `JoinNextBlocking`.

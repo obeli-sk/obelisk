@@ -2129,7 +2129,7 @@ impl SqlitePool {
         execution_id: &ExecutionId,
     ) -> Result<concepts::storage::ExecutionLog, DbErrorRead> {
         let mut stmt = tx.prepare(
-            "SELECT created_at, json_value FROM t_execution_log WHERE \
+            "SELECT created_at, json_value, version FROM t_execution_log WHERE \
                         execution_id = :execution_id ORDER BY version",
         )?;
         let events = stmt
@@ -2146,11 +2146,13 @@ impl SqlitePool {
                             consistency_rusqlite("cannot deserialize event")
                         })?
                         .0;
+                    let version = Version(row.get("version")?);
 
                     Ok(ExecutionEvent {
                         created_at,
                         event,
                         backtrace_id: None,
+                        version,
                     })
                 },
             )?
@@ -2183,6 +2185,7 @@ impl SqlitePool {
             "SELECT
                 log.created_at,
                 log.json_value,
+                log.version as version,
                 -- Select version_min_including from backtrace if a match is found, otherwise NULL
                 bt.version_min_including AS backtrace_id
             FROM
@@ -2200,7 +2203,7 @@ impl SqlitePool {
                 log.version;"
         } else {
             "SELECT
-                created_at, json_value, NULL as backtrace_id
+                created_at, json_value, NULL as backtrace_id, version
             FROM t_execution_log WHERE
                 execution_id = :execution_id AND version >= :version_min AND version < :version_max_excluding
             ORDER BY version"
@@ -2217,12 +2220,15 @@ impl SqlitePool {
                     let backtrace_id = row
                         .get::<_, Option<VersionType>>("backtrace_id")?
                         .map(Version::new);
+                    let version = Version(row.get("version")?);
+
                     let event = row
                         .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
                         .map(|event| ExecutionEvent {
                             created_at,
                             event: event.0,
                             backtrace_id,
+                            version,
                         })
                         .map_err(|serde| {
                             error!("Cannot deserialize {row:?} - {serde:?}");
@@ -2241,7 +2247,7 @@ impl SqlitePool {
         version: VersionType,
     ) -> Result<ExecutionEvent, DbErrorRead> {
         let mut stmt = tx.prepare(
-            "SELECT created_at, json_value FROM t_execution_log WHERE \
+            "SELECT created_at, json_value, version FROM t_execution_log WHERE \
                         execution_id = :execution_id AND version = :version",
         )?;
         stmt.query_row(
@@ -2257,11 +2263,13 @@ impl SqlitePool {
                         error!("Cannot deserialize {row:?} - {serde:?}");
                         consistency_rusqlite("cannot deserialize event")
                     })?;
+                let version = Version(row.get("version")?);
 
                 Ok(ExecutionEvent {
                     created_at,
                     event: event.0,
                     backtrace_id: None,
+                    version,
                 })
             },
         )
@@ -2294,6 +2302,7 @@ impl SqlitePool {
                         created_at,
                         event: event.0,
                         backtrace_id: None,
+                        version: version.clone(),
                     },
                     version,
                 ))
