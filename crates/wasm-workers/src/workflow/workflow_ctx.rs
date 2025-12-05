@@ -55,6 +55,8 @@ pub(crate) enum WorkflowFunctionError {
         reason: StrVariant,
         detail: Option<String>,
     },
+    #[error("constraint violation: {0}")]
+    ConstraintViolation(StrVariant),
     // retriable errors:
     #[error("interrupt, db updated")]
     InterruptDbUpdated,
@@ -94,6 +96,9 @@ impl WorkflowFunctionError {
                 },
                 version,
             ),
+            WorkflowFunctionError::ConstraintViolation(reason) => {
+                WorkerPartialResult::FatalError(FatalError::ConstraintViolation { reason }, version)
+            }
         }
     }
 }
@@ -106,6 +111,9 @@ impl From<ApplyError> for WorkflowFunctionError {
             }
             ApplyError::InterruptDbUpdated => WorkflowFunctionError::InterruptDbUpdated,
             ApplyError::DbError(db_error) => WorkflowFunctionError::DbError(db_error),
+            ApplyError::ConstraintViolation(reason) => {
+                WorkflowFunctionError::ConstraintViolation(reason)
+            }
         }
     }
 }
@@ -1053,7 +1061,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                             Self::get_host_maybe_capture_backtrace(&mut caller);
                         let resource: Resource<JoinSetId> =
                             wasmtime::component::Resource::new_own(rep);
-                        host.join_set_close(resource, wasm_backtrace).await
+                        host.join_set_close_resource(resource, wasm_backtrace).await
                     })
                 },
             )
@@ -1257,7 +1265,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        host.join_set_close(join_set_resource, wasm_backtrace)
+                        host.join_set_close_resource(join_set_resource, wasm_backtrace)
                             .await?;
 
                         Ok(())
@@ -1342,15 +1350,23 @@ mod workflow_support {
     impl<C: ClockFn> ExecutionIfcHost for WorkflowCtx<C> {}
 
     impl<C: ClockFn> WorkflowCtx<C> {
-        pub(crate) async fn join_set_close(
+        pub(crate) async fn join_set_close_resource(
             &mut self,
             resource: Resource<JoinSetId>,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<()> {
             let join_set_id = self.resource_table.delete(resource)?;
+            self.join_set_close(&join_set_id, wasm_backtrace).await
+        }
+
+        pub(crate) async fn join_set_close(
+            &mut self,
+            join_set_id: &JoinSetId,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
+        ) -> wasmtime::Result<()> {
             self.event_history
                 .join_set_close(
-                    &join_set_id,
+                    join_set_id,
                     &mut self.db_connection,
                     self.clock_fn.now(),
                     wasm_backtrace,
@@ -1568,7 +1584,6 @@ mod workflow_support {
                 self.clock_fn.now(),
             )
             .await
-            .map_err(WorkflowFunctionError::from)
         }
     }
 }
@@ -1637,13 +1652,14 @@ pub(crate) mod tests {
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest,
         DbExecutor, DbPool, ExecutionEvent, ExecutionEventInner, HistoryEvent,
         HistoryEventScheduleAt, JoinSetRequest, Locked, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind,
+        PendingStateFinishedError, PendingStateFinishedResultKind,
     };
     use concepts::storage::{DbPoolCloseable, ExecutionLog};
     use concepts::time::{ClockFn, Now};
     use concepts::{
-        ComponentId, ComponentRetryConfig, ExecutionMetadata, FunctionRegistry, IfcFqnName,
-        JoinSetId, JoinSetKind, RETURN_TYPE_DUMMY, SUFFIX_PKG_EXT, SUPPORTED_RETURN_VALUE_OK_EMPTY,
+        ComponentId, ComponentRetryConfig, ExecutionMetadata, FinishedExecutionError,
+        FunctionRegistry, IfcFqnName, JoinSetId, JoinSetKind, PermanentFailureKind,
+        RETURN_TYPE_DUMMY, SUFFIX_PKG_EXT, SUPPORTED_RETURN_VALUE_OK_EMPTY,
     };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
@@ -1704,6 +1720,9 @@ pub(crate) mod tests {
         RandomString {
             min_length: u16,
             max_length_exclusive: u16,
+        },
+        JoinSetClose {
+            join_set_id: JoinSetId,
         },
     }
 
@@ -1900,6 +1919,13 @@ pub(crate) mod tests {
                             .unwrap();
                         assert!(value.len() > *min_length as usize);
                         assert!(value.len() < usize::from(*max_length_exclusive));
+                        Ok(())
+                    }
+                    WorkflowStep::JoinSetClose { join_set_id } => {
+                        workflow_ctx
+                            .join_set_close(join_set_id, None)
+                            .await
+                            .unwrap();
                         Ok(())
                     }
                 };
@@ -2175,6 +2201,53 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
+    #[tokio::test]
+    async fn submitting_to_closed_join_set_should_be_permanent_execution_error() {
+        test_utils::set_up();
+        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+        let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "foo".into()).unwrap();
+        let steps = vec![
+            WorkflowStep::JoinSetCreateNamed {
+                join_set_id: join_set_id.clone(),
+            },
+            WorkflowStep::JoinSetClose {
+                join_set_id: join_set_id.clone(),
+            },
+            WorkflowStep::SubmitExecution {
+                target_ffqn: FFQN_CHILD_MOCK,
+                join_set_id: join_set_id.clone(),
+            },
+        ];
+        let (_, log) = execute_steps(
+            steps,
+            db_pool.clone(),
+            db_exec,
+            &mut SimClock::epoch(),
+            || 0,
+        )
+        .await;
+        assert_matches!(
+            log.pending_state,
+            PendingState::Finished {
+                finished: PendingStateFinished {
+                    result_kind: PendingStateFinishedResultKind(Err(
+                        PendingStateFinishedError::ExecutionFailure
+                    )),
+                    ..
+                }
+            }
+        );
+        let (_reason_inner, reason_full, kind, _detail) = assert_matches!(log.into_finished_result().unwrap(),
+            SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError::PermanentFailure { reason_inner, reason_full, kind, detail })
+            =>(reason_inner, reason_full, kind, detail));
+        assert_eq!(PermanentFailureKind::ConstraintViolation, kind);
+        assert_eq!(
+            format!("not found in open join sets: `{join_set_id}`"),
+            reason_full
+        );
+        db_close.close().await;
+    }
+
     const FFQN_CHILD_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn-child");
 
     #[tokio::test]
@@ -2395,7 +2468,8 @@ pub(crate) mod tests {
             .iter()
             .filter_map(|step| match step {
                 WorkflowStep::SubmitDelay { join_set_id, .. }
-                | WorkflowStep::SubmitExecution { join_set_id, .. } => Some(join_set_id.clone()),
+                | WorkflowStep::SubmitExecution { join_set_id, .. }
+                | WorkflowStep::JoinSetClose { join_set_id } => Some(join_set_id.clone()),
                 _ => None,
             })
             .filter(|join_set| {
@@ -2406,6 +2480,19 @@ pub(crate) mod tests {
         for join_set_id in join_sets_added {
             steps.insert(0, WorkflowStep::JoinSetCreateNamed { join_set_id });
         }
+        // Do not allow using the join set after close
+        let mut join_set_closed = HashSet::new();
+        steps.retain(|step| match step {
+            WorkflowStep::JoinSetClose { join_set_id } => {
+                let already_present = join_set_closed.insert(join_set_id.clone());
+                !already_present // only first one is retained
+            }
+            WorkflowStep::SubmitDelay { join_set_id, .. }
+            | WorkflowStep::SubmitExecution { join_set_id, .. } => {
+                !join_set_closed.contains(join_set_id)
+            }
+            _ => true,
+        });
 
         println!("Generated steps: {steps:?}");
         steps

@@ -678,6 +678,12 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                         workflow_ctx.db_connection.version.clone(),
                     ))
                 }
+                ApplyError::ConstraintViolation(reason) => {
+                    WorkerResult::Err(WorkerError::FatalError(
+                        FatalError::ConstraintViolation { reason },
+                        workflow_ctx.db_connection.version.clone(),
+                    ))
+                }
             })
     }
 }

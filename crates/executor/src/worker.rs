@@ -122,6 +122,8 @@ pub enum FatalError {
     },
     #[error("out of fuel: {reason}")]
     OutOfFuel { reason: String },
+    #[error("constraint violation: {reason}")]
+    ConstraintViolation { reason: StrVariant },
 }
 
 impl From<FatalError> for FinishedExecutionError {
@@ -188,6 +190,14 @@ impl From<FatalError> for FinishedExecutionError {
                 kind: PermanentFailureKind::OutOfFuel,
                 detail: None,
             },
+            FatalError::ConstraintViolation { reason } => {
+                FinishedExecutionError::PermanentFailure {
+                    reason_inner: reason.to_string(),
+                    reason_full: reason.to_string(),
+                    kind: PermanentFailureKind::ConstraintViolation,
+                    detail: None,
+                }
+            }
         }
     }
 }

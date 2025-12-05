@@ -89,6 +89,8 @@ pub(crate) enum ApplyError {
     InterruptDbUpdated,
     #[error(transparent)]
     DbError(DbErrorWrite),
+    #[error("constraint violation: {0}")]
+    ConstraintViolation(StrVariant),
 }
 
 #[expect(clippy::struct_field_names)]
@@ -416,9 +418,11 @@ impl EventHistory {
         let (_, response_ids) = self
             .index_join_set_to_unawaited_requests
             .shift_remove_entry(join_set_id)
-            .expect(
-                "each join set creation adds an entry to `index_join_set_to_unawaited_requests`",
-            );
+            .ok_or_else(|| {
+                ApplyError::ConstraintViolation(
+                    format!("not found in open join sets: `{join_set_id}`").into(),
+                )
+            })?;
         debug!("Closing `{join_set_id}` with {response_ids:?}");
 
         let join_next_count = response_ids.len();
@@ -1927,7 +1931,11 @@ impl SubmitChildExecution {
         event_history
             .index_join_set_to_unawaited_requests
             .get_mut(&join_set_id)
-            .expect("join set entry must have been created when creating the join set")
+            .ok_or_else(|| {
+                WorkflowFunctionError::ConstraintViolation(
+                    format!("not found in open join sets: `{join_set_id}`").into(),
+                )
+            })?
             .insert(
                 ResponseId::ChildExecutionId(child_execution_id),
                 component_type,
@@ -1970,7 +1978,11 @@ impl SubmitDelay {
         event_history
             .index_join_set_to_unawaited_requests
             .get_mut(&join_set_id)
-            .expect("join set entry must have been created when creating the join set")
+            .ok_or_else(|| {
+                WorkflowFunctionError::ConstraintViolation(
+                    format!("not found in open join sets: `{join_set_id}`").into(),
+                )
+            })?
             .insert(
                 ResponseId::DelayId(delay_id.clone()),
                 INVALID_CHILD_TYPE_FOR_DELAYS,
@@ -2087,7 +2099,11 @@ impl JoinNextRequestingFfqn {
                 let was_present = event_history
                     .index_join_set_to_unawaited_requests
                     .get_mut(&join_set_id)
-                    .expect("join set entry must have been created when creating the join set")
+                    .ok_or_else(|| {
+                        WorkflowFunctionError::ConstraintViolation(
+                            format!("not found in open join sets: `{join_set_id}`").into(),
+                        )
+                    })?
                     .shift_remove(&ResponseId::ChildExecutionId(child_execution_id));
                 assert!(was_present.is_some());
                 wast_val_res
@@ -2098,7 +2114,11 @@ impl JoinNextRequestingFfqn {
                     let was_present = event_history
                         .index_join_set_to_unawaited_requests
                         .get_mut(&join_set_id)
-                        .expect("join set entry must have been created when creating the join set")
+                        .ok_or_else(|| {
+                            WorkflowFunctionError::ConstraintViolation(
+                                format!("not found in open join sets: `{join_set_id}`").into(),
+                            )
+                        })?
                         .shift_remove(actual_id);
                     assert!(was_present.is_some());
                 }
@@ -2126,7 +2146,7 @@ impl JoinNext {
         called_at: DateTime<Utc>,
     ) -> Result<
         Result<(types_execution::ResponseId, Result<(), ()>), types_join_set::JoinNextError>,
-        ApplyError,
+        WorkflowFunctionError,
     > {
         assert!(
             self.join_set_id.kind != JoinSetKind::OneOff,
@@ -2145,7 +2165,11 @@ impl JoinNext {
             let was_present = event_history
                 .index_join_set_to_unawaited_requests
                 .get_mut(&join_set_id)
-                .expect("join set entry must have been created when creating the join set")
+                .ok_or_else(|| {
+                    WorkflowFunctionError::ConstraintViolation(
+                        format!("not found in open join sets: `{join_set_id}`").into(),
+                    )
+                })?
                 .shift_remove(response_id);
             assert!(was_present.is_some());
         }

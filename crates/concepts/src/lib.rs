@@ -99,6 +99,8 @@ pub enum PermanentFailureKind {
     OutOfFuel,
     /// Applicable to WASM and Stub activities
     Cancelled,
+    /// Applicable to workflows
+    ConstraintViolation,
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
