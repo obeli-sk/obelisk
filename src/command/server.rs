@@ -883,6 +883,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         &self,
         request: tonic::Request<grpc_gen::CancelRequest>,
     ) -> std::result::Result<tonic::Response<grpc_gen::CancelResponse>, tonic::Status> {
+        const CANCEL_RETRIES: u8 = 5;
         let request = request.into_inner();
         let executed_at = Now.now();
         let response_id = request.request.argument_must_exist("request")?;
@@ -908,9 +909,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         "cancelled execution must be an activity",
                     ));
                 }
-                storage::cancel_activity(conn.as_ref(), &child_execution_id, executed_at)
-                    .await
-                    .to_status()?;
+                storage::cancel_activity_with_retries(
+                    conn.as_ref(),
+                    &child_execution_id,
+                    executed_at,
+                    CANCEL_RETRIES,
+                )
+                .await
+                .to_status()?;
             }
             grpc_gen::cancel_request::Request::Delay(delay_req) => {
                 let delay_id = delay_req.delay_id.argument_must_exist("delay_id")?;

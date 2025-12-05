@@ -865,6 +865,21 @@ pub trait DbConnection: DbExecutor {
 }
 
 /// It is the responsibiilty of the caller to check that the execution belongs to an activity!
+pub async fn cancel_activity_with_retries(
+    db_connection: &dyn DbConnection,
+    child_execution_id_derived: &ExecutionIdDerived,
+    created_at: DateTime<Utc>,
+    mut retries: u8,
+) -> Result<(), DbErrorWrite> {
+    loop {
+        let res = cancel_activity(db_connection, child_execution_id_derived, created_at).await;
+        if res.is_ok() || retries == 0 {
+            return res;
+        }
+        retries -= 1;
+    }
+}
+
 pub async fn cancel_activity(
     db_connection: &dyn DbConnection,
     child_execution_id_derived: &ExecutionIdDerived,

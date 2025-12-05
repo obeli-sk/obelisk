@@ -418,6 +418,8 @@ impl EventHistory {
         called_at: DateTime<Utc>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), ApplyError> {
+        const CANCEL_RETRIES: u8 = 5;
+
         let (_, response_ids) = self
             .index_join_set_to_unawaited_requests
             .shift_remove_entry(join_set_id)
@@ -434,10 +436,11 @@ impl EventHistory {
             if let ResponseId::ChildExecutionId(child_execution_id_derived) = response_id
                 && component_type.is_activity()
             {
-                let res = storage::cancel_activity(
+                let res = storage::cancel_activity_with_retries(
                     db_connection.db_connection.as_ref(),
                     child_execution_id_derived,
                     called_at,
+                    CANCEL_RETRIES,
                 )
                 .await;
                 if let Err(err) = res {
