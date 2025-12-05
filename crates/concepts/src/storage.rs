@@ -886,9 +886,7 @@ pub async fn cancel_activity(
     created_at: DateTime<Utc>,
 ) -> Result<(), DbErrorWrite> {
     debug!("Determining cancellation state of {child_execution_id_derived}");
-    let (parent_execution_id, join_set_id) = child_execution_id_derived
-        .split_to_parts()
-        .expect("TODO remove result");
+    let (parent_execution_id, join_set_id) = child_execution_id_derived.split_to_parts();
     let child_execution_id = ExecutionId::Derived(child_execution_id_derived.clone());
     let last_event = db_connection
         .get_last_execution_event(&child_execution_id)

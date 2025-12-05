@@ -430,11 +430,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             }
             ExecutionId::Derived(derived) => derived,
         };
-        let Ok((parent_execution_id, join_set_id)) = execution_id.split_to_parts() else {
-            return Err(tonic::Status::invalid_argument(
-                "execution ID cannot be parsed",
-            ));
-        };
+        let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
         span.record("execution_id", tracing::field::display(&execution_id));
         // Get FFQN
 
@@ -921,12 +917,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             grpc_gen::cancel_request::Request::Delay(delay_req) => {
                 let delay_id = delay_req.delay_id.argument_must_exist("delay_id")?;
                 let delay_id = DelayId::try_from(delay_id)?;
-                let (parent_execution_id, join_set_id) =
-                    delay_id.split_to_parts().map_err(|err| {
-                        tonic::Status::invalid_argument(format!(
-                            "cannot split delay_id to parts - {err}"
-                        ))
-                    })?;
+                let (parent_execution_id, join_set_id) = delay_id.split_to_parts();
                 tracing::Span::current().record(
                     "execution_id",
                     tracing::field::display(&parent_execution_id),

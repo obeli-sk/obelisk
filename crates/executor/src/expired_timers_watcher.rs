@@ -24,7 +24,6 @@ use std::{
     time::Duration,
 };
 use tracing::Level;
-use tracing::error;
 use tracing::warn;
 use tracing::{debug, info, instrument};
 
@@ -152,12 +151,7 @@ pub(crate) async fn tick(
                         FinishedExecutionError::PermanentTimeout,
                     );
                     let parent = if let ExecutionId::Derived(derived) = &execution_id {
-                        derived
-                            .split_to_parts()
-                            .inspect_err(|err| {
-                                error!(%execution_id, "Cannot split execution to parts: {err:?}");
-                            })
-                            .ok()
+                        Some(derived.split_to_parts())
                     } else {
                         None
                     };

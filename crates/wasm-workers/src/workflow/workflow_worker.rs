@@ -2298,7 +2298,7 @@ pub(crate) mod tests {
         stub_execution_id: ExecutionIdDerived,
         result: SupportedFunctionReturnValue,
     ) {
-        let (parent_execution_id, join_set_id) = stub_execution_id.split_to_parts().unwrap();
+        let (parent_execution_id, join_set_id) = stub_execution_id.split_to_parts();
         let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
         let finished_req = AppendRequest {
             created_at,

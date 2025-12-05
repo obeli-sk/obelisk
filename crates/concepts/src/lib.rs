@@ -9,7 +9,6 @@ pub use indexmap;
 use indexmap::IndexMap;
 use opentelemetry::propagation::{Extractor, Injector};
 pub use prefixed_ulid::ExecutionId;
-use prefixed_ulid::ExecutionIdParseError;
 use serde_json::Value;
 use std::{
     borrow::Borrow,
@@ -1382,7 +1381,7 @@ pub mod prefixed_ulid {
                 idx,
             } = self;
             let infix = Arc::from(format!(
-                "{infix}{EXECUTION_ID_JOIN_SET_INFIX}{idx}{EXECUTION_ID_INFIX}{join_set_id}"
+                "{infix}{EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX}{idx}{EXECUTION_ID_INFIX}{join_set_id}"
             ));
             ExecutionIdDerived {
                 top_level: *top_level,
@@ -1398,46 +1397,51 @@ pub mod prefixed_ulid {
             } = self;
             write!(
                 f,
-                "{top_level}{EXECUTION_ID_INFIX}{infix}{EXECUTION_ID_JOIN_SET_INFIX}{idx}"
+                "{top_level}{EXECUTION_ID_INFIX}{infix}{EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX}{idx}"
             )
         }
 
-        pub fn split_to_parts(
-            &self,
-        ) -> Result<(ExecutionId, JoinSetId), ExecutionIdDerivedSplitError> {
+        #[must_use]
+        pub fn split_to_parts(&self) -> (ExecutionId, JoinSetId) {
+            self.split_to_parts_res().expect("verified in from_str")
+        }
+
+        fn split_to_parts_res(&self) -> Result<(ExecutionId, JoinSetId), DerivedIdSplitError> {
             // Two cases:
             // A. infix contains a `.` => infix must be split into old_infix _ old_idx . JoinSetId
             // B. else => child of a top level, will be split into the top level, the whole infix must be JoinSetId.
             if let Some((old_infix_and_index, join_set_id)) =
                 self.infix.rsplit_once(EXECUTION_ID_INFIX)
             {
-                let join_set_id = JoinSetId::from_str(join_set_id)?;
+                let join_set_id = JoinSetId::from_str(join_set_id)
+                    .map_err(DerivedIdSplitError::JoinSetIdParseError)?;
                 let Some((old_infix, old_idx)) =
-                    old_infix_and_index.rsplit_once(EXECUTION_ID_JOIN_SET_INFIX)
+                    old_infix_and_index.rsplit_once(EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX)
                 else {
-                    return Err(ExecutionIdDerivedSplitError::CannotFindJoinSetDelimiter);
+                    return Err(DerivedIdSplitError::CannotFindJoinSetDelimiter);
                 };
                 let parent = ExecutionIdDerived {
                     top_level: self.top_level,
                     infix: Arc::from(old_infix),
                     idx: old_idx
                         .parse()
-                        .map_err(ExecutionIdDerivedSplitError::CannotParseOldIndex)?,
+                        .map_err(DerivedIdSplitError::CannotParseOldIndex)?,
                 };
                 Ok((ExecutionId::Derived(parent), join_set_id))
             } else {
                 Ok((
                     ExecutionId::TopLevel(self.top_level),
-                    JoinSetId::from_str(&self.infix)?,
+                    JoinSetId::from_str(&self.infix)
+                        .map_err(DerivedIdSplitError::JoinSetIdParseError)?,
                 ))
             }
         }
     }
 
     #[derive(Debug, thiserror::Error)]
-    pub enum ExecutionIdDerivedSplitError {
+    pub enum DerivedIdSplitError {
         #[error(transparent)]
-        JoinSetIdParseError(#[from] JoinSetIdParseError),
+        JoinSetIdParseError(JoinSetIdParseError),
         #[error("cannot parse index of parent execution - {0}")]
         CannotParseOldIndex(ParseIntError),
         #[error("cannot find join set delimiter")]
@@ -1459,30 +1463,69 @@ pub mod prefixed_ulid {
 
         fn from_str(input: &str) -> Result<Self, Self::Err> {
             let (top_level, infix, idx) = derived_from_str(input)?;
-            Ok(ExecutionIdDerived {
+            let id = ExecutionIdDerived {
                 top_level,
                 infix,
                 idx,
-            })
+            };
+            Ok(id)
         }
     }
 
     fn derived_from_str<T: 'static>(
         input: &str,
     ) -> Result<(PrefixedUlid<T>, Arc<str>, u64), DerivedIdParseError> {
-        if let Some((prefix, suffix)) = input.split_once(EXECUTION_ID_INFIX) {
-            let top_level = PrefixedUlid::from_str(prefix)
-                .map_err(DerivedIdParseError::PrefixedUlidParseError)?;
-            let Some((infix, idx)) = suffix.rsplit_once(EXECUTION_ID_JOIN_SET_INFIX) else {
-                return Err(DerivedIdParseError::SecondDelimiterNotFound);
-            };
-            let infix = Arc::from(infix);
-            let idx = u64::from_str(idx).map_err(DerivedIdParseError::ParseIndexError)?;
-            Ok((top_level, infix, idx))
-        } else {
-            Err(DerivedIdParseError::FirstDelimiterNotFound)
+        // Isolate the Root ID (Prefix) from the Hierarchical Path (Suffix)
+        let (prefix, full_suffix) = input
+            .split_once(EXECUTION_ID_INFIX)
+            .ok_or(DerivedIdParseError::FirstDelimiterNotFound)?;
+
+        // Parse the Root ULID
+        let top_level =
+            PrefixedUlid::from_str(prefix).map_err(DerivedIdParseError::PrefixedUlidParseError)?;
+
+        // Iterate through every segment to ensure the full path is valid.
+        let mut last_idx = None;
+        for segment in full_suffix.split(EXECUTION_ID_INFIX) {
+            if segment.is_empty() {
+                return Err(DerivedIdParseError::EmptySegment);
+            }
+            // Split the segment into JoinSetId and Index
+            let (join_set_str, idx_str) = segment
+                .split_once(EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX)
+                .ok_or(DerivedIdParseError::SecondDelimiterNotFound)?;
+            JoinSetId::from_str(join_set_str).map_err(DerivedIdParseError::JoinSetIdParseError)?;
+            let idx = u64::from_str(idx_str).map_err(DerivedIdParseError::ParseIndexError)?;
+            last_idx = Some((idx, idx_str));
         }
+        let (idx, idx_str) = last_idx.expect("split must have returned at least one element");
+        let infix = full_suffix
+            .strip_suffix(idx_str)
+            .expect("must have ended with index");
+        let infix = infix
+            .strip_suffix(EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX)
+            .expect("must have ended with `_index`");
+        Ok((top_level, Arc::from(infix), idx))
     }
+
+    // fn derived_from_str0<T: 'static>(
+    //     input: &str,
+    // ) -> Result<(PrefixedUlid<T>, Arc<str>, u64), DerivedIdParseError> {
+    //     if let Some((prefix, suffix)) = input.split_once(EXECUTION_ID_INFIX) {
+    //         let top_level = PrefixedUlid::from_str(prefix)
+    //             .map_err(DerivedIdParseError::PrefixedUlidParseError)?;
+    //         let Some((infix, idx)) =
+    //             suffix.rsplit_once(EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX)
+    //         else {
+    //             return Err(DerivedIdParseError::SecondDelimiterNotFound);
+    //         };
+    //         let infix = Arc::from(infix);
+    //         let idx = u64::from_str(idx).map_err(DerivedIdParseError::ParseIndexError)?;
+    //         Ok((top_level, infix, idx))
+    //     } else {
+    //         Err(DerivedIdParseError::FirstDelimiterNotFound)
+    //     }
+    // }
 
     #[cfg(any(test, feature = "test"))]
     impl<'a> arbitrary::Arbitrary<'a> for ExecutionIdDerived {
@@ -1499,12 +1542,20 @@ pub mod prefixed_ulid {
         PrefixedUlidParseError(PrefixedUlidParseError),
         #[error("cannot parse derived id - delimiter `{EXECUTION_ID_INFIX}` not found")]
         FirstDelimiterNotFound,
-        #[error("cannot parse derived id - delimiter `{EXECUTION_ID_JOIN_SET_INFIX}` not found")]
+        #[error(
+            "cannot parse derived id - delimiter `{EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX}` not found"
+        )]
         SecondDelimiterNotFound,
         #[error(
-            "cannot parse derived id - suffix after `{EXECUTION_ID_JOIN_SET_INFIX}` must be a number"
+            "cannot parse derived id - suffix after `{EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX}` must be a number"
         )]
         ParseIndexError(ParseIntError),
+        #[error(transparent)]
+        DerivedIdSplitError(DerivedIdSplitError),
+        #[error(transparent)]
+        JoinSetIdParseError(JoinSetIdParseError),
+        #[error("empty segment")]
+        EmptySegment,
     }
 
     impl ExecutionId {
@@ -1575,7 +1626,7 @@ pub mod prefixed_ulid {
     }
 
     const EXECUTION_ID_INFIX: char = '.';
-    const EXECUTION_ID_JOIN_SET_INFIX: char = '_';
+    const EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX: char = '_';
     const EXECUTION_ID_START_IDX: u64 = 1;
     pub const JOIN_SET_START_IDX: u64 = 1;
     const DELAY_ID_START_IDX: u64 = 1;
@@ -1583,17 +1634,9 @@ pub mod prefixed_ulid {
     #[derive(Debug, thiserror::Error)]
     pub enum ExecutionIdParseError {
         #[error(transparent)]
-        PrefixedUlidParseError(#[from] PrefixedUlidParseError),
-        #[error(
-            "cannot parse derived execution id - first delimiter `{EXECUTION_ID_INFIX}` not found"
-        )]
-        FirstDelimiterNotFound,
-        #[error(
-            "cannot parse derived execution id - second delimiter `{EXECUTION_ID_INFIX}` not found"
-        )]
-        SecondDelimiterNotFound,
-        #[error("cannot parse derived execution id - last suffix must be a number")]
-        ParseIndexError(#[from] ParseIntError),
+        PrefixedUlidParseError(PrefixedUlidParseError),
+        #[error(transparent)]
+        DerivedIdParseError(DerivedIdParseError),
     }
 
     impl FromStr for ExecutionId {
@@ -1603,22 +1646,12 @@ pub mod prefixed_ulid {
             if input.contains(EXECUTION_ID_INFIX) {
                 ExecutionIdDerived::from_str(input)
                     .map(ExecutionId::Derived)
-                    .map_err(|err| match err {
-                        DerivedIdParseError::FirstDelimiterNotFound => {
-                            unreachable!("first delimiter checked")
-                        }
-                        DerivedIdParseError::SecondDelimiterNotFound => {
-                            ExecutionIdParseError::SecondDelimiterNotFound
-                        }
-                        DerivedIdParseError::PrefixedUlidParseError(err) => {
-                            ExecutionIdParseError::PrefixedUlidParseError(err)
-                        }
-                        DerivedIdParseError::ParseIndexError(err) => {
-                            ExecutionIdParseError::ParseIndexError(err)
-                        }
-                    })
+                    .map_err(ExecutionIdParseError::DerivedIdParseError)
             } else {
-                Ok(ExecutionId::TopLevel(PrefixedUlid::from_str(input)?))
+                Ok(ExecutionId::TopLevel(
+                    PrefixedUlid::from_str(input)
+                        .map_err(ExecutionIdParseError::PrefixedUlidParseError)?,
+                ))
             }
         }
     }
@@ -1709,33 +1742,38 @@ pub mod prefixed_ulid {
             }
         }
 
-        pub fn split_to_parts(
-            &self,
-        ) -> Result<(ExecutionId, JoinSetId), ExecutionIdDerivedSplitError> {
+        #[must_use]
+        pub fn split_to_parts(&self) -> (ExecutionId, JoinSetId) {
+            self.split_to_parts_res().expect("verified in from_str")
+        }
+
+        fn split_to_parts_res(&self) -> Result<(ExecutionId, JoinSetId), DerivedIdSplitError> {
             // Two cases:
             // A. infix contains a `.` => infix must be split into old_infix _ old_idx . JoinSetId
             // B. else => child of a top level, will be split into the top level, the whole infix must be JoinSetId.
             if let Some((old_infix_and_index, join_set_id)) =
                 self.infix.rsplit_once(EXECUTION_ID_INFIX)
             {
-                let join_set_id = JoinSetId::from_str(join_set_id)?;
+                let join_set_id = JoinSetId::from_str(join_set_id)
+                    .map_err(DerivedIdSplitError::JoinSetIdParseError)?;
                 let Some((old_infix, old_idx)) =
-                    old_infix_and_index.rsplit_once(EXECUTION_ID_JOIN_SET_INFIX)
+                    old_infix_and_index.rsplit_once(EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX)
                 else {
-                    return Err(ExecutionIdDerivedSplitError::CannotFindJoinSetDelimiter);
+                    return Err(DerivedIdSplitError::CannotFindJoinSetDelimiter);
                 };
                 let parent = ExecutionIdDerived {
                     top_level: ExecutionIdTopLevel::new(self.top_level.ulid),
                     infix: Arc::from(old_infix),
                     idx: old_idx
                         .parse()
-                        .map_err(ExecutionIdDerivedSplitError::CannotParseOldIndex)?,
+                        .map_err(DerivedIdSplitError::CannotParseOldIndex)?,
                 };
                 Ok((ExecutionId::Derived(parent), join_set_id))
             } else {
                 Ok((
                     ExecutionId::TopLevel(ExecutionIdTopLevel::new(self.top_level.ulid)),
-                    JoinSetId::from_str(&self.infix)?,
+                    JoinSetId::from_str(&self.infix)
+                        .map_err(DerivedIdSplitError::JoinSetIdParseError)?,
                 ))
             }
         }
@@ -1748,7 +1786,7 @@ pub mod prefixed_ulid {
             } = self;
             write!(
                 f,
-                "{top_level}{EXECUTION_ID_INFIX}{infix}{EXECUTION_ID_JOIN_SET_INFIX}{idx}"
+                "{top_level}{EXECUTION_ID_INFIX}{infix}{EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX}{idx}"
             )
         }
     }
@@ -1777,11 +1815,12 @@ pub mod prefixed_ulid {
 
             fn from_str(input: &str) -> Result<Self, Self::Err> {
                 let (top_level, infix, idx) = derived_from_str(input)?;
-                Ok(DelayId {
+                let id = DelayId {
                     top_level,
                     infix,
                     idx,
-                })
+                };
+                Ok(id)
             }
         }
 
@@ -1878,7 +1917,8 @@ impl FromStr for JoinSetId {
         let kind = kind
             .parse()
             .map_err(JoinSetIdParseError::JoinSetKindParseError)?;
-        Ok(JoinSetId::new(kind, StrVariant::from(name.to_string()))?)
+        JoinSetId::new(kind, StrVariant::from(name.to_string()))
+            .map_err(JoinSetIdParseError::InvalidName)
     }
 }
 
@@ -1886,12 +1926,10 @@ impl FromStr for JoinSetId {
 pub enum JoinSetIdParseError {
     #[error("join set must consist of three parts separated by {JOIN_SET_ID_INFIX} ")]
     WrongParts,
-    #[error("cannot parse join set id's execution id - {0}")]
-    ExecutionIdParseError(#[from] ExecutionIdParseError),
     #[error("cannot parse join set kind - {0}")]
     JoinSetKindParseError(&'static str),
     #[error("cannot parse join set id - {0}")]
-    InvalidName(#[from] InvalidNameError<JoinSetId>),
+    InvalidName(InvalidNameError<JoinSetId>),
 }
 
 #[cfg(any(test, feature = "test"))]
@@ -2546,7 +2584,7 @@ mod tests {
         let join_set_id =
             JoinSetId::new(JoinSetKind::Generated, StrVariant::Static("some")).unwrap();
         let execution_id = top_level.next_level(&join_set_id);
-        let (actual_top_level, actual_join_set) = execution_id.split_to_parts().unwrap();
+        let (actual_top_level, actual_join_set) = execution_id.split_to_parts();
         assert_eq!(top_level, actual_top_level);
         assert_eq!(join_set_id, actual_join_set);
     }
@@ -2564,9 +2602,14 @@ mod tests {
             JoinSetId::new(JoinSetKind::Generated, StrVariant::Static("other")).unwrap();
         let second_level = first_level.next_level(&join_set_id_inner);
 
-        let (actual_first_level, actual_join_set) = second_level.split_to_parts().unwrap();
+        let (actual_first_level, actual_join_set) = second_level.split_to_parts();
         assert_eq!(ExecutionId::Derived(first_level), actual_first_level);
         assert_eq!(join_set_id_inner, actual_join_set);
+    }
+
+    #[test]
+    fn invalid_execution_id_should_fail_to_parse() {
+        ExecutionId::from_str("E_01KBNHM5FQW81KP5Y3XMNX31K4.g:gg._2.o:oo_2").unwrap_err();
     }
 
     #[test]

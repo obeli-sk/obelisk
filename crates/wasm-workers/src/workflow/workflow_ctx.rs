@@ -444,19 +444,7 @@ impl StubFnCall<'_> {
             }
         };
 
-        let (parent_id, join_set_id) = match target_execution_id.split_to_parts() {
-            Ok(ok) => ok,
-            Err(err) => {
-                return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                    ffqn: called_ffqn,
-                    reason: format!(
-                        "cannot split target execution id to parts in `-stub` function - {err}"
-                    )
-                    .into(),
-                    detail: Some(format!("{err:?}")),
-                });
-            }
-        };
+        let (parent_id, join_set_id) = target_execution_id.split_to_parts();
         let ReturnType::Extendable(target_return_type) = target_fn_metadata.return_type else {
             unreachable!("only functions with compatible return types are exported and extended")
         };
