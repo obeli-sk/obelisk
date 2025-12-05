@@ -743,7 +743,7 @@ pub trait DbConnection: DbExecutor {
     async fn get_last_execution_event(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<(ExecutionEvent, Version), DbErrorRead>;
+    ) -> Result<ExecutionEvent, DbErrorRead>;
 
     async fn get_create_request(
         &self,

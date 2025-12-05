@@ -2279,7 +2279,7 @@ impl SqlitePool {
     fn get_last_execution_event(
         tx: &Transaction,
         execution_id: &ExecutionId,
-    ) -> Result<(ExecutionEvent, Version), DbErrorRead> {
+    ) -> Result<ExecutionEvent, DbErrorRead> {
         let mut stmt = tx.prepare(
             "SELECT created_at, json_value, version FROM t_execution_log WHERE \
                         execution_id = :execution_id ORDER BY version DESC",
@@ -2297,15 +2297,12 @@ impl SqlitePool {
                         consistency_rusqlite("cannot deserialize event")
                     })?;
                 let version = Version(row.get("version")?);
-                Ok((
-                    ExecutionEvent {
-                        created_at,
-                        event: event.0,
-                        backtrace_id: None,
-                        version: version.clone(),
-                    },
-                    version,
-                ))
+                Ok(ExecutionEvent {
+                    created_at,
+                    event: event.0,
+                    backtrace_id: None,
+                    version: version.clone(),
+                })
             },
         )
         .map_err(DbErrorRead::from)
@@ -3338,7 +3335,7 @@ impl DbConnection for SqlitePool {
     async fn get_last_execution_event(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<(ExecutionEvent, Version), DbErrorRead> {
+    ) -> Result<ExecutionEvent, DbErrorRead> {
         let execution_id = execution_id.clone();
         self.transaction(
             move |tx| Self::get_last_execution_event(tx, &execution_id),

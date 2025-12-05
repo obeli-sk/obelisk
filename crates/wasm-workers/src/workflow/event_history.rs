@@ -433,7 +433,7 @@ impl EventHistory {
             {
                 debug!("Determining cancellation state of {child_execution_id_derived}");
                 let child_execution_id = ExecutionId::Derived(child_execution_id_derived.clone());
-                let (last_event, version) = db_connection
+                let last_event = db_connection
                     .db_connection
                     .get_last_execution_event(&child_execution_id)
                     .await
@@ -441,7 +441,7 @@ impl EventHistory {
                 if matches!(last_event.event, ExecutionEventInner::Finished { .. }) {
                     debug!("Not cancelling, {child_execution_id_derived} is already finished");
                 } else {
-                    let finished_version = version.increment();
+                    let finished_version = last_event.version.increment();
                     debug!(
                         "Cancelling activity {child_execution_id_derived} at {finished_version}"
                     );
