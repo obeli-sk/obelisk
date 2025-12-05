@@ -216,6 +216,17 @@ enabled = true
 # directory = "."
 # prefix = "obelisk_server_daily" # File name prefix
 
+[log.file]
+enabled = true
+level = "info,obeli=debug,app=trace"
+style = "plain"
+span = "none"
+target = true
+rotation = "never"
+directory = "."
+prefix = "obelisk.log"
+
+
 ## Appendix: Supported path prefixes:
 # | Prefix               | Default path           | Details
 # | ~                    | ~                      | Current user's home directory

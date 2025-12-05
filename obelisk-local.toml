@@ -3,6 +3,16 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 log.stdout.enabled = true
 activities.directories.enabled = true
 
+[log.file]
+enabled = true
+level = "info,obeli=debug,app=trace"
+style = "plain"                           # One of "plain","plain_compact","json"
+span = "none"                             # One of "none","new","enter","exit","close","active","full"
+target = true
+rotation = "never"                        # One of "minutely"|"hourly"|"daily"|"never"
+directory = "."
+prefix = "obelisk.log" # File name prefix
+
 [[http_server]]
 name = "external_webhook"
 listening_addr = "127.0.0.1:9090"

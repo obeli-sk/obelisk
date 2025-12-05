@@ -4,3 +4,4 @@
 test-codegen-cache
 /assets/unpublishable-packages.txt
 /.vscode/
+obelisk.log
