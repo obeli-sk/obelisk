@@ -154,8 +154,8 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
     tracing_subscriber::registry()
         .with(tokio_console_layer())
         .with(tokio_tracing_otlp(config)?)
+        .with(rolling_file_layer) // Must be before `out_layer`: https://github.com/tokio-rs/tracing/issues/3116
         .with(out_layer)
-        .with(rolling_file_layer)
         .init();
 
     std::panic::set_hook(Box::new(tracing_panic_hook));
