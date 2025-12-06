@@ -19,11 +19,13 @@ impl Generate {
                 component_type,
                 input_wit_directory,
                 output_directory,
+                force,
             } => {
                 generate_exported_extension_wits(
                     input_wit_directory,
                     output_directory,
                     component_type,
+                    force,
                 )
                 .await
             }
@@ -55,6 +57,7 @@ pub(crate) async fn generate_exported_extension_wits(
     input_wit_directory: PathBuf,
     output_directory: PathBuf,
     component_type: ComponentType,
+    force: bool,
 ) -> Result<(), anyhow::Error> {
     let wasm_component = WasmComponent::new_from_wit_folder(&input_wit_directory, component_type)?;
     let pkgs_to_wits = wasm_component.exported_extension_wits()?;
@@ -66,8 +69,12 @@ pub(crate) async fn generate_exported_extension_wits(
             .await
             .unwrap_or_default();
 
-        let old_content = strip_header(&old_content);
-        if old_content != new_content {
+        let old_content = if force {
+            None
+        } else {
+            Some(strip_header(&old_content))
+        };
+        if old_content.as_ref() != Some(&new_content) {
             let new_content = format!("{HEADER} {PKG_VERSION}\n{new_content}");
             tokio::fs::create_dir_all(&pkg_folder)
                 .await
