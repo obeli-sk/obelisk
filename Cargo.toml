@@ -194,7 +194,7 @@ console-subscriber = "0.5.0"
 const_format = "0.2.35"
 criterion = "0.7"
 crossterm = "0.29.0"
-derive_more = { version = "2.0.1", features = [
+derive_more = { version = "2.1.0", features = [
     "debug",
     "deref",
     "display",
@@ -220,7 +220,7 @@ indexmap = { version = "2.12", features = ["serde"] }
 insta = { version = "1.44.3", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
-libc = "0.2.177"
+libc = "0.2.178"
 oci-client = { version = "0.15.0", default-features = false, features = [
     "rustls-tls",
 ] }
