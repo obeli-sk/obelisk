@@ -16,6 +16,15 @@ permissions:
 jobs:
   bump-cargo-lock:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: compatible
+            cmd: cargo upgrade
+          - name: incompatible
+            cmd: cargo upgrade --incompatible
+
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
         with:
@@ -23,7 +32,7 @@ jobs:
 
       - name: Generate Unique Branch Name
         id: branch-name
-        run: echo "branch_name=bump-flake-lock-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+        run: echo "branch_name=bump-flake-lock-${{ matrix.name }}$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035
         with:
@@ -35,8 +44,7 @@ jobs:
 
       - name: Bump Cargo.lock, Cargo.toml
         run: |
-          nix develop --command cargo upgrade
-          nix develop --command cargo update
+          nix develop --command ${{ matrix.cmd }}
 
       - name: Configure Git
         run: |
