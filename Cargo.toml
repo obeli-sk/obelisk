@@ -192,7 +192,7 @@ config = { version = "0.15.19", default-features = false, features = [
 ] }
 console-subscriber = "0.5.0"
 const_format = "0.2.35"
-criterion = "0.7"
+criterion = "0.8"
 crossterm = "0.29.0"
 derive_more = { version = "2.1.0", features = [
     "debug",
@@ -286,14 +286,14 @@ wasmtime-wasi-io = "39.0.1"
 wasmtime-wasi-http = "39.0.1"
 wasmtime-environ = "39.0.1"
 # wasm-tools
-wast = "242.0.0"
-wit-parser = "0.242.0"
-wasmparser = "0.242.0"
-wit-component = "0.242.0"
+wast = "243.0.0"
+wit-parser = "0.243.0"
+wasmparser = "0.243.0"
+wit-component = "0.243.0"
 
 # testing components
 wasip2 = "1.0.1"
-wit-bindgen = "0.48.1"
+wit-bindgen = "0.49.0"
 wstd = "0.6.3"
 
 # otlp
