@@ -32,7 +32,7 @@ jobs:
 
       - name: Generate Unique Branch Name
         id: branch-name
-        run: echo "branch_name=bump-flake-lock-${{ matrix.name }}$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+        run: echo "branch_name=bump-flake-lock-${{ matrix.name }}-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035
         with:
