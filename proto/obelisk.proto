@@ -186,14 +186,6 @@ message GetStatusRequest {
     bool send_finished_status = 3;
 }
 
-enum ResultKind {
-    OK = 0;
-    FALLIBLE_ERROR = 1;
-    TIMEOUT = 2;
-    EXECUTION_FAILURE = 3;
-    reserved 4;
-}
-
 message ExecutionStatus {
     message Locked {
         RunId run_id = 2;
@@ -222,6 +214,18 @@ message ExecutionStatus {
     }
 }
 
+message ResultKind {
+    message Ok {
+    }
+    message FallibleError {
+    }
+    oneof value {
+        Ok ok = 1;
+        FallibleError fallible_error = 2;
+        ExecutionFailureKind execution_failure_kind = 3;
+    }
+}
+
 message FinishedStatus {
     google.protobuf.Timestamp created_at = 1;
     google.protobuf.Timestamp scheduled_at = 2;
@@ -229,28 +233,39 @@ message FinishedStatus {
     ResultDetail result_detail = 4;
 }
 
+enum ExecutionFailureKind {
+    // Applicable to activities only, because workflows will be retried forever
+    TIMED_OUT = 0;
+    // Applicable to workflows
+    NONDETERMINISM_DETECTED = 1;
+    // Applicable to WASM components
+    OUT_OF_FUEL = 2;
+    // Applicable to activities
+    CANCELLED = 3;
+    UNCATEGORIZED = 4;
+}
+
 // Mirrors SupportedFunctionReturnValue
 message ResultDetail {
     message Ok {
         google.protobuf.Any return_value = 1;
     }
-    message FallibleError { // TODO: rename to Err
+    message FallibleError {
         // The top level JSON attribute "err" must be present.
         google.protobuf.Any return_value = 1;
     }
-    // FinishedExecutionError::PermanentTimeout
-    message Timeout {
-    }
-    // FinishedExecutionError::PermanentFailure
+
+
+
+    // FinishedExecutionError
     message ExecutionFailure {
-        string reason = 1;
-        optional string detail = 2;
-        // TODO Add PermanentFailureKind
+        ExecutionFailureKind kind = 1;
+        optional string reason = 2;
+        optional string detail = 3;
     }
     oneof value {
         Ok ok = 1;
         FallibleError fallible_error = 2;
-        Timeout timeout = 3;
         ExecutionFailure execution_failure = 4;
     }
 }

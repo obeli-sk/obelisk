@@ -493,12 +493,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "ExecutionError": {
-              "PermanentFailure": {
-                "reason_inner": "",
-                "reason_full": "",
-                "kind": "cancelled",
-                "detail": null
-              }
+              "kind": "cancelled"
             }
           }
         }
@@ -514,12 +509,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "ExecutionError": {
-              "PermanentFailure": {
-                "reason_inner": "",
-                "reason_full": "",
-                "kind": "cancelled",
-                "detail": null
-              }
+              "kind": "cancelled"
             }
           }
         }
@@ -548,12 +538,7 @@ expression: execution_log
           "finished_version": 1,
           "result": {
             "ExecutionError": {
-              "PermanentFailure": {
-                "reason_inner": "",
-                "reason_full": "",
-                "kind": "cancelled",
-                "detail": null
-              }
+              "kind": "cancelled"
             }
           }
         }

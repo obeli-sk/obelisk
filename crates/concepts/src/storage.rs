@@ -1,12 +1,12 @@
 use crate::ComponentId;
 use crate::ComponentRetryConfig;
+use crate::ExecutionFailureKind;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
 use crate::FinishedExecutionError;
 use crate::FunctionFqn;
 use crate::JoinSetId;
 use crate::Params;
-use crate::PermanentFailureKind;
 use crate::StrVariant;
 use crate::SupportedFunctionReturnValue;
 use crate::prefixed_ulid::DelayId;
@@ -23,7 +23,6 @@ use serde::Serialize;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoStaticStr;
@@ -261,9 +260,7 @@ pub enum ExecutionEventInner {
     TemporarilyFailed {
         backoff_expires_at: DateTime<Utc>,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
-        reason_full: StrVariant,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason inner")))]
-        reason_inner: StrVariant,
+        reason: StrVariant,
         detail: Option<String>,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
         http_client_traces: Option<Vec<HttpClientTrace>>,
@@ -928,14 +925,11 @@ pub async fn cancel_activity(
     } else {
         let finished_version = last_event.version.increment();
         debug!("Cancelling activity {child_execution_id_derived} at {finished_version}");
-        let child_result = SupportedFunctionReturnValue::ExecutionError(
-            FinishedExecutionError::PermanentFailure {
-                reason_inner: String::new(),
-                reason_full: String::new(),
-                kind: PermanentFailureKind::Cancelled,
-                detail: None,
-            },
-        );
+        let child_result = SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
+            reason: None,
+            kind: ExecutionFailureKind::Cancelled,
+            detail: None,
+        });
         db_connection
             .append_batch_respond_to_parent(
                 AppendEventsToExecution {
@@ -1216,37 +1210,41 @@ pub struct LockedBy {
     pub run_id: RunId,
 }
 
-#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
-#[display("{result_kind}")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingStateFinished {
     pub version: VersionType, // not Version since it must be Copy
     pub finished_at: DateTime<Utc>,
     pub result_kind: PendingStateFinishedResultKind,
 }
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
-)]
-pub struct PendingStateFinishedResultKind(pub Result<(), PendingStateFinishedError>);
-const OK_VARIANT: &str = "ok";
-impl FromStr for PendingStateFinishedResultKind {
-    type Err = strum::ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == OK_VARIANT {
-            Ok(PendingStateFinishedResultKind(Ok(())))
-        } else {
-            let err = PendingStateFinishedError::from_str(s)?;
-            Ok(PendingStateFinishedResultKind(Err(err)))
+impl Display for PendingStateFinished {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.result_kind {
+            PendingStateFinishedResultKind::Ok => write!(f, "ok"),
+            PendingStateFinishedResultKind::Err(err) => write!(f, "{err}"),
+        }
+    }
+}
+impl Display for SupportedFunctionReturnValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.as_pending_state_finished_result() {
+            PendingStateFinishedResultKind::Ok => write!(f, "ok"),
+            PendingStateFinishedResultKind::Err(err) => write!(f, "{err}"),
         }
     }
 }
 
-impl Display for PendingStateFinishedResultKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.0 {
-            Ok(()) => write!(f, "{OK_VARIANT}"),
-            Err(err) => write!(f, "{err}"),
+// This is not a Result so that it can be customized for serialization
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingStateFinishedResultKind {
+    Ok,
+    Err(PendingStateFinishedError),
+}
+impl PendingStateFinishedResultKind {
+    pub fn as_result(&self) -> Result<(), &PendingStateFinishedError> {
+        match self {
+            PendingStateFinishedResultKind::Ok => Ok(()),
+            PendingStateFinishedResultKind::Err(err) => Err(err),
         }
     }
 }
@@ -1257,12 +1255,11 @@ impl From<&SupportedFunctionReturnValue> for PendingStateFinishedResultKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString, strum::Display)]
-#[cfg_attr(test, derive(strum::VariantArray))]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum PendingStateFinishedError {
-    Timeout,
-    ExecutionFailure,
+    #[display("execution failed: {_0}")]
+    ExecutionFailure(ExecutionFailureKind),
+    #[display("returned error variant")]
     FallibleError,
 }
 
@@ -1372,6 +1369,7 @@ mod tests {
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
     use super::PendingStateFinishedResultKind;
+    use crate::ExecutionFailureKind;
     use crate::SupportedFunctionReturnValue;
     use chrono::DateTime;
     use chrono::Datelike;
@@ -1379,14 +1377,13 @@ mod tests {
     use insta::assert_snapshot;
     use rstest::rstest;
     use std::time::Duration;
-    use strum::VariantArray as _;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::WastVal;
     use val_json::wast_val::WastValWithType;
 
     #[rstest(expected => [
-        PendingStateFinishedResultKind(Result::Ok(())),
-        PendingStateFinishedResultKind(Result::Err(PendingStateFinishedError::Timeout)),
+        PendingStateFinishedResultKind::Ok,
+        PendingStateFinishedResultKind::Err(PendingStateFinishedError::ExecutionFailure(ExecutionFailureKind::TimedOut)),
     ])]
     #[test]
     fn serde_pending_state_finished_result_kind_should_work(
@@ -1398,8 +1395,8 @@ mod tests {
     }
 
     #[rstest(result_kind => [
-        PendingStateFinishedResultKind(Result::Ok(())),
-        PendingStateFinishedResultKind(Result::Err(PendingStateFinishedError::Timeout)),
+        PendingStateFinishedResultKind::Ok,
+        PendingStateFinishedResultKind::Err(PendingStateFinishedError::ExecutionFailure(ExecutionFailureKind::TimedOut)),
     ])]
     #[test]
     fn serde_pending_state_finished_should_work(result_kind: PendingStateFinishedResultKind) {
@@ -1431,19 +1428,6 @@ mod tests {
         let actual: SupportedFunctionReturnValue = serde_json::from_str(&json).unwrap();
 
         assert_eq!(expected, actual);
-    }
-
-    #[test]
-    fn verify_pending_state_finished_result_kind_serde() {
-        let variants: Vec<_> = PendingStateFinishedError::VARIANTS
-            .iter()
-            .map(|var| PendingStateFinishedResultKind(Err(*var)))
-            .chain(std::iter::once(PendingStateFinishedResultKind(Ok(()))))
-            .collect();
-        let ser = serde_json::to_string_pretty(&variants).unwrap();
-        insta::assert_snapshot!(ser);
-        let deser: Vec<PendingStateFinishedResultKind> = serde_json::from_str(&ser).unwrap();
-        assert_eq!(variants, deser);
     }
 
     #[test]

@@ -12,9 +12,9 @@ use concepts::storage::{
 };
 use concepts::time::ClockFn;
 use concepts::{
-    ComponentId, ComponentType, ExecutionId, ExecutionMetadata, FinishedExecutionError,
-    FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, JoinSetKind, Params,
-    PermanentFailureKind, ReturnType, SUFFIX_PKG_SCHEDULE, SUPPORTED_RETURN_VALUE_OK_EMPTY,
+    ComponentId, ComponentType, ExecutionFailureKind, ExecutionId, ExecutionMetadata,
+    FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName,
+    JoinSetKind, Params, ReturnType, SUFFIX_PKG_SCHEDULE, SUPPORTED_RETURN_VALUE_OK_EMPTY,
     StrVariant, TrapKind,
 };
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
@@ -801,14 +801,11 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     }
                 };
 
-                SupportedFunctionReturnValue::ExecutionError(
-                    FinishedExecutionError::PermanentFailure {
-                        reason_full: err.to_string(),
-                        reason_inner: err.reason,
-                        kind: PermanentFailureKind::WebhookEndpointError,
-                        detail: err.detail,
-                    },
-                )
+                SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
+                    reason: Some(err.to_string()),
+                    kind: ExecutionFailureKind::Uncategorized,
+                    detail: err.detail,
+                })
             }
         };
         if let Some(version) = self.version {

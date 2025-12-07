@@ -1645,8 +1645,8 @@ pub(crate) mod tests {
     use concepts::storage::{DbPoolCloseable, ExecutionLog};
     use concepts::time::{ClockFn, Now};
     use concepts::{
-        ComponentId, ComponentRetryConfig, ExecutionMetadata, FinishedExecutionError,
-        FunctionRegistry, IfcFqnName, JoinSetId, JoinSetKind, PermanentFailureKind,
+        ComponentId, ComponentRetryConfig, ExecutionFailureKind, ExecutionMetadata,
+        FinishedExecutionError, FunctionRegistry, IfcFqnName, JoinSetId, JoinSetKind,
         RETURN_TYPE_DUMMY, SUFFIX_PKG_EXT, SUPPORTED_RETURN_VALUE_OK_EMPTY,
     };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
@@ -2214,24 +2214,27 @@ pub(crate) mod tests {
             || 0,
         )
         .await;
-        assert_matches!(
+        let kind = assert_matches!(
             log.pending_state,
             PendingState::Finished {
                 finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind(Err(
-                        PendingStateFinishedError::ExecutionFailure
-                    )),
+                    result_kind: PendingStateFinishedResultKind::Err(
+                        PendingStateFinishedError::ExecutionFailure(kind)
+                    ),
                     ..
                 }
-            }
+            } => kind
         );
-        let (_reason_inner, reason_full, kind, _detail) = assert_matches!(log.into_finished_result().unwrap(),
-            SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError::PermanentFailure { reason_inner, reason_full, kind, detail })
-            =>(reason_inner, reason_full, kind, detail));
-        assert_eq!(PermanentFailureKind::ConstraintViolation, kind);
+        assert_eq!(ExecutionFailureKind::Uncategorized, kind);
+        let (reason, kind, _detail) = assert_matches!(log.into_finished_result().unwrap(),
+            SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError { reason, kind, detail })
+            =>(reason, kind, detail));
+        assert_eq!(ExecutionFailureKind::Uncategorized, kind);
         assert_eq!(
-            format!("not found in open join sets: `{join_set_id}`"),
-            reason_full
+            Some(format!(
+                "constraint violation: not found in open join sets: `{join_set_id}`"
+            )),
+            reason
         );
         db_close.close().await;
     }
@@ -2378,7 +2381,7 @@ pub(crate) mod tests {
             execution_log.pending_state,
             PendingState::Finished {
                 finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind(Ok(())),
+                    result_kind: PendingStateFinishedResultKind::Ok,
                     ..
                 }
             }

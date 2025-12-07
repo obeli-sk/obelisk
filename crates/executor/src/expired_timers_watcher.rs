@@ -2,6 +2,7 @@ use crate::AbortOnDropHandle;
 use crate::executor::Append;
 use crate::executor::ChildFinishedResponse;
 use chrono::{DateTime, Utc};
+use concepts::ExecutionFailureKind;
 use concepts::ExecutionId;
 use concepts::StrVariant;
 use concepts::SupportedFunctionReturnValue;
@@ -147,9 +148,12 @@ pub(crate) async fn tick(
                     info!(%execution_id, run_id = %expired.locked_by.run_id, executor_id = %expired.locked_by.executor_id,
                         created_at = %executed_at,
                         "Marking execution with expired lock as permanently timed out - {expired:?}");
-                    let finished_exec_result = SupportedFunctionReturnValue::ExecutionError(
-                        FinishedExecutionError::PermanentTimeout,
-                    );
+                    let finished_exec_result =
+                        SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
+                            kind: ExecutionFailureKind::TimedOut,
+                            reason: None,
+                            detail: None,
+                        });
                     let parent = if let ExecutionId::Derived(derived) = &execution_id {
                         Some(derived.split_to_parts())
                     } else {

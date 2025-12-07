@@ -1,6 +1,6 @@
 use super::activity_ctx::{self, ActivityCtx};
 use super::activity_ctx_process::process_support_outer::v1_0_0::obelisk::activity::process as process_support;
-use crate::activity::activity_ctx::HttpClientTracesContainer;
+use crate::activity::activity_ctx::{ActivityPreopenIoError, HttpClientTracesContainer};
 use crate::component_logger::log_activities;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
@@ -15,7 +15,7 @@ use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
 use std::path::Path;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{info, trace};
+use tracing::{error, info, trace};
 use utils::wasm_tools::ExIm;
 use wasmtime::UpdateDeadline;
 use wasmtime::component::{ComponentExportIndex, InstancePre};
@@ -141,9 +141,14 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         Ok(()) => {}
                         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
                         Err(err) => {
+                            error!(
+                                "Cannot remove old preopened directory that is in the way - {err:?}"
+                            );
                             return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
-                                reason_kind: "cannot remove old preopened directory that is in the way",
-                                reason_inner: err.to_string(),
+                                reason: format!(
+                                    "cannot remove old preopened directory that is in the way - {err}"
+                                ),
+                                detail: format!("{err:?}"),
                                 version: ctx.version,
                             });
                         }
@@ -151,9 +156,10 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                 }
                 let res = tokio::fs::create_dir_all(&preopened_dir).await;
                 if let Err(err) = res {
+                    error!("cannot create preopened directory - {err:?}");
                     return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
-                        reason_kind: "cannot create preopened directory",
-                        reason_inner: err.to_string(),
+                        reason: format!("cannot create preopened directory - {err}"),
+                        detail: format!("{err:?}"),
                         version: ctx.version,
                     });
                 }
@@ -172,10 +178,12 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                 preopened_dir,
             ) {
                 Ok(store) => store,
-                Err(err) => {
+                Err(ActivityPreopenIoError { err }) => {
                     return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
-                        reason_kind: "not found although preopened directory was just created",
-                        reason_inner: err.0,
+                        reason: format!(
+                            "not found although preopened directory was just created - {err}"
+                        ),
+                        detail: format!("{err:?}"),
                         version: ctx.version,
                     });
                 }
@@ -596,7 +604,7 @@ pub(crate) mod tests {
         use concepts::storage::{Locked, LockedBy, PendingState};
         use concepts::time::Now;
         use concepts::{
-            ComponentRetryConfig, FinishedExecutionError, PermanentFailureKind,
+            ComponentRetryConfig, ExecutionFailureKind, FinishedExecutionError,
             SUPPORTED_RETURN_VALUE_OK_EMPTY,
         };
         use concepts::{
@@ -692,17 +700,19 @@ pub(crate) mod tests {
         #[case(
             10,
             100,
-            SupportedFunctionReturnValue::ExecutionError(
-                concepts::FinishedExecutionError::PermanentTimeout
-            )
+            SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError{
+                kind: ExecutionFailureKind::TimedOut,
+                reason: None, detail: None
+            })
         )] // 1s -> timeout
         #[case(10, 10, SUPPORTED_RETURN_VALUE_OK_EMPTY)] // 0.1s -> Ok
         #[case(
             1500,
             1,
-            SupportedFunctionReturnValue::ExecutionError(
-                concepts::FinishedExecutionError::PermanentTimeout
-            )
+            SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError{
+                kind: ExecutionFailureKind::TimedOut,
+                reason: None, detail: None
+            })
         )] // 1s -> timeout
         #[tokio::test]
         async fn flaky_sleep_should_produce_temporary_timeout(
@@ -1101,15 +1111,15 @@ pub(crate) mod tests {
                 => (result, http_client_traces));
             let res =
                 assert_matches!(res, SupportedFunctionReturnValue::ExecutionError(err) => err);
-            assert_matches!(
+            let reason = assert_matches!(
                 res,
-                FinishedExecutionError::PermanentFailure {
-                    reason_inner: _,
-                    reason_full: _,
-                    kind: PermanentFailureKind::ActivityTrap,
+                FinishedExecutionError {
+                    kind: ExecutionFailureKind::Uncategorized,
+                    reason: Some(reason), // activity trap
                     detail: _
-                }
+                } => reason
             );
+            assert!(reason.starts_with("activity trap"), "{reason}");
 
             assert_eq!(1, http_client_traces.len());
             let http_client_trace = http_client_traces.into_iter().next().unwrap();
@@ -1221,20 +1231,18 @@ pub(crate) mod tests {
                 );
                 let exec_log = db_connection.get(&execution_id).await.unwrap();
 
-                let (reason_full, reason_inner, detail, found_expires_at, http_client_traces) = assert_matches!(
+                let (reason, detail, found_expires_at, http_client_traces) = assert_matches!(
                     &exec_log.last_event().event,
                     ExecutionEventInner::TemporarilyFailed {
                         backoff_expires_at,
-                        reason_full,
-                        reason_inner,
+                        reason,
                         detail: Some(detail),
                         http_client_traces: Some(http_client_traces)
                     }
-                    => (reason_full, reason_inner, detail, *backoff_expires_at, http_client_traces)
+                    => (reason, detail, *backoff_expires_at, http_client_traces)
                 );
                 assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
-                assert_eq!("activity returned error", reason_inner.deref());
-                assert_eq!("activity returned error", reason_full.deref());
+                assert_eq!("activity returned error", reason.deref());
                 assert!(
                     detail.contains("wrong status code: 500"),
                     "Unexpected {detail}"

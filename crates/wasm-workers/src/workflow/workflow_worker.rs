@@ -1217,7 +1217,7 @@ pub(crate) mod tests {
                 .unwrap(),
             PendingState::Finished {
                 finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind(Ok(())),
+                    result_kind: PendingStateFinishedResultKind::Ok,
                     ..
                 },
                 ..
@@ -1378,7 +1378,7 @@ pub(crate) mod tests {
                 .unwrap(),
             PendingState::Finished {
                 finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind(Ok(())),
+                    result_kind: PendingStateFinishedResultKind::Ok,
                     ..
                 },
                 ..
@@ -1853,9 +1853,9 @@ pub(crate) mod tests {
             pending_state,
             PendingState::Finished {
                 finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind(Err(
+                    result_kind: PendingStateFinishedResultKind::Err(
                         PendingStateFinishedError::FallibleError
-                    )),
+                    ),
                     ..
                 }
             }
@@ -2118,7 +2118,7 @@ pub(crate) mod tests {
             pending_state,
             PendingState::Finished {
                 finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind(Ok(())),
+                    result_kind: PendingStateFinishedResultKind::Ok,
                     ..
                 }
             }
@@ -2463,7 +2463,7 @@ pub(crate) mod tests {
             pending_state,
             PendingState::Finished {
                 finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind(Ok(())),
+                    result_kind: PendingStateFinishedResultKind::Ok,
                     ..
                 }
             }

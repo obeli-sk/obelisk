@@ -36,70 +36,33 @@ pub const SUFFIX_PKG_SCHEDULE: &str = "-obelisk-schedule";
 pub const SUFFIX_PKG_STUB: &str = "-obelisk-stub";
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FinishedExecutionError {
-    // Activity only, because workflows will be retried forever
-    #[error("permanent timeout")]
-    PermanentTimeout,
-    #[error("permanent failure: {reason_full}")]
-    PermanentFailure {
-        // Exists just for extracting reason of an activity trap, to avoid "activity trap: " prefix.
-        reason_inner: String, // FIXME: remove
-        // Contains reason_inner embedded in the error message
-        reason_full: String,
-        kind: PermanentFailureKind,
-        detail: Option<String>,
-    },
+#[error("execution error: {kind}")]
+pub struct FinishedExecutionError {
+    pub kind: ExecutionFailureKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 impl FinishedExecutionError {
     #[must_use]
     pub fn as_pending_state_finished_error(&self) -> PendingStateFinishedError {
-        match self {
-            FinishedExecutionError::PermanentTimeout => PendingStateFinishedError::Timeout,
-            FinishedExecutionError::PermanentFailure { .. } => {
-                PendingStateFinishedError::ExecutionFailure
-            }
-        }
-    }
-
-    #[must_use]
-    pub fn new_stubbed_error() -> Self {
-        let reason = "stubbed error".to_string();
-        Self::PermanentFailure {
-            reason_inner: reason.clone(),
-            reason_full: reason,
-            kind: PermanentFailureKind::StubbedError,
-            detail: None,
-        }
+        PendingStateFinishedError::ExecutionFailure(self.kind)
     }
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PermanentFailureKind {
-    /// Applicable to Workflow
-    NondeterminismDetected,
-    /// Applicable to Workflow, WASM Activity
-    ParamsParsingError,
-    /// Applicable to Workflow, WASM Activity
-    CannotInstantiate,
-    /// Applicable to Workflow, WASM Activity
-    ResultParsingError,
-    /// Applicable to Workflow
-    ImportedFunctionCallError,
-    /// Applicable to WASM Activity
-    ActivityTrap,
-    /// Applicable to Workflow
-    WorkflowTrap,
-    /// Applicable to Webhook
-    WebhookEndpointError,
-    /// Applicable to Stub Activity
-    StubbedError,
-    /// Applicable to Webhook, Workflow, WASM Activity
-    OutOfFuel,
-    /// Applicable to WASM and Stub activities
-    Cancelled,
+pub enum ExecutionFailureKind {
+    /// Applicable to activities only, because workflows will be retried forever
+    TimedOut,
     /// Applicable to workflows
-    ConstraintViolation,
+    NondeterminismDetected,
+    /// Applicable to WASM components
+    OutOfFuel,
+    /// Applicable to activities
+    Cancelled,
+    Uncategorized,
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
@@ -715,12 +678,12 @@ impl SupportedFunctionReturnValue {
     #[must_use]
     pub fn as_pending_state_finished_result(&self) -> PendingStateFinishedResultKind {
         match self {
-            SupportedFunctionReturnValue::Ok { ok: _ } => PendingStateFinishedResultKind(Ok(())),
+            SupportedFunctionReturnValue::Ok { ok: _ } => PendingStateFinishedResultKind::Ok,
             SupportedFunctionReturnValue::Err { err: _ } => {
-                PendingStateFinishedResultKind(Err(PendingStateFinishedError::FallibleError))
+                PendingStateFinishedResultKind::Err(PendingStateFinishedError::FallibleError)
             }
-            SupportedFunctionReturnValue::ExecutionError(_) => {
-                PendingStateFinishedResultKind(Err(PendingStateFinishedError::ExecutionFailure))
+            SupportedFunctionReturnValue::ExecutionError(err) => {
+                PendingStateFinishedResultKind::Err(err.as_pending_state_finished_error())
             }
         }
     }

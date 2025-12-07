@@ -242,7 +242,10 @@ mod conversions {
 
     use super::RusqliteError;
     use concepts::storage::{DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite};
-    use rusqlite::types::{FromSql, FromSqlError};
+    use rusqlite::{
+        ToSql,
+        types::{FromSql, FromSqlError},
+    };
     use std::{fmt::Debug, str::FromStr};
     use tracing::error;
 
@@ -315,6 +318,21 @@ mod conversions {
                 FromSqlError::InvalidType
             })?;
             Ok(Self(value))
+        }
+    }
+    impl<T: serde::ser::Serialize + Debug> ToSql for JsonWrapper<T> {
+        fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+            let string = serde_json::to_string(&self.0).map_err(|err| {
+                error!(
+                    "Cannot serialize {value:?} of type `{type}` - {err:?}",
+                    value = self.0,
+                    r#type = std::any::type_name::<T>()
+                );
+                rusqlite::Error::ToSqlConversionFailure(Box::new(err))
+            })?;
+            Ok(rusqlite::types::ToSqlOutput::Owned(
+                rusqlite::types::Value::Text(string),
+            ))
         }
     }
 
@@ -1362,12 +1380,13 @@ impl SqlitePool {
                 WHERE execution_id = :execution_id
             ",
         )?;
+
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
             ":appending_version": appending_version.0,
             ":pending_expires_finished": finished_at,
             ":state": STATE_FINISHED,
-            ":result_kind": result_kind.to_string(),
+            ":result_kind": JsonWrapper(result_kind),
         })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
@@ -1464,7 +1483,7 @@ impl SqlitePool {
                         join_set_id: row.get::<_, Option<JoinSetId>>("join_set_id")?,
                         join_set_closing: row.get::<_, Option<bool>>("join_set_closing")?,
                         result_kind: row
-                            .get::<_, Option<FromStrWrapper<PendingStateFinishedResultKind>>>(
+                            .get::<_, Option<JsonWrapper<PendingStateFinishedResultKind>>>(
                                 "result_kind",
                             )?
                             .map(|wrapper| wrapper.0),
@@ -1591,7 +1610,7 @@ impl SqlitePool {
                             join_set_id: row.get::<_, Option<JoinSetId>>("join_set_id")?,
                             join_set_closing: row.get::<_, Option<bool>>("join_set_closing")?,
                             result_kind: row
-                                .get::<_, Option<FromStrWrapper<PendingStateFinishedResultKind>>>(
+                                .get::<_, Option<JsonWrapper<PendingStateFinishedResultKind>>>(
                                     "result_kind",
                                 )?
                                 .map(|wrapper| wrapper.0),

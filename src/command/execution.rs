@@ -5,6 +5,7 @@ use crate::get_execution_repository_client;
 use crate::get_fn_repository_client;
 use anyhow::bail;
 use chrono::DateTime;
+use concepts::ExecutionFailureKind;
 use concepts::JOIN_SET_ID_INFIX;
 use concepts::JoinSetKind;
 use concepts::prefixed_ulid::ExecutionIdDerived;
@@ -14,6 +15,7 @@ use grpc::grpc_gen::execution_status::BlockedByJoinSet;
 use grpc::grpc_gen::execution_status::Finished;
 use grpc_gen::execution_status::Status;
 use itertools::Either;
+use serde::Serialize;
 use serde_json::json;
 use std::time::Duration;
 use tracing::instrument;
@@ -174,7 +176,7 @@ pub(crate) async fn stub(
 }
 
 /// Return true if the status is Finished.
-fn print_status(response: grpc_gen::GetStatusResponse) -> Result<bool, ExecutionError> {
+fn print_status(response: grpc_gen::GetStatusResponse) -> Result<bool, AlreadyPrintedError> {
     use grpc_gen::get_status_response::Message;
     let message = response.message.expect("message expected");
 
@@ -223,18 +225,9 @@ fn format_pending_status(pending_status: grpc_gen::ExecutionStatus) -> String {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-// This error is printed in the same function that constructs it.
-enum ExecutionError {
-    #[error("fallible error")]
-    FallibleError,
-    #[error("timeout")]
-    Timeout,
-    #[error("execution failure")]
-    ExecutionFailure,
-}
-
-fn print_finished_status(finished_status: grpc_gen::FinishedStatus) -> Result<(), ExecutionError> {
+fn print_finished_status(
+    finished_status: grpc_gen::FinishedStatus,
+) -> Result<(), AlreadyPrintedError> {
     let created_at = DateTime::from(
         finished_status
             .created_at
@@ -266,32 +259,30 @@ fn print_finished_status(finished_status: grpc_gen::FinishedStatus) -> Result<()
             },
         )) => {
             let return_value = String::from_utf8_lossy(&return_value.value);
-            (
-                format!("Err: {return_value}"),
-                Err(ExecutionError::FallibleError),
-            )
-        }
-        Some(grpc_gen::result_detail::Value::Timeout(_)) => {
-            ("Timeout".to_string(), Err(ExecutionError::Timeout))
+            (format!("Err: {return_value}"), Err(AlreadyPrintedError))
         }
         Some(grpc_gen::result_detail::Value::ExecutionFailure(
             grpc_gen::result_detail::ExecutionFailure {
+                kind,
                 reason,
-                detail: Some(detail),
+                detail,
             },
-        )) => (
-            format!("Execution failure: {reason}\ndetail: {detail}"),
-            Err(ExecutionError::ExecutionFailure),
-        ),
-        Some(grpc_gen::result_detail::Value::ExecutionFailure(
-            grpc_gen::result_detail::ExecutionFailure {
-                reason,
-                detail: None,
-            },
-        )) => (
-            format!("Execution failure: {reason}"),
-            Err(ExecutionError::ExecutionFailure),
-        ),
+        )) => {
+            let kind = grpc_gen::ExecutionFailureKind::try_from(kind)
+                .expect("ExecutionFailureKind must be in sync with the server");
+            let kind = ExecutionFailureKind::from(kind);
+            let mut string = format!("Execution failure ({kind})");
+            if let Some(reason) = reason {
+                string.push_str(": `");
+                string.push_str(&reason);
+                string.push('`');
+            }
+            if let Some(detail) = detail {
+                string.push('\n');
+                string.push_str(&detail);
+            }
+            (string, Err(AlreadyPrintedError))
+        }
         other => unreachable!("unexpected variant {other:?}"),
     };
 
@@ -307,7 +298,7 @@ fn print_finished_status(finished_status: grpc_gen::FinishedStatus) -> Result<()
 
 fn print_finished_status_json(
     finished_status: grpc_gen::FinishedStatus,
-) -> Result<(), ExecutionError> {
+) -> Result<(), AlreadyPrintedError> {
     let created_at = finished_status
         .created_at
         .expect("`created_at` is sent by the server");
@@ -342,18 +333,36 @@ fn print_finished_status_json(
                 .expect("return_value must be JSON encoded");
             (
                 json!({"fallible_error": return_value}),
-                Err(ExecutionError::FallibleError),
+                Err(AlreadyPrintedError),
             )
         }
-        Some(grpc_gen::result_detail::Value::Timeout(_)) => {
-            (json!({"timeout": null}), Err(ExecutionError::Timeout))
-        }
         Some(grpc_gen::result_detail::Value::ExecutionFailure(
-            grpc_gen::result_detail::ExecutionFailure { reason, detail },
-        )) => (
-            json!({"execution_failure": {"reason": reason, "detail": detail}}),
-            Err(ExecutionError::ExecutionFailure),
-        ),
+            grpc_gen::result_detail::ExecutionFailure {
+                kind,
+                reason,
+                detail,
+            },
+        )) => {
+            let kind = grpc_gen::ExecutionFailureKind::try_from(kind)
+                .expect("ExecutionFailureKind must be in sync with the server");
+            let kind = ExecutionFailureKind::from(kind);
+            #[expect(clippy::items_after_statements)]
+            #[derive(Serialize)]
+            struct Failure {
+                kind: String,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                reason: Option<String>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                detail: Option<String>,
+            }
+            let ser = serde_json::to_value(Failure {
+                kind: kind.to_string(),
+                reason,
+                detail,
+            })
+            .expect("infallible JSON serialization");
+            (ser, Err(AlreadyPrintedError))
+        }
         other => unreachable!("unexpected variant {other:?}"),
     };
     json["created_at"] = serde_json::Value::String(created_at.to_string());
@@ -396,7 +405,7 @@ pub(crate) async fn get_status_json(
     res.map_err(anyhow::Error::from)
 }
 
-fn print_status_json(response: grpc_gen::GetStatusResponse) -> Result<(), ExecutionError> {
+fn print_status_json(response: grpc_gen::GetStatusResponse) -> Result<(), AlreadyPrintedError> {
     use grpc_gen::get_status_response::Message;
     let message = response.message.expect("message expected");
 
@@ -411,6 +420,10 @@ fn print_status_json(response: grpc_gen::GetStatusResponse) -> Result<(), Execut
         Message::FinishedStatus(finished_sattus) => print_finished_status_json(finished_sattus),
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("")]
+struct AlreadyPrintedError;
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct GetStatusOptions {
@@ -432,7 +445,7 @@ pub(crate) async fn get_status(
                     if err.downcast_ref::<tonic::Status>().is_some() {
                         eprintln!("Got error while polling the status, reconnecting - {err}");
                         tokio::time::sleep(Duration::from_secs(1)).await;
-                    } else if err.downcast_ref::<ExecutionError>().is_some() {
+                    } else if err.downcast_ref::<AlreadyPrintedError>().is_some() {
                         // Already printed.
                         return Err(err);
                     } else {

@@ -893,7 +893,9 @@ impl EventHistory {
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(Ok(
                             (
                                 ResponseId::ChildExecutionId(child_execution_id.clone()),
-                                res.as_pending_state_finished_result().0.map_err(|_| ()),
+                                res.as_pending_state_finished_result()
+                                    .as_result()
+                                    .map_err(|_| ()),
                             ),
                         ))))
                     }

@@ -10,13 +10,12 @@ use concepts::time::{ClockFn, Sleep};
 use concepts::{
     ComponentId, ComponentRetryConfig, FunctionMetadata, StrVariant, SupportedFunctionReturnValue,
 };
+use concepts::{ExecutionFailureKind, JoinSetId};
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use concepts::{
     FinishedExecutionError,
     storage::{ExecutionEventInner, Version},
 };
-use concepts::{JoinSetId, PermanentFailureKind};
-use std::fmt::Display;
 use std::{
     sync::{
         Arc,
@@ -373,10 +372,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
     ) -> Result<Option<Append>, DbErrorWrite> {
         Ok(match worker_result {
             WorkerResult::Ok(result, new_version, http_client_traces) => {
-                info!(
-                    "Execution finished: {}",
-                    result.as_pending_state_finished_result()
-                );
+                info!("Execution finished: {result}");
                 let child_finished =
                     parent.map(
                         |(parent_execution_id, parent_join_set)| ChildFinishedResponse {
@@ -403,7 +399,8 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             }
             WorkerResult::DbUpdatedByWorkerOrWatcher => None,
             WorkerResult::Err(err) => {
-                let reason_full = err.to_string(); // WorkerError.display() usually contains a variant specific prefix + inner `reason`.
+                let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
+
                 let (primary_event, child_finished, version) = match err {
                     WorkerError::TemporaryTimeout {
                         http_client_traces,
@@ -423,9 +420,13 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                                 version,
                             )
                         } else {
-                            info!("Permanent timeout");
+                            info!("Execution timed out");
                             let result = SupportedFunctionReturnValue::ExecutionError(
-                                FinishedExecutionError::PermanentTimeout,
+                                FinishedExecutionError {
+                                    kind: ExecutionFailureKind::TimedOut,
+                                    reason: None,
+                                    detail: None,
+                                },
                             );
                             let child_finished =
                                 parent.map(|(parent_execution_id, parent_join_set)| {
@@ -449,37 +450,106 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         return Err(db_error);
                     }
                     WorkerError::ActivityTrap {
-                        reason: reason_inner,
+                        reason: _, // reason_generic contains trap_kind + reason
                         trap_kind,
                         detail,
                         version,
                         http_client_traces,
-                    } => retry_or_fail(
-                        result_obtained_at,
-                        parent,
-                        can_be_retried,
-                        reason_full,
-                        reason_inner,
-                        trap_kind, // short reason like `trap` for logs
+                    } => {
+                        if let Some(duration) = can_be_retried {
+                            let expires_at = result_obtained_at + duration;
+                            debug!(
+                                "Retrying activity with `{trap_kind}` execution after {duration:?} at {expires_at}"
+                            );
+                            (
+                                ExecutionEventInner::TemporarilyFailed {
+                                    reason: StrVariant::from(reason_generic),
+                                    backoff_expires_at: expires_at,
+                                    detail,
+                                    http_client_traces,
+                                },
+                                None,
+                                version,
+                            )
+                        } else {
+                            info!(
+                                "Activity with `{trap_kind}` marked as permanent failure - {reason_generic}"
+                            );
+                            let result = SupportedFunctionReturnValue::ExecutionError(
+                                FinishedExecutionError {
+                                    reason: Some(reason_generic),
+                                    kind: ExecutionFailureKind::Uncategorized,
+                                    detail,
+                                },
+                            );
+                            let child_finished =
+                                parent.map(|(parent_execution_id, parent_join_set)| {
+                                    ChildFinishedResponse {
+                                        parent_execution_id,
+                                        parent_join_set,
+                                        result: result.clone(),
+                                    }
+                                });
+                            (
+                                ExecutionEventInner::Finished {
+                                    result,
+                                    http_client_traces,
+                                },
+                                child_finished,
+                                version,
+                            )
+                        }
+                    }
+                    WorkerError::ActivityPreopenedDirError {
+                        reason,
                         detail,
                         version,
-                        http_client_traces,
-                    ),
-                    WorkerError::ActivityPreopenedDirError {
-                        reason_kind,
-                        reason_inner,
-                        version,
-                    } => retry_or_fail(
-                        result_obtained_at,
-                        parent,
-                        can_be_retried,
-                        reason_full,
-                        reason_inner,
-                        reason_kind, // short reason for logs
-                        None,        // detail
-                        version,
-                        None, // http_client_traces
-                    ),
+                    } => {
+                        let http_client_traces = None;
+                        if let Some(duration) = can_be_retried {
+                            let expires_at = result_obtained_at + duration;
+                            debug!(
+                                "Retrying activity with ActivityPreopenedDirError `{reason}` execution after {duration:?} at {expires_at}"
+                            );
+                            (
+                                ExecutionEventInner::TemporarilyFailed {
+                                    reason: StrVariant::from(reason_generic),
+                                    backoff_expires_at: expires_at,
+                                    detail: Some(detail),
+                                    http_client_traces,
+                                },
+                                None,
+                                version,
+                            )
+                        } else {
+                            info!(
+                                "Activity with ActivityPreopenedDirError `{reason}` marked as permanent failure - {reason_generic}"
+                            );
+                            let result = SupportedFunctionReturnValue::ExecutionError(
+                                FinishedExecutionError {
+                                    reason: Some(reason_generic),
+                                    kind: ExecutionFailureKind::Uncategorized,
+                                    detail: Some(detail),
+                                },
+                            );
+                            let child_finished =
+                                parent.map(|(parent_execution_id, parent_join_set)| {
+                                    ChildFinishedResponse {
+                                        parent_execution_id,
+                                        parent_join_set,
+                                        result: result.clone(),
+                                    }
+                                });
+                            (
+                                ExecutionEventInner::Finished {
+                                    result,
+                                    http_client_traces,
+                                },
+                                child_finished,
+                                version,
+                            )
+                        }
+                    }
                     WorkerError::ActivityReturnedError {
                         detail,
                         version,
@@ -493,8 +563,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         (
                             ExecutionEventInner::TemporarilyFailed {
                                 backoff_expires_at: expires_at,
-                                reason_full: StrVariant::Static("activity returned error"), // is same as the variant's display message.
-                                reason_inner: StrVariant::Static("activity returned error"),
+                                reason: StrVariant::Static("activity returned error"), // is same as the variant's display message.
                                 detail, // contains the backtrace
                                 http_client_traces,
                             },
@@ -503,17 +572,17 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         )
                     }
                     WorkerError::LimitReached {
-                        reason: inner_reason,
+                        reason,
                         version: new_version,
                     } => {
                         let expires_at = result_obtained_at + unlock_expiry_on_limit_reached;
                         warn!(
-                            "Limit reached: {inner_reason}, unlocking after {unlock_expiry_on_limit_reached:?} at {expires_at}"
+                            "Limit reached: {reason}, unlocking after {unlock_expiry_on_limit_reached:?} at {expires_at}"
                         );
                         (
                             ExecutionEventInner::Unlocked {
                                 backoff_expires_at: expires_at,
-                                reason: StrVariant::from(reason_full),
+                                reason: StrVariant::from(reason),
                             },
                             None,
                             new_version,
@@ -554,64 +623,6 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 })
             }
         })
-    }
-}
-
-#[expect(clippy::too_many_arguments)]
-fn retry_or_fail(
-    result_obtained_at: DateTime<Utc>,
-    parent: Option<(ExecutionId, JoinSetId)>,
-    can_be_retried: Option<Duration>,
-    reason_full: String,
-    reason_inner: String,
-    err_kind_for_logs: impl Display,
-    detail: Option<String>,
-    version: Version,
-    http_client_traces: Option<Vec<concepts::storage::http_client_trace::HttpClientTrace>>,
-) -> (ExecutionEventInner, Option<ChildFinishedResponse>, Version) {
-    if let Some(duration) = can_be_retried {
-        let expires_at = result_obtained_at + duration;
-        debug!(
-            "Retrying activity with `{err_kind_for_logs}` execution after {duration:?} at {expires_at}"
-        );
-        (
-            ExecutionEventInner::TemporarilyFailed {
-                backoff_expires_at: expires_at,
-                reason_full: StrVariant::from(reason_full),
-                reason_inner: StrVariant::from(reason_inner),
-                detail,
-                http_client_traces,
-            },
-            None,
-            version,
-        )
-    } else {
-        info!("Activity with `{err_kind_for_logs}` marked as permanent failure - {reason_inner}");
-        let result = SupportedFunctionReturnValue::ExecutionError(
-            FinishedExecutionError::PermanentFailure {
-                reason_inner,
-                reason_full,
-                kind: PermanentFailureKind::ActivityTrap,
-                detail,
-            },
-        );
-
-        let child_finished =
-            parent.map(
-                |(parent_execution_id, parent_join_set)| ChildFinishedResponse {
-                    parent_execution_id,
-                    parent_join_set,
-                    result: result.clone(),
-                },
-            );
-        (
-            ExecutionEventInner::Finished {
-                result,
-                http_client_traces,
-            },
-            child_finished,
-            version,
-        )
     }
 }
 
@@ -1037,12 +1048,11 @@ mod tests {
         .await;
         assert_eq!(3, execution_log.events.len());
         {
-            let (reason_full, reason_inner, detail, at, expires_at) = assert_matches!(
+            let (reason, detail, at, expires_at) = assert_matches!(
                 &execution_log.events.get(2).unwrap(),
                 ExecutionEvent {
                     event: ExecutionEventInner::TemporarilyFailed {
-                        reason_inner,
-                        reason_full,
+                        reason,
                         detail,
                         backoff_expires_at,
                         http_client_traces: None,
@@ -1051,13 +1061,9 @@ mod tests {
                     backtrace_id: None,
                     version: Version(2),
                 }
-                => (reason_full, reason_inner, detail, *at, *backoff_expires_at)
+                => (reason, detail, *at, *backoff_expires_at)
             );
-            assert_eq!(expected_reason, reason_inner.deref());
-            assert_eq!(
-                format!("activity trap: {expected_reason}"),
-                reason_full.deref()
-            );
+            assert_eq!(format!("activity trap: {expected_reason}"), reason.deref());
             assert_eq!(Some(expected_detail), detail.as_deref());
             assert_eq!(at, sim_clock.now());
             assert_eq!(sim_clock.now() + retry_config.retry_exp_backoff, expires_at);
@@ -1141,11 +1147,12 @@ mod tests {
             retry_config: ComponentRetryConfig::ZERO,
         };
 
-        let expected_reason = "error reason";
+        let reason = "error reason";
+        let expected_reason = format!("activity trap: {reason}");
         let expected_detail = "error detail";
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::ActivityTrap {
-                reason: expected_reason.to_string(),
+                reason: reason.to_string(),
                 trap_kind: concepts::TrapKind::Trap,
                 detail: Some(expected_detail.to_string()),
                 version: Version::new(2),
@@ -1171,18 +1178,19 @@ mod tests {
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished{
-                    result: SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError::PermanentFailure{reason_inner, kind, detail, reason_full:_}),
+                    result: SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError{reason, kind, detail}),
                     http_client_traces: None
                 },
                 created_at: at,
                 backtrace_id: None,
                 version: Version(2),
             } if *at == created_at
-            => (reason_inner, kind, detail)
+            => (reason, kind, detail)
         );
-        assert_eq!(expected_reason, *reason);
+
+        assert_eq!(Some(expected_reason), *reason);
         assert_eq!(Some(expected_detail), detail.as_deref());
-        assert_eq!(PermanentFailureKind::ActivityTrap, *kind);
+        assert_eq!(ExecutionFailureKind::Uncategorized, *kind);
 
         db_close.close().await;
     }
@@ -1196,10 +1204,9 @@ mod tests {
             version: Version::new(2),
             http_client_traces: None,
         };
-        let expected_child_err = FinishedExecutionError::PermanentFailure {
-            reason_full: "activity trap: error reason".to_string(),
-            reason_inner: "error reason".to_string(),
-            kind: PermanentFailureKind::ActivityTrap,
+        let expected_child_err = FinishedExecutionError {
+            kind: ExecutionFailureKind::Uncategorized,
+            reason: Some("activity trap: error reason".to_string()),
             detail: Some("detail".to_string()),
         };
         child_execution_permanently_failed_should_notify_parent(
@@ -1209,11 +1216,13 @@ mod tests {
         .await;
     }
 
-    // TODO: Add test for WorkerError::TemporaryTimeout
-
     #[tokio::test]
     async fn child_execution_permanently_failed_handled_by_watcher_should_notify_parent_timeout() {
-        let expected_child_err = FinishedExecutionError::PermanentTimeout;
+        let expected_child_err = FinishedExecutionError {
+            kind: ExecutionFailureKind::TimedOut,
+            reason: None,
+            detail: None,
+        };
         child_execution_permanently_failed_should_notify_parent(
             WorkerResult::DbUpdatedByWorkerOrWatcher,
             expected_child_err,
@@ -1351,7 +1360,7 @@ mod tests {
             sim_clock.now(),
         )
         .await;
-        if matches!(expected_child_err, FinishedExecutionError::PermanentTimeout) {
+        if matches!(expected_child_err.kind, ExecutionFailureKind::TimedOut) {
             // In case of timeout, let the timers watcher handle it
             sim_clock.move_time_forward(LOCK_EXPIRY);
             expired_timers_watcher::tick(db_pool.connection().as_ref(), sim_clock.now())

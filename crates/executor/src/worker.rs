@@ -1,8 +1,8 @@
 use async_trait::async_trait;
+use concepts::ExecutionFailureKind;
 use concepts::ExecutionId;
 use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
-use concepts::PermanentFailureKind;
 use concepts::TrapKind;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::HistoryEvent;
@@ -63,10 +63,10 @@ pub enum WorkerError {
         version: Version,
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
-    #[error("{reason_kind}")]
+    #[error("{reason}")]
     ActivityPreopenedDirError {
-        reason_kind: &'static str,
-        reason_inner: String,
+        reason: String,
+        detail: String,
         version: Version,
     },
     // Used by activity worker, must not be returned when retries are exhausted.
@@ -127,77 +127,42 @@ pub enum FatalError {
 }
 
 impl From<FatalError> for FinishedExecutionError {
-    fn from(value: FatalError) -> Self {
-        let reason_full = value.to_string();
-        match value {
-            FatalError::NondeterminismDetected { detail } => {
-                FinishedExecutionError::PermanentFailure {
-                    reason_inner: reason_full.clone(),
-                    reason_full,
-                    kind: PermanentFailureKind::NondeterminismDetected,
-                    detail: Some(detail),
-                }
-            }
-            FatalError::ParamsParsingError(params_parsing_error) => {
-                FinishedExecutionError::PermanentFailure {
-                    reason_inner: reason_full.clone(),
-                    reason_full,
-                    kind: PermanentFailureKind::ParamsParsingError,
-                    detail: params_parsing_error.detail(),
-                }
-            }
-            FatalError::CannotInstantiate {
-                detail,
-                reason: reason_inner,
-                ..
-            } => FinishedExecutionError::PermanentFailure {
-                reason_inner,
-                reason_full,
-                kind: PermanentFailureKind::CannotInstantiate,
+    fn from(err: FatalError) -> Self {
+        let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
+        match err {
+            FatalError::NondeterminismDetected { detail } => FinishedExecutionError {
+                reason: None,
+                kind: ExecutionFailureKind::NondeterminismDetected,
                 detail: Some(detail),
             },
-            FatalError::ResultParsingError(_) => FinishedExecutionError::PermanentFailure {
-                reason_inner: reason_full.clone(),
-                reason_full,
-                kind: PermanentFailureKind::ResultParsingError,
+            FatalError::OutOfFuel { reason } => FinishedExecutionError {
+                reason: Some(reason),
+                kind: ExecutionFailureKind::OutOfFuel,
                 detail: None,
             },
-            FatalError::ImportedFunctionCallError {
-                detail,
-                reason: reason_inner,
-                ..
-            } => FinishedExecutionError::PermanentFailure {
-                reason_inner: reason_inner.to_string(),
-                reason_full,
-                kind: PermanentFailureKind::ImportedFunctionCallError,
-                detail,
+            FatalError::ParamsParsingError(err) => FinishedExecutionError {
+                reason: Some(reason_generic),
+                kind: ExecutionFailureKind::Uncategorized,
+                detail: err.detail(),
             },
-            FatalError::WorkflowTrap {
-                detail,
-                reason: reason_inner,
-                ..
-            } => FinishedExecutionError::PermanentFailure {
-                reason_inner,
-                reason_full,
-                kind: PermanentFailureKind::WorkflowTrap,
-                detail,
+            FatalError::CannotInstantiate { reason: _, detail } => FinishedExecutionError {
+                reason: Some(reason_generic),
+                kind: ExecutionFailureKind::Uncategorized,
+                detail: Some(detail),
             },
-            FatalError::OutOfFuel {
-                reason: reason_inner,
-            } => FinishedExecutionError::PermanentFailure {
-                reason_inner,
-                reason_full,
-                kind: PermanentFailureKind::OutOfFuel,
-                detail: None,
-            },
-            FatalError::ConstraintViolation { reason } => {
-                FinishedExecutionError::PermanentFailure {
-                    reason_inner: reason.to_string(),
-                    reason_full: reason.to_string(),
-                    kind: PermanentFailureKind::ConstraintViolation,
+            FatalError::ResultParsingError(_) | FatalError::ConstraintViolation { reason: _ } => {
+                FinishedExecutionError {
+                    reason: Some(reason_generic),
+                    kind: ExecutionFailureKind::Uncategorized,
                     detail: None,
                 }
             }
+            FatalError::ImportedFunctionCallError { detail, .. }
+            | FatalError::WorkflowTrap { detail, .. } => FinishedExecutionError {
+                reason: Some(reason_generic),
+                kind: ExecutionFailureKind::Uncategorized,
+                detail,
+            },
         }
     }
 }

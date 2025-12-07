@@ -1,7 +1,7 @@
-use crate::grpc_gen::{self, execution_event::history_event};
+use crate::grpc_gen::{self, execution_event::history_event, result_kind};
 use concepts::{
-    ComponentId, ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn,
-    SupportedFunctionReturnValue,
+    ComponentId, ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionError,
+    FunctionFqn, SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, RunId},
     storage::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
@@ -253,16 +253,84 @@ impl From<PendingState> for grpc_gen::ExecutionStatus {
 impl From<PendingStateFinishedResultKind> for grpc_gen::ResultKind {
     fn from(result_kind: PendingStateFinishedResultKind) -> Self {
         match result_kind {
-            PendingStateFinishedResultKind(Ok(())) => grpc_gen::ResultKind::Ok,
-            PendingStateFinishedResultKind(Err(PendingStateFinishedError::Timeout)) => {
-                grpc_gen::ResultKind::Timeout
+            PendingStateFinishedResultKind::Ok => grpc_gen::ResultKind {
+                value: Some(result_kind::Value::Ok(result_kind::Ok {})),
+            },
+            PendingStateFinishedResultKind::Err(PendingStateFinishedError::ExecutionFailure(
+                kind,
+            )) => grpc_gen::ResultKind {
+                value: Some(result_kind::Value::ExecutionFailureKind(
+                    grpc_gen::ExecutionFailureKind::from(kind).into(),
+                )),
+            },
+            PendingStateFinishedResultKind::Err(PendingStateFinishedError::FallibleError) => {
+                grpc_gen::ResultKind {
+                    value: Some(result_kind::Value::FallibleError(
+                        result_kind::FallibleError {},
+                    )),
+                }
             }
-            PendingStateFinishedResultKind(Err(PendingStateFinishedError::ExecutionFailure)) => {
-                grpc_gen::ResultKind::ExecutionFailure
+        }
+    }
+}
+#[derive(Debug)]
+pub enum ResultKindConversionError {
+    MissingValue,
+    UnknownVariant,
+}
+
+impl TryFrom<grpc_gen::ResultKind> for PendingStateFinishedResultKind {
+    type Error = ResultKindConversionError;
+
+    fn try_from(result: grpc_gen::ResultKind) -> Result<Self, Self::Error> {
+        use grpc_gen::result_kind::Value;
+
+        match result.value {
+            Some(Value::Ok(_)) => Ok(PendingStateFinishedResultKind::Ok),
+
+            Some(Value::ExecutionFailureKind(kind)) => Ok(PendingStateFinishedResultKind::Err(
+                PendingStateFinishedError::ExecutionFailure(ExecutionFailureKind::from(
+                    grpc_gen::ExecutionFailureKind::try_from(kind)
+                        .map_err(|_| ResultKindConversionError::UnknownVariant)?,
+                )),
+            )),
+
+            Some(Value::FallibleError(_)) => Ok(PendingStateFinishedResultKind::Err(
+                PendingStateFinishedError::FallibleError,
+            )),
+
+            None => Err(ResultKindConversionError::MissingValue),
+        }
+    }
+}
+
+impl From<ExecutionFailureKind> for grpc_gen::ExecutionFailureKind {
+    fn from(value: ExecutionFailureKind) -> Self {
+        match value {
+            ExecutionFailureKind::TimedOut => grpc_gen::ExecutionFailureKind::TimedOut,
+            ExecutionFailureKind::NondeterminismDetected => {
+                grpc_gen::ExecutionFailureKind::NondeterminismDetected
             }
-            PendingStateFinishedResultKind(Err(PendingStateFinishedError::FallibleError)) => {
-                grpc_gen::ResultKind::FallibleError
+            ExecutionFailureKind::OutOfFuel => grpc_gen::ExecutionFailureKind::OutOfFuel,
+            ExecutionFailureKind::Cancelled => grpc_gen::ExecutionFailureKind::Cancelled,
+            ExecutionFailureKind::Uncategorized => grpc_gen::ExecutionFailureKind::Uncategorized,
+        }
+    }
+}
+impl From<grpc_gen::ExecutionFailureKind> for ExecutionFailureKind {
+    fn from(value: grpc_gen::ExecutionFailureKind) -> Self {
+        match value {
+            grpc_gen::ExecutionFailureKind::TimedOut => ExecutionFailureKind::TimedOut,
+
+            grpc_gen::ExecutionFailureKind::NondeterminismDetected => {
+                ExecutionFailureKind::NondeterminismDetected
             }
+
+            grpc_gen::ExecutionFailureKind::OutOfFuel => ExecutionFailureKind::OutOfFuel,
+
+            grpc_gen::ExecutionFailureKind::Cancelled => ExecutionFailureKind::Cancelled,
+
+            grpc_gen::ExecutionFailureKind::Uncategorized => ExecutionFailureKind::Uncategorized,
         }
     }
 }
@@ -373,20 +441,15 @@ impl From<SupportedFunctionReturnValue> for grpc_gen::ResultDetail {
                     },
                 )
             }
-            SupportedFunctionReturnValue::ExecutionError(
-                FinishedExecutionError::PermanentTimeout,
-            ) => grpc_gen::result_detail::Value::Timeout(grpc_gen::result_detail::Timeout {}),
-            SupportedFunctionReturnValue::ExecutionError(
-                FinishedExecutionError::PermanentFailure {
-                    reason_full,
-                    kind: _, // TODO Add PermanentFailureKind
-                    detail,
-                    reason_inner: _,
-                },
-            ) => grpc_gen::result_detail::Value::ExecutionFailure(
+            SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
+                kind,
+                reason,
+                detail,
+            }) => grpc_gen::result_detail::Value::ExecutionFailure(
                 grpc_gen::result_detail::ExecutionFailure {
-                    reason: reason_full,
+                    reason,
                     detail,
+                    kind: grpc_gen::ExecutionFailureKind::from(kind).into(),
                 },
             ),
         };
@@ -440,12 +503,11 @@ pub fn from_execution_event_to_grpc(
                 },
                 ExecutionEventInner::TemporarilyFailed {
                     backoff_expires_at,
-                    reason_full,
-                    reason_inner: _,
+                    reason,
                     detail,
                     http_client_traces
                 } => grpc_gen::execution_event::Event::TemporarilyFailed(grpc_gen::execution_event::TemporarilyFailed {
-                    reason: reason_full.to_string(),
+                    reason: reason.to_string(),
                     detail,
                     backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                     http_client_traces: http_client_traces.unwrap_or_default().into_iter().map(grpc_gen::HttpClientTrace::from).collect(),

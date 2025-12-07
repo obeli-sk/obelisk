@@ -121,7 +121,9 @@ impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
     }
 }
 
-pub(crate) struct ActivityPreopenIoError(pub String);
+pub(crate) struct ActivityPreopenIoError {
+    pub err: wasmtime::Error,
+}
 
 pub(crate) fn store<C: ClockFn>(
     engine: &Engine,
@@ -160,7 +162,7 @@ pub(crate) fn store<C: ClockFn>(
     if let Some(preopened_dir) = &preopened_dir {
         let res = wasi_ctx.preopened_dir(preopened_dir, ".", DirPerms::all(), FilePerms::all());
         if let Err(err) = res {
-            return Err(ActivityPreopenIoError(err.to_string()));
+            return Err(ActivityPreopenIoError { err });
         }
     }
 
