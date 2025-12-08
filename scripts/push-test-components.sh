@@ -9,7 +9,7 @@ TAG="$1"
 TOML_FILE="obelisk.toml"
 PREFIX="docker.io/getobelisk/"
 
-cargo build
+cargo check --workspace # starts build.rs of each -builder
 
 push() {
     RELATIVE_PATH=$1
