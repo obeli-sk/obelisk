@@ -9,13 +9,13 @@ const WASM_CORE_MODULE: &str = "wasm32-unknown-unknown";
 
 #[derive(Debug, Clone, Default)]
 pub struct BuildConfig {
-    pub profile: Option<String>,
+    pub profile: String,
     pub custom_dst_target_dir: Option<PathBuf>,
 }
 impl BuildConfig {
     pub fn target_subdir(target_dir: impl Into<PathBuf>) -> Self {
         Self {
-            profile: Some("release_wasm".to_string()),
+            profile: "release_wasm".to_string(),
             custom_dst_target_dir: Some(get_target_dir().join(target_dir.into())),
         }
     }
@@ -100,12 +100,7 @@ fn build_internal(
     let dst_target_dir = conf.custom_dst_target_dir.unwrap_or_else(get_target_dir);
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
-    let wasm_path = run_cargo_build(
-        &dst_target_dir,
-        pkg_name,
-        target_tripple,
-        conf.profile.as_deref(),
-    );
+    let wasm_path = run_cargo_build(&dst_target_dir, pkg_name, target_tripple, &conf.profile);
     if std::env::var("RUST_LOG").is_ok() {
         println!("cargo:warning=Built `{pkg_name}` - {wasm_path:?}");
     }
@@ -238,21 +233,10 @@ fn add_dependency(file: &Utf8Path) {
     println!("cargo:rerun-if-changed={file}");
 }
 
-fn run_cargo_build(
-    dst_target_dir: &Path,
-    name: &str,
-    tripple: &str,
-    profile: Option<&str>,
-) -> PathBuf {
+fn run_cargo_build(dst_target_dir: &Path, name: &str, tripple: &str, profile: &str) -> PathBuf {
     let mut cmd = Command::new("cargo");
-    let temp_str;
     cmd.arg("build")
-        .arg(if let Some(profile) = profile {
-            temp_str = format!("--profile={profile}");
-            &temp_str
-        } else {
-            "--release"
-        })
+        .arg(format!("--profile={profile}"))
         .arg(format!("--target={tripple}"))
         .arg(format!("--package={name}"))
         .env("CARGO_TARGET_DIR", dst_target_dir)
@@ -264,13 +248,13 @@ fn run_cargo_build(
     let name_snake_case = to_snake_case(name);
     let target = dst_target_dir
         .join(tripple)
-        .join("release")
+        .join(profile)
         .join(format!("{name_snake_case}.wasm",));
     assert!(target.exists(), "Target path must exist: {target:?}");
     if is_transformation_to_wasm_component_needed(tripple) {
         let target_transformed = dst_target_dir
             .join(tripple)
-            .join("release")
+            .join(profile)
             .join(format!("{name_snake_case}_component.wasm",));
         let mut cmd = Command::new("wasm-tools");
         cmd.arg("component")
