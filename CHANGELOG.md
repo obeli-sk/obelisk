@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0](https://github.com/obeli-sk/obelisk/compare/v0.28.1...v0.29.0)
+
+### Added
+- Implemented cancellation of activities and durable sleep in join set close.
+- Added RPC for cancellation of activities and durable sleep.
+
+### Changed
+- WIT, Database schema and `obelisk.proto` were reworked for cancellation, those are breaking changes.
+- Improved delayed submission of all non-blocking events. Previously only async submission was supported.
+- Implicit Join set close now supports backtrace capture.
+- Web UI was extracted to a [separate repository](github.com/obeli-sk/webui)
+
+### Removed
+- Removed `ClosingStrategy` concepts from WIT definitions. When a join set is closed, activities and delays are cancelled, workflows are awaited.
+
+### Fixed
+- Removed ANSI symbols from the log file output.
+- Added version numbers to nondeterminism detected errors.
+
 ## [0.28.1](https://github.com/obeli-sk/obelisk/compare/v0.28.0...v0.28.1)
 
 ### Fixed
