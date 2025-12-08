@@ -13,25 +13,10 @@ pub struct BuildConfig {
     pub custom_dst_target_dir: Option<PathBuf>,
 }
 impl BuildConfig {
-    pub fn profile(profile: impl Into<String>) -> Self {
-        Self {
-            profile: Some(profile.into()),
-            custom_dst_target_dir: None,
-        }
-    }
     pub fn target_subdir(target_dir: impl Into<PathBuf>) -> Self {
         Self {
-            profile: None,
+            profile: Some("release_wasm".to_string()),
             custom_dst_target_dir: Some(get_target_dir().join(target_dir.into())),
-        }
-    }
-    pub fn new(
-        profile: Option<impl Into<String>>,
-        custom_dst_target_dir: Option<impl Into<PathBuf>>,
-    ) -> Self {
-        Self {
-            profile: profile.map(Into::into),
-            custom_dst_target_dir: custom_dst_target_dir.map(Into::into),
         }
     }
 }
