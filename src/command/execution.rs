@@ -6,7 +6,7 @@ use crate::get_fn_repository_client;
 use anyhow::bail;
 use chrono::DateTime;
 use concepts::ExecutionFailureKind;
-use concepts::JOIN_SET_ID_INFIX;
+use concepts::JoinSetId;
 use concepts::JoinSetKind;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::{ExecutionId, FunctionFqn};
@@ -214,8 +214,12 @@ fn format_pending_status(pending_status: grpc_gen::ExecutionStatus) -> String {
                 grpc_gen::join_set_id::JoinSetKind::try_from(kind)
                     .expect("JoinSetKind must be valid"),
             );
-            let closing = if closing { " (closing)" } else { "" };
-            format!("BlockedByJoinSet {kind}{JOIN_SET_ID_INFIX}{name}{closing}")
+            let join_set_id =
+                JoinSetId::new(kind, name.into()).expect("server sends valid join sets");
+            format!(
+                "BlockedByJoinSet {join_set_id}{closing}",
+                closing = if closing { " (closing)" } else { "" }
+            )
         }
         Status::Finished(Finished { .. }) => {
             // the final result will be sent in the next message, since we set `send_finished_status` to true.

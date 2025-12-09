@@ -1154,7 +1154,10 @@ impl Display for Params {
 }
 
 pub mod prefixed_ulid {
-    use crate::{JoinSetId, JoinSetIdParseError};
+    use crate::{
+        EXECUTION_ID_INFIX, EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX, JoinSetId,
+        JoinSetIdParseError,
+    };
     use serde_with::{DeserializeFromStr, SerializeDisplay};
     use std::{
         fmt::{Debug, Display},
@@ -1471,25 +1474,6 @@ pub mod prefixed_ulid {
         Ok((top_level, Arc::from(infix), idx))
     }
 
-    // fn derived_from_str0<T: 'static>(
-    //     input: &str,
-    // ) -> Result<(PrefixedUlid<T>, Arc<str>, u64), DerivedIdParseError> {
-    //     if let Some((prefix, suffix)) = input.split_once(EXECUTION_ID_INFIX) {
-    //         let top_level = PrefixedUlid::from_str(prefix)
-    //             .map_err(DerivedIdParseError::PrefixedUlidParseError)?;
-    //         let Some((infix, idx)) =
-    //             suffix.rsplit_once(EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX)
-    //         else {
-    //             return Err(DerivedIdParseError::SecondDelimiterNotFound);
-    //         };
-    //         let infix = Arc::from(infix);
-    //         let idx = u64::from_str(idx).map_err(DerivedIdParseError::ParseIndexError)?;
-    //         Ok((top_level, infix, idx))
-    //     } else {
-    //         Err(DerivedIdParseError::FirstDelimiterNotFound)
-    //     }
-    // }
-
     #[cfg(any(test, feature = "test"))]
     impl<'a> arbitrary::Arbitrary<'a> for ExecutionIdDerived {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
@@ -1588,8 +1572,6 @@ pub mod prefixed_ulid {
         }
     }
 
-    const EXECUTION_ID_INFIX: char = '.';
-    const EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX: char = '_';
     const EXECUTION_ID_START_IDX: u64 = 1;
     pub const JOIN_SET_START_IDX: u64 = 1;
     const DELAY_ID_START_IDX: u64 = 1;
@@ -1867,8 +1849,11 @@ impl FromStr for JoinSetKind {
     }
 }
 
-pub const JOIN_SET_ID_INFIX: char = ':';
-const CHARSET_EXTRA_JSON_SET: &str = "_-/";
+pub(crate) const EXECUTION_ID_INFIX: char = '.';
+pub(crate) const EXECUTION_ID_INFIX_BETWEEN_JOIN_SET_AND_INDEX: char = '_';
+
+const JOIN_SET_ID_INFIX: char = ':';
+const CHARSET_EXTRA_JSON_SET: &str = "-/";
 
 impl FromStr for JoinSetId {
     type Err = JoinSetIdParseError;
