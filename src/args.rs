@@ -201,6 +201,7 @@ pub(crate) enum Execution {
         follow: bool,
         execution_id: ExecutionId,
     },
+    Cancel(CancelCommand),
 }
 
 pub(crate) mod params {
@@ -287,4 +288,11 @@ pub(crate) struct Stub {
     /// Stub a return value encoded as JSON
     #[arg(value_name = "RETURN_VAL")]
     pub(crate) return_value: String,
+}
+
+#[derive(Debug, clap::Args)]
+#[command()]
+pub(crate) struct CancelCommand {
+    #[arg(value_name = "ID")]
+    pub(crate) id: String,
 }

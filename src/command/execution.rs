@@ -1,6 +1,7 @@
 use crate::ExecutionRepositoryClient;
 use crate::FunctionRepositoryClient;
 use crate::args;
+use crate::args::CancelCommand;
 use crate::args::params::parse_params;
 use crate::get_execution_repository_client;
 use crate::get_fn_repository_client;
@@ -9,9 +10,15 @@ use chrono::DateTime;
 use concepts::ExecutionFailureKind;
 use concepts::JoinSetId;
 use concepts::JoinSetKind;
+use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::grpc_gen;
+use grpc::grpc_gen::CancelRequest;
+use grpc::grpc_gen::cancel_request;
+use grpc::grpc_gen::cancel_request::CancelRequestActivity;
+use grpc::grpc_gen::cancel_request::CancelRequestDelay;
+use grpc::grpc_gen::cancel_response::CancelOutcome;
 use grpc::grpc_gen::execution_status::BlockedByJoinSet;
 use grpc::grpc_gen::execution_status::Finished;
 use grpc::to_channel;
@@ -19,6 +26,7 @@ use grpc_gen::execution_status::Status;
 use itertools::Either;
 use serde::Serialize;
 use serde_json::json;
+use std::str::FromStr;
 use std::time::Duration;
 use tracing::instrument;
 
@@ -79,6 +87,7 @@ impl args::Execution {
                 let client = get_execution_repository_client(channel).await?;
                 get_status_json(client, execution_id, follow, false).await
             }
+            args::Execution::Cancel(cancel_request) => cancel_request.execute(api_url).await,
         }
     }
 }
@@ -499,4 +508,39 @@ async fn poll_get_status_stream(
         }
     }
     Ok(())
+}
+
+impl CancelCommand {
+    #[instrument(skip_all)]
+    pub(crate) async fn execute(self, api_url: &str) -> anyhow::Result<()> {
+        let channel = to_channel(api_url).await?;
+        let mut client = get_execution_repository_client(channel).await?;
+        let request = if let Ok(execution_id) = ExecutionIdDerived::from_str(&self.id) {
+            cancel_request::Request::Activity(CancelRequestActivity {
+                child_execution_id: Some(grpc_gen::ExecutionId {
+                    id: execution_id.to_string(),
+                }),
+            })
+        } else if let Ok(delay_id) = DelayId::from_str(&self.id) {
+            cancel_request::Request::Delay(CancelRequestDelay {
+                delay_id: Some(grpc_gen::DelayId {
+                    id: delay_id.to_string(),
+                }),
+            })
+        } else {
+            bail!("id is not a derived execution id nor a delay id")
+        };
+        let resp = client
+            .cancel(tonic::Request::new(CancelRequest {
+                request: Some(request),
+            }))
+            .await?
+            .into_inner();
+
+        match resp.outcome() {
+            CancelOutcome::Success => println!("Success"),
+            CancelOutcome::AlreadyFinished => println!("Already finished"),
+        }
+        Ok(())
+    }
 }
