@@ -8,7 +8,7 @@ mod oci;
 use args::{Args, Client, ClientSubcommand, Subcommand};
 use clap::Parser;
 use directories::ProjectDirs;
-use grpc::{grpc_gen, injector::TracingInjector, to_channel};
+use grpc::{grpc_gen, injector::TracingInjector};
 use tonic::{codec::CompressionEncoding, transport::Channel};
 
 #[tokio::main]
@@ -36,11 +36,11 @@ type ExecutionRepositoryClient = grpc_gen::execution_repository_client::Executio
 >;
 
 async fn get_execution_repository_client(
-    url: &str,
+    channel: Channel,
 ) -> Result<ExecutionRepositoryClient, anyhow::Error> {
     Ok(
         grpc_gen::execution_repository_client::ExecutionRepositoryClient::with_interceptor(
-            to_channel(url).await?,
+            channel,
             TracingInjector,
         )
         .send_compressed(CompressionEncoding::Zstd)
@@ -51,10 +51,12 @@ async fn get_execution_repository_client(
 type FunctionRepositoryClient = grpc_gen::function_repository_client::FunctionRepositoryClient<
     tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
 >;
-async fn get_fn_repository_client(url: &str) -> Result<FunctionRepositoryClient, anyhow::Error> {
+async fn get_fn_repository_client(
+    channel: Channel,
+) -> Result<FunctionRepositoryClient, anyhow::Error> {
     Ok(
         grpc_gen::function_repository_client::FunctionRepositoryClient::with_interceptor(
-            to_channel(url).await?,
+            channel,
             TracingInjector,
         )
         .send_compressed(CompressionEncoding::Zstd)

@@ -1,4 +1,5 @@
 use crate::ExecutionRepositoryClient;
+use crate::FunctionRepositoryClient;
 use crate::args;
 use crate::args::params::parse_params;
 use crate::get_execution_repository_client;
@@ -13,6 +14,7 @@ use concepts::{ExecutionId, FunctionFqn};
 use grpc::grpc_gen;
 use grpc::grpc_gen::execution_status::BlockedByJoinSet;
 use grpc::grpc_gen::execution_status::Finished;
+use grpc::to_channel;
 use grpc_gen::execution_status::Status;
 use itertools::Either;
 use serde::Serialize;
@@ -30,19 +32,30 @@ impl args::Execution {
                 json,
                 no_reconnect,
             } => {
-                let client = get_execution_repository_client(api_url).await?;
+                let channel = to_channel(api_url).await?;
+                let client = get_execution_repository_client(channel.clone()).await?;
                 let opts = if json {
                     SubmitOutputOpts::Json
                 } else {
                     SubmitOutputOpts::Plain { no_reconnect }
                 };
-                submit(client, ffqn, parse_params(params)?, follow, opts, api_url).await
+                let component_client = get_fn_repository_client(channel).await?;
+                submit(
+                    client,
+                    component_client,
+                    ffqn,
+                    parse_params(params)?,
+                    follow,
+                    opts,
+                )
+                .await
             }
             args::Execution::Stub(args::Stub {
                 execution_id,
                 return_value,
             }) => {
-                let client = get_execution_repository_client(api_url).await?;
+                let channel = to_channel(api_url).await?;
+                let client = get_execution_repository_client(channel).await?;
                 stub(client, execution_id, return_value).await
             }
             args::Execution::Get {
@@ -50,7 +63,8 @@ impl args::Execution {
                 follow,
                 no_reconnect,
             } => {
-                let client = get_execution_repository_client(api_url).await?;
+                let channel = to_channel(api_url).await?;
+                let client = get_execution_repository_client(channel).await?;
                 let opts = GetStatusOptions {
                     follow,
                     no_reconnect,
@@ -61,7 +75,8 @@ impl args::Execution {
                 follow,
                 execution_id,
             } => {
-                let client = get_execution_repository_client(api_url).await?;
+                let channel = to_channel(api_url).await?;
+                let client = get_execution_repository_client(channel).await?;
                 get_status_json(client, execution_id, follow, false).await
             }
         }
@@ -77,15 +92,14 @@ pub(crate) enum SubmitOutputOpts {
 #[instrument(skip_all)]
 pub(crate) async fn submit(
     mut client: ExecutionRepositoryClient,
+    mut component_client: FunctionRepositoryClient,
     ffqn: FunctionFqn,
     params: Vec<u8>,
     follow: bool,
     opts: SubmitOutputOpts,
-    api_url: &str,
 ) -> anyhow::Result<()> {
     let ffqn = if let Some(ifc_name) = ffqn.ifc_fqn.strip_prefix(".../") {
         // Guess function
-        let mut component_client = get_fn_repository_client(api_url).await?;
         let components = component_client
             .list_components(tonic::Request::new(grpc_gen::ListComponentsRequest {
                 function_name: None,

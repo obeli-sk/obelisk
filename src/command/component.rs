@@ -7,6 +7,7 @@ use anyhow::Context;
 use concepts::ComponentType;
 use concepts::{FunctionFqn, FunctionMetadata};
 use grpc::grpc_gen;
+use grpc::to_channel;
 use std::path::PathBuf;
 use utils::wasm_tools::WasmComponent;
 
@@ -37,7 +38,8 @@ impl args::Component {
                 imports,
                 extensions,
             } => {
-                let client = get_fn_repository_client(api_url).await?;
+                let channel = to_channel(api_url).await?;
+                let client = get_fn_repository_client(channel).await?;
                 list_components(
                     client,
                     if imports {
