@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - WIT, Database schema and `obelisk.proto` were reworked for cancellation, those are breaking changes.
 - Improved delayed submission of all non-blocking events. Previously only async submission was supported.
 - Implicit Join set close now supports backtrace capture.
-- Web UI was extracted to a [separate repository](github.com/obeli-sk/webui)
+- Web UI was extracted to a [separate repository](https://github.com/obeli-sk/webui)
 
 ### Removed
 - Removed `ClosingStrategy` concepts from WIT definitions. When a join set is closed, activities and delays are cancelled, workflows are awaited.
