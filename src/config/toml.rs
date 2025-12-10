@@ -55,6 +55,8 @@ pub(crate) struct ConfigToml {
     pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
     #[serde(default)]
     pub(crate) timers_watcher: TimersWatcherTomlConfig,
+    #[serde(default)]
+    pub(crate) cancel_watcher: CancelWatcherTomlConfig,
     #[serde(default, rename = "activity_wasm")]
     pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
     #[serde(default, rename = "activity_stub")]
@@ -359,6 +361,23 @@ impl Default for TimersWatcherTomlConfig {
             enabled: default_timers_watcher_enabled(),
             leeway: default_timers_watcher_leeway(),
             tick_sleep: default_timers_watcher_tick_sleep(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CancelWatcherTomlConfig {
+    #[serde(default = "default_cancel_watcher_enabled")]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_cancel_watcher_tick_sleep")]
+    pub(crate) tick_sleep: DurationConfig,
+}
+impl Default for CancelWatcherTomlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_cancel_watcher_enabled(),
+            tick_sleep: default_cancel_watcher_tick_sleep(),
         }
     }
 }
@@ -1399,6 +1418,13 @@ fn default_timers_watcher_leeway() -> DurationConfig {
 }
 fn default_timers_watcher_tick_sleep() -> DurationConfig {
     DurationConfig::Milliseconds(100)
+}
+
+fn default_cancel_watcher_enabled() -> bool {
+    true
+}
+fn default_cancel_watcher_tick_sleep() -> DurationConfig {
+    DurationConfig::Seconds(1)
 }
 
 #[cfg(test)]

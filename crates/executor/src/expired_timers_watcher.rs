@@ -17,10 +17,7 @@ use concepts::{
     FinishedExecutionError,
     storage::{ExecutionEventInner, ExpiredTimer},
 };
-use std::{
-    sync::{ Arc},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 use tracing::Level;
 use tracing::warn;
 use tracing::{debug, info, instrument};

@@ -11,6 +11,7 @@ use crate::config::toml::ActivityStubExtComponentConfigToml;
 use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityWasmComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
+use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
@@ -1268,6 +1269,7 @@ async fn run_internal(
         .global_webhook_instance_limiter
         .as_semaphore();
     let timers_watcher = config.timers_watcher;
+    let cancel_watcher = config.cancel_watcher;
 
     let (compiled_and_linked, component_source_map) = Box::pin(verify_internal(
         config,
@@ -1289,6 +1291,7 @@ async fn run_internal(
         sqlite_config,
         global_webhook_instance_limiter,
         timers_watcher,
+        cancel_watcher,
         &cancel_registry,
     )
     .instrument(span)
@@ -1533,6 +1536,8 @@ struct ServerInit {
     exec_join_handles: Vec<ExecutorTaskHandle>,
     #[expect(dead_code)]
     timers_watcher: Option<AbortOnDropHandle>,
+    #[expect(dead_code)]
+    cancel_watcher: Option<AbortOnDropHandle>,
     #[expect(dead_code)] // http servers will be aborted automatically
     http_servers_handles: Vec<AbortOnDropHandle>,
     #[expect(dead_code)] // Shuts itself down in drop
@@ -1548,6 +1553,7 @@ async fn spawn_tasks_and_threads(
     sqlite_config: SqliteConfig,
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     timers_watcher: TimersWatcherTomlConfig,
+    cancel_watcher: CancelWatcherTomlConfig,
     cancel_registry: &CancelRegistry,
 ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
     // Start components requiring a database
@@ -1569,6 +1575,14 @@ async fn spawn_tasks_and_threads(
                 leeway: timers_watcher.leeway.into(),
             },
         ))
+    } else {
+        None
+    };
+
+    let cancel_watcher = if cancel_watcher.enabled {
+        Some(
+            cancel_registry.spawn_cancel_watcher(db_pool.clone(), cancel_watcher.tick_sleep.into()),
+        )
     } else {
         None
     };
@@ -1636,6 +1650,7 @@ async fn spawn_tasks_and_threads(
             shutdown: watch::channel(false),
             exec_join_handles,
             timers_watcher,
+            cancel_watcher,
             http_servers_handles,
             epoch_ticker,
             preopens_cleaner,
@@ -1653,6 +1668,7 @@ impl ServerInit {
                 shutdown: _, // Dropping notifies follower tasks.
                 exec_join_handles,
                 timers_watcher: _,
+                cancel_watcher: _,
                 http_servers_handles: _,
                 epoch_ticker: _,
                 preopens_cleaner: _,

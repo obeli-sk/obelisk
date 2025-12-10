@@ -4,15 +4,16 @@ use concepts::{
     prefixed_ulid::ExecutionId,
     storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CancelOutcome,
-        DbConnection, DbErrorWrite, ExecutionEventInner,
+        DbConnection, DbErrorWrite, DbPool, ExecutionEventInner,
     },
 };
+use executor::AbortOnDropHandle;
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::sync::oneshot;
-use tracing::debug;
+use tracing::{debug, info};
 
 pub const CANCEL_RETRIES: u8 = 5;
 
@@ -32,6 +33,49 @@ impl CancelRegistry {
     pub fn new() -> CancelRegistry {
         CancelRegistry {
             tokens: Arc::default(),
+        }
+    }
+
+    pub fn spawn_cancel_watcher(
+        &self,
+        db_pool: Arc<dyn DbPool>,
+        sleep_duration: Duration,
+    ) -> AbortOnDropHandle {
+        info!("Spawning cancel_watcher");
+        let clone = self.clone();
+        AbortOnDropHandle::new(
+            tokio::spawn({
+                async move {
+                    loop {
+                        clone.tick(db_pool.connection().as_ref()).await;
+                        tokio::time::sleep(sleep_duration).await;
+                    }
+                }
+            })
+            .abort_handle(),
+        )
+    }
+
+    async fn tick(&self, db_connection: &dyn DbConnection) {
+        let execution_ids: Vec<_> = {
+            let guard = self.tokens.lock().unwrap();
+            guard.keys().cloned().collect()
+        };
+        let mut finished = Vec::new();
+        for execution_id in execution_ids {
+            if let Ok(pending_state) = db_connection.get_pending_state(&execution_id).await
+                && pending_state.is_finished()
+            {
+                finished.push(execution_id);
+            }
+        }
+        if !finished.is_empty() {
+            let mut guard = self.tokens.lock().unwrap();
+            for execution_id in finished {
+                if let Some(sender) = guard.remove(&execution_id) {
+                    let _ = sender.send(());
+                }
+            }
         }
     }
 
