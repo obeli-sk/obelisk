@@ -124,7 +124,6 @@ use val_json::wast_val::WastValWithType;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::RunnableComponent;
 use wasm_workers::activity::activity_worker::ActivityWorkerCompiled;
-use wasm_workers::activity::cancel_registry::CANCEL_RETRIES;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
@@ -903,7 +902,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     ));
                 }
                 self.cancel_registry
-                    .cancel(conn.as_ref(), &execution_id, executed_at, CANCEL_RETRIES)
+                    .cancel(conn.as_ref(), &execution_id, executed_at)
                     .await
                     .to_status()?
             }

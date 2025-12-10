@@ -8,7 +8,6 @@ use super::host_exports::execution_id_into_wast_val;
 use super::host_exports::v4_0_0::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
-use crate::activity::cancel_registry::CANCEL_RETRIES;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::workflow::event_history::response_id::INVALID_CHILD_TYPE_FOR_DELAYS;
 use crate::workflow::event_history::response_id::ResponseId;
@@ -445,7 +444,6 @@ impl EventHistory {
                         db_connection.db_connection.as_ref(),
                         &ExecutionId::Derived(child_execution_id_derived.clone()),
                         called_at,
-                        CANCEL_RETRIES,
                     )
                     .await;
                 if let Err(err) = res {

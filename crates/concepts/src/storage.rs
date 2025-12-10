@@ -684,8 +684,8 @@ pub trait DbExecutor: Send + Sync {
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
-        mut retries: u8,
     ) -> Result<CancelOutcome, DbErrorWrite> {
+        let mut retries = 5;
         loop {
             let res = self.cancel_activity(execution_id, cancelled_at).await;
             if res.is_ok() || retries == 0 {

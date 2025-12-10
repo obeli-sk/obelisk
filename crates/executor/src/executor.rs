@@ -360,11 +360,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         execution_id,
                         cancelled_at,
                     } => db_exec
-                        .cancel_activity_with_retries(
-                            &execution_id,
-                            cancelled_at,
-                            5, // FIXME
-                        )
+                        .cancel_activity_with_retries(&execution_id, cancelled_at)
                         .await
                         .map(|_| ()),
                     AppendOrCancel::Other(append) => append.append(db_exec).await,

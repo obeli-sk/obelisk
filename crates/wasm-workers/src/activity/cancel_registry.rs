@@ -94,7 +94,6 @@ impl CancelRegistry {
         db_connection: &dyn DbConnection,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
-        retries: u8,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         // Sending the signal is best effort, the activity might be locked but the token might not be obtained yet.
         let sender = {
@@ -105,7 +104,7 @@ impl CancelRegistry {
             let _ = sender.send(());
         }
         db_connection
-            .cancel_activity_with_retries(execution_id, cancelled_at, retries)
+            .cancel_activity_with_retries(execution_id, cancelled_at)
             .await
     }
 }
