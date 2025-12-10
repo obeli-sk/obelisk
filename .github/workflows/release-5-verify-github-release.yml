@@ -19,7 +19,7 @@ defaults:
 
 jobs:
   verify-assets:
-    name: ${{ matrix.runner }}
+    name: ${{ matrix.runner }}-${{ matrix.file }}
     runs-on: ${{ matrix.runner }}
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
