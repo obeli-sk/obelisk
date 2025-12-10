@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.1](https://github.com/obeli-sk/obelisk/compare/v0.29.0...v0.29.1)
+
+### Changed
+- Termination is triggered on cancelled activities.
+
+
 ## [0.29.0](https://github.com/obeli-sk/obelisk/compare/v0.28.1...v0.29.0)
 
 ### Added
