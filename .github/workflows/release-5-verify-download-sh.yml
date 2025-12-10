@@ -28,7 +28,6 @@ jobs:
         include:
           - runner: ubuntu-22.04
           - runner: ubuntu-22.04-arm
-          - runner: macos-13
           - runner: macos-14
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8

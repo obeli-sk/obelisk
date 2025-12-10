@@ -30,7 +30,7 @@ jobs:
             file: obelisk-x86_64-unknown-linux-gnu.tar.gz
           - runner: ubuntu-22.04
             file: obelisk-x86_64-unknown-linux-musl.tar.gz
-          - runner: macos-13
+          - runner: macos-14
             file: obelisk-x86_64-apple-darwin.tar.gz
           - runner: macos-14
             file: obelisk-aarch64-apple-darwin.tar.gz
