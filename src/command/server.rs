@@ -2340,7 +2340,7 @@ impl WorkerLinked {
     ) -> ExecutorTaskHandle {
         let worker: Arc<dyn Worker> = match self.worker {
             Either::Left(activity_compiled) => {
-                Arc::from(activity_compiled.into_worker(cancel_registry.clone()))
+                Arc::from(activity_compiled.into_worker(cancel_registry))
             }
             Either::Right(workflow_linked) => Arc::from(workflow_linked.worker.into_worker(
                 db_pool.clone(),
@@ -2348,7 +2348,7 @@ impl WorkerLinked {
                     leeway: workflow_linked.workflows_lock_extension_leeway,
                     clock_fn: Now,
                 }),
-                cancel_registry.clone(),
+                cancel_registry,
             )),
         };
         ExecTask::spawn_new(worker, self.exec_config, Now, db_executor, TokioSleep)
