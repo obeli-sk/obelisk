@@ -122,7 +122,8 @@ use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::RunnableComponent;
-use wasm_workers::activity::activity_worker::ActivityWorker;
+use wasm_workers::activity::activity_worker::ActivityWorkerCompiled;
+use wasm_workers::activity::cancel_registry::CANCEL_RETRIES;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
@@ -884,7 +885,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         &self,
         request: tonic::Request<grpc_gen::CancelRequest>,
     ) -> std::result::Result<tonic::Response<grpc_gen::CancelResponse>, tonic::Status> {
-        const CANCEL_RETRIES: u8 = 5;
         let request = request.into_inner();
         let executed_at = Now.now();
         let response_id = request.request.argument_must_exist("request")?;
@@ -1160,14 +1160,7 @@ pub(crate) async fn verify(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
-    let cancel_registry = CancelRegistry::new();
-    Box::pin(verify_internal(
-        config,
-        config_holder,
-        verify_params,
-        cancel_registry,
-    ))
-    .await?;
+    Box::pin(verify_internal(config, config_holder, verify_params)).await?;
     Ok(())
 }
 
@@ -1184,7 +1177,6 @@ async fn verify_internal(
     config: ConfigToml,
     config_holder: ConfigHolder,
     params: VerifyParams,
-    cancel_registry: CancelRegistry, // TODO: Remove
 ) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
     info!("Verifying server configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
@@ -1234,7 +1226,7 @@ async fn verify_internal(
         config_holder.path_prefixes,
     )
     .await?;
-    let compiled_and_linked = ServerCompiledLinked::new(server_verified, cancel_registry).await?;
+    let compiled_and_linked = ServerCompiledLinked::new(server_verified).await?;
     info!(
         "Server configuration was verified{}",
         if compiled_and_linked.supressed_errors.is_some() {
@@ -1276,7 +1268,7 @@ async fn run_internal(
         .global_webhook_instance_limiter
         .as_semaphore();
     let timers_watcher = config.timers_watcher;
-    let cancel_registry = CancelRegistry::new();
+
     let (compiled_and_linked, component_source_map) = Box::pin(verify_internal(
         config,
         config_holder,
@@ -1285,10 +1277,11 @@ async fn run_internal(
             clean_codegen_cache: params.clean_codegen_cache,
             ignore_missing_env_vars: false,
         },
-        cancel_registry.clone(),
     ))
     .instrument(span.clone())
     .await?;
+
+    let cancel_registry = CancelRegistry::new();
 
     let (init, component_registry_ro) = spawn_tasks_and_threads(
         compiled_and_linked,
@@ -1508,10 +1501,7 @@ struct ServerCompiledLinked {
 }
 
 impl ServerCompiledLinked {
-    async fn new(
-        server_verified: ServerVerified,
-        cancel_registry: CancelRegistry,
-    ) -> Result<Self, anyhow::Error> {
+    async fn new(server_verified: ServerVerified) -> Result<Self, anyhow::Error> {
         let (compiled_components, component_registry_ro, supressed_errors) = compile_and_verify(
             &server_verified.engines,
             server_verified.config.activities_wasm,
@@ -1522,7 +1512,6 @@ impl ServerCompiledLinked {
             server_verified.config.fuel,
             server_verified.build_semaphore,
             server_verified.workflows_lock_extension_leeway,
-            cancel_registry,
         )
         .await?;
         Ok(Self {
@@ -1626,7 +1615,7 @@ async fn spawn_tasks_and_threads(
         .compiled_components
         .workers_linked
         .into_iter()
-        .map(|pre_spawn| pre_spawn.spawn(&db_pool, db_executor.clone(), cancel_registry))
+        .map(|pre_spawn| pre_spawn.spawn(&db_pool, db_executor.clone(), cancel_registry.clone()))
         .collect();
 
     // Start webhook HTTP servers
@@ -1973,7 +1962,6 @@ async fn compile_and_verify(
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
     workflows_lock_extension_leeway: Duration,
-    cancel_registry: CancelRegistry,
 ) -> Result<
     (
         LinkedComponents,
@@ -1992,12 +1980,11 @@ async fn compile_and_verify(
             let engines = engines.clone();
             let build_semaphore = build_semaphore.clone();
             let parent_span = parent_span.clone();
-            let cancel_registry = cancel_registry.clone();
             tokio::task::spawn_blocking(move || {
                 let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "activity_wasm_compile", component_id = %activity_wasm.component_id());
                 span.in_scope(|| {
-                    prespawn_activity(activity_wasm, &engines, cancel_registry).map(|(worker, component_config)| {
+                    prespawn_activity(activity_wasm, &engines).map(|(worker, component_config)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
@@ -2191,7 +2178,6 @@ mod semaphore {
 fn prespawn_activity(
     activity: ActivityWasmConfigVerified,
     engines: &Engines,
-    cancel_registry: CancelRegistry,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     assert!(activity.component_id().component_type == ComponentType::ActivityWasm);
     debug!("Instantiating activity");
@@ -2204,13 +2190,12 @@ fn prespawn_activity(
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
         .ok();
-    let worker = ActivityWorker::new_with_config(
+    let worker = ActivityWorkerCompiled::new_with_config(
         runnable_component,
         activity.activity_config,
         engine,
         Now,
         TokioSleep,
-        cancel_registry,
     )?;
     Ok(WorkerCompiled::new_activity(
         worker,
@@ -2262,13 +2247,13 @@ struct WorkflowWorkerCompiledWithConfig {
 }
 
 struct WorkerCompiled {
-    worker: Either<Arc<dyn Worker>, WorkflowWorkerCompiledWithConfig>,
+    worker: Either<ActivityWorkerCompiled<Now, TokioSleep>, WorkflowWorkerCompiledWithConfig>,
     exec_config: ExecConfig,
 }
 
 impl WorkerCompiled {
     fn new_activity(
-        worker: ActivityWorker<Now, TokioSleep>,
+        worker: ActivityWorkerCompiled<Now, TokioSleep>,
         content_digest: ContentDigest,
         exec_config: ExecConfig,
         wit: Option<String>,
@@ -2285,7 +2270,7 @@ impl WorkerCompiled {
         };
         (
             WorkerCompiled {
-                worker: Either::Left(Arc::from(worker)),
+                worker: Either::Left(worker),
                 exec_config,
             },
             component,
@@ -2343,7 +2328,7 @@ struct WorkflowWorkerLinkedWithConfig {
 }
 
 struct WorkerLinked {
-    worker: Either<Arc<dyn Worker>, WorkflowWorkerLinkedWithConfig>,
+    worker: Either<ActivityWorkerCompiled<Now, TokioSleep>, WorkflowWorkerLinkedWithConfig>,
     exec_config: ExecConfig,
 }
 impl WorkerLinked {
@@ -2351,10 +2336,12 @@ impl WorkerLinked {
         self,
         db_pool: &Arc<dyn DbPool>,
         db_executor: Arc<dyn DbExecutor>,
-        cancel_registry: &CancelRegistry,
+        cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
-        let worker = match self.worker {
-            Either::Left(activity) => activity,
+        let worker: Arc<dyn Worker> = match self.worker {
+            Either::Left(activity_compiled) => {
+                Arc::from(activity_compiled.into_worker(cancel_registry.clone()))
+            }
             Either::Right(workflow_linked) => Arc::from(workflow_linked.worker.into_worker(
                 db_pool.clone(),
                 Arc::new(DeadlineTrackerFactoryTokio {
@@ -2688,7 +2675,6 @@ mod tests {
     use directories::BaseDirs;
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
-    use wasm_workers::activity::cancel_registry::CancelRegistry;
 
     fn get_workspace_dir() -> PathBuf {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
@@ -2726,9 +2712,7 @@ mod tests {
             config_holder.path_prefixes,
         )
         .await?;
-        let cancel_registry = CancelRegistry::new();
-        let compiled_and_linked =
-            ServerCompiledLinked::new(server_verified, cancel_registry).await?;
+        let compiled_and_linked = ServerCompiledLinked::new(server_verified).await?;
         assert_eq!(compiled_and_linked.supressed_errors, None);
         Ok(())
     }
