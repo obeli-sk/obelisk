@@ -2914,6 +2914,18 @@ impl DbExecutor for SqlitePool {
             }
         }
     }
+
+    async fn get_last_execution_event(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<ExecutionEvent, DbErrorRead> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| Self::get_last_execution_event(tx, &execution_id),
+            "get_last_execution_event",
+        )
+        .await
+    }
 }
 
 #[async_trait]
@@ -3410,18 +3422,6 @@ impl DbConnection for SqlitePool {
         self.transaction(
             move |tx| Self::get_execution_event(tx, &execution_id, version),
             "get_execution_event",
-        )
-        .await
-    }
-
-    async fn get_last_execution_event(
-        &self,
-        execution_id: &ExecutionId,
-    ) -> Result<ExecutionEvent, DbErrorRead> {
-        let execution_id = execution_id.clone();
-        self.transaction(
-            move |tx| Self::get_last_execution_event(tx, &execution_id),
-            "get_last_execution_event",
         )
         .await
     }

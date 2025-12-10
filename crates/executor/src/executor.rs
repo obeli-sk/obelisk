@@ -1,4 +1,4 @@
-use crate::worker::{Worker, WorkerContext, WorkerError, WorkerResult};
+use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::RunId;
@@ -355,7 +355,20 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         )? {
             Some(append) => {
                 trace!("Appending {append:?}");
-                append.append(db_exec).await
+                match append {
+                    AppendOrCancel::Cancel {
+                        execution_id,
+                        cancelled_at,
+                    } => db_exec
+                        .cancel_activity_with_retries(
+                            &execution_id,
+                            cancelled_at,
+                            5, // FIXME
+                        )
+                        .await
+                        .map(|_| ()),
+                    AppendOrCancel::Other(append) => append.append(db_exec).await,
+                }
             }
             None => Ok(()),
         }
@@ -369,7 +382,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         parent: Option<(ExecutionId, JoinSetId)>,
         can_be_retried: Option<Duration>,
         unlock_expiry_on_limit_reached: Duration,
-    ) -> Result<Option<Append>, DbErrorWrite> {
+    ) -> Result<Option<AppendOrCancel>, DbErrorWrite> {
         Ok(match worker_result {
             WorkerResult::Ok(result, new_version, http_client_traces) => {
                 info!("Execution finished: {result}");
@@ -389,13 +402,13 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                     },
                 };
 
-                Some(Append {
+                Some(AppendOrCancel::Other(Append {
                     created_at: result_obtained_at,
                     primary_event,
                     execution_id,
                     version: new_version,
                     child_finished,
-                })
+                }))
             }
             WorkerResult::DbUpdatedByWorkerOrWatcher => None,
             WorkerResult::Err(err) => {
@@ -588,6 +601,13 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                             new_version,
                         )
                     }
+                    WorkerError::FatalError(FatalError::Cancelled, _version) => {
+                        // use more optimized `cancel` to avoid polluting the logs with errors on a race.
+                        return Ok(Some(AppendOrCancel::Cancel {
+                            execution_id,
+                            cancelled_at: result_obtained_at,
+                        }));
+                    }
                     WorkerError::FatalError(fatal_error, version) => {
                         warn!("Fatal worker error - {fatal_error:?}");
                         let result = SupportedFunctionReturnValue::ExecutionError(
@@ -611,7 +631,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         )
                     }
                 };
-                Some(Append {
+                Some(AppendOrCancel::Other(Append {
                     created_at: result_obtained_at,
                     primary_event: AppendRequest {
                         created_at: result_obtained_at,
@@ -620,7 +640,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                     execution_id,
                     version,
                     child_finished,
-                })
+                }))
             }
         })
     }
@@ -631,6 +651,16 @@ pub(crate) struct ChildFinishedResponse {
     pub(crate) parent_execution_id: ExecutionId,
     pub(crate) parent_join_set: JoinSetId,
     pub(crate) result: SupportedFunctionReturnValue,
+}
+
+#[derive(Debug, Clone)]
+#[expect(clippy::large_enum_variant)]
+pub(crate) enum AppendOrCancel {
+    Cancel {
+        execution_id: ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    },
+    Other(Append),
 }
 
 #[derive(Debug, Clone)]

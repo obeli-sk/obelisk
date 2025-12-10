@@ -152,6 +152,19 @@ impl DbExecutor for InMemoryDbConnection {
             }
         }
     }
+
+    async fn get_last_execution_event(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<ExecutionEvent, DbErrorRead> {
+        let execution_log = self.0.lock().unwrap().get(execution_id)?;
+        let last_version = execution_log.next_version.0 - 1;
+        Ok(execution_log
+            .events
+            .get(usize::try_from(last_version).unwrap())
+            .cloned()
+            .ok_or(DbErrorRead::NotFound)?)
+    }
 }
 
 #[async_trait]
@@ -213,19 +226,6 @@ impl DbConnection for InMemoryDbConnection {
         Ok(execution_log
             .events
             .get(usize::try_from(version.0).unwrap())
-            .cloned()
-            .ok_or(DbErrorRead::NotFound)?)
-    }
-
-    async fn get_last_execution_event(
-        &self,
-        execution_id: &ExecutionId,
-    ) -> Result<ExecutionEvent, DbErrorRead> {
-        let execution_log = self.0.lock().unwrap().get(execution_id)?;
-        let last_version = execution_log.next_version.0 - 1;
-        Ok(execution_log
-            .events
-            .get(usize::try_from(last_version).unwrap())
             .cloned()
             .ok_or(DbErrorRead::NotFound)?)
     }
