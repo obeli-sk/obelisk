@@ -18,10 +18,7 @@ use concepts::{
     storage::{ExecutionEventInner, ExpiredTimer},
 };
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{ Arc},
     time::Duration,
 };
 use tracing::Level;
@@ -50,14 +47,12 @@ pub fn spawn_new<C: ClockFn + 'static>(
     config: TimersWatcherConfig<C>,
 ) -> AbortOnDropHandle {
     info!("Spawning expired_timers_watcher");
-    let is_closing = Arc::new(AtomicBool::default());
     let tick_sleep = config.tick_sleep;
     AbortOnDropHandle::new(
         tokio::spawn({
-            let is_closing = is_closing.clone();
             async move {
                 let mut old_err = None;
-                while !is_closing.load(Ordering::Relaxed) {
+                loop {
                     let executed_at = config.clock_fn.now() - config.leeway;
                     let res = tick(db_pool.connection().as_ref(), executed_at).await;
                     log_err_if_new(res, &mut old_err);
