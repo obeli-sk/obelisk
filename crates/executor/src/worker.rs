@@ -124,6 +124,9 @@ pub enum FatalError {
     OutOfFuel { reason: String },
     #[error("constraint violation: {reason}")]
     ConstraintViolation { reason: StrVariant },
+
+    #[error("cancelled")]
+    Cancelled,
 }
 
 impl From<FatalError> for FinishedExecutionError {
@@ -162,6 +165,11 @@ impl From<FatalError> for FinishedExecutionError {
                 reason: Some(reason_generic),
                 kind: ExecutionFailureKind::Uncategorized,
                 detail,
+            },
+            FatalError::Cancelled => FinishedExecutionError {
+                kind: ExecutionFailureKind::Cancelled,
+                reason: None,
+                detail: None,
             },
         }
     }

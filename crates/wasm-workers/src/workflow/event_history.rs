@@ -8,6 +8,8 @@ use super::host_exports::execution_id_into_wast_val;
 use super::host_exports::v4_0_0::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
+use crate::activity::cancel_registry::CANCEL_RETRIES;
+use crate::activity::cancel_registry::CancelRegistry;
 use crate::workflow::event_history::response_id::INVALID_CHILD_TYPE_FOR_DELAYS;
 use crate::workflow::event_history::response_id::ResponseId;
 use crate::workflow::host_exports::ffqn_into_wast_val;
@@ -115,6 +117,7 @@ pub(crate) struct EventHistory {
     lock_extension: Duration,
     locked_event: Locked,
     fn_registry: Arc<dyn FunctionRegistry>,
+    cancel_registry: CancelRegistry,
 
     // Tracks join set contents for closing. One-offs are ignored, response id is removed when the response is processed.
     index_join_set_to_unawaited_requests: IndexMap<JoinSetId, IndexMap<ResponseId, ComponentType>>,
@@ -134,6 +137,7 @@ impl EventHistory {
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
         deadline_tracker: Box<dyn DeadlineTracker>,
         locked_event: Locked,
         lock_extension: Duration,
@@ -155,6 +159,7 @@ impl EventHistory {
             worker_span,
             deadline_tracker,
             fn_registry,
+            cancel_registry,
             locked_event,
             lock_extension,
             index_join_set_to_unawaited_requests: IndexMap::default(),
@@ -418,8 +423,6 @@ impl EventHistory {
         called_at: DateTime<Utc>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), ApplyError> {
-        const CANCEL_RETRIES: u8 = 5;
-
         let (_, response_ids) = self
             .index_join_set_to_unawaited_requests
             .shift_remove_entry(join_set_id)
@@ -436,13 +439,15 @@ impl EventHistory {
             if let ResponseId::ChildExecutionId(child_execution_id_derived) = response_id
                 && component_type.is_activity()
             {
-                let res = storage::cancel_activity_with_retries(
-                    db_connection.db_connection.as_ref(),
-                    child_execution_id_derived,
-                    called_at,
-                    CANCEL_RETRIES,
-                )
-                .await;
+                let res = self
+                    .cancel_registry
+                    .cancel(
+                        db_connection.db_connection.as_ref(),
+                        &ExecutionId::Derived(child_execution_id_derived.clone()),
+                        called_at,
+                        CANCEL_RETRIES,
+                    )
+                    .await;
                 if let Err(err) = res {
                     debug!("Ignoring failure to cancel {child_execution_id_derived} - {err:?}");
                 }
@@ -2632,6 +2637,7 @@ mod tests {
     };
     use super::super::workflow_worker::JoinNextBlockingStrategy;
     use super::SubmitChildExecution;
+    use crate::activity::cancel_registry::CancelRegistry;
     use crate::testing_fn_registry::TestingFnRegistry;
     use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
     use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
@@ -3439,6 +3445,7 @@ mod tests {
             caching_buffer: CachingBuffer::new(join_next_blocking_strategy),
             version: exec_log.next_version.clone(),
         };
+        let cancel_registry = CancelRegistry::new();
         let event_history = EventHistory::new(
             exec_log.event_history().collect(),
             exec_log
@@ -3448,6 +3455,7 @@ mod tests {
                 .collect(),
             join_next_blocking_strategy,
             fn_registry,
+            cancel_registry,
             deadline_tracker,
             Locked {
                 component_id: ComponentId::dummy_activity(),

@@ -515,9 +515,9 @@ impl CancelCommand {
     pub(crate) async fn execute(self, api_url: &str) -> anyhow::Result<()> {
         let channel = to_channel(api_url).await?;
         let mut client = get_execution_repository_client(channel).await?;
-        let request = if let Ok(execution_id) = ExecutionIdDerived::from_str(&self.id) {
+        let request = if let Ok(execution_id) = ExecutionId::from_str(&self.id) {
             cancel_request::Request::Activity(CancelRequestActivity {
-                child_execution_id: Some(grpc_gen::ExecutionId {
+                execution_id: Some(grpc_gen::ExecutionId {
                     id: execution_id.to_string(),
                 }),
             })
@@ -538,8 +538,8 @@ impl CancelCommand {
             .into_inner();
 
         match resp.outcome() {
-            CancelOutcome::Success => println!("Success"),
-            CancelOutcome::AlreadyFinished => println!("Already finished"),
+            CancelOutcome::Cancelled => println!("Cancelled"),
+            CancelOutcome::AlreadyFinished => println!("Already successfully finished"),
         }
         Ok(())
     }

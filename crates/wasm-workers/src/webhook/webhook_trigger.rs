@@ -1068,6 +1068,7 @@ pub(crate) mod tests {
         use super::*;
         use crate::RunnableComponent;
         use crate::activity::activity_worker::tests::{compile_activity, new_activity_fibo};
+        use crate::activity::cancel_registry::CancelRegistry;
         use crate::engines::{EngineConfig, Engines};
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
@@ -1133,6 +1134,7 @@ pub(crate) mod tests {
                         test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
                     ),
                 ]);
+                let cancel_registry = CancelRegistry::new();
                 let engine =
                     Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
                 let workflow_exec = new_workflow_fibo(
@@ -1141,6 +1143,7 @@ pub(crate) mod tests {
                     sim_clock.clone(),
                     JoinNextBlockingStrategy::Interrupt,
                     &fn_registry,
+                    cancel_registry,
                 );
 
                 let router = {

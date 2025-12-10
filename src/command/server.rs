@@ -123,6 +123,7 @@ use val_json::wast_val::WastValWithType;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::RunnableComponent;
 use wasm_workers::activity::activity_worker::ActivityWorker;
+use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
@@ -200,6 +201,8 @@ struct GrpcServer {
     shutdown_requested: watch::Receiver<bool>,
     component_registry_ro: ComponentConfigRegistryRO,
     component_source_map: ComponentSourceMap,
+    #[debug(skip)]
+    cancel_registry: CancelRegistry,
 }
 
 impl GrpcServer {
@@ -208,12 +211,14 @@ impl GrpcServer {
         shutdown_requested: watch::Receiver<bool>,
         component_registry_ro: ComponentConfigRegistryRO,
         component_source_map: ComponentSourceMap,
+        cancel_registry: CancelRegistry,
     ) -> Self {
         Self {
             db_pool,
             shutdown_requested,
             component_registry_ro,
             component_source_map,
+            cancel_registry,
         }
     }
 }
@@ -886,33 +891,20 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let outcome = match response_id {
             grpc_gen::cancel_request::Request::Activity(activity_req) => {
                 let child_execution_id = activity_req
-                    .child_execution_id
-                    .argument_must_exist("child_execution_id")?;
-                let ExecutionId::Derived(child_execution_id) =
-                    ExecutionId::try_from(child_execution_id)?
-                else {
-                    return Err(tonic::Status::invalid_argument(
-                        "child_execution_id must be a derived execution id",
-                    ));
-                };
+                    .execution_id
+                    .argument_must_exist("execution_id")?;
+                let execution_id = ExecutionId::try_from(child_execution_id)?;
                 let conn = self.db_pool.connection();
-                let child_create_req = conn
-                    .get_create_request(&ExecutionId::Derived(child_execution_id.clone()))
-                    .await
-                    .to_status()?;
+                let child_create_req = conn.get_create_request(&execution_id).await.to_status()?;
                 if !child_create_req.component_id.component_type.is_activity() {
                     return Err(tonic::Status::invalid_argument(
                         "cancelled execution must be an activity",
                     ));
                 }
-                storage::cancel_activity_with_retries(
-                    conn.as_ref(),
-                    &child_execution_id,
-                    executed_at,
-                    CANCEL_RETRIES,
-                )
-                .await
-                .to_status()?
+                self.cancel_registry
+                    .cancel(conn.as_ref(), &execution_id, executed_at, CANCEL_RETRIES)
+                    .await
+                    .to_status()?
             }
             grpc_gen::cancel_request::Request::Delay(delay_req) => {
                 let delay_id = delay_req.delay_id.argument_must_exist("delay_id")?;
@@ -1168,7 +1160,14 @@ pub(crate) async fn verify(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
-    Box::pin(verify_internal(config, config_holder, verify_params)).await?;
+    let cancel_registry = CancelRegistry::new();
+    Box::pin(verify_internal(
+        config,
+        config_holder,
+        verify_params,
+        cancel_registry,
+    ))
+    .await?;
     Ok(())
 }
 
@@ -1185,6 +1184,7 @@ async fn verify_internal(
     config: ConfigToml,
     config_holder: ConfigHolder,
     params: VerifyParams,
+    cancel_registry: CancelRegistry, // TODO: Remove
 ) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
     info!("Verifying server configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
@@ -1234,7 +1234,7 @@ async fn verify_internal(
         config_holder.path_prefixes,
     )
     .await?;
-    let compiled_and_linked = ServerCompiledLinked::new(server_verified).await?;
+    let compiled_and_linked = ServerCompiledLinked::new(server_verified, cancel_registry).await?;
     info!(
         "Server configuration was verified{}",
         if compiled_and_linked.supressed_errors.is_some() {
@@ -1276,6 +1276,7 @@ async fn run_internal(
         .global_webhook_instance_limiter
         .as_semaphore();
     let timers_watcher = config.timers_watcher;
+    let cancel_registry = CancelRegistry::new();
     let (compiled_and_linked, component_source_map) = Box::pin(verify_internal(
         config,
         config_holder,
@@ -1284,6 +1285,7 @@ async fn run_internal(
             clean_codegen_cache: params.clean_codegen_cache,
             ignore_missing_env_vars: false,
         },
+        cancel_registry.clone(),
     ))
     .instrument(span.clone())
     .await?;
@@ -1294,6 +1296,7 @@ async fn run_internal(
         sqlite_config,
         global_webhook_instance_limiter,
         timers_watcher,
+        &cancel_registry,
     )
     .instrument(span)
     .await?;
@@ -1303,6 +1306,7 @@ async fn run_internal(
         init.shutdown.1.clone(),
         component_registry_ro,
         component_source_map,
+        cancel_registry,
     ));
     tonic::transport::Server::builder()
         .accept_http1(true)
@@ -1504,7 +1508,10 @@ struct ServerCompiledLinked {
 }
 
 impl ServerCompiledLinked {
-    async fn new(server_verified: ServerVerified) -> Result<Self, anyhow::Error> {
+    async fn new(
+        server_verified: ServerVerified,
+        cancel_registry: CancelRegistry,
+    ) -> Result<Self, anyhow::Error> {
         let (compiled_components, component_registry_ro, supressed_errors) = compile_and_verify(
             &server_verified.engines,
             server_verified.config.activities_wasm,
@@ -1515,6 +1522,7 @@ impl ServerCompiledLinked {
             server_verified.config.fuel,
             server_verified.build_semaphore,
             server_verified.workflows_lock_extension_leeway,
+            cancel_registry,
         )
         .await?;
         Ok(Self {
@@ -1551,6 +1559,7 @@ async fn spawn_tasks_and_threads(
     sqlite_config: SqliteConfig,
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     timers_watcher: TimersWatcherTomlConfig,
+    cancel_registry: &CancelRegistry,
 ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
     // Start components requiring a database
     let epoch_ticker = EpochTicker::spawn_new(
@@ -1617,7 +1626,7 @@ async fn spawn_tasks_and_threads(
         .compiled_components
         .workers_linked
         .into_iter()
-        .map(|pre_spawn| pre_spawn.spawn(&db_pool, db_executor.clone()))
+        .map(|pre_spawn| pre_spawn.spawn(&db_pool, db_executor.clone(), cancel_registry))
         .collect();
 
     // Start webhook HTTP servers
@@ -1964,6 +1973,7 @@ async fn compile_and_verify(
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
     workflows_lock_extension_leeway: Duration,
+    cancel_registry: CancelRegistry,
 ) -> Result<
     (
         LinkedComponents,
@@ -1982,11 +1992,12 @@ async fn compile_and_verify(
             let engines = engines.clone();
             let build_semaphore = build_semaphore.clone();
             let parent_span = parent_span.clone();
+            let cancel_registry = cancel_registry.clone();
             tokio::task::spawn_blocking(move || {
                 let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "activity_wasm_compile", component_id = %activity_wasm.component_id());
                 span.in_scope(|| {
-                    prespawn_activity(activity_wasm, &engines).map(|(worker, component_config)| {
+                    prespawn_activity(activity_wasm, &engines, cancel_registry).map(|(worker, component_config)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
@@ -2180,6 +2191,7 @@ mod semaphore {
 fn prespawn_activity(
     activity: ActivityWasmConfigVerified,
     engines: &Engines,
+    cancel_registry: CancelRegistry,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     assert!(activity.component_id().component_type == ComponentType::ActivityWasm);
     debug!("Instantiating activity");
@@ -2198,6 +2210,7 @@ fn prespawn_activity(
         engine,
         Now,
         TokioSleep,
+        cancel_registry,
     )?;
     Ok(WorkerCompiled::new_activity(
         worker,
@@ -2338,6 +2351,7 @@ impl WorkerLinked {
         self,
         db_pool: &Arc<dyn DbPool>,
         db_executor: Arc<dyn DbExecutor>,
+        cancel_registry: &CancelRegistry,
     ) -> ExecutorTaskHandle {
         let worker = match self.worker {
             Either::Left(activity) => activity,
@@ -2347,6 +2361,7 @@ impl WorkerLinked {
                     leeway: workflow_linked.workflows_lock_extension_leeway,
                     clock_fn: Now,
                 }),
+                cancel_registry.clone(),
             )),
         };
         ExecTask::spawn_new(worker, self.exec_config, Now, db_executor, TokioSleep)
@@ -2673,6 +2688,7 @@ mod tests {
     use directories::BaseDirs;
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
+    use wasm_workers::activity::cancel_registry::CancelRegistry;
 
     fn get_workspace_dir() -> PathBuf {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
@@ -2710,7 +2726,9 @@ mod tests {
             config_holder.path_prefixes,
         )
         .await?;
-        let compiled_and_linked = ServerCompiledLinked::new(server_verified).await?;
+        let cancel_registry = CancelRegistry::new();
+        let compiled_and_linked =
+            ServerCompiledLinked::new(server_verified, cancel_registry).await?;
         assert_eq!(compiled_and_linked.supressed_errors, None);
         Ok(())
     }

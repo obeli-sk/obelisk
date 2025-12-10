@@ -694,7 +694,7 @@ impl From<HttpClientTrace> for grpc_gen::HttpClientTrace {
 impl From<CancelOutcome> for grpc_gen::cancel_response::CancelOutcome {
     fn from(value: CancelOutcome) -> Self {
         match value {
-            CancelOutcome::Success => grpc_gen::cancel_response::CancelOutcome::Success,
+            CancelOutcome::Cancelled => grpc_gen::cancel_response::CancelOutcome::Cancelled,
             CancelOutcome::AlreadyFinished => {
                 grpc_gen::cancel_response::CancelOutcome::AlreadyFinished
             }

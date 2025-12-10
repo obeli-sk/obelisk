@@ -24,6 +24,7 @@ mod bench {
     use tokio::runtime::Handle;
     use wasm_workers::RunnableComponent;
     use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorker};
+    use wasm_workers::activity::cancel_registry::CancelRegistry;
     use wasm_workers::engines::{EngineConfig, Engines, PoolingConfig};
     use wasm_workers::testing_fn_registry::TestingFnRegistry;
     use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
@@ -65,6 +66,7 @@ mod bench {
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
         activity_engine: Arc<Engine>,
+        cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
         spawn_activity_with_config(
             db_exec,
@@ -73,6 +75,7 @@ mod bench {
             sleep,
             activity_config,
             activity_engine,
+            cancel_registry,
         )
     }
 
@@ -83,6 +86,7 @@ mod bench {
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
         activity_engine: Arc<Engine>,
+        cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
         let (worker, component_id) = new_activity_worker_with_config(
             wasm_path,
@@ -90,6 +94,7 @@ mod bench {
             clock_fn.clone(),
             sleep,
             config_fn,
+            cancel_registry,
         );
         let exec_config = ExecConfig {
             batch_size: 1,
@@ -109,6 +114,7 @@ mod bench {
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
+        cancel_registry: CancelRegistry,
     ) -> (Arc<dyn Worker>, ComponentId) {
         let (wasm_component, component_id) = compile_activity_with_engine(wasm_path, &engine);
         (
@@ -119,6 +125,7 @@ mod bench {
                     engine,
                     clock_fn,
                     sleep,
+                    cancel_registry,
                 )
                 .unwrap(),
             ),
@@ -131,6 +138,7 @@ mod bench {
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
         activity_engine: Arc<Engine>,
+        cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
         spawn_activity(
             db_exec,
@@ -138,6 +146,7 @@ mod bench {
             clock_fn,
             sleep,
             activity_engine,
+            cancel_registry,
         )
     }
 
@@ -153,6 +162,7 @@ mod bench {
         )
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn spawn_workflow(
         db_pool: Arc<dyn DbPool>,
         db_exec: Arc<dyn DbExecutor>,
@@ -161,6 +171,7 @@ mod bench {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
         workflow_engine: Arc<Engine>,
+        cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
         let component_id =
             ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
@@ -188,6 +199,7 @@ mod bench {
                     leeway: Duration::ZERO,
                     clock_fn: clock_fn.clone(),
                 }),
+                cancel_registry,
             ),
         );
         let exec_config = ExecConfig {
@@ -209,6 +221,7 @@ mod bench {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
         workflow_engine: Arc<Engine>,
+        cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
         spawn_workflow(
             db_pool,
@@ -218,6 +231,7 @@ mod bench {
             join_next_blocking_strategy,
             fn_registry,
             workflow_engine,
+            cancel_registry,
         )
     }
 
@@ -271,6 +285,8 @@ mod bench {
         let (_guard, db_pool, db_exec, db_close) =
             tokio.block_on(async move { database.set_up().await });
 
+        let cancel_registry = CancelRegistry::new();
+
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
             db_exec.clone(),
@@ -280,10 +296,16 @@ mod bench {
             },
             &fn_registry,
             engines.workflow_engine.clone(),
+            cancel_registry.clone(),
         );
 
-        let activity_exec_task =
-            spawn_activity_fibo(db_exec, Now, TokioSleep, engines.activity_engine.clone());
+        let activity_exec_task = spawn_activity_fibo(
+            db_exec,
+            Now,
+            TokioSleep,
+            engines.activity_engine.clone(),
+            cancel_registry,
+        );
 
         bencher.bench(|| {
             let db_pool = db_pool.clone();

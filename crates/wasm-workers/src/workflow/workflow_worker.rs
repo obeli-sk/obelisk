@@ -1,6 +1,7 @@
 use super::deadline_tracker::DeadlineTrackerFactory;
 use super::event_history::ApplyError;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
+use crate::activity::cancel_registry::CancelRegistry;
 use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
 use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
@@ -79,6 +80,7 @@ pub struct WorkflowWorker<C: ClockFn> {
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     instance_pre: InstancePre<WorkflowCtx<C>>,
     fn_registry: Arc<dyn FunctionRegistry>,
+    cancel_registry: CancelRegistry,
     deadline_factory: Arc<dyn DeadlineTrackerFactory>,
 }
 
@@ -310,6 +312,7 @@ impl<C: ClockFn> WorkflowWorkerLinked<C> {
         self,
         db_pool: Arc<dyn DbPool>,
         deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        cancel_registry: CancelRegistry,
     ) -> WorkflowWorker<C> {
         WorkflowWorker {
             config: self.config,
@@ -321,6 +324,7 @@ impl<C: ClockFn> WorkflowWorkerLinked<C> {
             exported_functions_noext: self.exported_functions_noext,
             fn_registry: self.fn_registry,
             deadline_factory,
+            cancel_registry,
         }
     }
 }
@@ -399,6 +403,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             self.config.backtrace_persist,
             deadline_tracker,
             self.fn_registry.clone(),
+            self.cancel_registry.clone(),
             ctx.locked_event,
             self.config.lock_extension,
         );
@@ -729,6 +734,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::activity::activity_worker::tests::new_activity;
     use crate::activity::activity_worker::tests::{compile_activity_stub, new_activity_worker};
+    use crate::activity::cancel_registry::CancelRegistry;
     use crate::testing_fn_registry::{TestingFnRegistry, fn_registry_dummy};
     use crate::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
     use crate::{
@@ -821,6 +827,7 @@ pub(crate) mod tests {
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
     ) -> ExecTask<C> {
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
@@ -850,6 +857,7 @@ pub(crate) mod tests {
                     leeway: Duration::ZERO,
                     clock_fn: clock_fn.clone(),
                 }),
+                cancel_registry,
             ),
         );
         info!("Instantiated worker");
@@ -871,6 +879,7 @@ pub(crate) mod tests {
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
     ) -> ExecTask<C> {
         new_workflow(
             db_pool,
@@ -879,6 +888,7 @@ pub(crate) mod tests {
             clock_fn,
             join_next_blocking_strategy,
             fn_registry,
+            cancel_registry,
         )
     }
 
@@ -930,12 +940,14 @@ pub(crate) mod tests {
             compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
             compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW),
         ]);
+        let cancel_registry = CancelRegistry::new();
         let workflow_exec = new_workflow_fibo(
             db_pool.clone(),
             db_exec.clone(),
             sim_clock.clone(),
             join_next_blocking_strategy,
             &fn_registry,
+            cancel_registry,
         );
         // Create an execution.
         let execution_id = ExecutionId::generate();
@@ -1025,12 +1037,14 @@ pub(crate) mod tests {
         let (_guard, db_pool, db_exec, _db_close) = Database::Memory.set_up().await;
         test_utils::set_up();
         let fn_registry = fn_registry_dummy(&[]);
+        let cancel_registry = CancelRegistry::new();
         new_workflow_fibo(
             db_pool.clone(),
             db_exec,
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
+            cancel_registry,
         );
     }
 
@@ -1040,6 +1054,7 @@ pub(crate) mod tests {
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
     ) -> Arc<WorkflowWorker<C>> {
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
@@ -1067,6 +1082,7 @@ pub(crate) mod tests {
                     leeway: Duration::ZERO,
                     clock_fn,
                 }),
+                cancel_registry,
             ),
         )
     }
@@ -1079,6 +1095,7 @@ pub(crate) mod tests {
         let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
 
         let sim_clock = SimClock::epoch();
+        let cancel_registry = CancelRegistry::new();
         let worker = compile_workflow_worker(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),
@@ -1092,6 +1109,7 @@ pub(crate) mod tests {
                     test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 ),
             ]),
+            cancel_registry,
         );
         // simulate a scheduling problem where deadline < now, meaning there is no point in running the execution.
         let execution_deadline = sim_clock.now();
@@ -1157,12 +1175,14 @@ pub(crate) mod tests {
                     test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 ),
             ]);
+            let cancel_registry = CancelRegistry::new();
             let worker = compile_workflow_worker(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 db_pool.clone(),
                 sim_clock.clone(),
                 join_next_blocking_strategy,
                 &fn_registry,
+                cancel_registry,
             );
             let exec_config = ExecConfig {
                 batch_size: 1,
@@ -1265,12 +1285,14 @@ pub(crate) mod tests {
 
         let executor_id = ExecutorId::generate();
         let sleep_exec = {
+            let cancel_registry = CancelRegistry::new();
             let worker = compile_workflow_worker(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 db_pool.clone(),
                 sim_clock.clone(),
                 join_next_blocking_strategy,
                 &fn_registry,
+                cancel_registry,
             );
             let exec_config = ExecConfig {
                 batch_size: 1,
@@ -1421,6 +1443,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
+            CancelRegistry::new(),
         );
         let execution_id = ExecutionId::generate();
         db_connection
@@ -1504,6 +1527,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
+            CancelRegistry::new(),
         );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1596,6 +1620,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
+            CancelRegistry::new(),
         );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1694,6 +1719,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             join_next_strategy,
             &fn_registry,
+            CancelRegistry::new(),
         );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
@@ -1802,6 +1828,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
+            CancelRegistry::new(),
         );
 
         let url = "http://";
@@ -1886,6 +1913,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
+            CancelRegistry::new(),
         );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
@@ -2024,6 +2052,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
+            CancelRegistry::new(),
         );
         let exec_task = ExecTask::new_test(
             worker,
@@ -2216,6 +2245,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
+            CancelRegistry::new(),
         );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
@@ -2352,6 +2382,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
+            CancelRegistry::new(),
         );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();

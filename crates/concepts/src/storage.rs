@@ -3,7 +3,6 @@ use crate::ComponentRetryConfig;
 use crate::ExecutionFailureKind;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
-use crate::FinishedExecutionError;
 use crate::FunctionFqn;
 use crate::JoinSetId;
 use crate::Params;
@@ -681,6 +680,12 @@ pub trait DbExecutor: Send + Sync {
     );
 }
 
+pub enum AppendDelayResponseOutcome {
+    Success,
+    AlreadyFinished,
+    AlreadyCancelled,
+}
+
 #[async_trait]
 pub trait DbConnection: DbExecutor {
     #[cfg(feature = "test")]
@@ -697,8 +702,8 @@ pub trait DbConnection: DbExecutor {
         execution_id: ExecutionId,
         join_set_id: JoinSetId,
         delay_id: DelayId,
-        outcome: Result<(), ()>, // Successfully awaited by the watcher - `Ok(())` or cancelled - `Err(())`
-    ) -> Result<(), DbErrorWrite>;
+        outcome: Result<(), ()>, // Successfully finished - `Ok(())` or cancelled - `Err(())`
+    ) -> Result<AppendDelayResponseOutcome, DbErrorWrite>;
 
     /// Append a batch of events to an existing execution log, and append a response to a parent execution.
     /// The batch cannot contain `ExecutionEventInner::Created`.
@@ -861,25 +866,9 @@ pub trait DbConnection: DbExecutor {
     ) -> Result<Vec<ResponseWithCursor>, DbErrorRead>;
 }
 
-/// It is the responsibiilty of the caller to check that the execution belongs to an activity!
-pub async fn cancel_activity_with_retries(
-    db_connection: &dyn DbConnection,
-    child_execution_id_derived: &ExecutionIdDerived,
-    created_at: DateTime<Utc>,
-    mut retries: u8,
-) -> Result<CancelOutcome, DbErrorWrite> {
-    loop {
-        let res = cancel_activity(db_connection, child_execution_id_derived, created_at).await;
-        if res.is_ok() || retries == 0 {
-            return res;
-        }
-        retries -= 1;
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CancelOutcome {
-    Success,
+    Cancelled,
     AlreadyFinished,
 }
 
@@ -889,7 +878,7 @@ pub async fn cancel_delay(
     created_at: DateTime<Utc>,
 ) -> Result<CancelOutcome, DbErrorWrite> {
     let (parent_execution_id, join_set_id) = delay_id.split_to_parts();
-    let res = db_connection
+    db_connection
         .append_delay_response(
             created_at,
             parent_execution_id,
@@ -897,66 +886,13 @@ pub async fn cancel_delay(
             delay_id,
             Err(()), // Mark as cancelled.
         )
-        .await;
-    match res {
-        Ok(()) => Ok(CancelOutcome::Success),
-        Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState(_))) => {
-            Ok(CancelOutcome::AlreadyFinished)
-        }
-        Err(err) => Err(err),
-    }
-}
-
-pub async fn cancel_activity(
-    db_connection: &dyn DbConnection,
-    child_execution_id_derived: &ExecutionIdDerived,
-    created_at: DateTime<Utc>,
-) -> Result<CancelOutcome, DbErrorWrite> {
-    debug!("Determining cancellation state of {child_execution_id_derived}");
-    let (parent_execution_id, join_set_id) = child_execution_id_derived.split_to_parts();
-    let child_execution_id = ExecutionId::Derived(child_execution_id_derived.clone());
-    let last_event = db_connection
-        .get_last_execution_event(&child_execution_id)
         .await
-        .map_err(DbErrorWrite::from)?;
-    if matches!(last_event.event, ExecutionEventInner::Finished { .. }) {
-        debug!("Not cancelling, {child_execution_id_derived} is already finished");
-        Ok(CancelOutcome::AlreadyFinished)
-    } else {
-        let finished_version = last_event.version.increment();
-        debug!("Cancelling activity {child_execution_id_derived} at {finished_version}");
-        let child_result = SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
-            reason: None,
-            kind: ExecutionFailureKind::Cancelled,
-            detail: None,
-        });
-        db_connection
-            .append_batch_respond_to_parent(
-                AppendEventsToExecution {
-                    execution_id: child_execution_id,
-                    version: finished_version.clone(),
-                    batch: vec![AppendRequest {
-                        created_at,
-                        event: ExecutionEventInner::Finished {
-                            result: child_result.clone(),
-                            http_client_traces: None,
-                        },
-                    }],
-                },
-                AppendResponseToExecution {
-                    parent_execution_id,
-                    created_at,
-                    join_set_id: join_set_id.clone(),
-                    child_execution_id: child_execution_id_derived.clone(),
-                    finished_version,
-                    result: child_result,
-                },
-                created_at,
-            )
-            .await?;
-        debug!("Cancelled {child_execution_id_derived}");
-        Ok(CancelOutcome::Success)
-    }
+        .map(|ok| match ok {
+            AppendDelayResponseOutcome::Success | AppendDelayResponseOutcome::AlreadyCancelled => {
+                CancelOutcome::Cancelled
+            }
+            AppendDelayResponseOutcome::AlreadyFinished => CancelOutcome::AlreadyFinished,
+        })
 }
 
 #[derive(Clone)]

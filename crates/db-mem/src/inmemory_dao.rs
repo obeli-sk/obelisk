@@ -9,16 +9,17 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, ExecutorId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendEventsToExecution, AppendRequest, AppendResponse,
-    AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest, DbConnection,
-    DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
-    DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionEventInner,
-    ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredDelay, ExpiredLock,
-    ExpiredTimer, HistoryEvent, JoinSetResponse, JoinSetResponseEventOuter, LockPendingResponse,
-    Locked, LockedExecution, Pagination, ResponseWithCursor, Version, VersionType,
+    AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
+    AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
+    DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
+    DbErrorWriteNonRetriable, DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent,
+    ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredDelay,
+    ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetResponse, JoinSetResponseEventOuter,
+    LockPendingResponse, Locked, LockedExecution, Pagination, ResponseWithCursor, Version,
+    VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
-use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
+use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, StrVariant};
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
@@ -279,17 +280,51 @@ impl DbConnection for InMemoryDbConnection {
         join_set_id: JoinSetId,
         delay_id: DelayId,
         result: Result<(), ()>,
-    ) -> Result<(), DbErrorWrite> {
-        self.0.lock().unwrap().append_response(
+    ) -> Result<AppendDelayResponseOutcome, DbErrorWrite> {
+        let mut guard = self.0.lock().unwrap();
+        let res = guard.append_response(
             &execution_id,
             JoinSetResponseEventOuter {
                 created_at,
                 event: JoinSetResponseEvent {
                     join_set_id,
-                    event: JoinSetResponse::DelayFinished { delay_id, result },
+                    event: JoinSetResponse::DelayFinished {
+                        delay_id: delay_id.clone(),
+                        result,
+                    },
                 },
             },
-        )
+        );
+        match res {
+            Ok(()) => Ok(AppendDelayResponseOutcome::Success),
+            Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState(
+                StrVariant::Static("conflicting response id"),
+            ))) => {
+                let journal = guard
+                    .journals
+                    .get_mut(&execution_id)
+                    .expect("already checked");
+                let delay_success =
+                    journal
+                        .responses
+                        .iter()
+                        .find_map(|resp| match &resp.event.event {
+                            JoinSetResponse::DelayFinished {
+                                delay_id: found_id,
+                                result,
+                            } if delay_id == *found_id => Some(result.is_ok()),
+                            _ => None,
+                        });
+                match delay_success {
+                    Some(true) => Ok(AppendDelayResponseOutcome::AlreadyFinished),
+                    Some(false) => Ok(AppendDelayResponseOutcome::AlreadyCancelled),
+                    None => unreachable!(
+                        "insert failed yet select did not find the response while holding the lock"
+                    ),
+                }
+            }
+            Err(err) => Err(err),
+        }
     }
 
     async fn wait_for_finished_result(

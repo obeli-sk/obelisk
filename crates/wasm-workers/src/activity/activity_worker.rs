@@ -1,6 +1,7 @@
 use super::activity_ctx::{self, ActivityCtx};
 use super::activity_ctx_process::process_support_outer::v1_0_0::obelisk::activity::process as process_support;
 use crate::activity::activity_ctx::{ActivityPreopenIoError, HttpClientTracesContainer};
+use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::log_activities;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
@@ -53,6 +54,7 @@ pub struct ActivityWorker<C: ClockFn, S: Sleep> {
     sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
+    cancel_registry: CancelRegistry,
 }
 
 impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
@@ -62,6 +64,7 @@ impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
         engine: Arc<Engine>,
         clock_fn: C,
         sleep: S,
+        cancel_registry: CancelRegistry,
     ) -> Result<Self, WasmFileError> {
         let linking_err = |err: wasmtime::Error| WasmFileError::LinkingError {
             context: StrVariant::Static("linking error"),
@@ -103,6 +106,7 @@ impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
             exported_ffqn_to_index,
             config,
             instance_pre,
+            cancel_registry,
         })
     }
 
@@ -129,6 +133,9 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
         trace!("Params: {params:?}", params = ctx.params);
         assert!(ctx.event_history.is_empty());
         let http_client_traces = HttpClientTracesContainer::default();
+        let cancelation_token = self
+            .cancel_registry
+            .obtain_cancellation_token(ctx.execution_id.clone());
 
         let call_function = {
             let preopened_dir = if let Some(directories_config) = &self.config.directories_config {
@@ -393,6 +400,11 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                     version: ctx.version,
                 });
             }
+            cancel_res = cancelation_token => {
+                assert!(cancel_res.is_ok(), "only closed channels are dropped");
+                // TODO: Add http traces
+                return WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, ctx.version));
+            }
         }
     }
 }
@@ -483,6 +495,7 @@ pub(crate) mod tests {
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
     ) -> (Arc<dyn Worker>, ComponentId) {
+        let cancel_registry = CancelRegistry::new();
         let (wasm_component, component_id) =
             compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm);
         (
@@ -493,6 +506,7 @@ pub(crate) mod tests {
                     engine,
                     clock_fn,
                     sleep,
+                    cancel_registry,
                 )
                 .unwrap(),
             ),

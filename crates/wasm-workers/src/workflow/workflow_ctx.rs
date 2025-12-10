@@ -12,6 +12,7 @@ use super::host_exports::{
 };
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
+use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::workflow::event_history::JoinSetCreate;
 use crate::workflow::host_exports::v4_0_0::DelayId_4_0_0;
@@ -877,6 +878,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         backtrace_persist: bool,
         deadline_tracker: Box<dyn DeadlineTracker>,
         fn_registry: Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
         locked_event: Locked,
         lock_extension: Duration,
     ) -> Self {
@@ -893,6 +895,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 responses,
                 join_next_blocking_strategy,
                 fn_registry,
+                cancel_registry,
                 deadline_tracker,
                 locked_event,
                 lock_extension,
@@ -1619,6 +1622,7 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::activity::cancel_registry::CancelRegistry;
     use crate::testing_fn_registry::fn_registry_dummy;
     use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
     use crate::workflow::deadline_tracker::{
@@ -1660,6 +1664,7 @@ pub(crate) mod tests {
     use hashbrown::HashSet;
     use rand::SeedableRng as _;
     use rand::rngs::StdRng;
+
     use std::{fmt::Debug, sync::Arc, time::Duration};
     use test_utils::get_seed;
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
@@ -1780,6 +1785,7 @@ pub(crate) mod tests {
                 version: ctx.version,
             };
 
+            let cancel_registry = CancelRegistry::new();
             let mut workflow_ctx = WorkflowCtx::new(
                 caching_db_connection,
                 ctx.event_history,
@@ -1796,6 +1802,7 @@ pub(crate) mod tests {
                 .create(ctx.locked_event.lock_expires_at)
                 .unwrap(),
                 self.fn_registry.clone(),
+                cancel_registry,
                 ctx.locked_event,
                 Duration::from_secs(1),
             );

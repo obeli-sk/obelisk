@@ -1789,7 +1789,7 @@ async fn append_response_with_same_id_twice_should_fail(
 
 #[rstest]
 #[tokio::test]
-async fn delay_cancellation_twice_should_report_already_finished(
+async fn delay_cancellation_should_be_idempotent(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
@@ -1860,10 +1860,10 @@ async fn delay_cancellation_twice_should_report_already_finished(
     let res = storage::cancel_delay(db_connection.as_ref(), delay_id.clone(), sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::Success, res);
+    assert_eq!(CancelOutcome::Cancelled, res);
     let res = storage::cancel_delay(db_connection.as_ref(), delay_id.clone(), sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::AlreadyFinished, res);
+    assert_eq!(CancelOutcome::Cancelled, res);
     db_close.close().await;
 }

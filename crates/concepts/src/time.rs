@@ -8,7 +8,7 @@ pub trait ClockFn: Send + Sync + Clone + 'static {
 }
 
 #[async_trait]
-pub trait Sleep: Send + Sync + Clone {
+pub trait Sleep: Send + Sync + Clone + 'static {
     async fn sleep(&self, duration: Duration);
 }
 

@@ -6,14 +6,14 @@ use concepts::{
     SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
-        AppendBatchResponse, AppendEventsToExecution, AppendRequest, AppendResponse,
-        AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest, DUMMY_CREATED,
-        DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
-        DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool, DbPoolCloseable,
-        ExecutionEvent, ExecutionEventInner, ExecutionListPagination, ExecutionWithState,
-        ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedBy,
-        LockedExecution, Pagination, PendingState, PendingStateFinished,
+        AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
+        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
+        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
+        DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool,
+        DbPoolCloseable, ExecutionEvent, ExecutionEventInner, ExecutionListPagination,
+        ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
+        Locked, LockedBy, LockedExecution, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor, Version,
         VersionType,
     },
@@ -2467,6 +2467,33 @@ impl SqlitePool {
             .map_err(DbErrorRead::from)
     }
 
+    fn delay_response(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        delay_id: &DelayId,
+    ) -> Result<Option<bool>, DbErrorRead> {
+        // TODO: Add test
+        tx.prepare(
+            "SELECT delay_success \
+                    FROM t_join_set_response \
+                    WHERE \
+                    execution_id = :execution_id AND delay_id = :delay_id
+                    ",
+        )?
+        .query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":delay_id": delay_id.to_string(),
+            },
+            |row| {
+                let delay_success = row.get::<_, bool>("delay_success")?;
+                Ok(delay_success)
+            },
+        )
+        .optional()
+        .map_err(DbErrorRead::from)
+    }
+
     // TODO(perf): Instead of OFFSET an per-execution sequential ID could improve the read performance.
     #[instrument(level = Level::TRACE, skip_all)]
     fn get_responses_with_offset(
@@ -3188,23 +3215,49 @@ impl DbConnection for SqlitePool {
         join_set_id: JoinSetId,
         delay_id: DelayId,
         result: Result<(), ()>,
-    ) -> Result<(), DbErrorWrite> {
+    ) -> Result<AppendDelayResponseOutcome, DbErrorWrite> {
         debug!("append_delay_response");
         let event = JoinSetResponseEventOuter {
             created_at,
             event: JoinSetResponseEvent {
                 join_set_id,
-                event: JoinSetResponse::DelayFinished { delay_id, result },
+                event: JoinSetResponse::DelayFinished {
+                    delay_id: delay_id.clone(),
+                    result,
+                },
             },
         };
-        let notifier = self
+        let res = self
             .transaction(
-                move |tx| Self::append_response(tx, &execution_id, event.clone()),
+                {
+                    let execution_id = execution_id.clone();
+                    move |tx| Self::append_response(tx, &execution_id, event.clone())
+                },
                 "append_delay_response",
             )
-            .await?;
-        self.notify_all(vec![notifier], created_at);
-        Ok(())
+            .await;
+        match res {
+            Ok(notifier) => {
+                self.notify_all(vec![notifier], created_at);
+                Ok(AppendDelayResponseOutcome::Success)
+            }
+            Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState(_))) => {
+                let delay_success = self
+                    .transaction(
+                        move |tx| Self::delay_response(tx, &execution_id, &delay_id),
+                        "delay_response",
+                    )
+                    .await?;
+                match delay_success {
+                    Some(true) => Ok(AppendDelayResponseOutcome::AlreadyFinished),
+                    Some(false) => Ok(AppendDelayResponseOutcome::AlreadyCancelled),
+                    None => Err(DbErrorWrite::Generic(DbErrorGeneric::Uncategorized(
+                        "insert failed yet select did not find the response".into(),
+                    ))),
+                }
+            }
+            Err(err) => Err(err),
+        }
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
