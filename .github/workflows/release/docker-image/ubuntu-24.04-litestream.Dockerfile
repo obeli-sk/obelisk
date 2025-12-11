@@ -5,7 +5,7 @@ ADD obelisk .
 ADD obelisk.toml /etc/obelisk/obelisk.toml
 
 # Install Litestream
-COPY --from=litestream/litestream:0.5.2 /usr/local/bin/litestream /usr/local/bin/litestream
+COPY --from=litestream/litestream:0.5.3 /usr/local/bin/litestream /usr/local/bin/litestream
 
 
 ENV PATH="/obelisk:${PATH}"
