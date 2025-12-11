@@ -2,11 +2,6 @@
 
 # Upcoming goals
 
-## feat!: Cancellation
-Bottom up.
-Sleep must be fallible, cancellable via RPC
-Activities - cancel via RPC
-
 ## feat!: Return execution id in -invoke, allow in webhooks
 Similarly to `-await-next`, return a tuple of execution id and the result.
 
