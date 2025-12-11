@@ -323,7 +323,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
     };
 
     // Too soon
-    sim_clock.move_time_forward(backoff - Duration::from_millis(100));
+    sim_clock.move_time_forward(backoff.checked_sub(Duration::from_millis(100)).unwrap());
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock while in timeout backoff");
@@ -578,7 +578,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
             .await
             .unwrap();
     }
-    sim_clock.move_time_forward(backoff - Duration::from_millis(100));
+    sim_clock.move_time_forward(backoff.checked_sub(Duration::from_millis(100)).unwrap());
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock while in timeout backoff");

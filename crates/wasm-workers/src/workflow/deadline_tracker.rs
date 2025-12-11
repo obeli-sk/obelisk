@@ -51,7 +51,7 @@ impl<C: ClockFn> DeadlineTracker for DeadlineTrackerTokio<C> {
         let now = self.clock_fn.now();
         let lock_expires_at = now + lock_extension;
         let lock_duration = if lock_extension > self.leeway {
-            lock_extension - self.leeway
+            lock_extension.checked_sub(self.leeway).unwrap()
         } else {
             warn!("Not setting the leeway as deadline duration is too short");
             lock_extension
@@ -77,7 +77,7 @@ impl<C: ClockFn> DeadlineTrackerFactory for DeadlineTrackerFactoryTokio<C> {
             return Err(LockAlreadyExpired { started_at });
         };
         let deadline_duration = if deadline_duration > self.leeway {
-            deadline_duration - self.leeway
+            deadline_duration.checked_sub(self.leeway).unwrap()
         } else {
             warn!("Not setting the leeway as deadline duration is too short");
             deadline_duration
