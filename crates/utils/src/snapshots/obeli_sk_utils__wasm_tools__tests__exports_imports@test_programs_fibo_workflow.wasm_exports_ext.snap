@@ -253,10 +253,19 @@ expression: exports
         "type_wrapper": {
           "result": {
             "ok": {
-              "result": {
-                "ok": "u64",
-                "err": null
-              }
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "u64",
+                    "err": null
+                  }
+                }
+              ]
             },
             "err": {
               "variant": {
@@ -265,7 +274,7 @@ expression: exports
             }
           }
         },
-        "wit_type": "result<result<u64>, invoke-extension-error>"
+        "wit_type": "result<tuple<execution-id, result<u64>>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -404,10 +413,19 @@ expression: exports
         "type_wrapper": {
           "result": {
             "ok": {
-              "result": {
-                "ok": "u64",
-                "err": null
-              }
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "u64",
+                    "err": null
+                  }
+                }
+              ]
             },
             "err": {
               "variant": {
@@ -416,7 +434,7 @@ expression: exports
             }
           }
         },
-        "wit_type": "result<result<u64>, invoke-extension-error>"
+        "wit_type": "result<tuple<execution-id, result<u64>>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -631,10 +649,19 @@ expression: exports
         "type_wrapper": {
           "result": {
             "ok": {
-              "result": {
-                "ok": "u64",
-                "err": null
-              }
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "u64",
+                    "err": null
+                  }
+                }
+              ]
             },
             "err": {
               "variant": {
@@ -643,7 +670,7 @@ expression: exports
             }
           }
         },
-        "wit_type": "result<result<u64>, invoke-extension-error>"
+        "wit_type": "result<tuple<execution-id, result<u64>>, invoke-extension-error>"
       }
     },
     "extension": "invoke",

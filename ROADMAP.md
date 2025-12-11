@@ -2,8 +2,7 @@
 
 # Upcoming goals
 
-## feat!: Return execution id in -invoke, allow in webhooks
-Similarly to `-await-next`, return a tuple of execution id and the result.
+## feat: Allow `-invoke` in webhooks
 
 ## feat: Support `-get(execution id)` in webhooks
 Enables pattern where webhook sends a signal via `-stub`, then reads the parent's result.

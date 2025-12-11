@@ -205,7 +205,7 @@ package testing:stub-activity-obelisk-ext {
 
     foo-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
-    foo-invoke: func(label: string, arg: string) -> result<result<string>, invoke-extension-error>;
+    foo-invoke: func(label: string, arg: string) -> result<tuple<execution-id, result<string>>, invoke-extension-error>;
 
     noret-submit: func(join-set: borrow<join-set>) -> execution-id;
 
@@ -213,7 +213,7 @@ package testing:stub-activity-obelisk-ext {
 
     noret-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    noret-invoke: func(label: string) -> result<result, invoke-extension-error>;
+    noret-invoke: func(label: string) -> result<tuple<execution-id, result>, invoke-extension-error>;
   }
 }
 

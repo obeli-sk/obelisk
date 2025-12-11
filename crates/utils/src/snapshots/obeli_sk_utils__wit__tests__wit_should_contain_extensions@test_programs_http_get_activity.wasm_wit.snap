@@ -401,7 +401,7 @@ package testing:http-obelisk-ext {
 
     get-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    get-invoke: func(label: string, url: string) -> result<result<string, string>, invoke-extension-error>;
+    get-invoke: func(label: string, url: string) -> result<tuple<execution-id, result<string, string>>, invoke-extension-error>;
 
     get-resp-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
@@ -409,7 +409,7 @@ package testing:http-obelisk-ext {
 
     get-resp-get: func(execution-id: execution-id) -> result<result<response, string>, get-extension-error>;
 
-    get-resp-invoke: func(label: string, url: string) -> result<result<response, string>, invoke-extension-error>;
+    get-resp-invoke: func(label: string, url: string) -> result<tuple<execution-id, result<response, string>>, invoke-extension-error>;
 
     get-stargazers-submit: func(join-set: borrow<join-set>) -> execution-id;
 
@@ -417,7 +417,7 @@ package testing:http-obelisk-ext {
 
     get-stargazers-get: func(execution-id: execution-id) -> result<result<stargazers, string>, get-extension-error>;
 
-    get-stargazers-invoke: func(label: string) -> result<result<stargazers, string>, invoke-extension-error>;
+    get-stargazers-invoke: func(label: string) -> result<tuple<execution-id, result<stargazers, string>>, invoke-extension-error>;
 
     get-successful-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
@@ -425,7 +425,7 @@ package testing:http-obelisk-ext {
 
     get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    get-successful-invoke: func(label: string, url: string) -> result<result<string, string>, invoke-extension-error>;
+    get-successful-invoke: func(label: string, url: string) -> result<tuple<execution-id, result<string, string>>, invoke-extension-error>;
   }
 }
 

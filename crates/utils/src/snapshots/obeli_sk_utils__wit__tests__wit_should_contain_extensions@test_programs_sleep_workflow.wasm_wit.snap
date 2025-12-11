@@ -231,7 +231,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-host-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-host-activity-invoke: func(label: string, duration: duration) -> result<result, invoke-extension-error>;
+    sleep-host-activity-invoke: func(label: string, duration: duration) -> result<tuple<execution-id, result>, invoke-extension-error>;
 
     sleep-schedule-at-submit: func(join-set: borrow<join-set>, schedule-at: schedule-at) -> execution-id;
 
@@ -239,7 +239,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-schedule-at-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-schedule-at-invoke: func(label: string, schedule-at: schedule-at) -> result<result, invoke-extension-error>;
+    sleep-schedule-at-invoke: func(label: string, schedule-at: schedule-at) -> result<tuple<execution-id, result>, invoke-extension-error>;
 
     sleep-activity-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
@@ -247,7 +247,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-activity-invoke: func(label: string, duration: duration) -> result<result, invoke-extension-error>;
+    sleep-activity-invoke: func(label: string, duration: duration) -> result<tuple<execution-id, result>, invoke-extension-error>;
 
     sleep-activity-submit-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
@@ -255,7 +255,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-activity-submit-get: func(execution-id: execution-id) -> result<result<execution-id>, get-extension-error>;
 
-    sleep-activity-submit-invoke: func(label: string, duration: duration) -> result<result<execution-id>, invoke-extension-error>;
+    sleep-activity-submit-invoke: func(label: string, duration: duration) -> result<tuple<execution-id, result<execution-id>>, invoke-extension-error>;
 
     sleep-random-submit: func(join-set: borrow<join-set>, min-millis: u64, max-millis-inclusive: u64) -> execution-id;
 
@@ -263,7 +263,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-random-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-random-invoke: func(label: string, min-millis: u64, max-millis-inclusive: u64) -> result<result, invoke-extension-error>;
+    sleep-random-invoke: func(label: string, min-millis: u64, max-millis-inclusive: u64) -> result<tuple<execution-id, result>, invoke-extension-error>;
 
     schedule-noop-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
@@ -271,7 +271,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     schedule-noop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    schedule-noop-invoke: func(label: string, duration: duration) -> result<result, invoke-extension-error>;
+    schedule-noop-invoke: func(label: string, duration: duration) -> result<tuple<execution-id, result>, invoke-extension-error>;
 
     two-delays-in-same-join-set-submit: func(join-set: borrow<join-set>) -> execution-id;
 
@@ -279,7 +279,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     two-delays-in-same-join-set-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    two-delays-in-same-join-set-invoke: func(label: string) -> result<result, invoke-extension-error>;
+    two-delays-in-same-join-set-invoke: func(label: string) -> result<tuple<execution-id, result>, invoke-extension-error>;
 
     join-next-produces-all-processed-error-submit: func(join-set: borrow<join-set>) -> execution-id;
 
@@ -287,7 +287,7 @@ package testing:sleep-workflow-obelisk-ext {
 
     join-next-produces-all-processed-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    join-next-produces-all-processed-error-invoke: func(label: string) -> result<result, invoke-extension-error>;
+    join-next-produces-all-processed-error-invoke: func(label: string) -> result<tuple<execution-id, result>, invoke-extension-error>;
   }
 }
 

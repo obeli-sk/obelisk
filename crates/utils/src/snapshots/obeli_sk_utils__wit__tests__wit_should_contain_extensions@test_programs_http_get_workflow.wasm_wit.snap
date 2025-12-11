@@ -230,7 +230,7 @@ package testing:http-workflow-obelisk-ext {
 
     get-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    get-invoke: func(label: string, url: string) -> result<result<string, string>, invoke-extension-error>;
+    get-invoke: func(label: string, url: string) -> result<tuple<execution-id, result<string, string>>, invoke-extension-error>;
 
     get-resp-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
@@ -238,7 +238,7 @@ package testing:http-workflow-obelisk-ext {
 
     get-resp-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    get-resp-invoke: func(label: string, url: string) -> result<result<string, string>, invoke-extension-error>;
+    get-resp-invoke: func(label: string, url: string) -> result<tuple<execution-id, result<string, string>>, invoke-extension-error>;
 
     get-stargazers-submit: func(join-set: borrow<join-set>) -> execution-id;
 
@@ -246,7 +246,7 @@ package testing:http-workflow-obelisk-ext {
 
     get-stargazers-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    get-stargazers-invoke: func(label: string) -> result<result, invoke-extension-error>;
+    get-stargazers-invoke: func(label: string) -> result<tuple<execution-id, result>, invoke-extension-error>;
 
     get-successful-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
@@ -254,7 +254,7 @@ package testing:http-workflow-obelisk-ext {
 
     get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    get-successful-invoke: func(label: string, url: string) -> result<result<string, string>, invoke-extension-error>;
+    get-successful-invoke: func(label: string, url: string) -> result<tuple<execution-id, result<string, string>>, invoke-extension-error>;
 
     get-successful-concurrently-submit: func(join-set: borrow<join-set>, urls: list<string>) -> execution-id;
 
@@ -262,7 +262,7 @@ package testing:http-workflow-obelisk-ext {
 
     get-successful-concurrently-get: func(execution-id: execution-id) -> result<result<list<string>, string>, get-extension-error>;
 
-    get-successful-concurrently-invoke: func(label: string, urls: list<string>) -> result<result<list<string>, string>, invoke-extension-error>;
+    get-successful-concurrently-invoke: func(label: string, urls: list<string>) -> result<tuple<execution-id, result<list<string>, string>>, invoke-extension-error>;
 
     get-successful-concurrently-stress-submit: func(join-set: borrow<join-set>, url: string, concurrency: u32) -> execution-id;
 
@@ -270,7 +270,7 @@ package testing:http-workflow-obelisk-ext {
 
     get-successful-concurrently-stress-get: func(execution-id: execution-id) -> result<result<list<string>, string>, get-extension-error>;
 
-    get-successful-concurrently-stress-invoke: func(label: string, url: string, concurrency: u32) -> result<result<list<string>, string>, invoke-extension-error>;
+    get-successful-concurrently-stress-invoke: func(label: string, url: string, concurrency: u32) -> result<tuple<execution-id, result<list<string>, string>>, invoke-extension-error>;
   }
 }
 

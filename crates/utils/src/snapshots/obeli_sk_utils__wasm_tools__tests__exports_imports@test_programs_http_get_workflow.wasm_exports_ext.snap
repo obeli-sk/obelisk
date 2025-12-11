@@ -172,10 +172,19 @@ expression: exports
         "type_wrapper": {
           "result": {
             "ok": {
-              "result": {
-                "ok": "string",
-                "err": "string"
-              }
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "string",
+                    "err": "string"
+                  }
+                }
+              ]
             },
             "err": {
               "variant": {
@@ -184,7 +193,7 @@ expression: exports
             }
           }
         },
-        "wit_type": "result<result<string, string>, invoke-extension-error>"
+        "wit_type": "result<tuple<execution-id, result<string, string>>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -359,10 +368,19 @@ expression: exports
         "type_wrapper": {
           "result": {
             "ok": {
-              "result": {
-                "ok": "string",
-                "err": "string"
-              }
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "string",
+                    "err": "string"
+                  }
+                }
+              ]
             },
             "err": {
               "variant": {
@@ -371,7 +389,7 @@ expression: exports
             }
           }
         },
-        "wit_type": "result<result<string, string>, invoke-extension-error>"
+        "wit_type": "result<tuple<execution-id, result<string, string>>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -571,10 +589,19 @@ expression: exports
         "type_wrapper": {
           "result": {
             "ok": {
-              "result": {
-                "ok": null,
-                "err": null
-              }
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": null,
+                    "err": null
+                  }
+                }
+              ]
             },
             "err": {
               "variant": {
@@ -583,7 +610,7 @@ expression: exports
             }
           }
         },
-        "wit_type": "result<result, invoke-extension-error>"
+        "wit_type": "result<tuple<execution-id, result>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -895,12 +922,21 @@ expression: exports
         "type_wrapper": {
           "result": {
             "ok": {
-              "result": {
-                "ok": {
-                  "list": "string"
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
                 },
-                "err": "string"
-              }
+                {
+                  "result": {
+                    "ok": {
+                      "list": "string"
+                    },
+                    "err": "string"
+                  }
+                }
+              ]
             },
             "err": {
               "variant": {
@@ -909,7 +945,7 @@ expression: exports
             }
           }
         },
-        "wit_type": "result<result<list<string>, string>, invoke-extension-error>"
+        "wit_type": "result<tuple<execution-id, result<list<string>, string>>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -1093,12 +1129,21 @@ expression: exports
         "type_wrapper": {
           "result": {
             "ok": {
-              "result": {
-                "ok": {
-                  "list": "string"
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
                 },
-                "err": "string"
-              }
+                {
+                  "result": {
+                    "ok": {
+                      "list": "string"
+                    },
+                    "err": "string"
+                  }
+                }
+              ]
             },
             "err": {
               "variant": {
@@ -1107,7 +1152,7 @@ expression: exports
             }
           }
         },
-        "wit_type": "result<result<list<string>, string>, invoke-extension-error>"
+        "wit_type": "result<tuple<execution-id, result<list<string>, string>>, invoke-extension-error>"
       }
     },
     "extension": "invoke",
@@ -1273,10 +1318,19 @@ expression: exports
         "type_wrapper": {
           "result": {
             "ok": {
-              "result": {
-                "ok": "string",
-                "err": "string"
-              }
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "string",
+                    "err": "string"
+                  }
+                }
+              ]
             },
             "err": {
               "variant": {
@@ -1285,7 +1339,7 @@ expression: exports
             }
           }
         },
-        "wit_type": "result<result<string, string>, invoke-extension-error>"
+        "wit_type": "result<tuple<execution-id, result<string, string>>, invoke-extension-error>"
       }
     },
     "extension": "invoke",

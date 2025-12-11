@@ -200,7 +200,7 @@ package testing:fibo-workflow-obelisk-ext {
 
     fibow-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-    fibow-invoke: func(label: string, n: u8, iterations: u32) -> result<result<u64>, invoke-extension-error>;
+    fibow-invoke: func(label: string, n: u8, iterations: u32) -> result<tuple<execution-id, result<u64>>, invoke-extension-error>;
 
     fiboa-submit: func(join-set: borrow<join-set>, n: u8, iterations: u32) -> execution-id;
 
@@ -208,7 +208,7 @@ package testing:fibo-workflow-obelisk-ext {
 
     fiboa-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-    fiboa-invoke: func(label: string, n: u8, iterations: u32) -> result<result<u64>, invoke-extension-error>;
+    fiboa-invoke: func(label: string, n: u8, iterations: u32) -> result<tuple<execution-id, result<u64>>, invoke-extension-error>;
 
     fiboa-concurrent-submit: func(join-set: borrow<join-set>, n: u8, iterations: u32) -> execution-id;
 
@@ -216,7 +216,7 @@ package testing:fibo-workflow-obelisk-ext {
 
     fiboa-concurrent-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
-    fiboa-concurrent-invoke: func(label: string, n: u8, iterations: u32) -> result<result<u64>, invoke-extension-error>;
+    fiboa-concurrent-invoke: func(label: string, n: u8, iterations: u32) -> result<tuple<execution-id, result<u64>>, invoke-extension-error>;
   }
 }
 

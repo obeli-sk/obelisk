@@ -365,14 +365,14 @@ fn add_extended_interfaces(
                     FunctionExtension::AwaitNext => {
                         // -await-next: func(join-set: borrow<join-set>) ->
                         //  result<tuple<execution-id, return-type>, await-next-extension-error>;
-                        // or if the function does not return anything:
-                        //  result<execution-id, await-next-extension-error>;
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
                         let params = vec![(
                             "join-set".to_string(),
                             Type::Id(type_id_join_set_id_borrow_handle),
                         )];
-                        let result = if let Some(actual_return_type_id) = &original_fn.result {
+                        let result = {
+                            let actual_return_type_id = &original_fn.result.expect(
+                                "all ExImLite exported functions must have their return type validated");
                             let type_id_await_next_ok_part_tuple = resolve.types.alloc(TypeDef {
                                 name: None,
                                 kind: TypeDefKind::Tuple(wit_parser::Tuple {
@@ -389,18 +389,6 @@ fn add_extended_interfaces(
                                 name: None,
                                 kind: TypeDefKind::Result(wit_parser::Result_ {
                                     ok: Some(Type::Id(type_id_await_next_ok_part_tuple)),
-                                    err: Some(Type::Id(type_id_await_next_err_part)),
-                                }),
-                                owner: TypeOwner::None,
-                                docs: wit_parser::Docs::default(),
-                                stability: wit_parser::Stability::default(),
-                            });
-                            Some(Type::Id(type_id_result))
-                        } else {
-                            let type_id_result = resolve.types.alloc(TypeDef {
-                                name: None,
-                                kind: TypeDefKind::Result(wit_parser::Result_ {
-                                    ok: Some(Type::Id(type_id_execution_id)),
                                     err: Some(Type::Id(type_id_await_next_err_part)),
                                 }),
                                 owner: TypeOwner::None,
@@ -476,7 +464,7 @@ fn add_extended_interfaces(
                         (params, result)
                     }
                     FunctionExtension::Invoke => {
-                        // -invoke(label: string, original param) -> result<original return type, invoke-extension-error>
+                        // -invoke(label: string, original param) -> result<tuple<execution-id, original return type>, invoke-extension-error>
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
                         let params = {
                             let schedule_at_param_name =
@@ -485,16 +473,33 @@ fn add_extended_interfaces(
                             params.extend_from_slice(&original_fn.params);
                             params
                         };
-                        let result = Some(Type::Id(resolve.types.alloc(TypeDef {
-                            name: None,
-                            kind: TypeDefKind::Result(wit_parser::Result_ {
-                                ok: original_fn.result,
-                                err: Some(Type::Id(type_id_invoke_extension_error)),
-                            }),
-                            owner: TypeOwner::None,
-                            docs: wit_parser::Docs::default(),
-                            stability: wit_parser::Stability::default(),
-                        })));
+                        let result = {
+                            let actual_return_type_id = &original_fn.result.expect(
+                                "all ExImLite exported functions must have their return type validated");
+                            let ok_part_tuple = resolve.types.alloc(TypeDef {
+                                name: None,
+                                kind: TypeDefKind::Tuple(wit_parser::Tuple {
+                                    types: vec![
+                                        Type::Id(type_id_execution_id),
+                                        *actual_return_type_id,
+                                    ],
+                                }),
+                                owner: TypeOwner::None,
+                                docs: wit_parser::Docs::default(),
+                                stability: wit_parser::Stability::default(),
+                            });
+                            let type_id_result = resolve.types.alloc(TypeDef {
+                                name: None,
+                                kind: TypeDefKind::Result(wit_parser::Result_ {
+                                    ok: Some(Type::Id(ok_part_tuple)),
+                                    err: Some(Type::Id(type_id_invoke_extension_error)),
+                                }),
+                                owner: TypeOwner::None,
+                                docs: wit_parser::Docs::default(),
+                                stability: wit_parser::Stability::default(),
+                            });
+                            Some(Type::Id(type_id_result))
+                        };
                         (params, result)
                     }
                 };

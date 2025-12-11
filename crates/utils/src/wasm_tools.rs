@@ -630,7 +630,7 @@ impl ExIm {
                 };
                 insert_ext(fn_get);
 
-                // -invoke(label: string, original params) -> result<original reslut, invoke-extension-error>
+                // -invoke(label: string, original params) -> result<tuple<execution-id, original reslut>, invoke-extension-error>
                 let fn_invoke = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),
@@ -646,18 +646,24 @@ impl ExIm {
                         params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
                         ParameterTypes(params)
                     },
-                    return_type: ReturnType::detect(
-                        TypeWrapper::Result {
-                            ok: Some(Box::new(TypeWrapper::from(
-                                return_type.type_wrapper_tl.clone(),
-                            ))),
-                            err: Some(Box::new(invoke_extension_error_type_wrapper.clone())),
-                        },
-                        StrVariant::from(format!(
-                            "result<{}, invoke-extension-error>",
-                            return_type.wit_type
-                        )),
-                    ),
+                    return_type: {
+                        let ok_part = format!(
+                            "tuple<execution-id, {original_ret}>",
+                            original_ret = exported_fn_metadata.return_type
+                        );
+                        // (execution-id, original_ret)
+                        let ok_type_wrapper = TypeWrapper::Tuple(Box::new([
+                            execution_id_type_wrapper.clone(),
+                            TypeWrapper::from(return_type.type_wrapper_tl.clone()),
+                        ]));
+                        ReturnType::detect(
+                            TypeWrapper::Result {
+                                ok: Some(Box::new(ok_type_wrapper)),
+                                err: Some(Box::new(invoke_extension_error_type_wrapper.clone())),
+                            },
+                            StrVariant::from(format!("result<{ok_part}, invoke-extension-error>")),
+                        )
+                    },
                     extension: Some(FunctionExtension::Invoke),
                     submittable: false,
                 };

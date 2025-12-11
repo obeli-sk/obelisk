@@ -2213,7 +2213,7 @@ impl OneOffChildExecutionRequest {
                 ffqn,
                 fn_component_id,
                 join_set_id,
-                child_execution_id,
+                child_execution_id: child_execution_id.clone(),
                 params,
                 wasm_backtrace,
             },
@@ -2222,8 +2222,13 @@ impl OneOffChildExecutionRequest {
             .apply_inner(event, db_connection, called_at)
             .await?;
         let value = assert_matches!(value, ChildReturnValue::WastVal(wast_val) => {
-            // wrap with an Ok in order to return result<T, invoke-extension-error>
-            Val::Result(Ok(Some(Box::new(wast_val.as_val()))))
+            // wrap with an Ok and a tuple in order to return result<tuple<execution-id, T>, invoke-extension-error>
+            Val::Result(Ok(Some(
+                Box::new(
+                Val::Tuple(vec![
+                    execution_id_derived_into_wast_val(&child_execution_id).as_val(),
+                    wast_val.as_val()
+            ])))))
         });
         Ok(value)
     }
