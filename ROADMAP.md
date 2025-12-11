@@ -48,9 +48,6 @@ Could be used to monitor MQTT, UDP etc.
 
 ## feat: Keepalives for activities, extending the lock until completion
 
-## fix: Change FFQN - allow dots in function name
-Accomodate for resource functions.
-
 ## fix: Migrate logging to wasi
 Use wasi:logging/logging@0.1.0-draft
 
