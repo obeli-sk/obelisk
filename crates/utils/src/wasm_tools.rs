@@ -1,10 +1,11 @@
 use crate::{sha256sum::calculate_sha256_file, wit::from_wit_package_name_to_pkg_fqn};
 use anyhow::Context;
 use concepts::{
-    ComponentType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
-    PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType, ReturnTypeNonExtendable,
-    SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB,
-    SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
+    ComponentType, ContentDigest, FnName, FunctionExtension, FunctionFqn, FunctionMetadata,
+    IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType,
+    ReturnTypeNonExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_INVOKE,
+    SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE,
+    SUFFIX_PKG_STUB, StrVariant,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -28,7 +29,7 @@ impl WasmComponent {
     pub async fn convert_core_module_to_component(
         wasm_path: &Path,
         output_parent: &Path,
-    ) -> Result<Option<PathBuf>, anyhow::Error> {
+    ) -> Result<Option<(PathBuf, ContentDigest)>, anyhow::Error> {
         use tokio::io::AsyncReadExt;
 
         let mut wasm_file = tokio::fs::File::open(wasm_path)
@@ -67,7 +68,7 @@ impl WasmComponent {
         // already transformed?
         if output_file.exists() {
             debug!("Found the transformed WASM Component {output_file:?}");
-            return Ok(Some(output_file));
+            return Ok(Some((output_file, content_digest)));
         }
 
         let wasm = tokio::fs::read(wasm_path).await?;
@@ -89,7 +90,7 @@ impl WasmComponent {
             })
             .inspect_err(|err| error!("{err:?}"))?;
         info!("Transformed Core WASM Module to WASM Component {output_file:?}");
-        Ok(Some(output_file))
+        Ok(Some((output_file, content_digest)))
     }
 
     /// Attempt to open the WASM file, parse it using `wit_parser`.

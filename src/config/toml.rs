@@ -18,7 +18,7 @@ use std::{
     time::Duration,
 };
 use tracing::{instrument, warn};
-use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
+use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
     activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig, ProcessProvider},
     envvar::EnvVar,
@@ -787,12 +787,9 @@ impl WorkflowComponentConfigToml {
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
         let (wasm_path, transformed_digest) = if self.convert_core_module {
-            let transformed_path =
-                WasmComponent::convert_core_module_to_component(&wasm_path, &wasm_cache_dir)
-                    .await?
-                    .unwrap_or(wasm_path);
-            let transformed_digest = calculate_sha256_file(&transformed_path).await?;
-            (transformed_path, transformed_digest)
+            WasmComponent::convert_core_module_to_component(&wasm_path, &wasm_cache_dir)
+                .await?
+                .unwrap_or((wasm_path, common.content_digest.clone()))
         } else {
             (wasm_path, common.content_digest.clone())
         };
