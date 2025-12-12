@@ -106,9 +106,15 @@ const CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_version  ON t_execution_log (execution_id, version);
 ";
 // Used in `lock_inner` to filter by execution ID and variant (created or event history)
-const CREATE_INDEX_IDX_T_EXECUTION_ID_EXECUTION_ID_VARIANT: &str = r"
+const CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VARIANT: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_variant  ON t_execution_log (execution_id, variant);
 ";
+
+// Used in `count_join_next`
+const CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_JOIN_SET: &str = const_format::formatcp!(
+    "CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_join_set  ON t_execution_log (execution_id, join_set_id, history_event_type) WHERE history_event_type=\"{}\";",
+    HISTORY_EVENT_TYPE_JOIN_NEXT
+);
 
 /// Stores child execution return values for the parent (`execution_id`). Append only.
 /// For `JoinSetResponse::DelayFinished`, columns `delay_id`,`delay_success` must not not null.
@@ -700,7 +706,12 @@ impl SqlitePool {
         )?;
         conn_execute(
             &conn,
-            CREATE_INDEX_IDX_T_EXECUTION_ID_EXECUTION_ID_VARIANT,
+            CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VARIANT,
+            [],
+        )?;
+        conn_execute(
+            &conn,
+            CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_JOIN_SET,
             [],
         )?;
         // t_join_set_response

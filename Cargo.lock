@@ -2543,6 +2543,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "chrono",
+ "const_format",
  "derive_more",
  "hashbrown 0.16.1",
  "hdrhistogram",
