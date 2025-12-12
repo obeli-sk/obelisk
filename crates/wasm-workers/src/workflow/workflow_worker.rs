@@ -1772,7 +1772,7 @@ pub(crate) mod tests {
         // The scheduled `noop` execution should be pending.
         let mut next_pending = db_pool
             .connection()
-            .lock_pending(
+            .lock_pending_by_ffqns(
                 10,
                 sim_clock.now(),
                 Arc::from([FFQN_ACTIVITY_SLEEP_NOOP_FFQN]),

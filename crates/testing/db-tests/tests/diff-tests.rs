@@ -177,7 +177,7 @@ async fn persist_finished_event(
     let version = {
         let created_at = sim_clock.now();
         let mut locked_executions = db_connection
-            .lock_pending(
+            .lock_pending_by_ffqns(
                 1,
                 created_at,
                 Arc::from([SOME_FFQN]),

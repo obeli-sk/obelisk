@@ -236,7 +236,7 @@ async fn lock_pending(
     let created_at = sim_clock.now();
     info!(now = %created_at, "LockPending");
     let locked_executions = db_connection
-        .lock_pending(
+        .lock_pending_by_ffqns(
             1,
             created_at,
             Arc::from([SOME_FFQN]),
@@ -328,7 +328,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock while in timeout backoff");
         let locked_executions = db_connection
-            .lock_pending(
+            .lock_pending_by_ffqns(
                 1,
                 created_at,
                 Arc::from([SOME_FFQN]),
@@ -352,7 +352,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
         let created_at = sim_clock.now();
         info!(now = %created_at, "Locking exactly at `backoff_expires_at` should succeed");
         let locked_executions = db_connection
-            .lock_pending(
+            .lock_pending_by_ffqns(
                 1,
                 created_at,
                 Arc::from([SOME_FFQN]),
@@ -454,7 +454,7 @@ async fn lock_and_attept_to_extend(
         let created_at = sim_clock.now();
         info!(now = %created_at, "LockPending");
         let locked_executions = db_connection
-            .lock_pending(
+            .lock_pending_by_ffqns(
                 1,
                 created_at,
                 Arc::from([SOME_FFQN]),
@@ -535,7 +535,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
         let created_at = sim_clock.now();
         info!(now = %created_at, "LockPending");
         let locked_executions = db_connection
-            .lock_pending(
+            .lock_pending_by_ffqns(
                 1,
                 created_at,
                 Arc::from([SOME_FFQN]),
@@ -583,7 +583,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock while in timeout backoff");
         let locked_executions = db_connection
-            .lock_pending(
+            .lock_pending_by_ffqns(
                 1,
                 created_at,
                 Arc::from([SOME_FFQN]),
@@ -619,7 +619,7 @@ async fn lock_pending_while_nothing_is_pending_should_be_noop(
 
     assert!(
         db_connection
-            .lock_pending(
+            .lock_pending_by_ffqns(
                 1,
                 sim_clock.now(),
                 Arc::from([SOME_FFQN]),
@@ -656,7 +656,7 @@ async fn creating_execution_twice_should_fail(
 
     assert!(
         db_connection
-            .lock_pending(
+            .lock_pending_by_ffqns(
                 1,
                 sim_clock.now(),
                 Arc::from([SOME_FFQN]),
@@ -752,7 +752,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
         let created_at = sim_clock.now();
         info!(now = %created_at, "LockPending");
         let mut locked_executions = db_connection
-            .lock_pending(
+            .lock_pending_by_ffqns(
                 1,
                 created_at,
                 Arc::from([SOME_FFQN]),
@@ -781,7 +781,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
     for _ in 0..3 {
         assert!(
             db_connection
-                .lock_pending(
+                .lock_pending_by_ffqns(
                     1,
                     sim_clock.now(),
                     Arc::from([SOME_FFQN]),
@@ -830,7 +830,7 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
     let lock_duration = Duration::from_millis(500);
     {
         let mut locked_executions = db_connection
-            .lock_pending(
+            .lock_pending_by_ffqns(
                 1,
                 sim_clock.now(),
                 Arc::from([SOME_FFQN]),
@@ -1148,7 +1148,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
         .unwrap();
 
     let locked_ids = db_connection
-        .lock_pending(
+        .lock_pending_by_ffqns(
             3,
             sim_clock.now(),
             Arc::from([SOME_FFQN]),
@@ -1235,7 +1235,7 @@ async fn lock(
     run_id: RunId,
 ) -> Version {
     let lock_pending_res = db_connection
-        .lock_pending(
+        .lock_pending_by_ffqns(
             1,
             sim_clock.now(), // pending at or sooner
             Arc::from([SOME_FFQN]),

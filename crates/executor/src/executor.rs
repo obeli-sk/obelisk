@@ -244,7 +244,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             let lock_expires_at = executed_at + self.config.lock_expiry;
             let locked_executions = self
                 .db_exec
-                .lock_pending(
+                .lock_pending_by_ffqns(
                     permits.len(), // batch size
                     executed_at,   // fetch expiring before now
                     self.ffqns.clone(),

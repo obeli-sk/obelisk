@@ -2662,7 +2662,7 @@ impl SqlitePool {
 #[async_trait]
 impl DbExecutor for SqlitePool {
     #[instrument(level = Level::TRACE, skip(self))]
-    async fn lock_pending(
+    async fn lock_pending_by_ffqns(
         &self,
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,

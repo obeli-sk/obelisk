@@ -37,7 +37,7 @@ pub struct InMemoryDbConnection(Arc<std::sync::Mutex<DbHolder>>);
 #[async_trait]
 impl DbExecutor for InMemoryDbConnection {
     #[instrument(skip_all)]
-    async fn lock_pending(
+    async fn lock_pending_by_ffqns(
         &self,
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,
