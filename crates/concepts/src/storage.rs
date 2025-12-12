@@ -637,6 +637,19 @@ pub trait DbExecutor: Send + Sync {
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorGeneric>;
 
+    #[expect(clippy::too_many_arguments)]
+    async fn lock_pending_by_component_id(
+        &self,
+        batch_size: usize,
+        pending_at_or_sooner: DateTime<Utc>,
+        component_id: &ComponentId,
+        created_at: DateTime<Utc>,
+        executor_id: ExecutorId,
+        lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
+        retry_config: ComponentRetryConfig,
+    ) -> Result<LockPendingResponse, DbErrorGeneric>;
+
     /// Specialized locking for e.g. extending the lock by the original executor and run.
     #[expect(clippy::too_many_arguments)]
     async fn lock_one(

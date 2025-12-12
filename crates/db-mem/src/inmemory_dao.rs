@@ -49,12 +49,36 @@ impl DbExecutor for InMemoryDbConnection {
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorGeneric> {
-        Ok(self.0.lock().unwrap().lock_pending(
+        Ok(self.0.lock().unwrap().lock_pending_by_ffqns(
             batch_size,
             pending_at_or_sooner,
             &ffqns,
             created_at,
             &component_id,
+            executor_id,
+            lock_expires_at,
+            run_id,
+            retry_config,
+        ))
+    }
+
+    #[instrument(skip_all)]
+    async fn lock_pending_by_component_id(
+        &self,
+        batch_size: usize,
+        pending_at_or_sooner: DateTime<Utc>,
+        component_id: &ComponentId,
+        created_at: DateTime<Utc>,
+        executor_id: ExecutorId,
+        lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
+        retry_config: ComponentRetryConfig,
+    ) -> Result<LockPendingResponse, DbErrorGeneric> {
+        Ok(self.0.lock().unwrap().lock_pending_by_component_id(
+            batch_size,
+            pending_at_or_sooner,
+            created_at,
+            component_id,
             executor_id,
             lock_expires_at,
             run_id,
@@ -416,6 +440,7 @@ impl DbConnection for InMemoryDbConnection {
 mod index {
     use super::{BTreeMap, DateTime, ExecutionId, HashMap, HashSet, JoinSetId, PendingState, Utc};
     use crate::journal::ExecutionJournal;
+    use concepts::ComponentId;
     use concepts::prefixed_ulid::DelayId;
     use concepts::storage::{HistoryEvent, JoinSetRequest, JoinSetResponse, PendingStateLocked};
     use tracing::trace;
@@ -431,7 +456,7 @@ mod index {
     }
 
     impl JournalsIndex {
-        pub(super) fn fetch_pending<'a>(
+        pub(super) fn fetch_pending_by_ffqns<'a>(
             &self,
             journals: &'a BTreeMap<ExecutionId, ExecutionJournal>,
             batch_size: usize,
@@ -448,6 +473,27 @@ mod index {
                 .collect::<Vec<_>>();
             // filter by ffqn
             pending.retain(|(journal, _)| ffqns.contains(journal.ffqn()));
+            pending.truncate(batch_size);
+            pending
+        }
+
+        pub(super) fn fetch_pending_by_component_id<'a>(
+            &self,
+            journals: &'a BTreeMap<ExecutionId, ExecutionJournal>,
+            batch_size: usize,
+            expiring_at_or_before: DateTime<Utc>,
+            component_id: &ComponentId,
+        ) -> Vec<(&'a ExecutionJournal, DateTime<Utc> /* scheduled at */)> {
+            let mut pending = self
+                .pending_scheduled
+                .range(..=expiring_at_or_before)
+                .flat_map(|(scheduled_at, ids)| {
+                    ids.iter()
+                        .map(|id| (journals.get(id).unwrap(), *scheduled_at))
+                })
+                .collect::<Vec<_>>();
+            // filter by ffqn
+            pending.retain(|(journal, _)| component_id == journal.component_id_last());
             pending.truncate(batch_size);
             pending
         }
@@ -605,7 +651,7 @@ struct DbHolder {
 
 impl DbHolder {
     #[expect(clippy::too_many_arguments)]
-    fn lock_pending(
+    fn lock_pending_by_ffqns(
         &mut self,
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,
@@ -617,9 +663,69 @@ impl DbHolder {
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> LockPendingResponse {
-        let pending =
-            self.index
-                .fetch_pending(&self.journals, batch_size, pending_at_or_sooner, ffqns);
+        let pending = self.index.fetch_pending_by_ffqns(
+            &self.journals,
+            batch_size,
+            pending_at_or_sooner,
+            ffqns,
+        );
+        let mut resp = Vec::with_capacity(pending.len());
+        for (journal, _scheduled_at) in pending {
+            let locked_event = Locked {
+                component_id: component_id.clone(),
+                executor_id,
+                lock_expires_at,
+                run_id,
+                retry_config,
+            };
+            let row = LockedExecution {
+                execution_id: journal.execution_id().clone(),
+                metadata: journal.metadata().clone(),
+                next_version: journal.version(), // updated later
+                ffqn: journal.ffqn().clone(),
+                params: journal.params(),
+                event_history: Vec::default(), // updated later
+                responses: journal.responses.clone(),
+                locked_event,
+                parent: journal.parent(),
+                intermittent_event_count: journal.temporary_event_count(),
+            };
+            resp.push(row);
+        }
+        // Lock, update the version and event history.
+        for row in &mut resp {
+            let (next_version, new_event_history) = self
+                .lock(
+                    created_at,
+                    &row.execution_id,
+                    row.next_version.clone(),
+                    row.locked_event.clone(),
+                )
+                .expect("must be lockable within the same transaction");
+            row.next_version = next_version;
+            row.event_history.extend(new_event_history);
+        }
+        resp
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn lock_pending_by_component_id(
+        &mut self,
+        batch_size: usize,
+        pending_at_or_sooner: DateTime<Utc>,
+        created_at: DateTime<Utc>,
+        component_id: &ComponentId,
+        executor_id: ExecutorId,
+        lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
+        retry_config: ComponentRetryConfig,
+    ) -> LockPendingResponse {
+        let pending = self.index.fetch_pending_by_component_id(
+            &self.journals,
+            batch_size,
+            pending_at_or_sooner,
+            component_id,
+        );
         let mut resp = Vec::with_capacity(pending.len());
         for (journal, _scheduled_at) in pending {
             let locked_event = Locked {
@@ -789,6 +895,7 @@ impl DbHolder {
                     retry_exp_backoff: retry_config.retry_exp_backoff,
                     locked_by: journal
                         .find_last_lock()
+                        .map(|(ll, _)| ll)
                         .expect("must have been locked in order to expire"),
                 };
                 ExpiredTimer::Lock(lock)
@@ -944,7 +1051,7 @@ impl DbHolder {
     ) -> Either<(), mpsc::Receiver<()>> {
         if !self
             .index
-            .fetch_pending(&self.journals, 1, pending_at_or_sooner, ffqns)
+            .fetch_pending_by_ffqns(&self.journals, 1, pending_at_or_sooner, ffqns)
             .is_empty()
         {
             return Either::Left(());

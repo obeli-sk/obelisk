@@ -1637,7 +1637,7 @@ impl SqlitePool {
     fn lock_single_execution(
         tx: &Transaction,
         created_at: DateTime<Utc>,
-        component_id: &ComponentId,
+        component_id: ComponentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         appending_version: &Version,
@@ -1658,7 +1658,7 @@ impl SqlitePool {
 
         // Append to `execution_log` table.
         let locked_event = Locked {
-            component_id: component_id.clone(),
+            component_id,
             executor_id,
             lock_expires_at,
             run_id,
@@ -1827,7 +1827,7 @@ impl SqlitePool {
             return Self::lock_single_execution(
                 tx,
                 created_at,
-                &component_id,
+                component_id,
                 execution_id,
                 run_id,
                 &appending_version,
@@ -2531,10 +2531,10 @@ impl SqlitePool {
                 ":batch_size": batch_size,
             },
             |row| {
-                let execution_id = row.get::<_, String>("execution_id")?.parse::<ExecutionId>();
+                let execution_id = row.get::<_, ExecutionId>("execution_id")?;
                 let next_version =
                     Version::new(row.get::<_, VersionType>("corresponding_version")?).increment();
-                Ok(execution_id.map(|exe| (exe, next_version)))
+                Ok((execution_id, next_version))
             },
         )
         .map_err(|err| {
@@ -2543,16 +2543,11 @@ impl SqlitePool {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| {
             warn!("Ignoring consistency error {err:?}");
-        })?
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| {
-            warn!("Ignoring consistency error {err:?}");
         })
     }
 
     /// Get executions and their next versions
-    fn get_pending(
+    fn get_pending_by_ffqns(
         conn: &Connection,
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,
@@ -2587,6 +2582,41 @@ impl SqlitePool {
             }
         }
         Ok(execution_ids_versions)
+    }
+
+    fn get_pending_by_component_id(
+        conn: &Connection,
+        batch_size: usize,
+        pending_at_or_sooner: DateTime<Utc>,
+        component_id: &ComponentId,
+    ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
+        let mut stmt = conn
+            .prepare_cached(&format!(
+                r#"
+                SELECT execution_id, corresponding_version FROM t_state WHERE
+                state = "{STATE_PENDING_AT}" AND
+                pending_expires_finished <= :pending_expires_finished AND
+                component_id_input_digest = :component_id_input_digest
+                ORDER BY pending_expires_finished LIMIT :batch_size
+                "#
+            ))
+            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+
+        stmt.query_map(
+            named_params! {
+                ":pending_expires_finished": pending_at_or_sooner,
+                ":component_id_input_digest": component_id.input_digest.to_string(),
+                ":batch_size": batch_size,
+            },
+            |row| {
+                let execution_id = row.get::<_, ExecutionId>("execution_id")?;
+                let next_version =
+                    Version::new(row.get::<_, VersionType>("corresponding_version")?).increment();
+                Ok((execution_id, next_version))
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(DbErrorGeneric::from)
     }
 
     // Must be called after write transaction for a correct happens-before relationship.
@@ -2676,8 +2706,10 @@ impl DbExecutor for SqlitePool {
     ) -> Result<LockPendingResponse, DbErrorGeneric> {
         let execution_ids_versions = self
             .transaction(
-                move |conn| Self::get_pending(conn, batch_size, pending_at_or_sooner, &ffqns),
-                "get_pending",
+                move |conn| {
+                    Self::get_pending_by_ffqns(conn, batch_size, pending_at_or_sooner, &ffqns)
+                },
+                "lock_pending_by_ffqns_get",
             )
             .await?;
         if execution_ids_versions.is_empty() {
@@ -2692,7 +2724,7 @@ impl DbExecutor for SqlitePool {
                         match Self::lock_single_execution(
                             tx,
                             created_at,
-                            &component_id,
+                            component_id.clone(),
                             execution_id,
                             run_id,
                             version,
@@ -2708,7 +2740,70 @@ impl DbExecutor for SqlitePool {
                     }
                     Ok(locked_execs)
                 },
-                "lock_pending",
+                "lock_pending_by_ffqns_one",
+            )
+            .await
+        }
+    }
+
+    #[instrument(level = Level::TRACE, skip(self))]
+    async fn lock_pending_by_component_id(
+        &self,
+        batch_size: usize,
+        pending_at_or_sooner: DateTime<Utc>,
+        component_id: &ComponentId,
+        created_at: DateTime<Utc>,
+        executor_id: ExecutorId,
+        lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
+        retry_config: ComponentRetryConfig,
+    ) -> Result<LockPendingResponse, DbErrorGeneric> {
+        let component_id = component_id.clone();
+        let execution_ids_versions = self
+            .transaction(
+                {
+                    let component_id = component_id.clone();
+                    move |conn| {
+                        Self::get_pending_by_component_id(
+                            conn,
+                            batch_size,
+                            pending_at_or_sooner,
+                            &component_id,
+                        )
+                    }
+                },
+                "lock_pending_by_component_id_get",
+            )
+            .await?;
+        if execution_ids_versions.is_empty() {
+            Ok(vec![])
+        } else {
+            debug!("Locking {execution_ids_versions:?}");
+            self.transaction(
+                move |tx| {
+                    let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
+                    // Append lock
+                    for (execution_id, version) in &execution_ids_versions {
+                        match Self::lock_single_execution(
+                            tx,
+                            created_at,
+                            component_id.clone(),
+                            execution_id,
+                            run_id,
+                            version,
+                            executor_id,
+                            lock_expires_at,
+                            retry_config,
+                        ) {
+                            Ok(locked) => locked_execs.push(locked),
+                            Err(err) => {
+                                warn!("Locking row {execution_id} failed - {err:?}");
+                            }
+                        }
+                    }
+                    Ok(locked_execs)
+                },
+                "lock_pending_by_component_id_one",
             )
             .await
         }
@@ -2733,7 +2828,7 @@ impl DbExecutor for SqlitePool {
                 Self::lock_single_execution(
                     tx,
                     created_at,
-                    &component_id,
+                    component_id.clone(),
                     &execution_id,
                     run_id,
                     &version,
@@ -2859,7 +2954,7 @@ impl DbExecutor for SqlitePool {
                 .transaction(
                     {
                         let ffqns = ffqns.clone();
-                        move |conn| Self::get_pending(conn, 1, pending_at_or_sooner, ffqns.as_ref())
+                        move |conn| Self::get_pending_by_ffqns(conn, 1, pending_at_or_sooner, ffqns.as_ref())
                     },
                     "subscribe_to_pending",
                 )

@@ -1,6 +1,5 @@
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
-use concepts::JoinSetId;
 use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionEventInner,
     HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
@@ -8,6 +7,7 @@ use concepts::storage::{
     VersionType,
 };
 use concepts::storage::{ExecutionLog, PendingState, Version};
+use concepts::{ComponentId, JoinSetId};
 use concepts::{ExecutionId, ExecutionMetadata};
 use concepts::{FunctionFqn, Params};
 use std::cmp::max;
@@ -66,6 +66,22 @@ impl ExecutionJournal {
                 ..
             } => ffqn,
             _ => panic!("first event must be `Created`"),
+        }
+    }
+
+    #[must_use]
+    pub(super) fn component_id_last(&self) -> &ComponentId {
+        if let Some((_, last_component_id)) = self.find_last_lock() {
+            last_component_id
+        } else {
+            let ExecutionEvent {
+                event: ExecutionEventInner::Created { component_id, .. },
+                ..
+            } = self.execution_events.front().unwrap()
+            else {
+                unreachable!("first event must be `Created`")
+            };
+            component_id
         }
     }
 
@@ -225,7 +241,7 @@ impl ExecutionJournal {
         self.pending_state = self.calculate_pending_state();
     }
 
-    pub(crate) fn find_last_lock(&self) -> Option<LockedBy> {
+    pub(crate) fn find_last_lock(&self) -> Option<(LockedBy, &ComponentId)> {
         self.execution_events
             .iter()
             .rev()
@@ -234,12 +250,15 @@ impl ExecutionJournal {
                     executor_id,
                     lock_expires_at: _,
                     run_id,
-                    component_id: _,
+                    component_id,
                     retry_config: _,
-                }) => Some(LockedBy {
-                    executor_id: *executor_id,
-                    run_id: *run_id,
-                }),
+                }) => Some((
+                    LockedBy {
+                        executor_id: *executor_id,
+                        run_id: *run_id,
+                    },
+                    component_id,
+                )),
                 _ => None,
             })
     }
@@ -295,7 +314,7 @@ impl ExecutionJournal {
                     ..
                 } => Some(PendingState::PendingAt {
                     scheduled_at: *expires_at,
-                    last_lock: self.find_last_lock(),
+                    last_lock: self.find_last_lock().map(|(ll, _)| ll),
                 }),
 
                 ExecutionEventInner::HistoryEvent {
@@ -338,7 +357,7 @@ impl ExecutionJournal {
                         let scheduled_at = max(*lock_expires_at, *nth_created_at);
                         Some(PendingState::PendingAt {
                             scheduled_at,
-                            last_lock: self.find_last_lock(),
+                            last_lock: self.find_last_lock().map(|(ll, _)| ll),
                         })
                     } else {
                         // Still waiting for response
