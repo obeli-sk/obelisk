@@ -42,7 +42,7 @@ pub struct ExecTask<C: ClockFn> {
     config: ExecConfig,
     clock_fn: C, // Used for obtaining current time when the execution finishes.
     db_exec: Arc<dyn DbExecutor>,
-    ffqns: Arc<[FunctionFqn]>,
+    lock_strategy_holder: LockStrategyHolder,
 }
 
 #[derive(derive_more::Debug, Default)]
@@ -117,6 +117,18 @@ fn extract_exported_ffqns_noext(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
         .collect::<Arc<_>>()
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub enum LockStrategy {
+    #[default]
+    ByFfqns,
+    ByComponentId,
+}
+
+enum LockStrategyHolder {
+    ByFfqns(Arc<[FunctionFqn]>),
+    ByComponentId,
+}
+
 impl<C: ClockFn + 'static> ExecTask<C> {
     #[cfg(feature = "test")]
     pub fn new_test(
@@ -131,7 +143,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             config,
             clock_fn,
             db_exec,
-            ffqns,
+            lock_strategy_holder: LockStrategyHolder::ByFfqns(ffqns),
         }
     }
 
@@ -148,7 +160,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             config,
             clock_fn,
             db_exec,
-            ffqns,
+            lock_strategy_holder: LockStrategyHolder::ByFfqns(ffqns),
         }
     }
 
@@ -157,6 +169,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         config: ExecConfig,
         clock_fn: C,
         db_exec: Arc<dyn DbExecutor>,
+        lock_strategy: LockStrategy,
         sleep: impl Sleep + 'static,
     ) -> ExecutorTaskHandle {
         let is_closing = Arc::new(AtomicBool::default());
@@ -166,18 +179,22 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         let executor_id = config.executor_id;
         let abort_handle = tokio::spawn(async move {
             debug!(executor_id = %config.executor_id, component_id = %config.component_id, "Spawned executor");
+            let lock_strategy_holder = match lock_strategy {
+                LockStrategy::ByFfqns =>  LockStrategyHolder::ByFfqns(ffqns),
+                LockStrategy::ByComponentId => LockStrategyHolder::ByComponentId,
+            };
             let task = ExecTask {
                 worker,
                 config,
                 db_exec,
-                ffqns: ffqns.clone(),
+                lock_strategy_holder,
                 clock_fn: clock_fn.clone(),
             };
             while !is_closing_inner.load(Ordering::Relaxed) {
                 let _ = task.tick(clock_fn.now(), RunId::generate()).await;
 
                 task.db_exec
-                    .wait_for_pending(clock_fn.now(), ffqns.clone(), {
+                    .wait_for_pending_by_component_id(clock_fn.now(), &task.config.component_id, {
                         let sleep = sleep.clone();
                         Box::pin(async move { sleep.sleep(task.config.tick_sleep).await })})
                     .await;
@@ -242,20 +259,37 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 return Ok(ExecutionProgress::default());
             }
             let lock_expires_at = executed_at + self.config.lock_expiry;
-            let locked_executions = self
-                .db_exec
-                .lock_pending_by_ffqns(
-                    permits.len(), // batch size
-                    executed_at,   // fetch expiring before now
-                    self.ffqns.clone(),
-                    executed_at, // created at
-                    self.config.component_id.clone(),
-                    self.config.executor_id,
-                    lock_expires_at,
-                    run_id,
-                    self.config.retry_config,
-                )
-                .await?;
+            let locked_executions = match &self.lock_strategy_holder {
+                LockStrategyHolder::ByFfqns(ffqns) => {
+                    self.db_exec
+                        .lock_pending_by_ffqns(
+                            permits.len(), // batch size
+                            executed_at,   // fetch expiring before now
+                            ffqns.clone(),
+                            executed_at, // created at
+                            self.config.component_id.clone(),
+                            self.config.executor_id,
+                            lock_expires_at,
+                            run_id,
+                            self.config.retry_config,
+                        )
+                        .await?
+                }
+                LockStrategyHolder::ByComponentId => {
+                    self.db_exec
+                        .lock_pending_by_component_id(
+                            permits.len(), // batch size
+                            executed_at,   // pending_at_or_sooner
+                            &self.config.component_id,
+                            executed_at, // created at
+                            self.config.executor_id,
+                            lock_expires_at,
+                            run_id,
+                            self.config.retry_config,
+                        )
+                        .await?
+                }
+            };
             // Drop permits if too many were allocated.
             while permits.len() > locked_executions.len() {
                 permits.pop();

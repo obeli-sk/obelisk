@@ -2935,7 +2935,7 @@ impl DbExecutor for SqlitePool {
     // Supports only one subscriber per ffqn.
     // A new subscriber replaces the old one, which will eventually time out, which is fine.
     #[instrument(level = Level::TRACE, skip(self, timeout_fut))]
-    async fn wait_for_pending(
+    async fn wait_for_pending_by_ffqn(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
@@ -2996,6 +2996,15 @@ impl DbExecutor for SqlitePool {
                 }
             }
         }
+    }
+
+    async fn wait_for_pending_by_component_id(
+        &self,
+        pending_at_or_sooner: DateTime<Utc>,
+        component_id: &ComponentId,
+        timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
+    ) {
+        timeout_fut.await
     }
 
     async fn get_last_execution_event(

@@ -706,6 +706,7 @@ pub(crate) mod tests {
             prefixed_ulid::RunId,
             storage::{ExecutionEventInner, Version},
         };
+        use executor::executor::LockStrategy;
         use insta::assert_debug_snapshot;
         use test_utils::{env_or_default, sim_clock::SimClock};
         use tracing::{debug, info, info_span};
@@ -850,7 +851,14 @@ pub(crate) mod tests {
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
             };
-            let exec_task = ExecTask::spawn_new(worker, exec_config, Now, db_exec, TokioSleep);
+            let exec_task = ExecTask::spawn_new(
+                worker,
+                exec_config,
+                Now,
+                db_exec,
+                LockStrategy::default(),
+                TokioSleep,
+            );
 
             // Create an execution.
             let execution_id = ExecutionId::generate();

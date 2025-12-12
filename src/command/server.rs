@@ -74,6 +74,7 @@ use directories::BaseDirs;
 use directories::ProjectDirs;
 use executor::AbortOnDropHandle;
 use executor::executor::ExecutorTaskHandle;
+use executor::executor::LockStrategy;
 use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher;
 use executor::expired_timers_watcher::TimersWatcherConfig;
@@ -2353,7 +2354,14 @@ impl WorkerLinked {
                 cancel_registry,
             )),
         };
-        ExecTask::spawn_new(worker, self.exec_config, Now, db_executor, TokioSleep)
+        ExecTask::spawn_new(
+            worker,
+            self.exec_config,
+            Now,
+            db_executor,
+            LockStrategy::default(),
+            TokioSleep,
+        )
     }
 }
 

@@ -15,7 +15,7 @@ mod bench {
     use concepts::{prefixed_ulid::ExecutorId, storage::CreateRequest};
     use db_tests::Database;
     use divan::{self};
-    use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
+    use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle, LockStrategy};
     use executor::worker::Worker;
     use serde_json::json;
     use std::path::PathBuf;
@@ -104,7 +104,14 @@ mod bench {
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
+        ExecTask::spawn_new(
+            worker,
+            exec_config,
+            clock_fn,
+            db_exec,
+            LockStrategy::default(),
+            TokioSleep,
+        )
     }
 
     fn new_activity_worker_with_config(
@@ -208,7 +215,14 @@ mod bench {
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
+        ExecTask::spawn_new(
+            worker,
+            exec_config,
+            clock_fn,
+            db_exec,
+            LockStrategy::default(),
+            TokioSleep,
+        )
     }
 
     pub(crate) fn spawn_workflow_fibo(

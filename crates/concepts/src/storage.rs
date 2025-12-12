@@ -686,10 +686,17 @@ pub trait DbExecutor: Send + Sync {
     /// Return immediately if there are pending notifications at `pending_at_or_sooner`.
     /// Otherwise wait until `timeout_fut` resolves.
     /// Timers that expire between `pending_at_or_sooner` and timeout can be disregarded.
-    async fn wait_for_pending(
+    async fn wait_for_pending_by_ffqn(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
+        timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
+    );
+
+    async fn wait_for_pending_by_component_id(
+        &self,
+        pending_at_or_sooner: DateTime<Utc>,
+        component_id: &ComponentId,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     );
 
