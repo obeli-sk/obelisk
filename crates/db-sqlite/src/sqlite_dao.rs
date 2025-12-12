@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS t_metadata (
     created_at TEXT NOT NULL
 ) STRICT
 ";
-const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 2;
+const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 3;
 
 /// Stores execution history. Append only.
 const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     corresponding_version INTEGER NOT NULL,
     ffqn TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    component_id_input_digest TEXT NOT NULL,
 
     pending_expires_finished TEXT NOT NULL,
     state TEXT NOT NULL,
@@ -1040,6 +1041,7 @@ impl SqlitePool {
         let ffqn = req.ffqn.clone();
         let created_at = req.created_at;
         let scheduled_at = req.scheduled_at;
+        let component_id = req.component_id.clone();
         let event = ExecutionEventInner::from(req);
         let event_ser = serde_json::to_string(&event).map_err(|err| {
             error!("Cannot serialize {event:?} - {err:?}");
@@ -1070,6 +1072,7 @@ impl SqlitePool {
                     ffqn,
                     state,
                     created_at,
+                    component_id_input_digest,
                     updated_at,
                     scheduled_at,
                     intermittent_event_count
@@ -1082,6 +1085,7 @@ impl SqlitePool {
                     :ffqn,
                     :state,
                     :created_at,
+                    :component_id_input_digest,
                     CURRENT_TIMESTAMP,
                     :scheduled_at,
                     0
@@ -1096,6 +1100,7 @@ impl SqlitePool {
                 ":ffqn": ffqn.to_string(),
                 ":state": STATE_PENDING_AT,
                 ":created_at": created_at,
+                ":component_id_input_digest": component_id.input_digest.to_string(),
                 ":scheduled_at": scheduled_at,
             })?;
             AppendNotifier {
