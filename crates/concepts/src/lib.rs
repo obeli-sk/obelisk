@@ -1936,14 +1936,7 @@ impl ComponentType {
 }
 
 #[derive(
-    derive_more::Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    serde_with::SerializeDisplay,
-    serde_with::DeserializeFromStr,
-    derive_more::Display,
+    derive_more::Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, Serialize, Deserialize,
 )]
 #[display("{component_type}:{name}")]
 #[debug("{}", self)]
@@ -1951,16 +1944,21 @@ impl ComponentType {
 pub struct ComponentId {
     pub component_type: ComponentType,
     pub name: StrVariant,
-    // TODO: Add ContentDigest
+    pub input_digest: ContentDigest,
+    pub transformed_digest: ContentDigest,
 }
 impl ComponentId {
     pub fn new(
         component_type: ComponentType,
         name: StrVariant,
+        input_digest: ContentDigest,
+        transformed_digest: ContentDigest,
     ) -> Result<Self, InvalidNameError<Self>> {
         Ok(Self {
             component_type,
             name: check_name(name, "_")?,
+            input_digest,
+            transformed_digest,
         })
     }
 
@@ -1969,14 +1967,19 @@ impl ComponentId {
         Self {
             component_type: ComponentType::ActivityWasm,
             name: StrVariant::empty(),
+            input_digest: CONTENT_DIGEST_DUMMY,
+            transformed_digest: CONTENT_DIGEST_DUMMY,
         }
     }
 
+    #[cfg(any(test, feature = "test"))]
     #[must_use]
     pub const fn dummy_workflow() -> ComponentId {
         ComponentId {
             component_type: ComponentType::Workflow,
             name: StrVariant::empty(),
+            input_digest: CONTENT_DIGEST_DUMMY,
+            transformed_digest: CONTENT_DIGEST_DUMMY,
         }
     }
 }
@@ -2012,27 +2015,6 @@ pub struct InvalidNameError<T> {
     phantom_data: PhantomData<T>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigIdParseError {
-    #[error("cannot parse ComponentConfigHash - delimiter ':' not found")]
-    DelimiterNotFound,
-    #[error("cannot parse prefix of ComponentConfigHash - {0}")]
-    ComponentTypeParseError(#[from] strum::ParseError),
-}
-
-impl FromStr for ComponentId {
-    type Err = ConfigIdParseError;
-
-    fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let (component_type, name) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
-        let component_type = component_type.parse()?;
-        Ok(Self {
-            component_type,
-            name: StrVariant::from(name.to_string()),
-        })
-    }
-}
-
 #[derive(
     Debug,
     Clone,
@@ -2063,10 +2045,11 @@ pub enum HashType {
     serde_with::DeserializeFromStr,
 )]
 pub struct ContentDigest(pub Digest);
-#[cfg(any(test, feature = "test"))]
 pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest {
     hash_type: HashType::Sha256,
-    hash_base16: StrVariant::empty(),
+    hash_base16: StrVariant::Static(
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    ),
 });
 
 impl ContentDigest {

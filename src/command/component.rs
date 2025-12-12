@@ -111,10 +111,14 @@ pub(crate) async fn list_components(
         .into_inner()
         .components;
     for component in components {
+        let component_id = component.component_id.expect("`component_id` is sent");
         println!(
-            "{name}\t{id}",
-            name = component.name,
-            id = component.component_id.map(|id| id.id).unwrap_or_default()
+            "{name}\t{ty}",
+            name = component_id.name,
+            ty = grpc_gen::ComponentType::try_from(component_id.component_type).map_or_else(
+                |_| "unknown type".to_string(),
+                |ty| ComponentType::from(ty).to_string()
+            )
         );
         println!("Exports:");
         print_fn_details(component.exports)?;

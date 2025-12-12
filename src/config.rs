@@ -23,7 +23,6 @@ pub(crate) struct ComponentConfig {
     pub(crate) component_id: ComponentId,
     pub(crate) imports: Vec<FunctionMetadata>,
     pub(crate) workflow_or_activity_config: Option<ComponentConfigImportable>,
-    pub(crate) content_digest: ContentDigest,
     pub(crate) wit: Option<String>,
 }
 
@@ -64,7 +63,7 @@ impl ComponentLocation {
         match self {
             ComponentLocation::Path(wasm_path) => {
                 let wasm_path = path_prefixes.replace_file_prefix_verify_exists(wasm_path)?;
-                // Future optimization: If the sha256 is in the config file and wasm is already in the cache dir, do not recalculate it.
+                // Future optimization: If the content digest is specified in TOML and wasm is already in the cache dir, do not recalculate it.
                 let content_digest = calculate_sha256_file(&wasm_path)
                     .await
                     .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;

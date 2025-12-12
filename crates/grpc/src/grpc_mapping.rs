@@ -1,7 +1,7 @@
 use crate::grpc_gen::{self, execution_event::history_event, result_kind};
 use concepts::{
-    ComponentId, ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionError,
-    FunctionFqn, SupportedFunctionReturnValue,
+    ComponentId, ComponentType, ContentDigest, Digest, ExecutionFailureKind, ExecutionId,
+    FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, RunId},
     storage::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
@@ -80,7 +80,10 @@ impl From<RunId> for grpc_gen::RunId {
 impl From<ComponentId> for grpc_gen::ComponentId {
     fn from(value: ComponentId) -> Self {
         Self {
-            id: value.to_string(),
+            component_type: grpc_gen::ComponentType::from(value.component_type).into(),
+            name: value.name.to_string(),
+            input_sha256_digest: value.input_digest.to_string(),
+            transformed_sha256_digest: value.transformed_digest.to_string(),
         }
     }
 }
@@ -88,10 +91,41 @@ impl From<ComponentId> for grpc_gen::ComponentId {
 impl TryFrom<grpc_gen::ComponentId> for ComponentId {
     type Error = tonic::Status;
 
-    fn try_from(value: grpc_gen::ComponentId) -> Result<Self, Self::Error> {
-        value.id.parse().map_err(|parse_err| {
-            error!("{parse_err:?}");
-            tonic::Status::invalid_argument(format!("ComponentId cannot be parsed - {parse_err}"))
+    fn try_from(value: grpc_gen::ComponentId) -> Result<ComponentId, Self::Error> {
+        let component_type =
+            grpc_gen::ComponentType::try_from(value.component_type).map_err(|parse_err| {
+                error!("{parse_err:?}");
+                tonic::Status::invalid_argument(format!(
+                    "`component_type` cannot be parsed - {parse_err}"
+                ))
+            })?;
+        let component_type = ComponentType::from(component_type);
+        let input_digest = ContentDigest(Digest::from_str(&value.input_sha256_digest).map_err(
+            |parse_err| {
+                error!("{parse_err:?}");
+                tonic::Status::invalid_argument(format!(
+                    "`input_sha256_digest` cannot be parsed - {parse_err}"
+                ))
+            },
+        )?);
+        let transformed_digest = ContentDigest(
+            Digest::from_str(&value.transformed_sha256_digest).map_err(|parse_err| {
+                error!("{parse_err:?}");
+                tonic::Status::invalid_argument(format!(
+                    "`transformed_sha256_digest` cannot be parsed - {parse_err}"
+                ))
+            })?,
+        );
+
+        ComponentId::new(
+            component_type,
+            value.name.into(),
+            input_digest,
+            transformed_digest,
+        )
+        .map_err(|parse_err| {
+            error!("`name` is invalid - {parse_err:?}");
+            tonic::Status::invalid_argument(format!("name cannot be parsed - {parse_err}"))
         })
     }
 }
@@ -199,6 +233,17 @@ impl From<ComponentType> for grpc_gen::ComponentType {
             ComponentType::ActivityExternal => grpc_gen::ComponentType::ActivityExternal,
             ComponentType::Workflow => grpc_gen::ComponentType::Workflow,
             ComponentType::WebhookEndpoint => grpc_gen::ComponentType::WebhookEndpoint,
+        }
+    }
+}
+impl From<grpc_gen::ComponentType> for ComponentType {
+    fn from(value: grpc_gen::ComponentType) -> Self {
+        match value {
+            grpc_gen::ComponentType::ActivityWasm => ComponentType::ActivityWasm,
+            grpc_gen::ComponentType::ActivityStub => ComponentType::ActivityStub,
+            grpc_gen::ComponentType::ActivityExternal => ComponentType::ActivityExternal,
+            grpc_gen::ComponentType::Workflow => ComponentType::Workflow,
+            grpc_gen::ComponentType::WebhookEndpoint => ComponentType::WebhookEndpoint,
         }
     }
 }

@@ -18,7 +18,7 @@ use concepts::{
         VersionType,
     },
 };
-use conversions::{FromStrWrapper, JsonWrapper, consistency_db_err, consistency_rusqlite};
+use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite};
 use hashbrown::HashMap;
 use rusqlite::{
     CachedStatement, Connection, ErrorCode, OpenFlags, OptionalExtension, Params, ToSql,
@@ -156,10 +156,11 @@ CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
     is_top_level INTEGER NOT NULL,
     corresponding_version INTEGER NOT NULL,
-    pending_expires_finished TEXT NOT NULL,
     ffqn TEXT NOT NULL,
-    state TEXT NOT NULL,
     created_at TEXT NOT NULL,
+
+    pending_expires_finished TEXT NOT NULL,
+    state TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     scheduled_at TEXT NOT NULL,
     intermittent_event_count INTEGER NOT NULL,
@@ -246,7 +247,7 @@ mod conversions {
         ToSql,
         types::{FromSql, FromSqlError},
     };
-    use std::{fmt::Debug, str::FromStr};
+    use std::fmt::Debug;
     use tracing::error;
 
     impl From<rusqlite::Error> for RusqliteError {
@@ -333,24 +334,6 @@ mod conversions {
             Ok(rusqlite::types::ToSqlOutput::Owned(
                 rusqlite::types::Value::Text(string),
             ))
-        }
-    }
-
-    pub(crate) struct FromStrWrapper<T: FromStr>(pub(crate) T);
-    impl<T: FromStr<Err = D>, D: Debug> FromSql for FromStrWrapper<T> {
-        fn column_result(
-            value: rusqlite::types::ValueRef<'_>,
-        ) -> rusqlite::types::FromSqlResult<Self> {
-            let value = String::column_result(value)?;
-            let value = T::from_str(&value).map_err(|err| {
-                error!(
-                    backtrace = %std::backtrace::Backtrace::capture(),
-                    "Cannot convert string `{value}` to type:`{type}` - {err:?}",
-                    r#type = std::any::type_name::<T>()
-                );
-                FromSqlError::InvalidType
-            })?;
-            Ok(Self(value))
         }
     }
 
@@ -3331,7 +3314,7 @@ impl DbConnection for SqlitePool {
                     |row| {
                         Ok(BacktraceInfo {
                             execution_id: execution_id.clone(),
-                            component_id: row.get::<_, FromStrWrapper<_> >("component_id")?.0,
+                            component_id: row.get::<_, JsonWrapper<_> >("component_id")?.0,
                             version_min_including: Version::new(row.get::<_, VersionType>("version_min_including")?),
                             version_max_excluding: Version::new(row.get::<_, VersionType>("version_max_excluding")?),
                             wasm_backtrace: row.get::<_, JsonWrapper<_>>("wasm_backtrace")?.0,

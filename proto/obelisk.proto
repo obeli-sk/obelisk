@@ -86,10 +86,6 @@ message ListComponentsResponse {
 
 message Component {
     ComponentId component_id = 1;
-    string digest = 2; // Hash of the configuration
-    string name = 3;
-    ComponentType type = 4;
-    reserved 5;
     repeated FunctionDetail exports = 6; // Functions are sorted by their interface name
     repeated FunctionDetail imports = 7; // Functions are sorted by their interface name
 }
@@ -155,7 +151,10 @@ message DelayId {
 }
 
 message ComponentId {
-    string id = 1;
+    ComponentType component_type = 1;
+    string name = 2;
+    string input_sha256_digest = 3;
+    string transformed_sha256_digest = 4;
 }
 
 message FunctionName {

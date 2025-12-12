@@ -63,7 +63,7 @@ pub(crate) async fn pull_to_cache_dir(
 ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
     let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
     let auth = get_oci_auth(image)?;
-    // Happy path: image's metadata digest -> mapping.txt -> content digest -> file -> verify hash
+    // Happy path: image's metadata digest mapping.txt -> content digest -> file -> verify hash
     // Recoverable errors, like reading inconsistent data, will be ignored. Image will be downloaded again.
     if let Some(metadata_digest) = image.digest()
         && let Ok(metadata_digest) = Digest::from_str(metadata_digest)

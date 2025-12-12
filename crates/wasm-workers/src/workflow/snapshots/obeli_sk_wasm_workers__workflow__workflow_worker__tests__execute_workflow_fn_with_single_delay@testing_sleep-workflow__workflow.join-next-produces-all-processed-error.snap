@@ -16,7 +16,12 @@ expression: execution_log
           "params": [],
           "parent": null,
           "scheduled_at": "1970-01-01T00:00:00Z",
-          "component_id": "workflow:",
+          "component_id": {
+            "component_type": "workflow",
+            "name": "",
+            "input_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "transformed_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          },
           "metadata": null,
           "scheduled_by": null
         }
@@ -28,7 +33,12 @@ expression: execution_log
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
         "Locked": {
-          "component_id": "workflow:",
+          "component_id": {
+            "component_type": "workflow",
+            "name": "",
+            "input_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "transformed_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          },
           "executor_id": "Exr_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000001",
           "lock_expires_at": "1970-01-01T00:00:01Z",
@@ -101,7 +111,12 @@ expression: execution_log
       "created_at": "1970-01-01T00:00:00.010Z",
       "event": {
         "Locked": {
-          "component_id": "workflow:",
+          "component_id": {
+            "component_type": "workflow",
+            "name": "",
+            "input_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "transformed_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          },
           "executor_id": "Exr_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000002",
           "lock_expires_at": "1970-01-01T00:00:01.010Z",

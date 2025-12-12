@@ -501,18 +501,18 @@ pub(crate) mod tests {
     use super::*;
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
-    use concepts::ComponentRetryConfig;
     use concepts::prefixed_ulid::RunId;
     use concepts::storage::DbExecutor;
     use concepts::time::TokioSleep;
+    use concepts::{ComponentRetryConfig, ComponentType};
     use concepts::{
-        ComponentType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
-        prefixed_ulid::ExecutorId, storage::CreateRequest, storage::DbPoolCloseable,
+        ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue, prefixed_ulid::ExecutorId,
+        storage::CreateRequest, storage::DbPoolCloseable,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask};
     use serde_json::json;
-    use std::{path::Path, time::Duration};
+    use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use val_json::{
         type_wrapper::TypeWrapper,
@@ -524,13 +524,6 @@ pub(crate) mod tests {
     ); // func(n: u8) -> u64;
     pub const FIBO_10_INPUT: u8 = 10;
     pub const FIBO_10_OUTPUT: u64 = 55;
-
-    pub(crate) fn wasm_file_name(input: impl AsRef<Path>) -> StrVariant {
-        let input = input.as_ref();
-        let input = input.file_name().and_then(|name| name.to_str()).unwrap();
-        let input = input.strip_suffix(".wasm").unwrap().to_string();
-        StrVariant::from(input)
-    }
 
     fn activity_config(component_id: ComponentId) -> ActivityConfig {
         ActivityConfig {
@@ -559,9 +552,10 @@ pub(crate) mod tests {
         engine: &Engine,
         component_type: ComponentType,
     ) -> (RunnableComponent, ComponentId) {
-        let component_id = ComponentId::new(component_type, wasm_file_name(wasm_path)).unwrap();
+        let mut component_id = ComponentId::dummy_activity();
+        component_id.component_type = component_type;
         (
-            RunnableComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
+            RunnableComponent::new(wasm_path, engine, component_type).unwrap(),
             component_id,
         )
     }

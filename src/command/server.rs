@@ -35,7 +35,6 @@ use chrono::DateTime;
 use chrono::Utc;
 use concepts::ComponentId;
 use concepts::ComponentType;
-use concepts::ContentDigest;
 use concepts::ExecutionId;
 use concepts::FnName;
 use concepts::FunctionExtension;
@@ -1041,10 +1040,7 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
         let mut res_components = Vec::with_capacity(components.len());
         for component in components {
             let res_component = grpc_gen::Component {
-                name: component.component_id.name.to_string(),
-                r#type: grpc_gen::ComponentType::from(component.component_id.component_type).into(),
                 component_id: Some(component.component_id.into()),
-                digest: component.content_digest.to_string(),
                 exports: component
                     .workflow_or_activity_config
                     .map(|workflow_or_activity_config| {
@@ -1958,7 +1954,6 @@ enum CompiledComponent {
         webhook_name: ConfigName,
         webhook_compiled: WebhookEndpointCompiled,
         routes: Vec<WebhookRouteVerified>,
-        content_digest: ContentDigest,
     },
     ActivityStubOrExternal {
         component_config: ComponentConfig,
@@ -2032,7 +2027,6 @@ async fn compile_and_verify(
                         component_id: activity_stub_ext.component_id,
                         imports: vec![],
                         workflow_or_activity_config: Some(component_config_importable),
-                        content_digest: activity_stub_ext.content_digest,
                         wit,
                     };
                     Ok(CompiledComponent::ActivityStubOrExternal { component_config })
@@ -2086,7 +2080,6 @@ async fn compile_and_verify(
                                 webhook_name,
                                 webhook_compiled,
                                 routes: webhook.routes,
-                                content_digest: webhook.content_digest,
                             })
                         })
                     })
@@ -2109,11 +2102,11 @@ async fn compile_and_verify(
                         component_registry.insert(component_config)?;
                         workers_compiled.push(worker);
                     },
-                    CompiledComponent::Webhook{webhook_name, webhook_compiled, routes, content_digest} => {
+                    CompiledComponent::Webhook{ webhook_name, webhook_compiled, routes } => {
                         let component = ComponentConfig {
                             component_id: webhook_compiled.config.component_id.clone(),
                             imports: webhook_compiled.imports().to_vec(),
-                            content_digest, workflow_or_activity_config: None,
+                            workflow_or_activity_config: None,
                             wit: webhook_compiled.runnable_component.wasm_component.wit()
                                 .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
                                 .ok()
@@ -2214,7 +2207,6 @@ fn prespawn_activity(
     )?;
     Ok(WorkerCompiled::new_activity(
         worker,
-        activity.content_digest,
         activity.exec_config,
         wit,
     ))
@@ -2249,7 +2241,6 @@ fn prespawn_workflow(
     )?;
     Ok(WorkerCompiled::new_workflow(
         worker,
-        workflow.content_digest,
         workflow.exec_config,
         wit,
         workflows_lock_extension_leeway,
@@ -2269,13 +2260,11 @@ struct WorkerCompiled {
 impl WorkerCompiled {
     fn new_activity(
         worker: ActivityWorkerCompiled<Now, TokioSleep>,
-        content_digest: ContentDigest,
         exec_config: ExecConfig,
         wit: Option<String>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
-            content_digest,
             workflow_or_activity_config: Some(ComponentConfigImportable {
                 exports_ext: worker.exported_functions_ext().to_vec(),
                 exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
@@ -2294,14 +2283,12 @@ impl WorkerCompiled {
 
     fn new_workflow(
         worker: WorkflowWorkerCompiled<Now>,
-        content_digest: ContentDigest,
         exec_config: ExecConfig,
         wit: Option<String>,
         workflows_lock_extension_leeway: Duration,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
-            content_digest,
             workflow_or_activity_config: Some(ComponentConfigImportable {
                 exports_ext: worker.exported_functions_ext().to_vec(),
                 exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),

@@ -739,7 +739,7 @@ pub(crate) mod tests {
     use crate::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
     use crate::{
         activity::activity_worker::tests::{
-            FIBO_10_INPUT, FIBO_10_OUTPUT, compile_activity, new_activity_fibo, wasm_file_name,
+            FIBO_10_INPUT, FIBO_10_OUTPUT, compile_activity, new_activity_fibo,
         },
         engines::{EngineConfig, Engines},
     };
@@ -812,8 +812,7 @@ pub(crate) mod tests {
         wasm_path: &str,
         engine: &Engine,
     ) -> (RunnableComponent, ComponentId) {
-        let component_id =
-            ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
+        let component_id = ComponentId::dummy_workflow();
         (
             RunnableComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
             component_id,
@@ -831,8 +830,7 @@ pub(crate) mod tests {
     ) -> ExecTask<C> {
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let component_id =
-            ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
+        let component_id = ComponentId::dummy_workflow();
         let worker = Arc::new(
             WorkflowWorkerCompiled::new_with_config(
                 RunnableComponent::new(wasm_path, &workflow_engine, component_id.component_type)

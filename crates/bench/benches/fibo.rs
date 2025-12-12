@@ -10,15 +10,15 @@ mod bench {
     use concepts::time::{ClockFn, Now, Sleep, TokioSleep};
     use concepts::{
         ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, FunctionRegistry, Params,
-        StrVariant, SupportedFunctionReturnValue,
+        SupportedFunctionReturnValue,
     };
-    use concepts::{ComponentType, prefixed_ulid::ExecutorId, storage::CreateRequest};
+    use concepts::{prefixed_ulid::ExecutorId, storage::CreateRequest};
     use db_tests::Database;
     use divan::{self};
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use executor::worker::Worker;
     use serde_json::json;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::runtime::Handle;
@@ -40,8 +40,7 @@ mod bench {
         wasm_path: &'static str,
         engine: &Engine,
     ) -> (RunnableComponent, ComponentId) {
-        let component_id =
-            ComponentId::new(ComponentType::ActivityWasm, wasm_file_name(wasm_path)).unwrap();
+        let component_id = ComponentId::dummy_activity();
         (
             RunnableComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
             component_id,
@@ -154,8 +153,7 @@ mod bench {
         wasm_path: &'static str,
         engine: &Engine,
     ) -> (RunnableComponent, ComponentId) {
-        let component_id =
-            ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
+        let component_id = ComponentId::dummy_workflow();
         (
             RunnableComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
             component_id,
@@ -173,8 +171,7 @@ mod bench {
         workflow_engine: Arc<Engine>,
         cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
-        let component_id =
-            ComponentId::new(ComponentType::Workflow, wasm_file_name(wasm_path)).unwrap();
+        let component_id = ComponentId::dummy_workflow();
         let worker = Arc::new(
             WorkflowWorkerCompiled::new_with_config(
                 RunnableComponent::new(wasm_path, &workflow_engine, component_id.component_type)
@@ -233,13 +230,6 @@ mod bench {
             workflow_engine,
             cancel_registry,
         )
-    }
-
-    pub(crate) fn wasm_file_name(input: impl AsRef<Path>) -> StrVariant {
-        let input = input.as_ref();
-        let input = input.file_name().and_then(|name| name.to_str()).unwrap();
-        let input = input.strip_suffix(".wasm").unwrap().to_string();
-        StrVariant::from(input)
     }
 
     #[divan::bench(args = [100, 200, 400, 800])]

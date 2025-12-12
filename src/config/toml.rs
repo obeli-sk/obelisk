@@ -4,8 +4,8 @@ use super::{
 use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
 use anyhow::{anyhow, bail};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, InvalidNameError, StrVariant,
-    check_name, prefixed_ulid::ExecutorId,
+    ComponentId, ComponentRetryConfig, ComponentType, InvalidNameError, StrVariant, check_name,
+    prefixed_ulid::ExecutorId,
 };
 use db_sqlite::sqlite_dao::SqliteConfig;
 use log::{LoggingConfig, LoggingStyle};
@@ -18,7 +18,7 @@ use std::{
     time::Duration,
 };
 use tracing::{instrument, warn};
-use utils::wasm_tools::WasmComponent;
+use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
 use wasm_workers::{
     activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig, ProcessProvider},
     envvar::EnvVar,
@@ -508,7 +508,6 @@ pub(crate) struct ActivityStubExtComponentConfigToml {
 pub(crate) struct ActivityStubExtConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) component_id: ComponentId,
-    pub(crate) content_digest: ContentDigest,
 }
 impl ActivityStubExtComponentConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
@@ -519,16 +518,18 @@ impl ActivityStubExtComponentConfigToml {
         metadata_dir: Arc<Path>,
         path_prefixes: Arc<PathPrefixes>,
     ) -> Result<ActivityStubExtConfigVerified, anyhow::Error> {
-        let component_id =
-            ComponentId::new(component_type, StrVariant::from(self.common.name.clone()))?;
-        tracing::Span::current().record("component_id", tracing::field::display(&component_id));
-
         let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
+        let component_id = ComponentId::new(
+            component_type,
+            StrVariant::from(common.name),
+            common.content_digest.clone(),
+            common.content_digest,
+        )?;
+
         Ok(ActivityStubExtConfigVerified {
-            content_digest: common.content_digest,
             wasm_path,
             component_id,
         })
@@ -567,7 +568,6 @@ pub(crate) struct ActivityWasmConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
-    pub(crate) content_digest: ContentDigest,
 }
 
 impl ActivityWasmConfigVerified {
@@ -577,7 +577,7 @@ impl ActivityWasmConfigVerified {
 }
 
 impl ActivityWasmComponentConfigToml {
-    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
+    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()))]
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn fetch_and_verify(
         self,
@@ -589,12 +589,6 @@ impl ActivityWasmComponentConfigToml {
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
-        let component_id = ComponentId::new(
-            ComponentType::ActivityWasm,
-            StrVariant::from(self.common.name.clone()),
-        )?;
-        tracing::Span::current().record("component_id", tracing::field::display(&component_id));
-
         let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
@@ -615,6 +609,13 @@ impl ActivityWasmComponentConfigToml {
             }
             (_, false) => None,
         };
+
+        let component_id = ComponentId::new(
+            ComponentType::ActivityWasm,
+            StrVariant::from(common.name),
+            common.content_digest.clone(),
+            common.content_digest,
+        )?;
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
             forward_stdout: self.forward_stdout.into(),
@@ -629,7 +630,6 @@ impl ActivityWasmComponentConfigToml {
             retry_exp_backoff: self.retry_exp_backoff.into(),
         };
         Ok(ActivityWasmConfigVerified {
-            content_digest: common.content_digest,
             wasm_path,
             activity_config,
             exec_config: self.exec.into_exec_exec_config(
@@ -730,7 +730,6 @@ pub(crate) struct WorkflowComponentBacktraceConfig {
 
 #[derive(Debug)]
 pub(crate) struct WorkflowConfigVerified {
-    pub(crate) content_digest: ContentDigest,
     pub(crate) wasm_path: PathBuf,
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
@@ -766,7 +765,7 @@ impl WorkflowConfigVerified {
 }
 
 impl WorkflowComponentConfigToml {
-    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
+    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()))]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
@@ -776,12 +775,6 @@ impl WorkflowComponentConfigToml {
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
-        let component_id = ComponentId::new(
-            ComponentType::Workflow,
-            StrVariant::from(self.common.name.clone()),
-        )?;
-        tracing::Span::current().record("component_id", tracing::field::display(&component_id));
-
         let retry_exp_backoff = Duration::from(self.retry_exp_backoff);
         if retry_exp_backoff == Duration::ZERO {
             bail!(
@@ -793,13 +786,22 @@ impl WorkflowComponentConfigToml {
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
-        let wasm_path = if self.convert_core_module {
-            WasmComponent::convert_core_module_to_component(&wasm_path, &wasm_cache_dir)
-                .await?
-                .unwrap_or(wasm_path)
+        let (wasm_path, transformed_digest) = if self.convert_core_module {
+            let transformed_path =
+                WasmComponent::convert_core_module_to_component(&wasm_path, &wasm_cache_dir)
+                    .await?
+                    .unwrap_or(wasm_path);
+            let transformed_digest = calculate_sha256_file(&transformed_path).await?;
+            (transformed_path, transformed_digest)
         } else {
-            wasm_path
+            (wasm_path, common.content_digest.clone())
         };
+        let component_id = ComponentId::new(
+            ComponentType::Workflow,
+            StrVariant::from(common.name),
+            common.content_digest,
+            transformed_digest,
+        )?;
 
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
@@ -816,7 +818,6 @@ impl WorkflowComponentConfigToml {
             retry_exp_backoff,
         };
         Ok(WorkflowConfigVerified {
-            content_digest: common.content_digest,
             wasm_path,
             workflow_config,
             exec_config: self.exec.into_exec_exec_config(
@@ -1109,7 +1110,7 @@ pub(crate) mod webhook {
     };
     use crate::config::{config_holder::PathPrefixes, env_var::EnvVarConfig};
     use anyhow::Context;
-    use concepts::{ComponentId, ComponentType, ContentDigest, StrVariant};
+    use concepts::{ComponentId, ComponentType, StrVariant};
     use schemars::JsonSchema;
     use serde::Deserialize;
     use std::{
@@ -1146,7 +1147,7 @@ pub(crate) mod webhook {
     }
 
     impl WebhookComponentConfigToml {
-        #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id), err)]
+        #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()), err)]
         pub(crate) async fn fetch_and_verify(
             self,
             wasm_cache_dir: Arc<Path>,
@@ -1154,12 +1155,6 @@ pub(crate) mod webhook {
             ignore_missing_env_vars: bool,
             path_prefixes: Arc<PathPrefixes>,
         ) -> Result<(ConfigName /* name */, WebhookComponentVerified), anyhow::Error> {
-            let component_id = ComponentId::new(
-                ComponentType::WebhookEndpoint,
-                StrVariant::from(self.common.name.clone()),
-            )?;
-            tracing::Span::current().record("component_id", tracing::field::display(&component_id));
-
             let (common, wasm_path) = self
                 .common
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
@@ -1168,9 +1163,14 @@ pub(crate) mod webhook {
                 self.backtrace.frame_files_to_sources,
                 &path_prefixes,
             );
-
+            let component_id = ComponentId::new(
+                ComponentType::WebhookEndpoint,
+                StrVariant::from(common.name.clone()),
+                common.content_digest.clone(),
+                common.content_digest,
+            )?;
             Ok((
-                common.name,
+                common.name, // TODO: remove, already in component id
                 WebhookComponentVerified {
                     component_id,
                     wasm_path,
@@ -1182,7 +1182,6 @@ pub(crate) mod webhook {
                     forward_stdout: self.forward_stdout.into(),
                     forward_stderr: self.forward_stderr.into(),
                     env_vars: resolve_env_vars(self.env_vars, ignore_missing_env_vars)?,
-                    content_digest: common.content_digest,
                     frame_files_to_sources,
                 },
             ))
@@ -1220,7 +1219,6 @@ pub(crate) mod webhook {
         pub(crate) forward_stdout: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) forward_stderr: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) env_vars: Arc<[EnvVar]>,
-        pub(crate) content_digest: ContentDigest,
         pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesVerified,
     }
 
