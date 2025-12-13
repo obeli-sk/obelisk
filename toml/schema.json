@@ -481,6 +481,10 @@
         "lock_expiry": {
           "$ref": "#/$defs/DurationConfig"
         },
+        "locking_strategy": {
+          "$ref": "#/$defs/LockingStrategy",
+          "default": "by_ffqns"
+        },
         "tick_sleep": {
           "$ref": "#/$defs/DurationConfig"
         }
@@ -513,6 +517,13 @@
           "format": "uint32",
           "minimum": 0
         }
+      ]
+    },
+    "LockingStrategy": {
+      "type": "string",
+      "enum": [
+        "by_ffqns",
+        "by_component_id"
       ]
     },
     "LoggingConfig": {

@@ -762,7 +762,7 @@ pub(crate) mod tests {
         },
     };
     use db_tests::Database;
-    use executor::executor::extract_exported_ffqns_noext_test;
+    use executor::executor::{LockingStrategy, extract_exported_ffqns_noext_test};
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
@@ -867,6 +867,7 @@ pub(crate) mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::WORKFLOW_TEST,
+            locking_strategy: LockingStrategy::default(),
         };
         ExecTask::new_all_ffqns_test(worker, exec_config, clock_fn, db_exec)
     }
@@ -1190,6 +1191,7 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             };
             let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
             ExecTask::new_test(worker, exec_config, sim_clock.clone(), db_exec, ffqns)
@@ -1300,6 +1302,7 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             };
             let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
             ExecTask::new_test(
@@ -1749,6 +1752,7 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             },
             sim_clock.clone(),
             db_exec,
@@ -1943,6 +1947,7 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             },
             sim_clock.clone(),
             db_exec,
@@ -2062,6 +2067,7 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::from_parts(0, 0),
                 retry_config: ComponentRetryConfig::WORKFLOW_TEST,
+                locking_strategy: LockingStrategy::default(),
             },
             sim_clock.clone(),
             db_exec,
@@ -2272,6 +2278,7 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             },
             sim_clock.clone(),
             db_exec,
@@ -2410,6 +2417,7 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             },
             sim_clock.clone(),
             db_exec.clone(),
@@ -2458,6 +2466,7 @@ pub(crate) mod tests {
                     task_limiter: None,
                     executor_id: ExecutorId::generate(),
                     retry_config: ComponentRetryConfig::ZERO,
+                    locking_strategy: LockingStrategy::default(),
                 },
                 sim_clock.clone(),
                 db_exec.clone(),

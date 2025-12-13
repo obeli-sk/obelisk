@@ -10,7 +10,7 @@ use concepts::{
 use db_sqlite::sqlite_dao::SqliteConfig;
 use log::{LoggingConfig, LoggingStyle};
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -435,6 +435,34 @@ impl ComponentCommon {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LockingStrategy {
+    ByFfqns,
+    ByComponentId,
+}
+impl From<LockingStrategy> for executor::executor::LockingStrategy {
+    fn from(value: LockingStrategy) -> Self {
+        match value {
+            LockingStrategy::ByFfqns => executor::executor::LockingStrategy::ByFfqns,
+            LockingStrategy::ByComponentId => executor::executor::LockingStrategy::ByComponentId,
+        }
+    }
+}
+impl From<executor::executor::LockingStrategy> for LockingStrategy {
+    fn from(value: executor::executor::LockingStrategy) -> Self {
+        match value {
+            executor::executor::LockingStrategy::ByFfqns => LockingStrategy::ByFfqns,
+            executor::executor::LockingStrategy::ByComponentId => LockingStrategy::ByComponentId,
+        }
+    }
+}
+impl Default for LockingStrategy {
+    fn default() -> Self {
+        executor::executor::LockingStrategy::default().into()
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecConfigToml {
@@ -444,6 +472,8 @@ pub(crate) struct ExecConfigToml {
     lock_expiry: DurationConfig,
     #[serde(default = "default_tick_sleep")]
     tick_sleep: DurationConfig,
+    #[serde(default)]
+    locking_strategy: LockingStrategy,
 }
 
 impl Default for ExecConfigToml {
@@ -452,6 +482,7 @@ impl Default for ExecConfigToml {
             batch_size: default_batch_size(),
             lock_expiry: default_lock_expiry(),
             tick_sleep: default_tick_sleep(),
+            locking_strategy: LockingStrategy::default(),
         }
     }
 }
@@ -471,6 +502,7 @@ impl ExecConfigToml {
             task_limiter: global_executor_instance_limiter,
             executor_id: ExecutorId::generate(),
             retry_config,
+            locking_strategy: self.locking_strategy.into(),
         }
     }
 }

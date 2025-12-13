@@ -510,7 +510,7 @@ pub(crate) mod tests {
         storage::CreateRequest, storage::DbPoolCloseable,
     };
     use db_tests::Database;
-    use executor::executor::{ExecConfig, ExecTask};
+    use executor::executor::{ExecConfig, ExecTask, LockingStrategy};
     use serde_json::json;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
@@ -631,6 +631,7 @@ pub(crate) mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config,
+            locking_strategy: LockingStrategy::default(),
         };
         ExecTask::new_all_ffqns_test(worker, exec_config, clock_fn, db_exec)
     }
@@ -706,7 +707,7 @@ pub(crate) mod tests {
             prefixed_ulid::RunId,
             storage::{ExecutionEventInner, Version},
         };
-        use executor::executor::LockStrategy;
+        use executor::executor::LockingStrategy;
         use insta::assert_debug_snapshot;
         use test_utils::{env_or_default, sim_clock::SimClock};
         use tracing::{debug, info, info_span};
@@ -850,15 +851,9 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             };
-            let exec_task = ExecTask::spawn_new(
-                worker,
-                exec_config,
-                Now,
-                db_exec,
-                LockStrategy::default(),
-                TokioSleep,
-            );
+            let exec_task = ExecTask::spawn_new(worker, exec_config, Now, db_exec, TokioSleep);
 
             // Create an execution.
             let execution_id = ExecutionId::generate();
@@ -1045,6 +1040,7 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task =
@@ -1157,6 +1153,7 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task =
@@ -1283,6 +1280,7 @@ pub(crate) mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config,
+                locking_strategy: LockingStrategy::default(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task =

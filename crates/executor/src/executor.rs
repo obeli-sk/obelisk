@@ -35,6 +35,7 @@ pub struct ExecConfig {
     pub task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     pub executor_id: ExecutorId,
     pub retry_config: ComponentRetryConfig,
+    pub locking_strategy: LockingStrategy,
 }
 
 pub struct ExecTask<C: ClockFn> {
@@ -42,7 +43,7 @@ pub struct ExecTask<C: ClockFn> {
     config: ExecConfig,
     clock_fn: C, // Used for obtaining current time when the execution finishes.
     db_exec: Arc<dyn DbExecutor>,
-    lock_strategy_holder: LockStrategyHolder,
+    locking_strategy_holder: LockingStrategyHolder,
 }
 
 #[derive(derive_more::Debug, Default)]
@@ -118,13 +119,21 @@ fn extract_exported_ffqns_noext(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub enum LockStrategy {
+pub enum LockingStrategy {
     #[default]
     ByFfqns,
     ByComponentId,
 }
+impl LockingStrategy {
+    fn holder(&self, ffqns: Arc<[FunctionFqn]>) -> LockingStrategyHolder {
+        match self {
+            LockingStrategy::ByFfqns => LockingStrategyHolder::ByFfqns(ffqns),
+            LockingStrategy::ByComponentId => LockingStrategyHolder::ByComponentId,
+        }
+    }
+}
 
-enum LockStrategyHolder {
+enum LockingStrategyHolder {
     ByFfqns(Arc<[FunctionFqn]>),
     ByComponentId,
 }
@@ -140,10 +149,10 @@ impl<C: ClockFn + 'static> ExecTask<C> {
     ) -> Self {
         Self {
             worker,
+            locking_strategy_holder: config.locking_strategy.holder(ffqns),
             config,
             clock_fn,
             db_exec,
-            lock_strategy_holder: LockStrategyHolder::ByFfqns(ffqns),
         }
     }
 
@@ -157,10 +166,10 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         let ffqns = extract_exported_ffqns_noext(worker.as_ref());
         Self {
             worker,
+            locking_strategy_holder: config.locking_strategy.holder(ffqns),
             config,
             clock_fn,
             db_exec,
-            lock_strategy_holder: LockStrategyHolder::ByFfqns(ffqns),
         }
     }
 
@@ -169,7 +178,6 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         config: ExecConfig,
         clock_fn: C,
         db_exec: Arc<dyn DbExecutor>,
-        lock_strategy: LockStrategy,
         sleep: impl Sleep + 'static,
     ) -> ExecutorTaskHandle {
         let is_closing = Arc::new(AtomicBool::default());
@@ -179,15 +187,12 @@ impl<C: ClockFn + 'static> ExecTask<C> {
         let executor_id = config.executor_id;
         let abort_handle = tokio::spawn(async move {
             debug!(executor_id = %config.executor_id, component_id = %config.component_id, "Spawned executor");
-            let lock_strategy_holder = match lock_strategy {
-                LockStrategy::ByFfqns =>  LockStrategyHolder::ByFfqns(ffqns),
-                LockStrategy::ByComponentId => LockStrategyHolder::ByComponentId,
-            };
+            let lock_strategy_holder = config.locking_strategy.holder(ffqns);
             let task = ExecTask {
                 worker,
                 config,
                 db_exec,
-                lock_strategy_holder,
+                locking_strategy_holder: lock_strategy_holder,
                 clock_fn: clock_fn.clone(),
             };
             while !is_closing_inner.load(Ordering::Relaxed) {
@@ -259,8 +264,8 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 return Ok(ExecutionProgress::default());
             }
             let lock_expires_at = executed_at + self.config.lock_expiry;
-            let locked_executions = match &self.lock_strategy_holder {
-                LockStrategyHolder::ByFfqns(ffqns) => {
+            let locked_executions = match &self.locking_strategy_holder {
+                LockingStrategyHolder::ByFfqns(ffqns) => {
                     self.db_exec
                         .lock_pending_by_ffqns(
                             permits.len(), // batch size
@@ -275,7 +280,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         )
                         .await?
                 }
-                LockStrategyHolder::ByComponentId => {
+                LockingStrategyHolder::ByComponentId => {
                     self.db_exec
                         .lock_pending_by_component_id(
                             permits.len(), // batch size
@@ -907,6 +912,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
+            locking_strategy: LockingStrategy::default(),
         };
 
         let execution_log = create_and_tick(
@@ -955,6 +961,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
+            locking_strategy: LockingStrategy::default(),
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
@@ -1079,6 +1086,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config,
+            locking_strategy: LockingStrategy::default(),
         };
         let expected_reason = "error reason";
         let expected_detail = "error detail";
@@ -1205,6 +1213,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
+            locking_strategy: LockingStrategy::default(),
         };
 
         let reason = "error reason";
@@ -1330,6 +1339,7 @@ mod tests {
                 task_limiter: None,
                 executor_id: parent_executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             },
             sim_clock.clone(),
             db_exec.clone(),
@@ -1413,6 +1423,7 @@ mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             },
             sim_clock.clone(),
             db_exec.clone(),
@@ -1523,6 +1534,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config,
+            locking_strategy: LockingStrategy::default(),
         };
 
         let worker = Arc::new(SleepyWorker {

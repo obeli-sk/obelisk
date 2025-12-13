@@ -1656,6 +1656,7 @@ pub(crate) mod tests {
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
+    use executor::executor::LockingStrategy;
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
@@ -2030,6 +2031,7 @@ pub(crate) mod tests {
                     task_limiter: None,
                     executor_id: ExecutorId::from_parts(0, 0), // only appears in Locked events
                     retry_config: ComponentRetryConfig::ZERO,
+                    locking_strategy: LockingStrategy::default(),
                 };
                 ExecTask::new_test(
                     worker,
@@ -2555,6 +2557,7 @@ pub(crate) mod tests {
                     next_u128(),
                 ),
                 retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::default(),
             };
             ExecTask::new_test(
                 worker,
