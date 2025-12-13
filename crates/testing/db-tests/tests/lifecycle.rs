@@ -182,6 +182,7 @@ async fn append_after_finish_should_not_be_possible(
     db_close.close().await;
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn lock_pending(
     execution_id: &ExecutionId,
     lock_expires_at: DateTime<Utc>,
@@ -216,7 +217,7 @@ async fn lock_pending(
             .lock_pending_by_component_id(
                 1,
                 created_at,
-                &component_id,
+                component_id,
                 created_at,
                 executor_id,
                 lock_expires_at,

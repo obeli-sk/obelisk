@@ -12,7 +12,7 @@ pub use prefixed_ulid::ExecutionId;
 use serde_json::Value;
 use std::{
     borrow::Borrow,
-    fmt::{Debug, Display},
+    fmt::{Debug, Display, Write as _},
     hash::Hash,
     marker::PhantomData,
     ops::Deref,
@@ -2091,10 +2091,11 @@ impl Digest {
 
     #[must_use]
     pub fn digest_base16(&self) -> String {
-        self.digest
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>()
+        let mut out = String::with_capacity(self.digest.len() * 2);
+        for &b in &self.digest {
+            write!(&mut out, "{b:02x}").expect("writing to string");
+        }
+        out
     }
 }
 
