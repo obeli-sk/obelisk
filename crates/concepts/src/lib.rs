@@ -1944,14 +1944,14 @@ impl ComponentType {
 pub struct ComponentId {
     pub component_type: ComponentType,
     pub name: StrVariant,
-    pub input_digest: ContentDigest,
+    pub input_digest: InputContentDigest,
     pub transformed_digest: ContentDigest,
 }
 impl ComponentId {
     pub fn new(
         component_type: ComponentType,
         name: StrVariant,
-        input_digest: ContentDigest,
+        input_digest: InputContentDigest,
         transformed_digest: ContentDigest,
     ) -> Result<Self, InvalidNameError<Self>> {
         Ok(Self {
@@ -1967,7 +1967,7 @@ impl ComponentId {
         Self {
             component_type: ComponentType::ActivityWasm,
             name: StrVariant::empty(),
-            input_digest: CONTENT_DIGEST_DUMMY,
+            input_digest: InputContentDigest(CONTENT_DIGEST_DUMMY),
             transformed_digest: CONTENT_DIGEST_DUMMY,
         }
     }
@@ -1978,7 +1978,7 @@ impl ComponentId {
         ComponentId {
             component_type: ComponentType::Workflow,
             name: StrVariant::empty(),
-            input_digest: CONTENT_DIGEST_DUMMY,
+            input_digest: InputContentDigest(CONTENT_DIGEST_DUMMY),
             transformed_digest: CONTENT_DIGEST_DUMMY,
         }
     }
@@ -2044,6 +2044,20 @@ pub enum HashType {
     serde_with::SerializeDisplay,
     serde_with::DeserializeFromStr,
 )]
+pub struct InputContentDigest(pub ContentDigest);
+
+#[derive(
+    Debug,
+    Clone,
+    derive_more::Display,
+    derive_more::FromStr,
+    derive_more::Deref,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
 pub struct ContentDigest(pub Digest);
 pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest {
     hash_type: HashType::Sha256,
@@ -2072,7 +2086,7 @@ impl ContentDigest {
 #[display("{hash_type}:{hash_base16}")]
 pub struct Digest {
     hash_type: HashType,
-    hash_base16: StrVariant,
+    hash_base16: StrVariant, // FIXME: Switch to [u8;32]
 }
 impl Digest {
     #[must_use]

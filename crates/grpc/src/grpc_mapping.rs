@@ -1,7 +1,7 @@
 use crate::grpc_gen::{self, execution_event::history_event, result_kind};
 use concepts::{
     ComponentId, ComponentType, ContentDigest, Digest, ExecutionFailureKind, ExecutionId,
-    FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
+    FinishedExecutionError, FunctionFqn, InputContentDigest, SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, RunId},
     storage::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
@@ -100,14 +100,14 @@ impl TryFrom<grpc_gen::ComponentId> for ComponentId {
                 ))
             })?;
         let component_type = ComponentType::from(component_type);
-        let input_digest = ContentDigest(Digest::from_str(&value.input_sha256_digest).map_err(
-            |parse_err| {
+        let input_digest = InputContentDigest(ContentDigest(
+            Digest::from_str(&value.input_sha256_digest).map_err(|parse_err| {
                 error!("{parse_err:?}");
                 tonic::Status::invalid_argument(format!(
                     "`input_sha256_digest` cannot be parsed - {parse_err}"
                 ))
-            },
-        )?);
+            })?,
+        ));
         let transformed_digest = ContentDigest(
             Digest::from_str(&value.transformed_sha256_digest).map_err(|parse_err| {
                 error!("{parse_err:?}");

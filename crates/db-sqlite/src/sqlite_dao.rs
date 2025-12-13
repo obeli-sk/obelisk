@@ -1,9 +1,9 @@
-use crate::histograms::Histograms;
+use crate::{histograms::Histograms, sqlite_dao::conversions::FromStrWrapper};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, JoinSetId, StrVariant,
-    SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, InputContentDigest, JoinSetId,
+    StrVariant, SupportedFunctionReturnValue,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
@@ -157,6 +157,7 @@ ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 /// `Locked`:               `max_retries`, `retry_exp_backoff_millis`, `last_lock_version`, `executor_id`, `run_id`
 /// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
 /// `Finished` :            `result_kind`.
+// FIXME component_id_input_digest - BLOB
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
@@ -254,7 +255,7 @@ mod conversions {
         ToSql,
         types::{FromSql, FromSqlError},
     };
-    use std::fmt::Debug;
+    use std::{fmt::Debug, str::FromStr};
     use tracing::error;
 
     impl From<rusqlite::Error> for RusqliteError {
@@ -344,6 +345,24 @@ mod conversions {
         }
     }
 
+    pub(crate) struct FromStrWrapper<T: FromStr>(pub(crate) T);
+    impl<T: FromStr<Err = D>, D: Debug> FromSql for FromStrWrapper<T> {
+        fn column_result(
+            value: rusqlite::types::ValueRef<'_>,
+        ) -> rusqlite::types::FromSqlResult<Self> {
+            let value = String::column_result(value)?;
+            let value = T::from_str(&value).map_err(|err| {
+                error!(
+                    backtrace = %std::backtrace::Backtrace::capture(),
+                    "Cannot convert string `{value}` to type:`{type}` - {err:?}",
+                    r#type = std::any::type_name::<T>()
+                );
+                FromSqlError::InvalidType
+            })?;
+            Ok(Self(value))
+        }
+    }
+
     // Used as a wrapper for `FromSqlError::Other`
     #[derive(Debug, thiserror::Error)]
     #[error("{0}")]
@@ -361,6 +380,7 @@ mod conversions {
 struct CombinedStateDTO {
     state: String,
     ffqn: String,
+    component_id_input_digest: InputContentDigest,
     pending_expires_finished: DateTime<Utc>,
     // Locked:
     last_lock_version: Option<Version>,
@@ -377,6 +397,7 @@ struct CombinedState {
     ffqn: FunctionFqn,
     pending_state: PendingState,
     corresponding_version: Version,
+    component_id_input_digest: InputContentDigest,
 }
 impl CombinedState {
     fn get_next_version_assert_not_finished(&self) -> Version {
@@ -398,6 +419,7 @@ impl CombinedState {
 struct NotifierPendingAt {
     scheduled_at: DateTime<Utc>,
     ffqn: FunctionFqn,
+    component_input_digest: InputContentDigest,
 }
 
 #[derive(Debug)]
@@ -414,15 +436,17 @@ struct AppendNotifier {
 }
 
 impl CombinedState {
-    fn new(
-        dto: &CombinedStateDTO,
-        corresponding_version: Version,
-    ) -> Result<Self, rusqlite::Error> {
-        let pending_state = match dto {
+    fn new(dto: CombinedStateDTO, corresponding_version: Version) -> Result<Self, rusqlite::Error> {
+        let ffqn = FunctionFqn::from_str(&dto.ffqn).map_err(|parse_err| {
+            error!("Error parsing ffqn of {dto:?} - {parse_err:?}");
+            consistency_rusqlite("invalid ffqn value in `t_state`")
+        })?;
+        let (pending_state, component_id_input_digest) = match dto {
             // Pending - just created
             CombinedStateDTO {
                 state,
                 ffqn: _,
+                component_id_input_digest,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
                 executor_id: None,
@@ -430,14 +454,18 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-            } if state == STATE_PENDING_AT => Ok(PendingState::PendingAt {
-                scheduled_at: *scheduled_at,
-                last_lock: None,
-            }),
+            } if state == STATE_PENDING_AT => (
+                PendingState::PendingAt {
+                    scheduled_at,
+                    last_lock: None,
+                },
+                component_id_input_digest,
+            ),
             // Pending, previously locked
             CombinedStateDTO {
                 state,
                 ffqn: _,
+                component_id_input_digest,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
                 executor_id: Some(executor_id),
@@ -445,16 +473,20 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-            } if state == STATE_PENDING_AT => Ok(PendingState::PendingAt {
-                scheduled_at: *scheduled_at,
-                last_lock: Some(LockedBy {
-                    executor_id: *executor_id,
-                    run_id: *run_id,
-                }),
-            }),
+            } if state == STATE_PENDING_AT => (
+                PendingState::PendingAt {
+                    scheduled_at,
+                    last_lock: Some(LockedBy {
+                        executor_id,
+                        run_id,
+                    }),
+                },
+                component_id_input_digest,
+            ),
             CombinedStateDTO {
                 state,
                 ffqn: _,
+                component_id_input_digest,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: Some(_),
                 executor_id: Some(executor_id),
@@ -462,16 +494,20 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-            } if state == STATE_LOCKED => Ok(PendingState::Locked(PendingStateLocked {
-                locked_by: LockedBy {
-                    executor_id: *executor_id,
-                    run_id: *run_id,
-                },
-                lock_expires_at: *lock_expires_at,
-            })),
+            } if state == STATE_LOCKED => (
+                PendingState::Locked(PendingStateLocked {
+                    locked_by: LockedBy {
+                        executor_id,
+                        run_id,
+                    },
+                    lock_expires_at,
+                }),
+                component_id_input_digest,
+            ),
             CombinedStateDTO {
                 state,
                 ffqn: _,
+                component_id_input_digest,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: None,
                 executor_id: _,
@@ -479,14 +515,18 @@ impl CombinedState {
                 join_set_id: Some(join_set_id),
                 join_set_closing: Some(join_set_closing),
                 result_kind: None,
-            } if state == STATE_BLOCKED_BY_JOIN_SET => Ok(PendingState::BlockedByJoinSet {
-                join_set_id: join_set_id.clone(),
-                closing: *join_set_closing,
-                lock_expires_at: *lock_expires_at,
-            }),
+            } if state == STATE_BLOCKED_BY_JOIN_SET => (
+                PendingState::BlockedByJoinSet {
+                    join_set_id: join_set_id.clone(),
+                    closing: join_set_closing,
+                    lock_expires_at,
+                },
+                component_id_input_digest,
+            ),
             CombinedStateDTO {
                 state,
                 ffqn: _,
+                component_id_input_digest,
                 pending_expires_finished: finished_at,
                 last_lock_version: None,
                 executor_id: None,
@@ -494,25 +534,26 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: Some(result_kind),
-            } if state == STATE_FINISHED => Ok(PendingState::Finished {
-                finished: PendingStateFinished {
-                    finished_at: *finished_at,
-                    version: corresponding_version.0,
-                    result_kind: *result_kind,
+            } if state == STATE_FINISHED => (
+                PendingState::Finished {
+                    finished: PendingStateFinished {
+                        finished_at,
+                        version: corresponding_version.0,
+                        result_kind,
+                    },
                 },
-            }),
+                component_id_input_digest,
+            ),
             _ => {
                 error!("Cannot deserialize pending state from  {dto:?}");
-                Err(consistency_rusqlite("invalid `t_state`"))
+                return Err(consistency_rusqlite("invalid `t_state`"));
             }
-        }?;
+        };
         Ok(Self {
-            ffqn: FunctionFqn::from_str(&dto.ffqn).map_err(|parse_err| {
-                error!("Error parsing ffqn of {dto:?} - {parse_err:?}");
-                consistency_rusqlite("invalid ffqn value in `t_state`")
-            })?,
+            ffqn,
             pending_state,
             corresponding_version,
+            component_id_input_digest,
         })
     }
 }
@@ -538,16 +579,60 @@ pub struct SqlitePool(SqlitePoolInner);
 
 type ResponseSubscribers =
     Arc<Mutex<HashMap<ExecutionId, (oneshot::Sender<JoinSetResponseEventOuter>, u64)>>>;
-type PendingFfqnSubscribers = Arc<Mutex<HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>>>;
+type PendingSubscribers = Arc<Mutex<PendingFfqnSubscribersHolder>>;
 type ExecutionFinishedSubscribers =
     Mutex<HashMap<ExecutionId, HashMap<u64, oneshot::Sender<SupportedFunctionReturnValue>>>>;
+
+#[derive(Default)]
+struct PendingFfqnSubscribersHolder {
+    by_ffqns: HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>,
+    by_component: HashMap<InputContentDigest /* input digest */, (mpsc::Sender<()>, u64)>,
+}
+impl PendingFfqnSubscribersHolder {
+    fn notify(&self, notifier: &NotifierPendingAt) {
+        if let Some((subscription, _)) = self.by_ffqns.get(&notifier.ffqn) {
+            debug!("Notifying pending subscriber by ffqn");
+            // Does not block
+            let _ = subscription.try_send(());
+        }
+        if let Some((subscription, _)) = self.by_component.get(&notifier.component_input_digest) {
+            debug!("Notifying pending subscriber by component");
+            // Does not block
+            let _ = subscription.try_send(());
+        }
+    }
+
+    fn insert_ffqn(&mut self, ffqn: FunctionFqn, value: (mpsc::Sender<()>, u64)) {
+        self.by_ffqns.insert(ffqn, value);
+    }
+
+    fn remove_ffqn(&mut self, ffqn: &FunctionFqn) -> Option<(mpsc::Sender<()>, u64)> {
+        self.by_ffqns.remove(ffqn)
+    }
+
+    fn insert_by_component(
+        &mut self,
+        input_content_digest: InputContentDigest,
+        value: (mpsc::Sender<()>, u64),
+    ) {
+        self.by_component.insert(input_content_digest, value);
+    }
+
+    fn remove_by_component(
+        &mut self,
+        input_content_digest: &InputContentDigest,
+    ) -> Option<(mpsc::Sender<()>, u64)> {
+        self.by_component.remove(input_content_digest)
+    }
+}
+
 #[derive(Clone)]
 struct SqlitePoolInner {
     shutdown_requested: Arc<AtomicBool>,
     shutdown_finished: Arc<AtomicBool>,
     command_tx: tokio::sync::mpsc::Sender<ThreadCommand>,
     response_subscribers: ResponseSubscribers,
-    pending_ffqn_subscribers: PendingFfqnSubscribers,
+    pending_subscribers: PendingSubscribers,
     execution_finished_subscribers: Arc<ExecutionFinishedSubscribers>,
     join_handle: Option<Arc<std::thread::JoinHandle<()>>>, // always Some, Optional for swapping in drop.
 }
@@ -927,7 +1012,7 @@ impl SqlitePool {
             shutdown_finished,
             command_tx,
             response_subscribers: Arc::default(),
-            pending_ffqn_subscribers: Arc::default(),
+            pending_subscribers: Arc::default(),
             join_handle: Some(Arc::new(join_handle)),
             execution_finished_subscribers: Arc::default(),
         }))
@@ -1115,7 +1200,11 @@ impl SqlitePool {
                 ":scheduled_at": scheduled_at,
             })?;
             AppendNotifier {
-                pending_at: Some(NotifierPendingAt { scheduled_at, ffqn }),
+                pending_at: Some(NotifierPendingAt {
+                    scheduled_at,
+                    ffqn,
+                    component_input_digest: component_id.input_digest,
+                }),
                 execution_finished: None,
                 response: None,
             }
@@ -1130,6 +1219,7 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         scheduled_at: DateTime<Utc>,     // Changing to state PendingAt
         corresponding_version: &Version, // t_execution_log is not be changed
+        component_input_digest: InputContentDigest,
     ) -> Result<AppendNotifier, DbErrorWrite> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after response appended");
         let execution_id_str = execution_id.to_string();
@@ -1168,6 +1258,7 @@ impl SqlitePool {
             pending_at: Some(NotifierPendingAt {
                 scheduled_at,
                 ffqn: Self::fetch_created_event(tx, execution_id)?.ffqn,
+                component_input_digest,
             }),
             execution_finished: None,
             response: None,
@@ -1181,6 +1272,7 @@ impl SqlitePool {
         appending_version: &Version,
         scheduled_at: DateTime<Utc>, // Changing to state PendingAt
         intermittent_failure: bool,
+        component_input_digest: InputContentDigest,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
         // If response idx is unknown, use 0. This distinguishs the two paths.
@@ -1224,6 +1316,7 @@ impl SqlitePool {
                 pending_at: Some(NotifierPendingAt {
                     scheduled_at,
                     ffqn: Self::fetch_created_event(tx, execution_id)?.ffqn,
+                    component_input_digest,
                 }),
                 execution_finished: None,
                 response: None,
@@ -1454,7 +1547,7 @@ impl SqlitePool {
         let mut stmt = tx.prepare(
             r"
                 SELECT
-                    state, ffqn, corresponding_version, pending_expires_finished,
+                    state, ffqn, component_id_input_digest, corresponding_version, pending_expires_finished,
                     last_lock_version, executor_id, run_id,
                     join_set_id, join_set_closing,
                     result_kind
@@ -1469,7 +1562,10 @@ impl SqlitePool {
             },
             |row| {
                 CombinedState::new(
-                    &CombinedStateDTO {
+                    CombinedStateDTO {
+                        component_id_input_digest: row
+                            .get::<_, FromStrWrapper<_>>("component_id_input_digest")?
+                            .0,
                         state: row.get("state")?,
                         ffqn: row.get("ffqn")?,
                         pending_expires_finished: row
@@ -1573,7 +1669,8 @@ impl SqlitePool {
         };
         let sql = format!(
             r"
-            SELECT created_at, scheduled_at, state, execution_id, ffqn, corresponding_version, pending_expires_finished,
+            SELECT created_at, scheduled_at, component_id_input_digest,
+            state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
             result_kind
@@ -1592,10 +1689,14 @@ impl SqlitePool {
                     .as_ref(),
                 |row| {
                     let execution_id = row.get::<_, ExecutionId>("execution_id")?;
+                    let component_id_input_digest = row
+                        .get::<_, FromStrWrapper<_>>("component_id_input_digest")?
+                        .0;
                     let created_at = row.get("created_at")?;
                     let scheduled_at = row.get("scheduled_at")?;
                     let combined_state = CombinedState::new(
-                        &CombinedStateDTO {
+                        CombinedStateDTO {
+                            component_id_input_digest,
                             state: row.get("state")?,
                             ffqn: row.get("ffqn")?,
                             pending_expires_finished: row
@@ -1901,6 +2002,7 @@ impl SqlitePool {
                     &appending_version,
                     *backoff_expires_at,
                     true, // an intermittent failure
+                    combined_state.component_id_input_digest,
                 )?;
                 return Ok((next_version, notifier));
             }
@@ -1914,6 +2016,7 @@ impl SqlitePool {
                     &appending_version,
                     *backoff_expires_at,
                     false, // not an intermittent failure
+                    combined_state.component_id_input_digest,
                 )?;
                 return Ok((next_version, notifier));
             }
@@ -2015,6 +2118,7 @@ impl SqlitePool {
                         &appending_version,
                         scheduled_at,
                         false, // not an intermittent failure
+                        combined_state.component_id_input_digest,
                     )?;
                     return Ok((next_version, notifier));
                 }
@@ -2097,6 +2201,7 @@ impl SqlitePool {
                 execution_id,
                 scheduled_at,
                 &combined_state.corresponding_version, // not changing the version
+                combined_state.component_id_input_digest,
             )?
         } else {
             AppendNotifier::default()
@@ -2595,11 +2700,11 @@ impl SqlitePool {
         Ok(execution_ids_versions)
     }
 
-    fn get_pending_by_component_id(
+    fn get_pending_by_component_input_digest(
         conn: &Connection,
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,
-        component_id: &ComponentId,
+        input_digest: &InputContentDigest,
     ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
         let mut stmt = conn
             .prepare_cached(&format!(
@@ -2616,7 +2721,7 @@ impl SqlitePool {
         stmt.query_map(
             named_params! {
                 ":pending_expires_finished": pending_at_or_sooner,
-                ":component_id_input_digest": component_id.input_digest.to_string(),
+                ":component_id_input_digest": input_digest.to_string(),
                 ":batch_size": batch_size,
             },
             |row| {
@@ -2652,7 +2757,7 @@ impl SqlitePool {
 
         // Notify pending_at subscribers.
         if !pending_ats.is_empty() {
-            let guard = self.0.pending_ffqn_subscribers.lock().unwrap();
+            let guard = self.0.pending_subscribers.lock().unwrap();
             for pending_at in pending_ats {
                 Self::notify_pending_locked(&pending_at, current_time, &guard);
             }
@@ -2685,17 +2790,11 @@ impl SqlitePool {
     fn notify_pending_locked(
         notifier: &NotifierPendingAt,
         current_time: DateTime<Utc>,
-        ffqn_to_pending_subscription: &std::sync::MutexGuard<
-            HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>,
-        >,
+        ffqn_to_pending_subscription: &std::sync::MutexGuard<PendingFfqnSubscribersHolder>,
     ) {
         // No need to remove here, cleanup is handled by the caller.
-        if notifier.scheduled_at <= current_time
-            && let Some((subscription, _)) = ffqn_to_pending_subscription.get(&notifier.ffqn)
-        {
-            debug!("Notifying pending subscriber");
-            // Does not block
-            let _ = subscription.try_send(());
+        if notifier.scheduled_at <= current_time {
+            ffqn_to_pending_subscription.notify(notifier);
         }
     }
 }
@@ -2775,11 +2874,11 @@ impl DbExecutor for SqlitePool {
                 {
                     let component_id = component_id.clone();
                     move |conn| {
-                        Self::get_pending_by_component_id(
+                        Self::get_pending_by_component_input_digest(
                             conn,
                             batch_size,
                             pending_at_or_sooner,
-                            &component_id,
+                            &component_id.input_digest,
                         )
                     }
                 },
@@ -2943,7 +3042,7 @@ impl DbExecutor for SqlitePool {
         Ok(version)
     }
 
-    // Supports only one subscriber per ffqn.
+    // Supports only one subscriber (executor) per ffqn.
     // A new subscriber replaces the old one, which will eventually time out, which is fine.
     #[instrument(level = Level::TRACE, skip(self, timeout_fut))]
     async fn wait_for_pending_by_ffqn(
@@ -2955,9 +3054,9 @@ impl DbExecutor for SqlitePool {
         let unique_tag: u64 = rand::random();
         let (sender, mut receiver) = mpsc::channel(1); // senders must use `try_send`
         {
-            let mut ffqn_to_pending_subscription = self.0.pending_ffqn_subscribers.lock().unwrap();
+            let mut pending_subscribers = self.0.pending_subscribers.lock().unwrap();
             for ffqn in ffqns.as_ref() {
-                ffqn_to_pending_subscription.insert(ffqn.clone(), (sender.clone(), unique_tag));
+                pending_subscribers.insert_ffqn(ffqn.clone(), (sender.clone(), unique_tag));
             }
         }
         async {
@@ -2967,7 +3066,7 @@ impl DbExecutor for SqlitePool {
                         let ffqns = ffqns.clone();
                         move |conn| Self::get_pending_by_ffqns(conn, 1, pending_at_or_sooner, ffqns.as_ref())
                     },
-                    "subscribe_to_pending",
+                    "get_pending_by_ffqns",
                 )
                 .await
             else {
@@ -2991,15 +3090,15 @@ impl DbExecutor for SqlitePool {
         }.await;
         // Clean up ffqn_to_pending_subscription in any case
         {
-            let mut ffqn_to_pending_subscription = self.0.pending_ffqn_subscribers.lock().unwrap();
+            let mut pending_subscribers = self.0.pending_subscribers.lock().unwrap();
             for ffqn in ffqns.as_ref() {
-                match ffqn_to_pending_subscription.remove(ffqn) {
+                match pending_subscribers.remove_ffqn(ffqn) {
                     Some((_, tag)) if tag == unique_tag => {
                         // Cleanup OK.
                     }
                     Some(other) => {
                         // Reinsert foreign sender.
-                        ffqn_to_pending_subscription.insert(ffqn.clone(), other);
+                        pending_subscribers.insert_ffqn(ffqn.clone(), other);
                     }
                     None => {
                         // Value was replaced and cleaned up already.
@@ -3009,13 +3108,70 @@ impl DbExecutor for SqlitePool {
         }
     }
 
+    // Supports only one subscriber (executor) per component id.
+    // A new subscriber replaces the old one, which will eventually time out, which is fine.
     async fn wait_for_pending_by_component_id(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
-        timeout_fut.await
+        let unique_tag: u64 = rand::random();
+        let (sender, mut receiver) = mpsc::channel(1); // senders must use `try_send`
+        {
+            let mut pending_subscribers = self.0.pending_subscribers.lock().unwrap();
+            pending_subscribers.insert_by_component(
+                component_id.input_digest.clone(),
+                (sender.clone(), unique_tag),
+            );
+        }
+        async {
+            let Ok(execution_ids_versions) = self
+                .transaction(
+                    {
+                        let input_digest =component_id.input_digest.clone();
+                        move |conn| Self::get_pending_by_component_input_digest(conn, 1, pending_at_or_sooner, &input_digest)
+                    },
+                    "get_pending_by_component_input_digest",
+                )
+                .await
+            else {
+                trace!(
+                    "Ignoring get_pending error and waiting in for timeout to avoid executor repolling too soon"
+                );
+                timeout_fut.await;
+                return;
+            };
+            if !execution_ids_versions.is_empty() {
+                trace!("Not waiting, database already contains new pending executions");
+                return;
+            }
+            tokio::select! { // future's liveness: Dropping the loser immediately.
+                _ = receiver.recv() => {
+                    trace!("Received a notification");
+                }
+                () = timeout_fut => {
+                }
+            }
+        }.await;
+        // Clean up ffqn_to_pending_subscription in any case
+        {
+            let mut pending_subscribers = self.0.pending_subscribers.lock().unwrap();
+
+            match pending_subscribers.remove_by_component(&component_id.input_digest) {
+                Some((_, tag)) if tag == unique_tag => {
+                    // Cleanup OK.
+                }
+                Some(other) => {
+                    // Reinsert foreign sender.
+                    pending_subscribers
+                        .insert_by_component(component_id.input_digest.clone(), other);
+                }
+                None => {
+                    // Value was replaced and cleaned up already.
+                }
+            }
+        }
     }
 
     async fn get_last_execution_event(

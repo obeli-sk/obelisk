@@ -4,8 +4,8 @@ use super::{
 use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
 use anyhow::{anyhow, bail};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, InvalidNameError, StrVariant, check_name,
-    prefixed_ulid::ExecutorId,
+    ComponentId, ComponentRetryConfig, ComponentType, InputContentDigest, InvalidNameError,
+    StrVariant, check_name, prefixed_ulid::ExecutorId,
 };
 use db_sqlite::sqlite_dao::SqliteConfig;
 use log::{LoggingConfig, LoggingStyle};
@@ -525,7 +525,7 @@ impl ActivityStubExtComponentConfigToml {
         let component_id = ComponentId::new(
             component_type,
             StrVariant::from(common.name),
-            common.content_digest.clone(),
+            InputContentDigest(common.content_digest.clone()),
             common.content_digest,
         )?;
 
@@ -613,7 +613,7 @@ impl ActivityWasmComponentConfigToml {
         let component_id = ComponentId::new(
             ComponentType::ActivityWasm,
             StrVariant::from(common.name),
-            common.content_digest.clone(),
+            InputContentDigest(common.content_digest.clone()),
             common.content_digest,
         )?;
         let activity_config = ActivityConfig {
@@ -796,7 +796,7 @@ impl WorkflowComponentConfigToml {
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             StrVariant::from(common.name),
-            common.content_digest,
+            InputContentDigest(common.content_digest),
             transformed_digest,
         )?;
 
@@ -1107,7 +1107,7 @@ pub(crate) mod webhook {
     };
     use crate::config::{config_holder::PathPrefixes, env_var::EnvVarConfig};
     use anyhow::Context;
-    use concepts::{ComponentId, ComponentType, StrVariant};
+    use concepts::{ComponentId, ComponentType, InputContentDigest, StrVariant};
     use schemars::JsonSchema;
     use serde::Deserialize;
     use std::{
@@ -1163,7 +1163,7 @@ pub(crate) mod webhook {
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(common.name.clone()),
-                common.content_digest.clone(),
+                InputContentDigest(common.content_digest.clone()),
                 common.content_digest,
             )?;
             Ok((
