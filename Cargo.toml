@@ -269,7 +269,7 @@ tonic-prost = "0.14.2"
 tonic-prost-build = "0.14.2"
 tonic-web = "0.14.2"
 tower = "0.5.2"
-tower-http = { version = "0.6.7", features = ["trace", "cors"] }
+tower-http = { version = "0.6.8", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.4"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
