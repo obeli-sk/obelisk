@@ -19,8 +19,8 @@ expression: execution_log
           "component_id": {
             "component_type": "workflow",
             "name": "",
-            "input_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-            "transformed_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "transformed_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "metadata": null,
           "scheduled_by": null
@@ -36,8 +36,8 @@ expression: execution_log
           "component_id": {
             "component_type": "workflow",
             "name": "",
-            "input_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-            "transformed_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "transformed_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "executor_id": "Exr_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000001",
@@ -159,8 +159,8 @@ expression: execution_log
           "component_id": {
             "component_type": "workflow",
             "name": "",
-            "input_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-            "transformed_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "transformed_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "executor_id": "Exr_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000002",
@@ -200,8 +200,8 @@ expression: execution_log
           "component_id": {
             "component_type": "workflow",
             "name": "",
-            "input_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-            "transformed_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "transformed_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "executor_id": "Exr_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000003",

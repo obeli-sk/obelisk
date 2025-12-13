@@ -1,4 +1,4 @@
-use crate::{histograms::Histograms, sqlite_dao::conversions::FromStrWrapper};
+use crate::histograms::Histograms;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -157,7 +157,6 @@ ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 /// `Locked`:               `max_retries`, `retry_exp_backoff_millis`, `last_lock_version`, `executor_id`, `run_id`
 /// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
 /// `Finished` :            `result_kind`.
-// FIXME component_id_input_digest - BLOB
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
@@ -165,7 +164,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     corresponding_version INTEGER NOT NULL,
     ffqn TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    component_id_input_digest TEXT NOT NULL,
+    component_id_input_digest BLOB NOT NULL,
 
     pending_expires_finished TEXT NOT NULL,
     state TEXT NOT NULL,
@@ -255,7 +254,7 @@ mod conversions {
         ToSql,
         types::{FromSql, FromSqlError},
     };
-    use std::{fmt::Debug, str::FromStr};
+    use std::fmt::Debug;
     use tracing::error;
 
     impl From<rusqlite::Error> for RusqliteError {
@@ -342,24 +341,6 @@ mod conversions {
             Ok(rusqlite::types::ToSqlOutput::Owned(
                 rusqlite::types::Value::Text(string),
             ))
-        }
-    }
-
-    pub(crate) struct FromStrWrapper<T: FromStr>(pub(crate) T);
-    impl<T: FromStr<Err = D>, D: Debug> FromSql for FromStrWrapper<T> {
-        fn column_result(
-            value: rusqlite::types::ValueRef<'_>,
-        ) -> rusqlite::types::FromSqlResult<Self> {
-            let value = String::column_result(value)?;
-            let value = T::from_str(&value).map_err(|err| {
-                error!(
-                    backtrace = %std::backtrace::Backtrace::capture(),
-                    "Cannot convert string `{value}` to type:`{type}` - {err:?}",
-                    r#type = std::any::type_name::<T>()
-                );
-                FromSqlError::InvalidType
-            })?;
-            Ok(Self(value))
         }
     }
 
@@ -1196,7 +1177,7 @@ impl SqlitePool {
                 ":ffqn": ffqn.to_string(),
                 ":state": STATE_PENDING_AT,
                 ":created_at": created_at,
-                ":component_id_input_digest": component_id.input_digest.to_string(),
+                ":component_id_input_digest": component_id.input_digest,
                 ":scheduled_at": scheduled_at,
             })?;
             AppendNotifier {
@@ -1563,9 +1544,7 @@ impl SqlitePool {
             |row| {
                 CombinedState::new(
                     CombinedStateDTO {
-                        component_id_input_digest: row
-                            .get::<_, FromStrWrapper<_>>("component_id_input_digest")?
-                            .0,
+                        component_id_input_digest: row.get("component_id_input_digest")?,
                         state: row.get("state")?,
                         ffqn: row.get("ffqn")?,
                         pending_expires_finished: row
@@ -1689,9 +1668,7 @@ impl SqlitePool {
                     .as_ref(),
                 |row| {
                     let execution_id = row.get::<_, ExecutionId>("execution_id")?;
-                    let component_id_input_digest = row
-                        .get::<_, FromStrWrapper<_>>("component_id_input_digest")?
-                        .0;
+                    let component_id_input_digest = row.get("component_id_input_digest")?;
                     let created_at = row.get("created_at")?;
                     let scheduled_at = row.get("scheduled_at")?;
                     let combined_state = CombinedState::new(
@@ -2721,7 +2698,7 @@ impl SqlitePool {
         stmt.query_map(
             named_params! {
                 ":pending_expires_finished": pending_at_or_sooner,
-                ":component_id_input_digest": input_digest.to_string(),
+                ":component_id_input_digest": input_digest,
                 ":batch_size": batch_size,
             },
             |row| {

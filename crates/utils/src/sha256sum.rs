@@ -17,8 +17,6 @@ pub async fn calculate_sha256_file<P: AsRef<Path>>(
         }
         hasher.update(&buf[..n]);
     }
-    Ok(ContentDigest::new(
-        concepts::HashType::Sha256,
-        format!("{:x}", hasher.finalize()),
-    ))
+    let digest: [u8; 32] = hasher.finalize().into();
+    Ok(ContentDigest::new(concepts::HashType::Sha256, digest))
 }

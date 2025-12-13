@@ -2061,40 +2061,27 @@ pub struct InputContentDigest(pub ContentDigest);
 pub struct ContentDigest(pub Digest);
 pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest {
     hash_type: HashType::Sha256,
-    hash_base16: StrVariant::Static(
-        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-    ),
+    digest: [0; 32],
 });
 
 impl ContentDigest {
     #[must_use]
-    pub fn new(hash_type: HashType, hash_base16: String) -> Self {
-        Self(Digest::new(hash_type, hash_base16))
+    pub fn new(hash_type: HashType, digest: [u8; 32]) -> Self {
+        Self(Digest::new(hash_type, digest))
     }
 }
 
 #[derive(
-    Debug,
-    Clone,
-    derive_more::Display,
-    PartialEq,
-    Eq,
-    Hash,
-    serde_with::SerializeDisplay,
-    serde_with::DeserializeFromStr,
+    Debug, Clone, PartialEq, Eq, Hash, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
 )]
-#[display("{hash_type}:{hash_base16}")]
 pub struct Digest {
-    hash_type: HashType,
-    hash_base16: StrVariant, // FIXME: Switch to [u8;32]
+    pub hash_type: HashType,
+    pub digest: [u8; 32],
 }
 impl Digest {
     #[must_use]
-    pub fn new(hash_type: HashType, hash_base16: String) -> Self {
-        Self {
-            hash_type,
-            hash_base16: StrVariant::Arc(Arc::from(hash_base16)),
-        }
+    pub fn new(hash_type: HashType, digest: [u8; 32]) -> Self {
+        Self { hash_type, digest }
     }
 
     #[must_use]
@@ -2103,8 +2090,21 @@ impl Digest {
     }
 
     #[must_use]
-    pub fn digest_base16(&self) -> &str {
-        &self.hash_base16
+    pub fn digest_base16(&self) -> String {
+        self.digest
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    }
+}
+
+impl Display for Digest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:", self.hash_type)?;
+        for b in self.digest {
+            write!(f, "{b:02x}")?;
+        }
+        Ok(())
     }
 }
 
@@ -2116,29 +2116,30 @@ pub enum DigestParseErrror {
     TypeParseError { hash_type: String },
     #[error("cannot parse ContentDigest - invalid suffix length, expected 64 hex digits, got {0}")]
     SuffixLength(usize),
-    #[error("cannot parse ContentDigest - suffix must be hex-encoded, got invalid character `{0}`")]
-    SuffixInvalid(char),
+    #[error("cannot parse ContentDigest - suffix must be hex encoded")]
+    InvalidHex,
 }
 
 impl FromStr for Digest {
     type Err = DigestParseErrror;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let (hash_type, hash_base16) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
+        let (hash_type, hash_base16) = input
+            .split_once(':')
+            .ok_or(DigestParseErrror::DelimiterNotFound)?;
         let hash_type =
-            HashType::from_str(hash_type).map_err(|_err| Self::Err::TypeParseError {
+            HashType::from_str(hash_type).map_err(|_err| DigestParseErrror::TypeParseError {
                 hash_type: hash_type.to_string(),
             })?;
         if hash_base16.len() != 64 {
-            return Err(Self::Err::SuffixLength(hash_base16.len()));
+            return Err(DigestParseErrror::SuffixLength(hash_base16.len()));
         }
-        if let Some(invalid) = hash_base16.chars().find(|c| !c.is_ascii_hexdigit()) {
-            return Err(Self::Err::SuffixInvalid(invalid));
+        let mut digest = [0u8; 32];
+        for i in 0..32 {
+            let chunk = &hash_base16[i * 2..i * 2 + 2];
+            digest[i] = u8::from_str_radix(chunk, 16).map_err(|_| DigestParseErrror::InvalidHex)?;
         }
-        Ok(Self {
-            hash_type,
-            hash_base16: StrVariant::Arc(Arc::from(hash_base16)),
-        })
+        Ok(Self { hash_type, digest })
     }
 }
 

@@ -1,11 +1,11 @@
 use crate::{
-    ExecutionId, JoinSetId,
+    ContentDigest, ExecutionId, HashType, InputContentDigest, JoinSetId,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite},
 };
 use rusqlite::{
     ToSql,
-    types::{FromSql, FromSqlError, ToSqlOutput},
+    types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
 };
 use tracing::error;
 
@@ -15,7 +15,7 @@ impl ToSql for ExecutionId {
     }
 }
 impl FromSql for ExecutionId {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<ExecutionId>().map_err(|err| {
             error!(
@@ -33,7 +33,7 @@ impl ToSql for ExecutionIdDerived {
     }
 }
 impl FromSql for ExecutionIdDerived {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<ExecutionIdDerived>().map_err(|err| {
             error!(
@@ -51,7 +51,7 @@ impl ToSql for JoinSetId {
     }
 }
 impl FromSql for JoinSetId {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<JoinSetId>().map_err(|err| {
             error!(
@@ -69,7 +69,7 @@ impl ToSql for DelayId {
     }
 }
 impl FromSql for DelayId {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<Self>().map_err(|err| {
             error!(
@@ -87,7 +87,7 @@ impl ToSql for RunId {
     }
 }
 impl FromSql for RunId {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<Self>().map_err(|err| {
             error!(
@@ -105,7 +105,7 @@ impl ToSql for ExecutorId {
     }
 }
 impl FromSql for ExecutorId {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<Self>().map_err(|err| {
             error!(
@@ -114,6 +114,28 @@ impl FromSql for ExecutorId {
             );
             FromSqlError::InvalidType
         })
+    }
+}
+
+impl ToSql for InputContentDigest {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.0.digest.as_slice()))
+    }
+}
+impl FromSql for InputContentDigest {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        match value {
+            ValueRef::Blob(b) if b.len() == 32 => {
+                let mut digest = [0u8; 32];
+                digest.copy_from_slice(b);
+                Ok(InputContentDigest(ContentDigest::new(
+                    HashType::Sha256,
+                    digest,
+                )))
+            }
+            ValueRef::Blob(_) => Err(FromSqlError::Other(Box::from("invalid blob length"))),
+            _ => Err(FromSqlError::InvalidType),
+        }
     }
 }
 
