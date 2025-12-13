@@ -733,34 +733,42 @@ impl SqlitePool {
         }
 
         // t_metadata
-        conn_execute(&conn, CREATE_TABLE_T_METADATA, [])?;
-        // Insert row if not exists.
-        conn_execute(
-            &conn,
-            &format!(
-                "INSERT INTO t_metadata (schema_version, created_at) VALUES
-                    ({T_METADATA_EXPECTED_SCHEMA_VERSION}, ?) ON CONFLICT DO NOTHING"
-            ),
-            [Utc::now()],
-        )?;
-        // Fail on unexpected `schema_version`.
-        let actual_version = conn
-            .prepare("SELECT schema_version FROM t_metadata ORDER BY id DESC LIMIT 1")
-            .map_err(|err| {
-                error!("cannot select schema version - {err:?}");
-                InitializationError
-            })?
-            .query_row([], |row| row.get::<_, u32>("schema_version"));
+        {
+            conn_execute(&conn, CREATE_TABLE_T_METADATA, [])?;
+            // Insert row if not exists.
 
-        let actual_version = actual_version.map_err(|err| {
-            error!("Cannot read the schema version - {err:?}");
-            InitializationError
-        })?;
-        if actual_version != T_METADATA_EXPECTED_SCHEMA_VERSION {
-            error!(
-                "wrong schema version, expected {T_METADATA_EXPECTED_SCHEMA_VERSION}, got {actual_version}"
-            );
-            return Err(InitializationError);
+            let actual_version = conn
+                .prepare("SELECT schema_version FROM t_metadata ORDER BY id DESC LIMIT 1")
+                .map_err(|err| {
+                    error!("cannot select schema version - {err:?}");
+                    InitializationError
+                })?
+                .query_row([], |row| row.get::<_, u32>("schema_version"))
+                .optional()
+                .map_err(|err| {
+                    error!("Cannot read the schema version - {err:?}");
+                    InitializationError
+                })?;
+
+            match actual_version {
+                None => conn_execute(
+                    &conn,
+                    &format!(
+                        "INSERT INTO t_metadata (schema_version, created_at) VALUES
+                            ({T_METADATA_EXPECTED_SCHEMA_VERSION}, ?) ON CONFLICT DO NOTHING"
+                    ),
+                    [Utc::now()],
+                )?,
+                Some(actual_version) => {
+                    // Fail on unexpected `schema_version`.
+                    if actual_version != T_METADATA_EXPECTED_SCHEMA_VERSION {
+                        error!(
+                            "wrong schema version, expected {T_METADATA_EXPECTED_SCHEMA_VERSION}, got {actual_version}"
+                        );
+                        return Err(InitializationError);
+                    }
+                }
+            }
         }
 
         // t_execution_log
