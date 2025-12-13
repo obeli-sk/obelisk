@@ -557,8 +557,7 @@ impl ActivityStubExtComponentConfigToml {
         let component_id = ComponentId::new(
             component_type,
             StrVariant::from(common.name),
-            InputContentDigest(common.content_digest.clone()),
-            common.content_digest,
+            InputContentDigest(common.content_digest),
         )?;
 
         Ok(ActivityStubExtConfigVerified {
@@ -645,8 +644,7 @@ impl ActivityWasmComponentConfigToml {
         let component_id = ComponentId::new(
             ComponentType::ActivityWasm,
             StrVariant::from(common.name),
-            InputContentDigest(common.content_digest.clone()),
-            common.content_digest,
+            InputContentDigest(common.content_digest),
         )?;
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
@@ -818,7 +816,8 @@ impl WorkflowComponentConfigToml {
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
-        let (wasm_path, transformed_digest) = if self.convert_core_module {
+        let (wasm_path, _transformed_digest) = if self.convert_core_module {
+            // TODO: Avoid this by maintainig a mapping file if necessary.
             WasmComponent::convert_core_module_to_component(&wasm_path, &wasm_cache_dir)
                 .await?
                 .unwrap_or((wasm_path, common.content_digest.clone()))
@@ -829,7 +828,6 @@ impl WorkflowComponentConfigToml {
             ComponentType::Workflow,
             StrVariant::from(common.name),
             InputContentDigest(common.content_digest),
-            transformed_digest,
         )?;
 
         let workflow_config = WorkflowConfig {
@@ -1195,8 +1193,7 @@ pub(crate) mod webhook {
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(common.name.clone()),
-                InputContentDigest(common.content_digest.clone()),
-                common.content_digest,
+                InputContentDigest(common.content_digest),
             )?;
             Ok((
                 common.name, // TODO: remove, already in component id

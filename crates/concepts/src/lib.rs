@@ -1945,20 +1945,17 @@ pub struct ComponentId {
     pub component_type: ComponentType,
     pub name: StrVariant,
     pub input_digest: InputContentDigest,
-    pub transformed_digest: ContentDigest,
 }
 impl ComponentId {
     pub fn new(
         component_type: ComponentType,
         name: StrVariant,
         input_digest: InputContentDigest,
-        transformed_digest: ContentDigest,
     ) -> Result<Self, InvalidNameError<Self>> {
         Ok(Self {
             component_type,
             name: check_name(name, "_")?,
             input_digest,
-            transformed_digest,
         })
     }
 
@@ -1968,7 +1965,6 @@ impl ComponentId {
             component_type: ComponentType::ActivityWasm,
             name: StrVariant::empty(),
             input_digest: InputContentDigest(CONTENT_DIGEST_DUMMY),
-            transformed_digest: CONTENT_DIGEST_DUMMY,
         }
     }
 
@@ -1979,7 +1975,6 @@ impl ComponentId {
             component_type: ComponentType::Workflow,
             name: StrVariant::empty(),
             input_digest: InputContentDigest(CONTENT_DIGEST_DUMMY),
-            transformed_digest: CONTENT_DIGEST_DUMMY,
         }
     }
 }

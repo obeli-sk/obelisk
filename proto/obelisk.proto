@@ -154,7 +154,6 @@ message ComponentId {
     ComponentType component_type = 1;
     string name = 2;
     string input_sha256_digest = 3;
-    string transformed_sha256_digest = 4;
 }
 
 message FunctionName {

@@ -83,7 +83,6 @@ impl From<ComponentId> for grpc_gen::ComponentId {
             component_type: grpc_gen::ComponentType::from(value.component_type).into(),
             name: value.name.to_string(),
             input_sha256_digest: value.input_digest.to_string(),
-            transformed_sha256_digest: value.transformed_digest.to_string(),
         }
     }
 }
@@ -108,22 +107,7 @@ impl TryFrom<grpc_gen::ComponentId> for ComponentId {
                 ))
             })?,
         ));
-        let transformed_digest = ContentDigest(
-            Digest::from_str(&value.transformed_sha256_digest).map_err(|parse_err| {
-                error!("{parse_err:?}");
-                tonic::Status::invalid_argument(format!(
-                    "`transformed_sha256_digest` cannot be parsed - {parse_err}"
-                ))
-            })?,
-        );
-
-        ComponentId::new(
-            component_type,
-            value.name.into(),
-            input_digest,
-            transformed_digest,
-        )
-        .map_err(|parse_err| {
+        ComponentId::new(component_type, value.name.into(), input_digest).map_err(|parse_err| {
             error!("`name` is invalid - {parse_err:?}");
             tonic::Status::invalid_argument(format!("name cannot be parsed - {parse_err}"))
         })
