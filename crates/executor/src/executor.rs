@@ -849,6 +849,7 @@ mod tests {
     };
     use db_tests::Database;
     use indexmap::IndexMap;
+    use rstest::rstest;
     use simple_worker::FFQN_SOME;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::set_up;
@@ -871,27 +872,37 @@ mod tests {
             .await
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn execute_simple_lifecycle_tick_based_mem() {
+    async fn execute_simple_lifecycle_tick_based_mem(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
+        locking_strategy: LockingStrategy,
+    ) {
         let created_at = Now.now();
         let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         execute_simple_lifecycle_tick_based(
             db_pool.connection().as_ref(),
             db_exec.clone(),
             ConstClock(created_at),
+            locking_strategy,
         )
         .await;
         db_close.close().await;
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn execute_simple_lifecycle_tick_based_sqlite() {
+    async fn execute_simple_lifecycle_tick_based_sqlite(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
+        locking_strategy: LockingStrategy,
+    ) {
         let created_at = Now.now();
         let (_guard, db_pool, db_exec, db_close) = Database::Sqlite.set_up().await;
         execute_simple_lifecycle_tick_based(
             db_pool.connection().as_ref(),
             db_exec.clone(),
             ConstClock(created_at),
+            locking_strategy,
         )
         .await;
         db_close.close().await;
@@ -901,6 +912,7 @@ mod tests {
         db_connection: &dyn DbConnection,
         db_exec: Arc<dyn DbExecutor>,
         clock_fn: C,
+        locking_strategy: LockingStrategy,
     ) {
         set_up();
         let created_at = clock_fn.now();
@@ -912,7 +924,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
-            locking_strategy: LockingStrategy::default(),
+            locking_strategy,
         };
 
         let execution_log = create_and_tick(
