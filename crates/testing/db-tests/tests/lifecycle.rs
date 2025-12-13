@@ -24,121 +24,76 @@ use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
 use tracing::{debug, info};
 
+#[rstest]
 #[tokio::test]
-async fn test_expired_lock_should_be_found_mem() {
+async fn test_expired_lock_should_be_found_mem(
+    #[values(Database::Memory, Database::Sqlite)] database: Database,
+) {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
     expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
     db_close.close().await;
 }
 
+#[rstest]
 #[tokio::test]
-async fn test_expired_lock_should_be_found_sqlite() {
+async fn test_append_batch_respond_to_parent(
+    #[values(Database::Memory, Database::Sqlite)] database: Database,
+) {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
-    let db_connection = db_pool.connection();
-    expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await;
-}
-
-#[tokio::test]
-async fn test_append_batch_respond_to_parent_mem() {
-    set_up();
-    let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
     append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
     db_close.close().await;
 }
 
+#[rstest]
 #[tokio::test]
-async fn test_append_batch_respond_to_parent_sqlite() {
+async fn test_lock_pending_should_sort_by_scheduled_at(
+    #[values(Database::Memory, Database::Sqlite)] database: Database,
+    #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
+    locking_strategy: LockingStrategy,
+) {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
-    append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
+    lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock, locking_strategy)
+        .await;
     db_close.close().await;
 }
 
+#[rstest]
 #[tokio::test]
-async fn test_lock_pending_should_sort_by_scheduled_at_mem() {
+async fn test_lock(#[values(Database::Memory, Database::Sqlite)] database: Database) {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
-    lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock).await;
+    test_lock_inner(db_connection.as_ref(), sim_clock).await;
     db_close.close().await;
 }
 
+#[rstest]
 #[tokio::test]
-async fn test_lock_pending_should_sort_by_scheduled_at_sqlite() {
+async fn test_get_expired_lock(#[values(Database::Memory, Database::Sqlite)] database: Database) {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
-    let db_connection = db_pool.connection();
-    lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await;
-}
-
-#[tokio::test]
-async fn test_lock_mem() {
-    set_up();
-    let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
-    let db_connection = db_pool.connection();
-    test_lock(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await;
-}
-
-#[tokio::test]
-async fn test_lock_sqlite() {
-    set_up();
-    let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
-    let db_connection = db_pool.connection();
-    test_lock(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await;
-}
-
-#[tokio::test]
-async fn test_get_expired_lock_mem() {
-    set_up();
-    let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_lock(db_connection.as_ref(), sim_clock).await;
     db_close.close().await;
 }
 
+#[rstest]
 #[tokio::test]
-async fn test_get_expired_lock_sqlite() {
+async fn test_get_expired_delay(#[values(Database::Memory, Database::Sqlite)] database: Database) {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
-    let db_connection = db_pool.connection();
-    get_expired_lock(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await;
-}
-
-#[tokio::test]
-async fn test_get_expired_delay_mem() {
-    set_up();
-    let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
-    let db_connection = db_pool.connection();
-    get_expired_delay(db_connection.as_ref(), sim_clock).await;
-    db_close.close().await;
-}
-
-#[tokio::test]
-async fn test_get_expired_delay_sqlite() {
-    set_up();
-    let sim_clock = SimClock::default();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     let db_connection = db_pool.connection();
     get_expired_delay(db_connection.as_ref(), sim_clock).await;
     db_close.close().await;
@@ -148,6 +103,8 @@ async fn test_get_expired_delay_sqlite() {
 #[rstest]
 async fn append_after_finish_should_not_be_possible(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
+    #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
+    locking_strategy: LockingStrategy,
 ) {
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
@@ -182,6 +139,7 @@ async fn append_after_finish_should_not_be_possible(
         &component_id,
         db_connection.as_ref(),
         &sim_clock,
+        locking_strategy,
     )
     .await;
     let version = {
@@ -232,26 +190,45 @@ async fn lock_pending(
     component_id: &ComponentId,
     db_connection: &dyn DbConnection,
     sim_clock: &SimClock,
+    locking_strategy: LockingStrategy,
 ) -> Version {
     let created_at = sim_clock.now();
     info!(now = %created_at, "LockPending");
-    let locked_executions = db_connection
-        .lock_pending_by_ffqns(
-            1,
-            created_at,
-            Arc::from([SOME_FFQN]),
-            created_at,
-            component_id.clone(),
-            executor_id,
-            lock_expires_at,
-            run_id,
-            ComponentRetryConfig {
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-            },
-        )
-        .await
-        .unwrap();
+    let locked_executions = match locking_strategy {
+        LockingStrategy::ByFfqns => db_connection
+            .lock_pending_by_ffqns(
+                1,
+                created_at,
+                Arc::from([SOME_FFQN]),
+                created_at,
+                component_id.clone(),
+                executor_id,
+                lock_expires_at,
+                run_id,
+                ComponentRetryConfig {
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
+            )
+            .await
+            .unwrap(),
+        LockingStrategy::ByComponentId => db_connection
+            .lock_pending_by_component_id(
+                1,
+                created_at,
+                &component_id,
+                created_at,
+                executor_id,
+                lock_expires_at,
+                run_id,
+                ComponentRetryConfig {
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
+            )
+            .await
+            .unwrap(),
+    };
     assert_eq!(1, locked_executions.len());
     let locked_execution = locked_executions.into_iter().next().unwrap();
     assert_eq!(*execution_id, locked_execution.execution_id);
@@ -265,6 +242,8 @@ async fn lock_pending(
 #[rstest]
 async fn locking_in_unlock_backoff_should_not_be_possible(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
+    #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
+    locking_strategy: LockingStrategy,
 ) {
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
@@ -300,6 +279,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
         &component_id,
         db_connection.as_ref(),
         &sim_clock,
+        locking_strategy,
     )
     .await;
 
@@ -1092,9 +1072,15 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_cl
     assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
 }
 
+enum LockingStrategy {
+    ByFfqns,
+    ByComponentId,
+}
+
 async fn lock_pending_should_sort_by_scheduled_at(
     db_connection: &dyn DbConnection,
     sim_clock: SimClock,
+    locking_strategy: LockingStrategy,
 ) {
     let created_at = sim_clock.now();
     let older_id = ExecutionId::generate();
@@ -1147,31 +1133,52 @@ async fn lock_pending_should_sort_by_scheduled_at(
         .await
         .unwrap();
 
-    let locked_ids = db_connection
-        .lock_pending_by_ffqns(
-            3,
-            sim_clock.now(),
-            Arc::from([SOME_FFQN]),
-            sim_clock.now(),
-            ComponentId::dummy_activity(),
-            ExecutorId::generate(),
-            sim_clock.now() + Duration::from_secs(1),
-            RunId::generate(),
-            ComponentRetryConfig {
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|locked| locked.execution_id)
-        .collect::<Vec<_>>();
+    let locked_ids = match locking_strategy {
+        LockingStrategy::ByFfqns => {
+            db_connection
+                .lock_pending_by_ffqns(
+                    3,
+                    sim_clock.now(),
+                    Arc::from([SOME_FFQN]),
+                    sim_clock.now(),
+                    ComponentId::dummy_activity(),
+                    ExecutorId::generate(),
+                    sim_clock.now() + Duration::from_secs(1),
+                    RunId::generate(),
+                    ComponentRetryConfig {
+                        retry_exp_backoff: Duration::ZERO,
+                        max_retries: 0,
+                    },
+                )
+                .await
+        }
+        LockingStrategy::ByComponentId => {
+            db_connection
+                .lock_pending_by_component_id(
+                    3,
+                    sim_clock.now(),
+                    &ComponentId::dummy_activity(),
+                    sim_clock.now(),
+                    ExecutorId::generate(),
+                    sim_clock.now() + Duration::from_secs(1),
+                    RunId::generate(),
+                    ComponentRetryConfig {
+                        retry_exp_backoff: Duration::ZERO,
+                        max_retries: 0,
+                    },
+                )
+                .await
+        }
+    }
+    .unwrap()
+    .into_iter()
+    .map(|locked| locked.execution_id)
+    .collect::<Vec<_>>();
 
     assert_eq!(vec![older_id, newer_id, newest_id], locked_ids);
 }
 
-async fn test_lock(db_connection: &dyn DbConnection, sim_clock: SimClock) {
+async fn test_lock_inner(db_connection: &dyn DbConnection, sim_clock: SimClock) {
     let execution_id = ExecutionId::generate();
     let executor_id = ExecutorId::generate();
     // Create
@@ -1416,6 +1423,8 @@ async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock
 #[rstest]
 async fn get_expired_times_with_execution_that_made_progress(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
+    #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
+    locking_strategy: LockingStrategy,
 ) {
     set_up();
 
@@ -1454,6 +1463,7 @@ async fn get_expired_times_with_execution_that_made_progress(
         &component_id,
         db_connection.as_ref(),
         &sim_clock,
+        locking_strategy,
     )
     .await;
 
