@@ -57,6 +57,7 @@ pub(crate) enum Generate {
         /// Directory where folders and WIT files will be written to.
         output_directory: PathBuf,
     },
+    ExecutionId,
 }
 
 #[derive(Debug, clap::Subcommand)]

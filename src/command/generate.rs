@@ -1,7 +1,7 @@
 use crate::args::Generate;
 use crate::{args::shadow::PKG_VERSION, config::toml::ConfigToml};
 use anyhow::Context;
-use concepts::ComponentType;
+use concepts::{ComponentType, ExecutionId};
 use schemars::schema_for;
 use std::{
     borrow::Cow,
@@ -33,6 +33,10 @@ impl Generate {
                 component_type,
                 output_directory,
             } => generate_support_wits(component_type, output_directory).await,
+            Generate::ExecutionId => {
+                println!("{}", ExecutionId::generate());
+                Ok(())
+            }
         }
     }
 }

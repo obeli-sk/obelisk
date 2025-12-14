@@ -24,7 +24,6 @@ Enable allow/deny lists of remote hosts for HTTP client.
 Allows self referential exports, also enables generating on import side.
 
 ## feat: Add `obelisk generate`
-`obelisk generate execution-id` + `submit --execution-id`
 `obelisk generate config` blank(just webui),fibo, testing, stargazers
 `obelisk generate wit -c obelisk.toml --out-dir wit/deps/ my-activity`
 `obelisk generate wit` - based on obelisk-deps.toml tool + extensions based on component type, e.g. just `-schedule` for webhooks
