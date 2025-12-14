@@ -1,7 +1,9 @@
 use crate::grpc_gen::{self, execution_event::history_event, result_kind};
 use concepts::{
-    ComponentId, ComponentType, ContentDigest, Digest, ExecutionFailureKind, ExecutionId,
-    FinishedExecutionError, FunctionFqn, InputContentDigest, SupportedFunctionReturnValue,
+    ComponentId, ComponentType, ContentDigest, ExecutionFailureKind, ExecutionId,
+    FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
+    component_id::Digest,
+    component_id::InputContentDigest,
     prefixed_ulid::{DelayId, RunId},
     storage::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,

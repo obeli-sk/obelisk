@@ -2,10 +2,10 @@ use crate::{sha256sum::calculate_sha256_file, wit::from_wit_package_name_to_pkg_
 use anyhow::Context;
 use concepts::{
     ComponentType, ContentDigest, FnName, FunctionExtension, FunctionFqn, FunctionMetadata,
-    HASH_TYPE, IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType,
+    IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType,
     ReturnTypeNonExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_INVOKE,
     SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE,
-    SUFFIX_PKG_STUB, StrVariant,
+    SUFFIX_PKG_STUB, StrVariant, component_id::HASH_TYPE,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{

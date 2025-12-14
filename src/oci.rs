@@ -1,5 +1,5 @@
 use anyhow::{Context, bail, ensure};
-use concepts::{ContentDigest, Digest, HASH_TYPE};
+use concepts::{ContentDigest, component_id::Digest, component_id::HASH_TYPE};
 use futures_util::TryFutureExt;
 use oci_client::{
     Reference,

@@ -4,8 +4,8 @@ use super::{
 use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
 use anyhow::{anyhow, bail};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, InputContentDigest, InvalidNameError,
-    StrVariant, check_name, prefixed_ulid::ExecutorId,
+    ComponentId, ComponentRetryConfig, ComponentType, InvalidNameError, StrVariant, check_name,
+    component_id::InputContentDigest, prefixed_ulid::ExecutorId,
 };
 use db_sqlite::sqlite_dao::SqliteConfig;
 use log::{LoggingConfig, LoggingStyle};
@@ -1137,7 +1137,7 @@ pub(crate) mod webhook {
     };
     use crate::config::{config_holder::PathPrefixes, env_var::EnvVarConfig};
     use anyhow::Context;
-    use concepts::{ComponentId, ComponentType, InputContentDigest, StrVariant};
+    use concepts::{ComponentId, ComponentType, StrVariant, component_id::InputContentDigest};
     use schemars::JsonSchema;
     use serde::Deserialize;
     use std::{

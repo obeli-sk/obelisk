@@ -2,8 +2,9 @@ use crate::histograms::Histograms;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, InputContentDigest, JoinSetId,
-    StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, JoinSetId, StrVariant,
+    SupportedFunctionReturnValue,
+    component_id::InputContentDigest,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,

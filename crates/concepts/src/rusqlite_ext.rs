@@ -1,5 +1,7 @@
 use crate::{
-    ContentDigest, Digest, ExecutionId, InputContentDigest, JoinSetId,
+    ContentDigest, ExecutionId, JoinSetId,
+    component_id::Digest,
+    component_id::InputContentDigest,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite},
 };

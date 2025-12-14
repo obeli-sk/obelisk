@@ -1,4 +1,4 @@
-use concepts::{ContentDigest, Digest};
+use concepts::{ContentDigest, component_id::Digest};
 use std::path::Path;
 
 #[tracing::instrument(skip_all)]
