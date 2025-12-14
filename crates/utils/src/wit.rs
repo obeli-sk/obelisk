@@ -233,21 +233,6 @@ fn add_extended_interfaces(
             stability: wit_parser::Stability::default(),
         })
     };
-    // obelisk:types/execution.{invoke-extension-error}
-    let type_id_invoke_extension_error = {
-        let actual_type_id = *execution_ifc
-            .types
-            .get("invoke-extension-error")
-            .expect("`invoke-extension-error` must exist");
-        // Create a reference to the type.
-        resolve.types.alloc(TypeDef {
-            name: None,
-            kind: TypeDefKind::Type(Type::Id(actual_type_id)),
-            owner: TypeOwner::Interface(execution_ifc_id),
-            docs: wit_parser::Docs::default(),
-            stability: wit_parser::Stability::default(),
-        })
-    };
     // obelisk:types/execution.{stub-error}
     let type_id_stub_error = {
         let actual_type_id = *execution_ifc
@@ -321,10 +306,6 @@ fn add_extended_interfaces(
                     types.insert(
                         "get-extension-error".to_string(),
                         type_id_get_extension_error,
-                    );
-                    types.insert(
-                        "invoke-extension-error".to_string(),
-                        type_id_invoke_extension_error,
                     );
                 }
                 PackageExtension::ObeliskSchedule => {
@@ -461,45 +442,6 @@ fn add_extended_interfaces(
                             docs: wit_parser::Docs::default(),
                             stability: wit_parser::Stability::default(),
                         })));
-                        (params, result)
-                    }
-                    FunctionExtension::Invoke => {
-                        // -invoke(label: string, original param) -> result<tuple<execution-id, original return type>, invoke-extension-error>
-                        assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
-                        let params = {
-                            let schedule_at_param_name =
-                                generate_param_name("label", &original_fn.params);
-                            let mut params = vec![(schedule_at_param_name.clone(), Type::String)];
-                            params.extend_from_slice(&original_fn.params);
-                            params
-                        };
-                        let result = {
-                            let actual_return_type_id = &original_fn.result.expect(
-                                "all ExImLite exported functions must have their return type validated");
-                            let ok_part_tuple = resolve.types.alloc(TypeDef {
-                                name: None,
-                                kind: TypeDefKind::Tuple(wit_parser::Tuple {
-                                    types: vec![
-                                        Type::Id(type_id_execution_id),
-                                        *actual_return_type_id,
-                                    ],
-                                }),
-                                owner: TypeOwner::None,
-                                docs: wit_parser::Docs::default(),
-                                stability: wit_parser::Stability::default(),
-                            });
-                            let type_id_result = resolve.types.alloc(TypeDef {
-                                name: None,
-                                kind: TypeDefKind::Result(wit_parser::Result_ {
-                                    ok: Some(Type::Id(ok_part_tuple)),
-                                    err: Some(Type::Id(type_id_invoke_extension_error)),
-                                }),
-                                owner: TypeOwner::None,
-                                docs: wit_parser::Docs::default(),
-                                stability: wit_parser::Stability::default(),
-                            });
-                            Some(Type::Id(type_id_result))
-                        };
                         (params, result)
                     }
                 };

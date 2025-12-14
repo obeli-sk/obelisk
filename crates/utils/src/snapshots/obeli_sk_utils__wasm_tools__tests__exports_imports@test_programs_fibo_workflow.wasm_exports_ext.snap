@@ -226,60 +226,6 @@ expression: exports
     "extension": "get",
     "submittable": false
   },
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-invoke": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fiboa-concurrent-invoke"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "string",
-        "name": "label",
-        "wit_type": "string"
-      },
-      {
-        "type_wrapper": "u8",
-        "name": "n",
-        "wit_type": "u8"
-      },
-      {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      }
-    ],
-    "return_type": {
-      "NonExtendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": "u64",
-                    "err": null
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "invalid-name": "string"
-              }
-            }
-          }
-        },
-        "wit_type": "result<tuple<execution-id, result<u64>>, invoke-extension-error>"
-      }
-    },
-    "extension": "invoke",
-    "submittable": false
-  },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": {
     "ffqn": {
       "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
@@ -384,60 +330,6 @@ expression: exports
       }
     },
     "extension": "get",
-    "submittable": false
-  },
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-invoke": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fiboa-invoke"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "string",
-        "name": "label",
-        "wit_type": "string"
-      },
-      {
-        "type_wrapper": "u8",
-        "name": "n",
-        "wit_type": "u8"
-      },
-      {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      }
-    ],
-    "return_type": {
-      "NonExtendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": "u64",
-                    "err": null
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "invalid-name": "string"
-              }
-            }
-          }
-        },
-        "wit_type": "result<tuple<execution-id, result<u64>>, invoke-extension-error>"
-      }
-    },
-    "extension": "invoke",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": {
@@ -620,60 +512,6 @@ expression: exports
       }
     },
     "extension": "get",
-    "submittable": false
-  },
-  "testing:fibo-workflow-obelisk-ext/workflow.fibow-invoke": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fibow-invoke"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "string",
-        "name": "label",
-        "wit_type": "string"
-      },
-      {
-        "type_wrapper": "u8",
-        "name": "n",
-        "wit_type": "u8"
-      },
-      {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      }
-    ],
-    "return_type": {
-      "NonExtendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": "u64",
-                    "err": null
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "invalid-name": "string"
-              }
-            }
-          }
-        },
-        "wit_type": "result<tuple<execution-id, result<u64>>, invoke-extension-error>"
-      }
-    },
-    "extension": "invoke",
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": {

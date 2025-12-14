@@ -150,55 +150,6 @@ expression: exports
     "extension": "get",
     "submittable": false
   },
-  "testing:http-workflow-obelisk-ext/workflow.get-invoke": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-invoke"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "string",
-        "name": "label",
-        "wit_type": "string"
-      },
-      {
-        "type_wrapper": "string",
-        "name": "url",
-        "wit_type": "string"
-      }
-    ],
-    "return_type": {
-      "NonExtendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": "string",
-                    "err": "string"
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "invalid-name": "string"
-              }
-            }
-          }
-        },
-        "wit_type": "result<tuple<execution-id, result<string, string>>, invoke-extension-error>"
-      }
-    },
-    "extension": "invoke",
-    "submittable": false
-  },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-await-next": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -344,55 +295,6 @@ expression: exports
       }
     },
     "extension": "get",
-    "submittable": false
-  },
-  "testing:http-workflow-obelisk-ext/workflow.get-resp-invoke": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-resp-invoke"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "string",
-        "name": "label",
-        "wit_type": "string"
-      },
-      {
-        "type_wrapper": "string",
-        "name": "url",
-        "wit_type": "string"
-      }
-    ],
-    "return_type": {
-      "NonExtendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": "string",
-                    "err": "string"
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "invalid-name": "string"
-              }
-            }
-          }
-        },
-        "wit_type": "result<tuple<execution-id, result<string, string>>, invoke-extension-error>"
-      }
-    },
-    "extension": "invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-submit": {
@@ -570,50 +472,6 @@ expression: exports
       }
     },
     "extension": "get",
-    "submittable": false
-  },
-  "testing:http-workflow-obelisk-ext/workflow.get-stargazers-invoke": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-stargazers-invoke"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "string",
-        "name": "label",
-        "wit_type": "string"
-      }
-    ],
-    "return_type": {
-      "NonExtendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": null,
-                    "err": null
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "invalid-name": "string"
-              }
-            }
-          }
-        },
-        "wit_type": "result<tuple<execution-id, result>, invoke-extension-error>"
-      }
-    },
-    "extension": "invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-submit": {
@@ -898,59 +756,6 @@ expression: exports
     "extension": "get",
     "submittable": false
   },
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-invoke": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-concurrently-invoke"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "string",
-        "name": "label",
-        "wit_type": "string"
-      },
-      {
-        "type_wrapper": {
-          "list": "string"
-        },
-        "name": "urls",
-        "wit_type": "list<string>"
-      }
-    ],
-    "return_type": {
-      "NonExtendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": {
-                      "list": "string"
-                    },
-                    "err": "string"
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "invalid-name": "string"
-              }
-            }
-          }
-        },
-        "wit_type": "result<tuple<execution-id, result<list<string>, string>>, invoke-extension-error>"
-      }
-    },
-    "extension": "invoke",
-    "submittable": false
-  },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -1102,62 +907,6 @@ expression: exports
     "extension": "get",
     "submittable": false
   },
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-invoke": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-concurrently-stress-invoke"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "string",
-        "name": "label",
-        "wit_type": "string"
-      },
-      {
-        "type_wrapper": "string",
-        "name": "url",
-        "wit_type": "string"
-      },
-      {
-        "type_wrapper": "u32",
-        "name": "concurrency",
-        "wit_type": "u32"
-      }
-    ],
-    "return_type": {
-      "NonExtendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": {
-                      "list": "string"
-                    },
-                    "err": "string"
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "invalid-name": "string"
-              }
-            }
-          }
-        },
-        "wit_type": "result<tuple<execution-id, result<list<string>, string>>, invoke-extension-error>"
-      }
-    },
-    "extension": "invoke",
-    "submittable": false
-  },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": {
     "ffqn": {
       "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
@@ -1294,55 +1043,6 @@ expression: exports
       }
     },
     "extension": "get",
-    "submittable": false
-  },
-  "testing:http-workflow-obelisk-ext/workflow.get-successful-invoke": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-invoke"
-    },
-    "parameter_types": [
-      {
-        "type_wrapper": "string",
-        "name": "label",
-        "wit_type": "string"
-      },
-      {
-        "type_wrapper": "string",
-        "name": "url",
-        "wit_type": "string"
-      }
-    ],
-    "return_type": {
-      "NonExtendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": "string",
-                    "err": "string"
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "invalid-name": "string"
-              }
-            }
-          }
-        },
-        "wit_type": "result<tuple<execution-id, result<string, string>>, invoke-extension-error>"
-      }
-    },
-    "extension": "invoke",
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": {

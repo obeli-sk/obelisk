@@ -739,7 +739,6 @@ pub const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 pub const SUFFIX_FN_SCHEDULE: &str = "-schedule";
 pub const SUFFIX_FN_STUB: &str = "-stub";
 pub const SUFFIX_FN_GET: &str = "-get";
-pub const SUFFIX_FN_INVOKE: &str = "-invoke";
 
 #[derive(
     Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, strum::EnumIter,
@@ -751,7 +750,6 @@ pub enum FunctionExtension {
     Schedule,
     Stub,
     Get,
-    Invoke,
 }
 impl FunctionExtension {
     #[must_use]
@@ -762,7 +760,6 @@ impl FunctionExtension {
             FunctionExtension::Schedule => SUFFIX_FN_SCHEDULE,
             FunctionExtension::Stub => SUFFIX_FN_STUB,
             FunctionExtension::Get => SUFFIX_FN_GET,
-            FunctionExtension::Invoke => SUFFIX_FN_INVOKE,
         }
     }
 
@@ -772,10 +769,7 @@ impl FunctionExtension {
             (pkg_ext, self),
             (
                 PackageExtension::ObeliskExt,
-                FunctionExtension::Submit
-                    | FunctionExtension::AwaitNext
-                    | FunctionExtension::Get
-                    | FunctionExtension::Invoke
+                FunctionExtension::Submit | FunctionExtension::AwaitNext | FunctionExtension::Get
             ) | (
                 PackageExtension::ObeliskSchedule,
                 FunctionExtension::Schedule

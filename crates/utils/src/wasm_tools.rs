@@ -3,9 +3,9 @@ use anyhow::Context;
 use concepts::{
     ComponentType, ContentDigest, FnName, FunctionExtension, FunctionFqn, FunctionMetadata,
     IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType,
-    ReturnTypeNonExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_INVOKE,
-    SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE,
-    SUFFIX_PKG_STUB, StrVariant, component_id::HASH_TYPE,
+    ReturnTypeNonExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_SCHEDULE,
+    SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB,
+    StrVariant, component_id::HASH_TYPE,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -415,11 +415,6 @@ impl ExIm {
             Box::from("hours") => Some(TypeWrapper::U32),
             Box::from("days") => Some(TypeWrapper::U32),
         });
-        let param_type_invoke_label = ParameterType {
-            type_wrapper: TypeWrapper::String,
-            name: "label".into(),
-            wit_type: "string".into(),
-        };
         let param_type_scheduled_at = ParameterType {
             type_wrapper: TypeWrapper::Variant(indexmap! {
                 Box::from("now") => None,
@@ -460,11 +455,6 @@ impl ExIm {
         let get_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
             Box::from("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
             Box::from("not-found-in-processed-responses") => None,
-        });
-
-        // invoke-extension-error
-        let invoke_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("invalid-name") => Some(TypeWrapper::String),
         });
 
         // stub-error
@@ -629,45 +619,6 @@ impl ExIm {
                     submittable: false,
                 };
                 insert_ext(fn_get);
-
-                // -invoke(label: string, original params) -> result<tuple<execution-id, original reslut>, invoke-extension-error>
-                let fn_invoke = FunctionMetadata {
-                    ffqn: FunctionFqn {
-                        ifc_fqn: obelisk_ext_ifc.clone(),
-                        function_name: FnName::from(format!(
-                            "{}{SUFFIX_FN_INVOKE}",
-                            exported_fn_metadata.ffqn.function_name
-                        )),
-                    },
-                    parameter_types: {
-                        let mut params =
-                            Vec::with_capacity(exported_fn_metadata.parameter_types.len() + 1);
-                        params.push(param_type_invoke_label.clone());
-                        params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
-                        ParameterTypes(params)
-                    },
-                    return_type: {
-                        let ok_part = format!(
-                            "tuple<execution-id, {original_ret}>",
-                            original_ret = exported_fn_metadata.return_type
-                        );
-                        // (execution-id, original_ret)
-                        let ok_type_wrapper = TypeWrapper::Tuple(Box::new([
-                            execution_id_type_wrapper.clone(),
-                            TypeWrapper::from(return_type.type_wrapper_tl.clone()),
-                        ]));
-                        ReturnType::detect(
-                            TypeWrapper::Result {
-                                ok: Some(Box::new(ok_type_wrapper)),
-                                err: Some(Box::new(invoke_extension_error_type_wrapper.clone())),
-                            },
-                            StrVariant::from(format!("result<{ok_part}, invoke-extension-error>")),
-                        )
-                    },
-                    extension: Some(FunctionExtension::Invoke),
-                    submittable: false,
-                };
-                insert_ext(fn_invoke);
 
                 if component_type != ComponentType::ActivityStub {
                     assert!(

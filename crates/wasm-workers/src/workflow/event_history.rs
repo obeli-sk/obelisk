@@ -2185,53 +2185,6 @@ impl OneOffChildExecutionRequest {
             ChildReturnValue::WastVal(wast_val) => wast_val.as_val());
         Ok(value)
     }
-
-    #[expect(clippy::too_many_arguments)]
-    pub(crate) async fn apply_invoke(
-        ffqn: FunctionFqn,
-        fn_component_id: ComponentId,
-        label: &str,
-        params: Params,
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-        event_history: &mut EventHistory,
-        db_connection: &mut CachingDbConnection,
-        called_at: DateTime<Utc>,
-    ) -> Result<Val, WorkflowFunctionError> {
-        let join_set_id = match event_history.next_join_set_one_off_named(label) {
-            Ok(ok) => ok,
-            Err(err) => {
-                // invoke-extension-error
-                return Ok(Val::Result(Err(Some(Box::new(Val::Variant(
-                    "invalid-name".to_string(),
-                    Some(Box::new(Val::String(err.to_string()))),
-                ))))));
-            }
-        };
-        let child_execution_id = db_connection.execution_id.next_level(&join_set_id);
-        let event = EventCall::Blocking(EventCallBlocking::OneOffChildExecutionRequest(
-            OneOffChildExecutionRequest {
-                ffqn,
-                fn_component_id,
-                join_set_id,
-                child_execution_id: child_execution_id.clone(),
-                params,
-                wasm_backtrace,
-            },
-        ));
-        let value = event_history
-            .apply_inner(event, db_connection, called_at)
-            .await?;
-        let value = assert_matches!(value, ChildReturnValue::WastVal(wast_val) => {
-            // wrap with an Ok and a tuple in order to return result<tuple<execution-id, T>, invoke-extension-error>
-            Val::Result(Ok(Some(
-                Box::new(
-                Val::Tuple(vec![
-                    execution_id_derived_into_wast_val(&child_execution_id).as_val(),
-                    wast_val.as_val()
-            ])))))
-        });
-        Ok(value)
-    }
 }
 
 #[derive(derive_more::Debug, Clone)]

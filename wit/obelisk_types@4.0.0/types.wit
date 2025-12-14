@@ -87,6 +87,7 @@ interface execution {
 
     /// Error variants that may occur when calling `-invoke` extension functions.
     @since(version = 3.0.0)
+    // deprecated
     variant invoke-extension-error {
         invalid-name(string),
     }

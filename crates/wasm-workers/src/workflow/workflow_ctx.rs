@@ -16,7 +16,7 @@ use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::workflow::event_history::JoinSetCreate;
 use crate::workflow::host_exports::v4_0_0::DelayId_4_0_0;
-use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_INVOKE, SUFFIX_FN_STUB};
+use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::{
@@ -139,7 +139,6 @@ pub(crate) enum ImportedFnCall<'a> {
     AwaitNext(AwaitNextFnCall),
     Stub(StubFnCall<'a>),
     Get(GetFnCall),
-    Invoke(InvokeFnCall<'a>),
 }
 
 #[derive(derive_more::Debug)]
@@ -564,65 +563,6 @@ impl GetFnCall {
     }
 }
 
-#[derive(derive_more::Debug)]
-pub(crate) struct InvokeFnCall<'a> {
-    target_ffqn: FunctionFqn,
-    fn_component_id: ComponentId,
-    label: &'a str,
-    params: &'a [Val],
-    #[debug(skip)]
-    wasm_backtrace: Option<storage::WasmBacktrace>,
-}
-impl InvokeFnCall<'_> {
-    fn new(
-        called_ffqn: FunctionFqn,
-        target_ffqn: FunctionFqn,
-        fn_component_id: ComponentId,
-        params: &[Val],
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-    ) -> Result<InvokeFnCall<'_>, WorkflowFunctionError> {
-        let Some((Val::String(label), params)) = params.split_first() else {
-            return Err(WorkflowFunctionError::ImportedFunctionCallError {
-                ffqn: called_ffqn,
-                reason: StrVariant::Static("exepcted first parameter `name` of type `string`"),
-                detail: None,
-            });
-        };
-        Ok(InvokeFnCall {
-            target_ffqn,
-            fn_component_id,
-            label,
-            params,
-            wasm_backtrace,
-        })
-    }
-
-    async fn call_imported_fn<C: ClockFn>(
-        self,
-        ctx: &mut WorkflowCtx<C>,
-        called_at: DateTime<Utc>,
-    ) -> Result<Val, WorkflowFunctionError> {
-        let InvokeFnCall {
-            target_ffqn,
-            fn_component_id,
-            label,
-            params,
-            wasm_backtrace,
-        } = self;
-        OneOffChildExecutionRequest::apply_invoke(
-            target_ffqn,
-            fn_component_id,
-            label,
-            Params::from_wasmtime(Arc::from(params)),
-            wasm_backtrace,
-            &mut ctx.event_history,
-            &mut ctx.db_connection,
-            called_at,
-        )
-        .await
-    }
-}
-
 impl<'a> ImportedFnCall<'a> {
     fn extract_join_set_id<'ctx, C: ClockFn>(
         called_ffqn: &FunctionFqn,
@@ -720,25 +660,6 @@ impl<'a> ImportedFnCall<'a> {
                 );
                 let get = GetFnCall::new(target_ffqn, called_ffqn, params)?;
                 Ok(ImportedFnCall::Get(get))
-            } else if let Some(function_name) =
-                called_ffqn.function_name.strip_suffix(SUFFIX_FN_INVOKE)
-            {
-                let target_ffqn = FunctionFqn::new_arc(
-                    Arc::from(target_ifc_fqn.to_string()),
-                    Arc::from(function_name),
-                );
-                let (target_fn_metadata, fn_component_id) = fn_registry
-                    .get_by_exported_function(&target_ffqn)
-                    .expect("function obtained from `fn_registry.all_exports()` must be found");
-                assert_eq!(None, target_fn_metadata.extension);
-                let invoke = InvokeFnCall::new(
-                    called_ffqn,
-                    target_ffqn,
-                    fn_component_id,
-                    params,
-                    wasm_backtrace,
-                )?;
-                Ok(ImportedFnCall::Invoke(invoke))
             } else {
                 unreachable!(
                     "all extensions were covered, no way fn_registry contains {called_ffqn}"
@@ -837,9 +758,6 @@ impl<'a> ImportedFnCall<'a> {
                 target_ffqn: ffqn, ..
             })
             | ImportedFnCall::Get(GetFnCall {
-                target_ffqn: ffqn, ..
-            })
-            | ImportedFnCall::Invoke(InvokeFnCall {
                 target_ffqn: ffqn, ..
             }) => ffqn,
         }
@@ -1308,7 +1226,6 @@ impl<C: ClockFn> WorkflowCtx<C> {
             }
             ImportedFnCall::Stub(stub) => stub.call_imported_fn(self, called_at).await,
             ImportedFnCall::Get(get) => Ok(get.call_imported_fn(self)),
-            ImportedFnCall::Invoke(invoke) => invoke.call_imported_fn(self, called_at).await,
         }
     }
 }

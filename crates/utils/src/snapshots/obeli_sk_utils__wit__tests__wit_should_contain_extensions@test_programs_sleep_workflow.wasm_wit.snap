@@ -223,7 +223,7 @@ package testing:sleep-workflow-obelisk-ext {
     use obelisk:types/time@4.0.0.{duration, schedule-at};
     use obelisk:types/execution@4.0.0.{execution-id};
     use obelisk:types/join-set@4.0.0.{join-set};
-    use obelisk:types/execution@4.0.0.{await-next-extension-error, get-extension-error, invoke-extension-error};
+    use obelisk:types/execution@4.0.0.{await-next-extension-error, get-extension-error};
 
     sleep-host-activity-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
@@ -231,15 +231,11 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-host-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-host-activity-invoke: func(label: string, duration: duration) -> result<tuple<execution-id, result>, invoke-extension-error>;
-
     sleep-schedule-at-submit: func(join-set: borrow<join-set>, schedule-at: schedule-at) -> execution-id;
 
     sleep-schedule-at-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     sleep-schedule-at-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
-
-    sleep-schedule-at-invoke: func(label: string, schedule-at: schedule-at) -> result<tuple<execution-id, result>, invoke-extension-error>;
 
     sleep-activity-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
@@ -247,15 +243,11 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-activity-invoke: func(label: string, duration: duration) -> result<tuple<execution-id, result>, invoke-extension-error>;
-
     sleep-activity-submit-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
     sleep-activity-submit-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<execution-id>>, await-next-extension-error>;
 
     sleep-activity-submit-get: func(execution-id: execution-id) -> result<result<execution-id>, get-extension-error>;
-
-    sleep-activity-submit-invoke: func(label: string, duration: duration) -> result<tuple<execution-id, result<execution-id>>, invoke-extension-error>;
 
     sleep-random-submit: func(join-set: borrow<join-set>, min-millis: u64, max-millis-inclusive: u64) -> execution-id;
 
@@ -263,15 +255,11 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-random-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-random-invoke: func(label: string, min-millis: u64, max-millis-inclusive: u64) -> result<tuple<execution-id, result>, invoke-extension-error>;
-
     schedule-noop-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
     schedule-noop-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     schedule-noop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
-
-    schedule-noop-invoke: func(label: string, duration: duration) -> result<tuple<execution-id, result>, invoke-extension-error>;
 
     two-delays-in-same-join-set-submit: func(join-set: borrow<join-set>) -> execution-id;
 
@@ -279,15 +267,11 @@ package testing:sleep-workflow-obelisk-ext {
 
     two-delays-in-same-join-set-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    two-delays-in-same-join-set-invoke: func(label: string) -> result<tuple<execution-id, result>, invoke-extension-error>;
-
     join-next-produces-all-processed-error-submit: func(join-set: borrow<join-set>) -> execution-id;
 
     join-next-produces-all-processed-error-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     join-next-produces-all-processed-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
-
-    join-next-produces-all-processed-error-invoke: func(label: string) -> result<tuple<execution-id, result>, invoke-extension-error>;
   }
 }
 

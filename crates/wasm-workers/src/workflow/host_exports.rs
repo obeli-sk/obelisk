@@ -11,7 +11,6 @@ use val_json::wast_val::WastVal;
 
 pub(crate) use concepts::SUFFIX_FN_AWAIT_NEXT;
 pub(crate) use concepts::SUFFIX_FN_GET;
-pub(crate) use concepts::SUFFIX_FN_INVOKE;
 pub(crate) use concepts::SUFFIX_FN_SCHEDULE;
 pub(crate) use concepts::SUFFIX_FN_STUB;
 pub(crate) use concepts::SUFFIX_FN_SUBMIT;

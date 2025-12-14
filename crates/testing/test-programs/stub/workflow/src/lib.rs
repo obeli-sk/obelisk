@@ -93,8 +93,7 @@ impl Guest for Component {
     }
 
     fn invoke_expect_execution_error() -> Result<(), ()> {
-        let (_execution_id, res) =
-            activity_ext::noret_invoke("").expect("join set name can be an empty string");
+        let res = activity::noret();
         res.unwrap_err();
         Ok(())
     }
