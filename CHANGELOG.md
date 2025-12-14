@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0](https://github.com/obeli-sk/obelisk/compare/v0.29.1...v0.30.0)
+
+### Added
+- *(cli)* Allow specifying execution id in `submit` - ([697b456](https://github.com/obeli-sk/obelisk/commit/697b456058fbe9c20d46bdf5adf26bbfc0977142))
+- *(grpc)* Add `rpc UpgradeExecutionComponent` - ([b290230](https://github.com/obeli-sk/obelisk/commit/b2902304ff846666bde12fb73a5d68a61f194efd))
+- *(grpc)* Add reflection API - ([ad0bd8f](https://github.com/obeli-sk/obelisk/commit/ad0bd8fb090d0a9a26c26d5e87ffad7f3e3da8fc))
+- *(toml)* Allow configuring executor's locking strategy - ([064ac8d](https://github.com/obeli-sk/obelisk/commit/064ac8d9399f04d6e06479a674ee2affa95d58f2))
+
+### Changed
+- *(wit)* [**breaking**] Include execution id in `-invoke` result - ([4cadbf8](https://github.com/obeli-sk/obelisk/commit/4cadbf83b895861445fe86acfa6d15b69752685e))
+- *(grpc)* [**breaking**] Allow searching by component digest in `ListComponents` - ([97cb366](https://github.com/obeli-sk/obelisk/commit/97cb36605446b7e86a1788acb77c61be7bd8b27f))
+- *(sqlite)* Add index for `count_join_next` - ([050479f](https://github.com/obeli-sk/obelisk/commit/050479f4c2b8b1b04572787fdce4102a3148e882))
+- *(sqlite)* [**breaking**] Store component's digest in `t_state` allowing locking by it
+
+### Fixed
+- *(sqlite)* Detect schema version mismatch - ([3db7038](https://github.com/obeli-sk/obelisk/commit/3db7038cffdc25cc2e08a5a46557552006b1b2d2))
+
+
 ## [0.29.1](https://github.com/obeli-sk/obelisk/compare/v0.29.0...v0.29.1)
 
 ### Changed
