@@ -9,6 +9,7 @@ use crate::JoinSetId;
 use crate::Params;
 use crate::StrVariant;
 use crate::SupportedFunctionReturnValue;
+use crate::component_id::InputContentDigest;
 use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
@@ -1104,6 +1105,7 @@ pub struct ExecutionWithState {
     pub pending_state: PendingState,
     pub created_at: DateTime<Utc>,
     pub scheduled_at: DateTime<Utc>,
+    pub component_id_input_digest: InputContentDigest,
 }
 
 pub enum ExecutionListPagination {

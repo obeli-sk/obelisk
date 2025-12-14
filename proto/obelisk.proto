@@ -68,6 +68,7 @@ message ExecutionSummary {
     ExecutionStatus current_status = 3;
     google.protobuf.Timestamp created_at = 4;
     google.protobuf.Timestamp scheduled_at = 5;
+    ContentDigest component_digest = 6;
 }
 
 message ListExecutionsResponse {

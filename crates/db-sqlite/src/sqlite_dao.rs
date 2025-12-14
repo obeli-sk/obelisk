@@ -1677,12 +1677,13 @@ impl SqlitePool {
                     .as_ref(),
                 |row| {
                     let execution_id = row.get::<_, ExecutionId>("execution_id")?;
-                    let component_id_input_digest = row.get("component_id_input_digest")?;
+                    let component_id_input_digest: InputContentDigest =
+                        row.get("component_id_input_digest")?;
                     let created_at = row.get("created_at")?;
                     let scheduled_at = row.get("scheduled_at")?;
                     let combined_state = CombinedState::new(
                         CombinedStateDTO {
-                            component_id_input_digest,
+                            component_id_input_digest: component_id_input_digest.clone(),
                             state: row.get("state")?,
                             ffqn: row.get("ffqn")?,
                             pending_expires_finished: row
@@ -1709,6 +1710,7 @@ impl SqlitePool {
                         pending_state: combined_state.pending_state,
                         created_at,
                         scheduled_at,
+                        component_id_input_digest,
                     })
                 },
             )?

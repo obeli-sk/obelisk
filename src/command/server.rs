@@ -568,6 +568,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 execution_id: Some(grpc_gen::ExecutionId::from(&execution_id)),
                 function_name: Some(create_request.ffqn.clone().into()),
                 current_status: Some(grpc_pending_status),
+                component_digest: Some(create_request.component_id.input_digest.clone().into()),
             })),
         };
         if current_pending_state.is_finished() || !request.follow {
@@ -659,12 +660,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                      pending_state,
                      created_at,
                      scheduled_at,
+                     component_id_input_digest,
                  }| grpc_gen::ExecutionSummary {
                     execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
                     function_name: Some(ffqn.into()),
                     current_status: Some(grpc_gen::ExecutionStatus::from(pending_state)),
                     created_at: Some(created_at.into()),
                     scheduled_at: Some(scheduled_at.into()),
+                    component_digest: Some(component_id_input_digest.into()),
                 },
             )
             .collect();
