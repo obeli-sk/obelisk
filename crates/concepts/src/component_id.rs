@@ -157,7 +157,7 @@ impl Digest {
         out
     }
 
-    pub fn parse_without_prefix(hash_base16: &str) -> Result<Digest, DigestParseErrror> {
+    fn parse_without_prefix(hash_base16: &str) -> Result<Digest, DigestParseErrror> {
         if hash_base16.len() != 64 {
             return Err(DigestParseErrror::SuffixLength(hash_base16.len()));
         }

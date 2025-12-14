@@ -90,15 +90,13 @@ impl From<ComponentId> for grpc_gen::ComponentId {
 
 impl From<InputContentDigest> for grpc_gen::ContentDigest {
     fn from(value: InputContentDigest) -> Self {
-        grpc_gen::ContentDigest {
-            digest: value.digest_base16_without_prefix(),
-        }
+        grpc_gen::ContentDigest::from(&value)
     }
 }
 impl From<&InputContentDigest> for grpc_gen::ContentDigest {
     fn from(value: &InputContentDigest) -> Self {
         grpc_gen::ContentDigest {
-            digest: value.digest_base16_without_prefix(),
+            digest: value.to_string(),
         }
     }
 }
@@ -106,7 +104,7 @@ impl TryFrom<grpc_gen::ContentDigest> for InputContentDigest {
     type Error = tonic::Status;
 
     fn try_from(value: grpc_gen::ContentDigest) -> Result<Self, Self::Error> {
-        let digest = Digest::parse_without_prefix(&value.digest).map_err(|parse_err| {
+        let digest = Digest::from_str(&value.digest).map_err(|parse_err| {
             error!("`Digest` cannot be parsed - {parse_err:?}");
             tonic::Status::invalid_argument(format!("`Digest` cannot be parsed - {parse_err}"))
         })?;
