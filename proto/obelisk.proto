@@ -150,10 +150,15 @@ message DelayId {
     string id = 1;
 }
 
+message ContentDigest {
+    // type is always sha256
+    string digest = 1; // hex encoded without any prefix.
+}
+
 message ComponentId {
     ComponentType component_type = 1;
     string name = 2;
-    string input_sha256_digest = 3;
+    ContentDigest digest = 3;
 }
 
 message FunctionName {
@@ -205,6 +210,7 @@ message ExecutionStatus {
         google.protobuf.Timestamp finished_at = 4;
         ResultKind result_kind = 5;
     }
+
     oneof status {
         Locked locked = 1;
         PendingAt pending_at = 2;

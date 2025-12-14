@@ -2,8 +2,7 @@ use crate::grpc_gen::{self, execution_event::history_event, result_kind};
 use concepts::{
     ComponentId, ComponentType, ContentDigest, ExecutionFailureKind, ExecutionId,
     FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
-    component_id::Digest,
-    component_id::InputContentDigest,
+    component_id::{Digest, InputContentDigest},
     prefixed_ulid::{DelayId, RunId},
     storage::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
@@ -84,8 +83,27 @@ impl From<ComponentId> for grpc_gen::ComponentId {
         Self {
             component_type: grpc_gen::ComponentType::from(value.component_type).into(),
             name: value.name.to_string(),
-            input_sha256_digest: value.input_digest.to_string(),
+            digest: Some(value.input_digest.into()),
         }
+    }
+}
+
+impl From<InputContentDigest> for grpc_gen::ContentDigest {
+    fn from(value: InputContentDigest) -> Self {
+        grpc_gen::ContentDigest {
+            digest: value.digest_base16_without_prefix(),
+        }
+    }
+}
+impl TryFrom<grpc_gen::ContentDigest> for InputContentDigest {
+    type Error = tonic::Status;
+
+    fn try_from(value: grpc_gen::ContentDigest) -> Result<Self, Self::Error> {
+        let digest = Digest::parse_without_prefix(&value.digest).map_err(|parse_err| {
+            error!("`Digest` cannot be parsed - {parse_err:?}");
+            tonic::Status::invalid_argument(format!("`Digest` cannot be parsed - {parse_err}"))
+        })?;
+        Ok(InputContentDigest(ContentDigest(digest)))
     }
 }
 
@@ -95,20 +113,18 @@ impl TryFrom<grpc_gen::ComponentId> for ComponentId {
     fn try_from(value: grpc_gen::ComponentId) -> Result<ComponentId, Self::Error> {
         let component_type =
             grpc_gen::ComponentType::try_from(value.component_type).map_err(|parse_err| {
-                error!("{parse_err:?}");
+                error!("`component_type` cannot be parsed - {parse_err:?}");
                 tonic::Status::invalid_argument(format!(
                     "`component_type` cannot be parsed - {parse_err}"
                 ))
             })?;
         let component_type = ComponentType::from(component_type);
-        let input_digest = InputContentDigest(ContentDigest(
-            Digest::from_str(&value.input_sha256_digest).map_err(|parse_err| {
-                error!("{parse_err:?}");
-                tonic::Status::invalid_argument(format!(
-                    "`input_sha256_digest` cannot be parsed - {parse_err}"
-                ))
-            })?,
-        ));
+        let Some(input_digest) = value.digest else {
+            return Err(tonic::Status::invalid_argument(
+                "`input_digest` is mandatory",
+            ));
+        };
+        let input_digest = InputContentDigest::try_from(input_digest)?;
         ComponentId::new(component_type, value.name.into(), input_digest).map_err(|parse_err| {
             error!("`name` is invalid - {parse_err:?}");
             tonic::Status::invalid_argument(format!("name cannot be parsed - {parse_err}"))

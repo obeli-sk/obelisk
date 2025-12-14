@@ -156,6 +156,18 @@ impl Digest {
         }
         out
     }
+
+    pub fn parse_without_prefix(hash_base16: &str) -> Result<Digest, DigestParseErrror> {
+        if hash_base16.len() != 64 {
+            return Err(DigestParseErrror::SuffixLength(hash_base16.len()));
+        }
+        let mut digest = [0u8; 32];
+        for i in 0..32 {
+            let chunk = &hash_base16[i * 2..i * 2 + 2];
+            digest[i] = u8::from_str_radix(chunk, 16).map_err(|_| DigestParseErrror::InvalidHex)?;
+        }
+        Ok(Digest(digest))
+    }
 }
 pub const HASH_TYPE: &str = "sha256";
 const HASH_TYPE_WITH_DELIMITER: &str = const_format::formatcp!("{}:", HASH_TYPE);
@@ -187,14 +199,6 @@ impl FromStr for Digest {
         let Some(hash_base16) = input.strip_prefix(HASH_TYPE_WITH_DELIMITER) else {
             return Err(DigestParseErrror::InvalidPrefix);
         };
-        if hash_base16.len() != 64 {
-            return Err(DigestParseErrror::SuffixLength(hash_base16.len()));
-        }
-        let mut digest = [0u8; 32];
-        for i in 0..32 {
-            let chunk = &hash_base16[i * 2..i * 2 + 2];
-            digest[i] = u8::from_str_radix(chunk, 16).map_err(|_| DigestParseErrror::InvalidHex)?;
-        }
-        Ok(Digest(digest))
+        Digest::parse_without_prefix(hash_base16)
     }
 }
