@@ -147,7 +147,7 @@ pub(crate) async fn submit(
     } else {
         ffqn
     };
-    let execution_id = execution_id.unwrap_or_else(|| ExecutionId::generate());
+    let execution_id = execution_id.unwrap_or_else(ExecutionId::generate);
     client
         .submit(tonic::Request::new(grpc_gen::SubmitRequest {
             execution_id: Some(execution_id.clone().into()),
