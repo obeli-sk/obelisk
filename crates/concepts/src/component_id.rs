@@ -149,7 +149,7 @@ pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest([0; 32]));
 pub struct Digest(pub [u8; 32]);
 impl Digest {
     #[must_use]
-    pub fn digest_base16(&self) -> String {
+    pub fn digest_base16_without_prefix(&self) -> String {
         let mut out = String::with_capacity(self.0.len() * 2);
         for &b in &self.0 {
             write!(&mut out, "{b:02x}").expect("writing to string");

@@ -62,7 +62,7 @@ impl WasmComponent {
         let content_digest = calculate_sha256_file(wasm_path).await?;
         let output_file = output_parent.join(format!(
             "{HASH_TYPE}_{}.wasm",
-            content_digest.digest_base16(),
+            content_digest.digest_base16_without_prefix(),
         ));
         // already transformed?
         if output_file.exists() {

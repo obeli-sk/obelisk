@@ -21,13 +21,16 @@ use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
 const OCI_CLIENT_RETRIES: u64 = 10;
 
 fn digest_to_metadata_file(metadata_dir: &Path, metadata_file: &Digest) -> PathBuf {
-    metadata_dir.join(format!("{HASH_TYPE}_{}.txt", metadata_file.digest_base16()))
+    metadata_dir.join(format!(
+        "{HASH_TYPE}_{}.txt",
+        metadata_file.digest_base16_without_prefix()
+    ))
 }
 
 fn content_digest_to_wasm_file(wasm_cache_dir: &Path, content_digest: &ContentDigest) -> PathBuf {
     wasm_cache_dir.join(format!(
         "{HASH_TYPE}_{content_digest}.wasm",
-        content_digest = content_digest.digest_base16(),
+        content_digest = content_digest.digest_base16_without_prefix(),
     ))
 }
 
