@@ -95,6 +95,13 @@ impl From<InputContentDigest> for grpc_gen::ContentDigest {
         }
     }
 }
+impl From<&InputContentDigest> for grpc_gen::ContentDigest {
+    fn from(value: &InputContentDigest) -> Self {
+        grpc_gen::ContentDigest {
+            digest: value.digest_base16_without_prefix(),
+        }
+    }
+}
 impl TryFrom<grpc_gen::ContentDigest> for InputContentDigest {
     type Error = tonic::Status;
 
@@ -254,6 +261,7 @@ impl From<PendingState> for grpc_gen::ExecutionStatus {
     fn from(pending_state: PendingState) -> grpc_gen::ExecutionStatus {
         use grpc_gen::execution_status::{BlockedByJoinSet, Finished, Locked, PendingAt, Status};
         grpc_gen::ExecutionStatus {
+            component_digest: Some(pending_state.get_component_id_input_digest().into()),
             status: Some(match pending_state {
                 PendingState::Locked(PendingStateLocked {
                     locked_by:

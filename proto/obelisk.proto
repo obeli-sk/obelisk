@@ -70,7 +70,6 @@ message ExecutionSummary {
     ExecutionStatus current_status = 3;
     google.protobuf.Timestamp created_at = 4;
     google.protobuf.Timestamp scheduled_at = 5;
-    ContentDigest component_digest = 6;
 }
 
 message ListExecutionsResponse {
@@ -220,6 +219,7 @@ message ExecutionStatus {
         BlockedByJoinSet blocked_by_join_set = 3;
         Finished finished = 4;
     }
+    ContentDigest component_digest = 5;
 }
 
 message ResultKind {
