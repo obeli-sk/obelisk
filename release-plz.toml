@@ -10,7 +10,7 @@ git_tag_name = "v{{ version }}"
 git_tag_enable = true
 git_release_enable = true
 
-changelog_update = false
+changelog_update = true
 changelog_include = [
     "obeli-sk-concepts",
     "obeli-sk-db-sqlite",
