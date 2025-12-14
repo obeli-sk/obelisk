@@ -34,6 +34,7 @@ impl args::Execution {
     pub(crate) async fn run(self, api_url: &str) -> Result<(), anyhow::Error> {
         match self {
             args::Execution::Submit {
+                execution_id,
                 ffqn,
                 params,
                 follow,
@@ -51,6 +52,7 @@ impl args::Execution {
                 submit(
                     client,
                     component_client,
+                    execution_id,
                     ffqn,
                     parse_params(params)?,
                     follow,
@@ -102,6 +104,7 @@ pub(crate) enum SubmitOutputOpts {
 pub(crate) async fn submit(
     mut client: ExecutionRepositoryClient,
     mut component_client: FunctionRepositoryClient,
+    execution_id: Option<ExecutionId>,
     ffqn: FunctionFqn,
     params: Vec<u8>,
     follow: bool,
@@ -144,7 +147,7 @@ pub(crate) async fn submit(
     } else {
         ffqn
     };
-    let execution_id = ExecutionId::generate();
+    let execution_id = execution_id.unwrap_or_else(|| ExecutionId::generate());
     client
         .submit(tonic::Request::new(grpc_gen::SubmitRequest {
             execution_id: Some(execution_id.clone().into()),

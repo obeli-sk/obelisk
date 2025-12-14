@@ -159,6 +159,8 @@ pub(crate) enum Component {
 pub(crate) enum Execution {
     /// Submit new execution and optionally follow its status stream until the it finishes.
     Submit {
+        #[arg(short, long)]
+        execution_id: Option<ExecutionId>,
         /// Function in the fully qualified format
         #[arg(value_name = "function")]
         ffqn: FunctionFqn,
