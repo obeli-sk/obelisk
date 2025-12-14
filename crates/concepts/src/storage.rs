@@ -968,6 +968,13 @@ pub trait DbConnection: DbExecutor {
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
     ) -> Result<Vec<ResponseWithCursor>, DbErrorRead>;
+
+    async fn upgrade_execution_component(
+        &self,
+        execution_id: &ExecutionId,
+        old: &InputContentDigest,
+        new: &InputContentDigest,
+    ) -> Result<(), DbErrorWrite>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -445,6 +445,15 @@ impl DbConnection for InMemoryDbConnection {
     ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
         unimplemented!("only needed for gRPC")
     }
+
+    async fn upgrade_execution_component(
+        &self,
+        _execution_id: &ExecutionId,
+        _old: &InputContentDigest,
+        _new: &InputContentDigest,
+    ) -> Result<(), DbErrorWrite> {
+        unimplemented!("only needed for gRPC")
+    }
 }
 
 mod index {

@@ -2783,6 +2783,39 @@ impl SqlitePool {
             ffqn_to_pending_subscription.notify(notifier);
         }
     }
+
+    fn upgrade_execution_component(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        old: &InputContentDigest,
+        new: &InputContentDigest,
+    ) -> Result<(), DbErrorWrite> {
+        debug!("Updating t_state to component {new}");
+        let mut stmt = tx
+            .prepare_cached(
+                r"
+                UPDATE t_state
+                SET
+                    updated_at = CURRENT_TIMESTAMP,
+                    component_id_input_digest = :new
+                WHERE
+                    execution_id = :execution_id AND
+                    component_id_input_digest = :old
+            ",
+            )
+            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        let updated = stmt
+            .execute(named_params! {
+                ":execution_id": execution_id,
+                ":old": old,
+                ":new": new,
+            })
+            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        if updated != 1 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -3706,7 +3739,23 @@ impl DbConnection for SqlitePool {
         let execution_id = execution_id.clone();
         self.transaction(
             move |tx| Self::list_responses(tx, &execution_id, Some(pagination)),
-            "list_executions",
+            "list_responses",
+        )
+        .await
+    }
+
+    async fn upgrade_execution_component(
+        &self,
+        execution_id: &ExecutionId,
+        old: &InputContentDigest,
+        new: &InputContentDigest,
+    ) -> Result<(), DbErrorWrite> {
+        let execution_id = execution_id.clone();
+        let old = old.clone();
+        let new = new.clone();
+        self.transaction(
+            move |tx| Self::upgrade_execution_component(tx, &execution_id, &old, &new),
+            "upgrade_execution_component",
         )
         .await
     }

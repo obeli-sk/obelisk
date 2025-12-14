@@ -182,6 +182,7 @@
                 cargo-nextest
                 cargo-semver-checks
                 cargo-zigbuild # only here for dev-deps
+                jq
                 grpcurl
                 litecli
                 nixd

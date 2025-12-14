@@ -887,7 +887,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         }
     }
 
-    #[instrument(skip_all, fields(execution_id))]
+    #[instrument(skip_all, fields(execution_id, delay_id))]
     async fn cancel(
         &self,
         request: tonic::Request<grpc_gen::CancelRequest>,
@@ -901,6 +901,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     .execution_id
                     .argument_must_exist("execution_id")?;
                 let execution_id = ExecutionId::try_from(child_execution_id)?;
+                tracing::Span::current()
+                    .record("execution_id", tracing::field::display(&execution_id));
+
                 let conn = self.db_pool.connection();
                 let child_create_req = conn.get_create_request(&execution_id).await.to_status()?;
                 if !child_create_req.component_id.component_type.is_activity() {
@@ -916,6 +919,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             grpc_gen::cancel_request::Request::Delay(delay_req) => {
                 let delay_id = delay_req.delay_id.argument_must_exist("delay_id")?;
                 let delay_id = DelayId::try_from(delay_id)?;
+                tracing::Span::current().record("delay_id", tracing::field::display(&delay_id));
+
                 let conn = self.db_pool.connection();
                 storage::cancel_delay(conn.as_ref(), delay_id, executed_at)
                     .await
@@ -926,6 +931,38 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         Ok(tonic::Response::new(grpc_gen::CancelResponse {
             outcome: grpc_gen::cancel_response::CancelOutcome::from(outcome).into(),
         }))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn upgrade_execution_component(
+        &self,
+        request: tonic::Request<grpc_gen::UpgradeExecutionComponentRequest>,
+    ) -> std::result::Result<
+        tonic::Response<grpc_gen::UpgradeExecutionComponentResponse>,
+        tonic::Status,
+    > {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let old = request
+            .expected_component_digest
+            .argument_must_exist("expected_component_digest")?
+            .try_into()?;
+        let new = request
+            .new_component_digest
+            .argument_must_exist("new_component_digest")?
+            .try_into()?;
+        self.db_pool
+            .connection()
+            .upgrade_execution_component(&execution_id, &old, &new)
+            .await
+            .to_status()?;
+        Ok(tonic::Response::new(
+            grpc_gen::UpgradeExecutionComponentResponse {},
+        ))
     }
 }
 

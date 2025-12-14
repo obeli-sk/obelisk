@@ -21,6 +21,8 @@ service ExecutionRepository {
     rpc Stub(StubRequest) returns (StubResponse);
     // Activity cancellation is best effort.
     rpc Cancel(CancelRequest) returns (CancelResponse);
+
+    rpc UpgradeExecutionComponent(UpgradeExecutionComponentRequest) returns (UpgradeExecutionComponentResponse);
 }
 
 service FunctionRepository {
@@ -577,4 +579,12 @@ message CancelResponse {
         ALREADY_FINISHED = 1;
     }
     CancelOutcome outcome = 1;
+}
+
+message UpgradeExecutionComponentRequest {
+  ExecutionId execution_id = 1;
+  ContentDigest expected_component_digest = 2; // old
+  ContentDigest new_component_digest = 3;      // new
+}
+message UpgradeExecutionComponentResponse {
 }
