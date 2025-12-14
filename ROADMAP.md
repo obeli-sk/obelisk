@@ -2,10 +2,15 @@
 
 # Upcoming goals
 
-## feat: Allow `-invoke` in webhooks
+## feat: `generate extensions` with specified interface(s)
+Allows self referential exports, also enables generating on import side.
 
-## feat: Support `-get(execution id)` in webhooks
-Enables pattern where webhook sends a signal via `-stub`, then reads the parent's result.
+## feat: Add `obelisk generate`
+`obelisk generate config` blank(just webui),fibo, testing, stargazers
+`obelisk generate wit -c obelisk.toml --out-dir wit/deps/ my-activity`
+`obelisk generate wit` - based on obelisk-deps.toml tool + extensions based on component type, e.g. just `-schedule` for webhooks
+`obelisk generate wit --oci path` - add WIT files + extensions
+`obelisk new` - show templates, blank workflow should have obelisk types and workflow support
 
 ## feat: KV host activity
 Allow using the underlying database.
@@ -19,16 +24,6 @@ Allow specifying queue ID when submitting, and when configuring an executor.
 
 ## feat: Configurable network access for activities, webhooks
 Enable allow/deny lists of remote hosts for HTTP client.
-
-## feat: `generate extensions` with specified interface(s)
-Allows self referential exports, also enables generating on import side.
-
-## feat: Add `obelisk generate`
-`obelisk generate config` blank(just webui),fibo, testing, stargazers
-`obelisk generate wit -c obelisk.toml --out-dir wit/deps/ my-activity`
-`obelisk generate wit` - based on obelisk-deps.toml tool + extensions based on component type, e.g. just `-schedule` for webhooks
-`obelisk generate wit --oci path` - add WIT files + extensions
-`obelisk new` - show templates, blank workflow should have obelisk types and workflow support
 
 ## feat: Inspect remote or cached components
 `obelisk client component inspect/wit` should accept: path, componentId, oci location
@@ -68,5 +63,4 @@ Use wasi:logging/logging@0.1.0-draft
 * Ability to hotfix a set of workflows, with an approval system when non determinism is detected - forking the execution log
 * Webhook endpoint mappings: running a single function, translating between HTTP and WIT defined parameters and return value
 * Distributed tracing context forwarding for outgoing HTTP as well as webhooks
-* Support for (distributed) sagas - define rollbacks on activities, call them on failed workflows
 * Investigate code-coverage for workflow steps
