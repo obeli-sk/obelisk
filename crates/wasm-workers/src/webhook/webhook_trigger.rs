@@ -314,7 +314,7 @@ pub async fn server<C: ClockFn + 'static>(
                             stream,
                             hyper::service::service_fn(move |req| {
                                 let execution_id = ExecutionId::generate().get_top_level();
-                                debug!(%execution_id, method = %req.method(), uri = %req.uri(), "Processing request");
+                                trace!(%execution_id, method = %req.method(), uri = %req.uri(), "Processing request");
                                 RequestHandler {
                                     engine: engine.clone(),
                                     clock_fn: clock_fn.clone(),
@@ -445,7 +445,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
         results: &mut [Val],
         wasm_backtrace: Option<concepts::storage::WasmBacktrace>,
     ) -> Result<(), WebhookEndpointFunctionError> {
-        debug!(?params, "call_imported_fn start");
+        trace!(?params, "call_imported_fn start");
         assert_eq!(
             1,
             results.len(),
@@ -664,7 +664,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 })
                 .await
         {
-            debug!("Ignoring error while appending backtrace: {err:?}");
+            trace!("Ignoring error while appending backtrace: {err:?}");
         }
         Ok(())
     }
@@ -998,7 +998,7 @@ impl<C: ClockFn + 'static> RequestHandler<C> {
             });
             match receiver.await {
                 Ok(Ok(resp)) => {
-                    debug!("Streaming the response");
+                    trace!("Streaming the response");
                     Ok(resp)
                 }
                 Ok(Err(err)) => {
