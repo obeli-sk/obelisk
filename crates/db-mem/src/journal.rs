@@ -264,7 +264,7 @@ impl ExecutionJournal {
     }
 
     fn get_create_request(&self) -> CreateRequest {
-        let execution_event = self.execution_events.get(0).expect("must not be empty");
+        let execution_event = self.execution_events.front().expect("must not be empty");
         let ExecutionEventInner::Created {
             ffqn,
             params,

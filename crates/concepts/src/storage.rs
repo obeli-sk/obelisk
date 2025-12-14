@@ -1247,6 +1247,7 @@ pub enum PendingState {
     },
 }
 impl PendingState {
+    #[must_use]
     pub fn get_component_id_input_digest(&self) -> &InputContentDigest {
         match self {
             PendingState::Locked(pending_state_locked) => {
