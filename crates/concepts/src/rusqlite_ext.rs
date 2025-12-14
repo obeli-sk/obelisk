@@ -1,5 +1,5 @@
 use crate::{
-    ContentDigest, ExecutionId, HashType, InputContentDigest, JoinSetId,
+    ContentDigest, Digest, ExecutionId, InputContentDigest, JoinSetId,
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite},
 };
@@ -119,7 +119,7 @@ impl FromSql for ExecutorId {
 
 impl ToSql for InputContentDigest {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        Ok(ToSqlOutput::from(self.0.digest.as_slice()))
+        Ok(ToSqlOutput::from(self.0.0.0.as_slice()))
     }
 }
 impl FromSql for InputContentDigest {
@@ -128,10 +128,7 @@ impl FromSql for InputContentDigest {
             ValueRef::Blob(b) if b.len() == 32 => {
                 let mut digest = [0u8; 32];
                 digest.copy_from_slice(b);
-                Ok(InputContentDigest(ContentDigest::new(
-                    HashType::Sha256,
-                    digest,
-                )))
+                Ok(InputContentDigest(ContentDigest(Digest(digest))))
             }
             ValueRef::Blob(_) => Err(FromSqlError::Other(Box::from("invalid blob length"))),
             _ => Err(FromSqlError::InvalidType),

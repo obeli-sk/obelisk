@@ -1,4 +1,4 @@
-use concepts::ContentDigest;
+use concepts::{ContentDigest, Digest};
 use std::path::Path;
 
 #[tracing::instrument(skip_all)]
@@ -18,5 +18,5 @@ pub async fn calculate_sha256_file<P: AsRef<Path>>(
         hasher.update(&buf[..n]);
     }
     let digest: [u8; 32] = hasher.finalize().into();
-    Ok(ContentDigest::new(concepts::HashType::Sha256, digest))
+    Ok(ContentDigest(Digest(digest)))
 }

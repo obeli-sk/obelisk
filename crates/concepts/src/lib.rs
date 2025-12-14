@@ -2013,23 +2013,6 @@ pub struct InvalidNameError<T> {
 #[derive(
     Debug,
     Clone,
-    Copy,
-    strum::Display,
-    strum::EnumString,
-    PartialEq,
-    Eq,
-    Hash,
-    serde_with::SerializeDisplay,
-    serde_with::DeserializeFromStr,
-)]
-#[strum(serialize_all = "snake_case")]
-pub enum HashType {
-    Sha256,
-}
-
-#[derive(
-    Debug,
-    Clone,
     derive_more::Display,
     derive_more::FromStr,
     derive_more::Deref,
@@ -2054,50 +2037,29 @@ pub struct InputContentDigest(pub ContentDigest);
     serde_with::DeserializeFromStr,
 )]
 pub struct ContentDigest(pub Digest);
-pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest {
-    hash_type: HashType::Sha256,
-    digest: [0; 32],
-});
-
-impl ContentDigest {
-    #[must_use]
-    pub fn new(hash_type: HashType, digest: [u8; 32]) -> Self {
-        Self(Digest::new(hash_type, digest))
-    }
-}
+pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest([0; 32]));
 
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
 )]
-pub struct Digest {
-    pub hash_type: HashType,
-    pub digest: [u8; 32],
-}
+pub struct Digest(pub [u8; 32]);
 impl Digest {
     #[must_use]
-    pub fn new(hash_type: HashType, digest: [u8; 32]) -> Self {
-        Self { hash_type, digest }
-    }
-
-    #[must_use]
-    pub fn hash_type(&self) -> HashType {
-        self.hash_type
-    }
-
-    #[must_use]
     pub fn digest_base16(&self) -> String {
-        let mut out = String::with_capacity(self.digest.len() * 2);
-        for &b in &self.digest {
+        let mut out = String::with_capacity(self.0.len() * 2);
+        for &b in &self.0 {
             write!(&mut out, "{b:02x}").expect("writing to string");
         }
         out
     }
 }
+pub const HASH_TYPE: &str = "sha256";
+const HASH_TYPE_WITH_DELIMITER: &str = const_format::formatcp!("{}:", HASH_TYPE);
 
 impl Display for Digest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:", self.hash_type)?;
-        for b in self.digest {
+        write!(f, "{HASH_TYPE_WITH_DELIMITER}")?;
+        for b in self.0 {
             write!(f, "{b:02x}")?;
         }
         Ok(())
@@ -2106,13 +2068,11 @@ impl Display for Digest {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DigestParseErrror {
-    #[error("cannot parse ContentDigest - delimiter ':' not found")]
-    DelimiterNotFound,
-    #[error("cannot parse ContentDigest - invalid prefix `{hash_type}`")]
-    TypeParseError { hash_type: String },
-    #[error("cannot parse ContentDigest - invalid suffix length, expected 64 hex digits, got {0}")]
+    #[error("cannot parse Digest - invalid prefix")]
+    InvalidPrefix,
+    #[error("cannot parse Digest - invalid suffix length, expected 64 hex digits, got {0}")]
     SuffixLength(usize),
-    #[error("cannot parse ContentDigest - suffix must be hex encoded")]
+    #[error("cannot parse Digest - suffix must be hex encoded")]
     InvalidHex,
 }
 
@@ -2120,13 +2080,9 @@ impl FromStr for Digest {
     type Err = DigestParseErrror;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let (hash_type, hash_base16) = input
-            .split_once(':')
-            .ok_or(DigestParseErrror::DelimiterNotFound)?;
-        let hash_type =
-            HashType::from_str(hash_type).map_err(|_err| DigestParseErrror::TypeParseError {
-                hash_type: hash_type.to_string(),
-            })?;
+        let Some(hash_base16) = input.strip_prefix(HASH_TYPE_WITH_DELIMITER) else {
+            return Err(DigestParseErrror::InvalidPrefix);
+        };
         if hash_base16.len() != 64 {
             return Err(DigestParseErrror::SuffixLength(hash_base16.len()));
         }
@@ -2135,7 +2091,7 @@ impl FromStr for Digest {
             let chunk = &hash_base16[i * 2..i * 2 + 2];
             digest[i] = u8::from_str_radix(chunk, 16).map_err(|_| DigestParseErrror::InvalidHex)?;
         }
-        Ok(Self { hash_type, digest })
+        Ok(Digest(digest))
     }
 }
 
