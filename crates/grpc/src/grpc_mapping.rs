@@ -262,6 +262,7 @@ impl From<PendingState> for grpc_gen::ExecutionStatus {
                             run_id,
                         },
                     lock_expires_at,
+                    component_id_input_digest: _,
                 }) => Status::Locked(Locked {
                     run_id: Some(run_id.into()),
                     lock_expires_at: Some(lock_expires_at.into()),
@@ -269,6 +270,7 @@ impl From<PendingState> for grpc_gen::ExecutionStatus {
                 PendingState::PendingAt {
                     scheduled_at,
                     last_lock: _,
+                    component_id_input_digest: _,
                 } => Status::PendingAt(PendingAt {
                     scheduled_at: Some(scheduled_at.into()),
                 }),
@@ -276,6 +278,7 @@ impl From<PendingState> for grpc_gen::ExecutionStatus {
                     join_set_id,
                     lock_expires_at,
                     closing,
+                    component_id_input_digest: _,
                 } => Status::BlockedByJoinSet(BlockedByJoinSet {
                     join_set_id: Some(join_set_id.into()),
                     lock_expires_at: Some(lock_expires_at.into()),
@@ -288,6 +291,7 @@ impl From<PendingState> for grpc_gen::ExecutionStatus {
                             finished_at,
                             result_kind,
                         },
+                    component_id_input_digest: _,
                 } => Status::Finished(Finished {
                     finished_at: Some(finished_at.into()),
                     result_kind: grpc_gen::ResultKind::from(result_kind).into(),

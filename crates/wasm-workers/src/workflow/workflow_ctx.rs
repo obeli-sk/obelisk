@@ -2231,7 +2231,8 @@ pub(crate) mod tests {
                         PendingStateFinishedError::ExecutionFailure(kind)
                     ),
                     ..
-                }
+                },
+                component_id_input_digest: _,
             } => kind
         );
         assert_eq!(ExecutionFailureKind::Uncategorized, kind);
@@ -2392,7 +2393,8 @@ pub(crate) mod tests {
                 finished: PendingStateFinished {
                     result_kind: PendingStateFinishedResultKind::Ok,
                     ..
-                }
+                },
+                component_id_input_digest: _,
             }
         );
 
@@ -2606,6 +2608,7 @@ pub(crate) mod tests {
                 PendingState::PendingAt {
                     scheduled_at,
                     last_lock: _,
+                    component_id_input_digest: _,
                 } if scheduled_at <= sim_clock.now() => {
                     // Can happen when join set cancels delay requests.
                     continue;

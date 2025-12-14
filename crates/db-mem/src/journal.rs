@@ -1,4 +1,3 @@
-use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionEventInner,
@@ -29,6 +28,7 @@ impl ExecutionJournal {
         let pending_state = PendingState::PendingAt {
             scheduled_at: req.scheduled_at,
             last_lock: None,
+            component_id_input_digest: req.component_id.input_digest.clone(),
         };
         let execution_id = req.execution_id.clone();
         let created_at = req.created_at;
@@ -263,20 +263,54 @@ impl ExecutionJournal {
             })
     }
 
+    fn get_create_request(&self) -> CreateRequest {
+        let execution_event = self.execution_events.get(0).expect("must not be empty");
+        let ExecutionEventInner::Created {
+            ffqn,
+            params,
+            parent,
+            scheduled_at,
+            component_id,
+            metadata,
+            scheduled_by,
+        } = execution_event.event.clone()
+        else {
+            unreachable!("must start with Created event")
+        };
+        CreateRequest {
+            created_at: execution_event.created_at,
+            execution_id: self.execution_id.clone(),
+            ffqn,
+            params,
+            parent,
+            scheduled_at,
+            component_id,
+            metadata,
+            scheduled_by,
+        }
+    }
+
     fn calculate_pending_state(&self) -> PendingState {
         self.execution_events
             .iter()
             .enumerate()
             .rev()
             .find_map(|(idx, event)| match &event.event {
-                ExecutionEventInner::Created { scheduled_at, .. } => {
-                    Some(PendingState::PendingAt {
-                        scheduled_at: *scheduled_at,
-                        last_lock: None,
-                    })
-                }
+                ExecutionEventInner::Created {
+                    scheduled_at,
+                    component_id,
+                    ..
+                } => Some(PendingState::PendingAt {
+                    scheduled_at: *scheduled_at,
+                    last_lock: None,
+                    component_id_input_digest: component_id.input_digest.clone(),
+                }),
 
                 ExecutionEventInner::Finished { result, .. } => {
+                    let component_id_input_digest = self
+                        .find_last_lock()
+                        .map(|l| l.1.input_digest.clone())
+                        .unwrap_or_else(|| self.get_create_request().component_id.input_digest);
                     assert_eq!(self.execution_events.len() - 1, idx);
                     Some(PendingState::Finished {
                         finished: PendingStateFinished {
@@ -284,6 +318,7 @@ impl ExecutionJournal {
                             finished_at: event.created_at,
                             result_kind: PendingStateFinishedResultKind::from(result),
                         },
+                        component_id_input_digest,
                     })
                 }
 
@@ -291,7 +326,7 @@ impl ExecutionJournal {
                     executor_id,
                     lock_expires_at,
                     run_id,
-                    component_id: _,
+                    component_id,
                     retry_config: _,
                 }) => Some(PendingState::Locked(PendingStateLocked {
                     locked_by: LockedBy {
@@ -299,6 +334,7 @@ impl ExecutionJournal {
                         run_id: *run_id,
                     },
                     lock_expires_at: *lock_expires_at,
+                    component_id_input_digest: component_id.input_digest.clone(),
                 })),
 
                 ExecutionEventInner::TemporarilyFailed {
@@ -312,10 +348,17 @@ impl ExecutionJournal {
                 | ExecutionEventInner::Unlocked {
                     backoff_expires_at: expires_at,
                     ..
-                } => Some(PendingState::PendingAt {
-                    scheduled_at: *expires_at,
-                    last_lock: self.find_last_lock().map(|(ll, _)| ll),
-                }),
+                } => {
+                    let component_id_input_digest = self
+                        .find_last_lock()
+                        .map(|l| l.1.input_digest.clone())
+                        .unwrap_or_else(|| self.get_create_request().component_id.input_digest);
+                    Some(PendingState::PendingAt {
+                        scheduled_at: *expires_at,
+                        last_lock: self.find_last_lock().map(|(ll, _)| ll),
+                        component_id_input_digest,
+                    })
+                }
 
                 ExecutionEventInner::HistoryEvent {
                     event:
@@ -352,12 +395,17 @@ impl ExecutionJournal {
                             _ => None,
                         })
                         .nth(join_next_count - 1);
+                    let component_id_input_digest = self
+                        .find_last_lock()
+                        .map(|l| l.1.input_digest.clone())
+                        .unwrap_or_else(|| self.get_create_request().component_id.input_digest);
                     if let Some(nth_created_at) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
                         let scheduled_at = max(*lock_expires_at, *nth_created_at);
                         Some(PendingState::PendingAt {
                             scheduled_at,
                             last_lock: self.find_last_lock().map(|(ll, _)| ll),
+                            component_id_input_digest,
                         })
                     } else {
                         // Still waiting for response
@@ -365,6 +413,7 @@ impl ExecutionJournal {
                             join_set_id: expected_join_set_id.clone(),
                             lock_expires_at: *lock_expires_at,
                             closing: *closing,
+                            component_id_input_digest,
                         })
                     }
                 }
@@ -411,18 +460,12 @@ impl ExecutionJournal {
 
     #[must_use]
     pub fn params(&self) -> Params {
-        assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
-                event: ExecutionEventInner::Created { params, .. },
-                ..
-            }) => params.clone())
+        self.get_create_request().params
     }
 
     #[must_use]
     pub fn parent(&self) -> Option<(ExecutionId, JoinSetId)> {
-        assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
-                event: ExecutionEventInner::Created { parent, .. },
-                ..
-            }) => parent.clone())
+        self.get_create_request().parent.clone()
     }
 
     #[must_use]

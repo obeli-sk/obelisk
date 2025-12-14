@@ -7,6 +7,7 @@ use self::index::JournalsIndex;
 use crate::journal::ExecutionJournal;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::component_id::InputContentDigest;
 use concepts::prefixed_ulid::{DelayId, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
@@ -539,6 +540,7 @@ mod index {
                 PendingState::PendingAt {
                     scheduled_at,
                     last_lock: _,
+                    component_id_input_digest: _,
                 } => {
                     self.pending_scheduled
                         .entry(scheduled_at)

@@ -1221,6 +1221,7 @@ pub enum PendingState {
     PendingAt {
         scheduled_at: DateTime<Utc>,
         last_lock: Option<LockedBy>, // Needed for lock extension
+        component_id_input_digest: InputContentDigest,
     }, // e.g. created with a schedule, temporary timeout/failure
     #[display("BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
     /// Caused by [`HistoryEvent::JoinNext`]
@@ -1230,11 +1231,34 @@ pub enum PendingState {
         lock_expires_at: DateTime<Utc>,
         /// Blocked by closing of the join set
         closing: bool,
+        component_id_input_digest: InputContentDigest,
     },
     #[display("Finished({finished})")]
     Finished {
         finished: PendingStateFinished,
+        component_id_input_digest: InputContentDigest,
     },
+}
+impl PendingState {
+    pub fn get_component_id_input_digest(&self) -> &InputContentDigest {
+        match self {
+            PendingState::Locked(pending_state_locked) => {
+                &pending_state_locked.component_id_input_digest
+            }
+            PendingState::PendingAt {
+                component_id_input_digest,
+                ..
+            }
+            | PendingState::BlockedByJoinSet {
+                component_id_input_digest,
+                ..
+            }
+            | PendingState::Finished {
+                component_id_input_digest,
+                ..
+            } => component_id_input_digest,
+        }
+    }
 }
 
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
@@ -1243,6 +1267,7 @@ pub enum PendingState {
 pub struct PendingStateLocked {
     pub locked_by: LockedBy,
     pub lock_expires_at: DateTime<Utc>,
+    pub component_id_input_digest: InputContentDigest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1321,6 +1346,7 @@ impl PendingState {
             PendingState::PendingAt {
                 scheduled_at,
                 last_lock,
+                component_id_input_digest: _,
             } => {
                 if *scheduled_at <= created_at {
                     // pending now, ok to lock
@@ -1347,6 +1373,7 @@ impl PendingState {
                         run_id: current_pending_state_run_id,
                     },
                 lock_expires_at: _,
+                component_id_input_digest: _,
             }) => {
                 if executor_id == *current_pending_state_executor_id
                     && run_id == *current_pending_state_run_id

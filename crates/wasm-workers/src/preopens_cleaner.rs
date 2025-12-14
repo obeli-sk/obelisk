@@ -73,6 +73,7 @@ impl<S: Sleep + 'static, C: ClockFn + 'static> PreopensCleaner<S, C> {
                 {
                     Ok(PendingState::Finished {
                         finished: PendingStateFinished { finished_at, .. },
+                        ..
                     }) if finished_at < delete_older_than => {
                         // finished => delete after specified time
                         self.delete(&subfolder, "finished").await;

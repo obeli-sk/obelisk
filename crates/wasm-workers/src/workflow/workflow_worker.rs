@@ -1368,7 +1368,8 @@ pub(crate) mod tests {
                 pending_state,
                 PendingState::PendingAt {
                     scheduled_at,
-                    last_lock: Some(LockedBy { executor_id, run_id })
+                    last_lock: Some(LockedBy { executor_id, run_id }),
+                    component_id_input_digest: _,
                 }
                 => (scheduled_at, executor_id, run_id)
             );
@@ -1886,7 +1887,8 @@ pub(crate) mod tests {
                         PendingStateFinishedError::FallibleError
                     ),
                     ..
-                }
+                },
+                component_id_input_digest: _,
             }
         );
         db_close.close().await;
@@ -1969,7 +1971,12 @@ pub(crate) mod tests {
             .get_pending_state(&execution_id)
             .await
             .unwrap();
-        let (scheduled_at, found_executor_id, found_run_id) = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at, last_lock: Some(LockedBy { executor_id, run_id }) }
+        let (scheduled_at, found_executor_id, found_run_id) = assert_matches!(pending_state,
+            PendingState::PendingAt {
+                scheduled_at,
+                last_lock: Some(LockedBy { executor_id, run_id }),
+                component_id_input_digest: _,
+            }
             => (scheduled_at, executor_id, run_id));
         assert_eq!(sim_clock.now(), scheduled_at);
         assert_eq!(executor_id, found_executor_id);
@@ -2153,7 +2160,8 @@ pub(crate) mod tests {
                 finished: PendingStateFinished {
                     result_kind: PendingStateFinishedResultKind::Ok,
                     ..
-                }
+                },
+                component_id_input_digest: _,
             }
         );
         let execution_log = db_connection.get(&execution_id).await.unwrap();
@@ -2299,7 +2307,13 @@ pub(crate) mod tests {
             .get_pending_state(&execution_id)
             .await
             .unwrap();
-        let join_set_id = assert_matches!(pending_state, PendingState::BlockedByJoinSet { join_set_id, lock_expires_at:_, closing: false } => join_set_id);
+        let join_set_id = assert_matches!(pending_state,
+            PendingState::BlockedByJoinSet {
+                join_set_id,
+                lock_expires_at:_,
+                closing: false,
+                component_id_input_digest: _,
+            } => join_set_id);
         let stub_execution_id = execution_id.next_level(&join_set_id);
         write_stub_response(
             db_connection.as_ref(),
@@ -2444,7 +2458,8 @@ pub(crate) mod tests {
             PendingState::BlockedByJoinSet {
                 join_set_id: _,
                 lock_expires_at: _,
-                closing: false
+                closing: false,
+                component_id_input_digest: _,
             }
         );
 
@@ -2503,7 +2518,8 @@ pub(crate) mod tests {
                 finished: PendingStateFinished {
                     result_kind: PendingStateFinishedResultKind::Ok,
                     ..
-                }
+                },
+                component_id_input_digest: _,
             }
         );
         db_close.close().await;

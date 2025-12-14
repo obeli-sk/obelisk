@@ -568,12 +568,17 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 execution_id: Some(grpc_gen::ExecutionId::from(&execution_id)),
                 function_name: Some(create_request.ffqn.clone().into()),
                 current_status: Some(grpc_pending_status),
-                component_digest: Some(create_request.component_id.input_digest.clone().into()),
+                component_digest: Some(
+                    current_pending_state
+                        .get_component_id_input_digest()
+                        .clone()
+                        .into(),
+                ),
             })),
         };
         if current_pending_state.is_finished() || !request.follow {
             // No waiting in this case
-            let output: Self::GetStatusStream = if let PendingState::Finished { finished } =
+            let output: Self::GetStatusStream = if let PendingState::Finished { finished, .. } =
                 current_pending_state
                 && request.send_finished_status
             {
@@ -982,6 +987,7 @@ async fn notify_status(
                 }
                 if let PendingState::Finished {
                     finished: pending_state_finished,
+                    ..
                 } = pending_state
                 {
                     if send_finished_status {

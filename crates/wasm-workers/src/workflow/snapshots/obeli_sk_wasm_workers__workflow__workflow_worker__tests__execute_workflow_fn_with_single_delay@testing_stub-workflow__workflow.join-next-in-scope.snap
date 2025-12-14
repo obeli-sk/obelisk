@@ -576,6 +576,7 @@ expression: execution_log
       "version": 23,
       "finished_at": "1970-01-01T00:00:00Z",
       "result_kind": "ok"
-    }
+    },
+    "component_id_input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   }
 }
