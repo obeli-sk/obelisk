@@ -89,7 +89,7 @@ fn get_target_dir() -> PathBuf {
 /// The folder structure typically looks like this: `target/debug/build/<crate_name>-<hash>/out`.
 #[cfg(feature = "genrs")]
 fn get_out_dir() -> PathBuf {
-    PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR environment variable not set"))
+    PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR environment variable must be set"))
 }
 
 fn build_internal(

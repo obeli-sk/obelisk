@@ -1,6 +1,11 @@
+use std::path::PathBuf;
+
 fn main() {
     let obelisk_proto = "proto/obelisk.proto";
     println!("cargo:rerun-if-changed={obelisk_proto}");
+    let descriptor_path =
+        PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR environment variable must be set"))
+            .join("descriptor.bin");
     tonic_prost_build::configure()
         .protoc_arg("--experimental_allow_proto3_optional") // not needed anymore with protoc  25.3
         .compile_well_known_types(true)
@@ -11,6 +16,7 @@ fn main() {
         .type_attribute(".", "#[serde(rename_all=\"snake_case\")]") // for CLI only
         .build_server(true)
         .build_client(true)
+        .file_descriptor_set_path(descriptor_path)
         .compile_protos(&[obelisk_proto], &[])
         .unwrap();
 }

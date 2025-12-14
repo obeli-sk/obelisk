@@ -1299,6 +1299,10 @@ async fn run_internal(
         component_source_map,
         cancel_registry,
     ));
+
+    let reflection_service = tonic_reflection::server::Builder::configure()
+        .register_encoded_file_descriptor_set(grpc_gen::FILE_DESCRIPTOR_SET)
+        .build_v1()?;
     tonic::transport::Server::builder()
         .accept_http1(true)
         .layer(
@@ -1330,6 +1334,7 @@ async fn run_internal(
             .send_compressed(CompressionEncoding::Gzip)
             .accept_compressed(CompressionEncoding::Gzip),
         )
+        .add_service(reflection_service)
         .serve_with_shutdown(api_listening_addr, async move {
             info!("Serving gRPC requests at {api_listening_addr}");
             info!("Server is ready");

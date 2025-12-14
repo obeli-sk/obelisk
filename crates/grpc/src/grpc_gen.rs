@@ -5,3 +5,5 @@
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::must_use_candidate)]
 tonic::include_proto!("obelisk");
+
+pub const FILE_DESCRIPTOR_SET: &[u8] = tonic::include_file_descriptor_set!("descriptor");
