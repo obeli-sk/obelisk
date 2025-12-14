@@ -112,7 +112,7 @@ pub(crate) async fn submit(
         let components = component_client
             .list_components(tonic::Request::new(grpc_gen::ListComponentsRequest {
                 function_name: None,
-                component_id: None,
+                component_digest: None,
                 extensions: false,
             }))
             .await?

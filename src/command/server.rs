@@ -48,6 +48,7 @@ use concepts::Params;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
 use concepts::SupportedFunctionReturnValue;
+use concepts::component_id::InputContentDigest;
 use concepts::prefixed_ulid::DelayId;
 use concepts::storage;
 use concepts::storage::AppendEventsToExecution;
@@ -1082,9 +1083,20 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
         request: tonic::Request<grpc_gen::ListComponentsRequest>,
     ) -> TonicRespResult<grpc_gen::ListComponentsResponse> {
         let request = request.into_inner();
-        let components = self.component_registry_ro.list(request.extensions);
-        let mut res_components = Vec::with_capacity(components.len());
-        for component in components {
+        let all_components = self.component_registry_ro.list(request.extensions);
+        let component_digest = request
+            .component_digest
+            .map(InputContentDigest::try_from)
+            .transpose()?;
+        let mut res_components = Vec::with_capacity(all_components.len());
+        for component in all_components
+            .into_iter()
+            .filter(|component| match &component_digest {
+                None => true,
+                Some(filter) if *filter == component.component_id.input_digest => true,
+                Some(_) => false,
+            })
+        {
             let res_component = grpc_gen::Component {
                 component_id: Some(component.component_id.into()),
                 exports: component

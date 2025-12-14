@@ -105,7 +105,7 @@ pub(crate) async fn list_components(
     let components = client
         .list_components(tonic::Request::new(grpc_gen::ListComponentsRequest {
             function_name: None,
-            component_id: None,
+            component_digest: None,
             extensions,
         }))
         .await?

@@ -79,7 +79,7 @@ message ListExecutionsResponse {
 
 message ListComponentsRequest {
     optional FunctionName function_name = 1;
-    optional ComponentId component_id = 2;
+    optional ContentDigest component_digest = 2;
     bool extensions = 3;
 }
 
