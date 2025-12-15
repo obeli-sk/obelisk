@@ -4,10 +4,7 @@ expression: exports
 ---
 {
   "testing:http-workflow/workflow.get": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get"
-    },
+    "ffqn": "testing:http-workflow/workflow.get",
     "parameter_types": [
       {
         "type_wrapper": "string",
@@ -28,10 +25,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow/workflow.get-resp": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get-resp"
-    },
+    "ffqn": "testing:http-workflow/workflow.get-resp",
     "parameter_types": [
       {
         "type_wrapper": "string",
@@ -52,10 +46,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow/workflow.get-stargazers": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get-stargazers"
-    },
+    "ffqn": "testing:http-workflow/workflow.get-stargazers",
     "parameter_types": [],
     "return_type": {
       "Extendable": {
@@ -70,10 +61,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow/workflow.get-successful": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get-successful"
-    },
+    "ffqn": "testing:http-workflow/workflow.get-successful",
     "parameter_types": [
       {
         "type_wrapper": "string",
@@ -94,10 +82,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow/workflow.get-successful-concurrently": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get-successful-concurrently"
-    },
+    "ffqn": "testing:http-workflow/workflow.get-successful-concurrently",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -122,10 +107,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow/workflow.get-successful-concurrently-stress": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get-successful-concurrently-stress"
-    },
+    "ffqn": "testing:http-workflow/workflow.get-successful-concurrently-stress",
     "parameter_types": [
       {
         "type_wrapper": "string",

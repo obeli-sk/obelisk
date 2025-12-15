@@ -9,10 +9,7 @@ expression: execution_log
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
         "Created": {
-          "ffqn": {
-            "ifc_fqn": "testing:sleep-workflow/workflow",
-            "function_name": "join-next-produces-all-processed-error"
-          },
+          "ffqn": "testing:sleep-workflow/workflow.join-next-produces-all-processed-error",
           "params": [],
           "parent": null,
           "scheduled_at": "1970-01-01T00:00:00Z",

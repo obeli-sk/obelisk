@@ -4,10 +4,7 @@ expression: imports
 ---
 {
   "obelisk:workflow/workflow-support@4.0.0.join-set-create": {
-    "ffqn": {
-      "ifc_fqn": "obelisk:workflow/workflow-support@4.0.0",
-      "function_name": "join-set-create"
-    },
+    "ffqn": "obelisk:workflow/workflow-support@4.0.0.join-set-create",
     "parameter_types": [],
     "return_type": {
       "NonExtendable": {
@@ -19,10 +16,7 @@ expression: imports
     "submittable": false
   },
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-obelisk-ext/fibo",
-      "function_name": "fibo-await-next"
-    },
+    "ffqn": "testing:fibo-obelisk-ext/fibo.fibo-await-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -95,10 +89,7 @@ expression: imports
     "submittable": false
   },
   "testing:fibo-obelisk-ext/fibo.fibo-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-obelisk-ext/fibo",
-      "function_name": "fibo-submit"
-    },
+    "ffqn": "testing:fibo-obelisk-ext/fibo.fibo-submit",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -125,10 +116,7 @@ expression: imports
     "submittable": false
   },
   "testing:fibo/fibo.fibo": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo/fibo",
-      "function_name": "fibo"
-    },
+    "ffqn": "testing:fibo/fibo.fibo",
     "parameter_types": [
       {
         "type_wrapper": "u8",

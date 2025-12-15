@@ -9,10 +9,7 @@ expression: execution_log
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
         "Created": {
-          "ffqn": {
-            "ifc_fqn": "testing:stub-workflow/workflow",
-            "function_name": "submit-race-join-next-stub"
-          },
+          "ffqn": "testing:stub-workflow/workflow.submit-race-join-next-stub",
           "params": [],
           "parent": null,
           "scheduled_at": "1970-01-01T00:00:00Z",
@@ -75,10 +72,7 @@ expression: execution_log
             "request": {
               "type": "ChildExecutionRequest",
               "child_execution_id": "E_00000000000000000000000000.g:1_1",
-              "target_ffqn": {
-                "ifc_fqn": "testing:stub-activity/activity",
-                "function_name": "foo"
-              },
+              "target_ffqn": "testing:stub-activity/activity.foo",
               "params": [
                 "some param"
               ]

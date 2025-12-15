@@ -4,10 +4,7 @@ expression: imports
 ---
 {
   "obelisk:types/join-set@4.0.0.[method]join-set.id": {
-    "ffqn": {
-      "ifc_fqn": "obelisk:types/join-set@4.0.0",
-      "function_name": "[method]join-set.id"
-    },
+    "ffqn": "obelisk:types/join-set@4.0.0.[method]join-set.id",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -25,10 +22,7 @@ expression: imports
     "submittable": false
   },
   "obelisk:workflow/workflow-support@4.0.0.join-set-create": {
-    "ffqn": {
-      "ifc_fqn": "obelisk:workflow/workflow-support@4.0.0",
-      "function_name": "join-set-create"
-    },
+    "ffqn": "obelisk:workflow/workflow-support@4.0.0.join-set-create",
     "parameter_types": [],
     "return_type": {
       "NonExtendable": {
@@ -40,10 +34,7 @@ expression: imports
     "submittable": false
   },
   "testing:http-obelisk-ext/http-get.get-successful-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-obelisk-ext/http-get",
-      "function_name": "get-successful-await-next"
-    },
+    "ffqn": "testing:http-obelisk-ext/http-get.get-successful-await-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -116,10 +107,7 @@ expression: imports
     "submittable": false
   },
   "testing:http-obelisk-ext/http-get.get-successful-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-obelisk-ext/http-get",
-      "function_name": "get-successful-submit"
-    },
+    "ffqn": "testing:http-obelisk-ext/http-get.get-successful-submit",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -146,10 +134,7 @@ expression: imports
     "submittable": false
   },
   "testing:http/http-get.get": {
-    "ffqn": {
-      "ifc_fqn": "testing:http/http-get",
-      "function_name": "get"
-    },
+    "ffqn": "testing:http/http-get.get",
     "parameter_types": [
       {
         "type_wrapper": "string",
@@ -170,10 +155,7 @@ expression: imports
     "submittable": false
   },
   "testing:http/http-get.get-resp": {
-    "ffqn": {
-      "ifc_fqn": "testing:http/http-get",
-      "function_name": "get-resp"
-    },
+    "ffqn": "testing:http/http-get.get-resp",
     "parameter_types": [
       {
         "type_wrapper": "string",
@@ -201,10 +183,7 @@ expression: imports
     "submittable": false
   },
   "testing:http/http-get.get-stargazers": {
-    "ffqn": {
-      "ifc_fqn": "testing:http/http-get",
-      "function_name": "get-stargazers"
-    },
+    "ffqn": "testing:http/http-get.get-stargazers",
     "parameter_types": [],
     "return_type": {
       "Extendable": {
@@ -224,10 +203,7 @@ expression: imports
     "submittable": false
   },
   "testing:http/http-get.get-successful": {
-    "ffqn": {
-      "ifc_fqn": "testing:http/http-get",
-      "function_name": "get-successful"
-    },
+    "ffqn": "testing:http/http-get.get-successful",
     "parameter_types": [
       {
         "type_wrapper": "string",

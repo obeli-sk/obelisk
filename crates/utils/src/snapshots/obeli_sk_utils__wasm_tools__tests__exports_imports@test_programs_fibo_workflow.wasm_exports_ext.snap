@@ -4,10 +4,7 @@ expression: exports
 ---
 {
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fiboa-await-next"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -80,10 +77,7 @@ expression: exports
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fiboa-concurrent-await-next"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -156,10 +150,7 @@ expression: exports
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-get": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fiboa-concurrent-get"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-get",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -227,10 +218,7 @@ expression: exports
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fiboa-concurrent-submit"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -262,10 +250,7 @@ expression: exports
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-get": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fiboa-get"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-get",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -333,10 +318,7 @@ expression: exports
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fiboa-submit"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -368,10 +350,7 @@ expression: exports
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fibow-await-next"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -444,10 +423,7 @@ expression: exports
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-get": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fibow-get"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fibow-get",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -515,10 +491,7 @@ expression: exports
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-ext/workflow",
-      "function_name": "fibow-submit"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -550,10 +523,7 @@ expression: exports
     "submittable": false
   },
   "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-concurrent-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-schedule/workflow",
-      "function_name": "fiboa-concurrent-schedule"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-concurrent-schedule",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -604,10 +574,7 @@ expression: exports
     "submittable": true
   },
   "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-schedule/workflow",
-      "function_name": "fiboa-schedule"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-schedule",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -658,10 +625,7 @@ expression: exports
     "submittable": true
   },
   "testing:fibo-workflow-obelisk-schedule/workflow.fibow-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow-obelisk-schedule/workflow",
-      "function_name": "fibow-schedule"
-    },
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fibow-schedule",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -712,10 +676,7 @@ expression: exports
     "submittable": true
   },
   "testing:fibo-workflow/workflow.fiboa": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow/workflow",
-      "function_name": "fiboa"
-    },
+    "ffqn": "testing:fibo-workflow/workflow.fiboa",
     "parameter_types": [
       {
         "type_wrapper": "u8",
@@ -741,10 +702,7 @@ expression: exports
     "submittable": true
   },
   "testing:fibo-workflow/workflow.fiboa-concurrent": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow/workflow",
-      "function_name": "fiboa-concurrent"
-    },
+    "ffqn": "testing:fibo-workflow/workflow.fiboa-concurrent",
     "parameter_types": [
       {
         "type_wrapper": "u8",
@@ -770,10 +728,7 @@ expression: exports
     "submittable": true
   },
   "testing:fibo-workflow/workflow.fibow": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow/workflow",
-      "function_name": "fibow"
-    },
+    "ffqn": "testing:fibo-workflow/workflow.fibow",
     "parameter_types": [
       {
         "type_wrapper": "u8",

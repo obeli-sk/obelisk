@@ -4,10 +4,7 @@ expression: exports
 ---
 {
   "testing:http-workflow-obelisk-ext/workflow.get-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-await-next"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-await-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -80,10 +77,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-get": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-get"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-get",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -151,10 +145,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-resp-await-next"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-resp-await-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -227,10 +218,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-get": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-resp-get"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-resp-get",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -298,10 +286,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-resp-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-resp-submit"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-resp-submit",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -328,10 +313,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-stargazers-await-next"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-stargazers-await-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -404,10 +386,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-get": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-stargazers-get"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-stargazers-get",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -475,10 +454,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-stargazers-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-stargazers-submit"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-stargazers-submit",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -500,10 +476,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-submit"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-submit",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -530,10 +503,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-await-next"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-successful-await-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -606,10 +576,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-concurrently-await-next"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-await-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -684,10 +651,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-get": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-concurrently-get"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-get",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -757,10 +721,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-concurrently-stress-await-next"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -835,10 +796,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-get": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-concurrently-stress-get"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-get",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -908,10 +866,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-concurrently-stress-submit"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -943,10 +898,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-concurrently-submit"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-submit",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -975,10 +927,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-get": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-get"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-successful-get",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -1046,10 +995,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-ext/workflow",
-      "function_name": "get-successful-submit"
-    },
+    "ffqn": "testing:http-workflow-obelisk-ext/workflow.get-successful-submit",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -1076,10 +1022,7 @@ expression: exports
     "submittable": false
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-resp-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
-      "function_name": "get-resp-schedule"
-    },
+    "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-resp-schedule",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -1125,10 +1068,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
-      "function_name": "get-schedule"
-    },
+    "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-schedule",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -1174,10 +1114,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-stargazers-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
-      "function_name": "get-stargazers-schedule"
-    },
+    "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-stargazers-schedule",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -1218,10 +1155,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
-      "function_name": "get-successful-concurrently-schedule"
-    },
+    "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-schedule",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -1269,10 +1203,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-stress-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
-      "function_name": "get-successful-concurrently-stress-schedule"
-    },
+    "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-stress-schedule",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -1323,10 +1254,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-successful-schedule": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow-obelisk-schedule/workflow",
-      "function_name": "get-successful-schedule"
-    },
+    "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-schedule",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -1372,10 +1300,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow/workflow.get": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get"
-    },
+    "ffqn": "testing:http-workflow/workflow.get",
     "parameter_types": [
       {
         "type_wrapper": "string",
@@ -1396,10 +1321,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow/workflow.get-resp": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get-resp"
-    },
+    "ffqn": "testing:http-workflow/workflow.get-resp",
     "parameter_types": [
       {
         "type_wrapper": "string",
@@ -1420,10 +1342,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow/workflow.get-stargazers": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get-stargazers"
-    },
+    "ffqn": "testing:http-workflow/workflow.get-stargazers",
     "parameter_types": [],
     "return_type": {
       "Extendable": {
@@ -1438,10 +1357,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow/workflow.get-successful": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get-successful"
-    },
+    "ffqn": "testing:http-workflow/workflow.get-successful",
     "parameter_types": [
       {
         "type_wrapper": "string",
@@ -1462,10 +1378,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow/workflow.get-successful-concurrently": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get-successful-concurrently"
-    },
+    "ffqn": "testing:http-workflow/workflow.get-successful-concurrently",
     "parameter_types": [
       {
         "type_wrapper": {
@@ -1490,10 +1403,7 @@ expression: exports
     "submittable": true
   },
   "testing:http-workflow/workflow.get-successful-concurrently-stress": {
-    "ffqn": {
-      "ifc_fqn": "testing:http-workflow/workflow",
-      "function_name": "get-successful-concurrently-stress"
-    },
+    "ffqn": "testing:http-workflow/workflow.get-successful-concurrently-stress",
     "parameter_types": [
       {
         "type_wrapper": "string",

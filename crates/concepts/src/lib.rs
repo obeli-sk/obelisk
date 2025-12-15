@@ -416,7 +416,9 @@ pub struct FnMarker;
 
 pub type FnName = Name<FnMarker>;
 
-#[derive(Hash, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Hash, Clone, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
+)]
 pub struct FunctionFqn {
     pub ifc_fqn: IfcFqnName,
     pub function_name: FnName,

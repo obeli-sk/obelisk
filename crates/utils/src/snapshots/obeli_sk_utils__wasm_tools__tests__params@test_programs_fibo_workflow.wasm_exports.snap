@@ -4,10 +4,7 @@ expression: exports
 ---
 {
   "testing:fibo-workflow/workflow.fiboa": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow/workflow",
-      "function_name": "fiboa"
-    },
+    "ffqn": "testing:fibo-workflow/workflow.fiboa",
     "parameter_types": [
       {
         "type_wrapper": "u8",
@@ -33,10 +30,7 @@ expression: exports
     "submittable": true
   },
   "testing:fibo-workflow/workflow.fiboa-concurrent": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow/workflow",
-      "function_name": "fiboa-concurrent"
-    },
+    "ffqn": "testing:fibo-workflow/workflow.fiboa-concurrent",
     "parameter_types": [
       {
         "type_wrapper": "u8",
@@ -62,10 +56,7 @@ expression: exports
     "submittable": true
   },
   "testing:fibo-workflow/workflow.fibow": {
-    "ffqn": {
-      "ifc_fqn": "testing:fibo-workflow/workflow",
-      "function_name": "fibow"
-    },
+    "ffqn": "testing:fibo-workflow/workflow.fibow",
     "parameter_types": [
       {
         "type_wrapper": "u8",

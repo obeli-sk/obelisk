@@ -9,10 +9,7 @@ expression: execution_log
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
         "Created": {
-          "ffqn": {
-            "ifc_fqn": "testing:stub-workflow/workflow",
-            "function_name": "await-next-produces-all-processed-error"
-          },
+          "ffqn": "testing:stub-workflow/workflow.await-next-produces-all-processed-error",
           "params": [],
           "parent": null,
           "scheduled_at": "1970-01-01T00:00:00Z",
@@ -72,10 +69,7 @@ expression: execution_log
           "event": {
             "type": "JoinNextTooMany",
             "join_set_id": "g:1",
-            "requested_ffqn": {
-              "ifc_fqn": "testing:stub-activity/activity",
-              "function_name": "foo"
-            }
+            "requested_ffqn": "testing:stub-activity/activity.foo"
           }
         }
       },
