@@ -106,6 +106,7 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::select;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::codec::CompressionEncoding;
@@ -1183,11 +1184,21 @@ pub(crate) async fn run(
     config: Option<PathBuf>,
     params: RunParams,
 ) -> anyhow::Result<()> {
+    let (graceful_shutdown_complete_sender, graceful_shutdown_complete_receiver) =
+        oneshot::channel();
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
 
-    Box::pin(run_internal(config, config_holder, params)).await?;
+    Box::pin(run_internal(
+        config,
+        config_holder,
+        params,
+        graceful_shutdown_complete_sender,
+    ))
+    .await?;
+
+    let _ = graceful_shutdown_complete_receiver.await; // Dropped the server before `InitServer` was created.
     Ok(())
 }
 
@@ -1289,6 +1300,7 @@ async fn run_internal(
     config: ConfigToml,
     config_holder: ConfigHolder,
     params: RunParams,
+    graceful_shutdown_complete_sender: oneshot::Sender<()>,
 ) -> anyhow::Result<()> {
     let span = info_span!("init");
     let api_listening_addr = config.api.listening_addr;
@@ -1339,13 +1351,23 @@ async fn run_internal(
         timers_watcher,
         cancel_watcher,
         &cancel_registry,
+        graceful_shutdown_complete_sender,
     )
     .instrument(span)
     .await?;
 
     let grpc_server = Arc::new(GrpcServer::new(
-        init.db_pool.clone(),
-        init.shutdown.1.clone(),
+        init.0
+            .as_ref()
+            .expect("server is not shut down")
+            .db_pool
+            .clone(),
+        init.0
+            .as_ref()
+            .expect("server is not shut down")
+            .shutdown
+            .1
+            .clone(),
         component_registry_ro,
         component_source_map,
         cancel_registry,
@@ -1402,8 +1424,7 @@ async fn run_internal(
             tokio::signal::ctrl_c()
                 .await
                 .expect("failed to listen for SIGINT event");
-            warn!("Received SIGINT, waiting for gRPC server to shut down");
-            init.close().await;
+            // Will log in ServerInitInner::close
         })
         .await
         .with_context(|| format!("server error listening on {api_listening_addr}"))
@@ -1590,7 +1611,8 @@ impl ServerCompiledLinked {
     }
 }
 
-struct ServerInit {
+struct ServerInit(Option<ServerInitInner>);
+struct ServerInitInner {
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
     shutdown: (watch::Sender<bool>, watch::Receiver<bool>),
@@ -1605,6 +1627,7 @@ struct ServerInit {
     epoch_ticker: EpochTicker,
     #[expect(dead_code)]
     preopens_cleaner: Option<AbortOnDropHandle>,
+    graceful_shutdown_complete_sender: oneshot::Sender<()>,
 }
 
 #[instrument(skip_all)]
@@ -1616,6 +1639,7 @@ async fn spawn_tasks_and_threads(
     timers_watcher: TimersWatcherTomlConfig,
     cancel_watcher: CancelWatcherTomlConfig,
     cancel_registry: &CancelRegistry,
+    graceful_shutdown_complete_sender: oneshot::Sender<()>,
 ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
     // Start components requiring a database
     let epoch_ticker = EpochTicker::spawn_new(
@@ -1702,28 +1726,40 @@ async fn spawn_tasks_and_threads(
         global_webhook_instance_limiter.clone(),
     )
     .await?;
+    let inner = ServerInitInner {
+        db_pool,
+        db_close: Box::pin(async move {
+            db.close().await;
+        }),
+        shutdown: watch::channel(false),
+        exec_join_handles,
+        timers_watcher,
+        cancel_watcher,
+        http_servers_handles,
+        epoch_ticker,
+        preopens_cleaner,
+        graceful_shutdown_complete_sender,
+    };
     Ok((
-        ServerInit {
-            db_pool,
-            db_close: Box::pin(async move {
-                db.close().await;
-            }),
-            shutdown: watch::channel(false),
-            exec_join_handles,
-            timers_watcher,
-            cancel_watcher,
-            http_servers_handles,
-            epoch_ticker,
-            preopens_cleaner,
-        },
+        ServerInit(Some(inner)),
         server_compiled_linked.component_registry_ro,
     ))
 }
-impl ServerInit {
+impl Drop for ServerInit {
+    fn drop(&mut self) {
+        if let Some(inner) = self.0.take() {
+            let handle = tokio::runtime::Handle::current();
+            handle.spawn(inner.close());
+        } else {
+            unreachable!("ServerInitInner is taken only once")
+        }
+    }
+}
+impl ServerInitInner {
     async fn close(self) {
         info!("Server is shutting down");
-        let (db_close, exec_join_handles) = {
-            let ServerInit {
+        let (db_close, exec_join_handles, graceful_shutdown_complete_sender) = {
+            let ServerInitInner {
                 db_pool: _,
                 db_close,
                 shutdown: _, // Dropping notifies follower tasks.
@@ -1733,15 +1769,23 @@ impl ServerInit {
                 http_servers_handles: _,
                 epoch_ticker: _,
                 preopens_cleaner: _,
+                graceful_shutdown_complete_sender,
             } = self;
             // drop AbortOnDropHandles
-            (db_close, exec_join_handles)
+            (
+                db_close,
+                exec_join_handles,
+                graceful_shutdown_complete_sender,
+            )
         };
         // Close most of the services. Worker tasks might still be running.
         for exec_join_handle in exec_join_handles {
             exec_join_handle.close().await;
         }
         db_close.await;
+        let _ = graceful_shutdown_complete_sender
+            .send(())
+            .map_err(|_| warn!("could not send the graceful shutdown complete signal"));
     }
 }
 
