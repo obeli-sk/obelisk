@@ -1,4 +1,5 @@
 use crate::args::Server;
+use crate::command::shutdown_signal::shutdown_signal;
 use crate::config::ComponentConfig;
 use crate::config::ComponentConfigImportable;
 use crate::config::ComponentLocation;
@@ -1218,7 +1219,14 @@ pub(crate) async fn verify(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
-    Box::pin(verify_internal(config, config_holder, verify_params)).await?;
+    let shutdown_signal = std::pin::pin!(shutdown_signal());
+    Box::pin(verify_internal(
+        config,
+        config_holder,
+        verify_params,
+        shutdown_signal,
+    ))
+    .await?;
     Ok(())
 }
 
@@ -1235,6 +1243,7 @@ async fn verify_internal(
     config: ConfigToml,
     config_holder: ConfigHolder,
     params: VerifyParams,
+    mut shutdown_signal: Pin<&mut impl Future<Output = ()>>,
 ) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
     info!("Verifying server configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
@@ -1282,9 +1291,10 @@ async fn verify_internal(
         Arc::from(metadata_dir),
         params.ignore_missing_env_vars,
         config_holder.path_prefixes,
+        shutdown_signal.as_mut(),
     )
     .await?;
-    let compiled_and_linked = ServerCompiledLinked::new(server_verified).await?;
+    let compiled_and_linked = ServerCompiledLinked::new(server_verified, shutdown_signal).await?;
     info!(
         "Server configuration was verified{}",
         if compiled_and_linked.supressed_errors.is_some() {
@@ -1302,6 +1312,8 @@ async fn run_internal(
     params: RunParams,
     graceful_shutdown_complete_sender: oneshot::Sender<()>,
 ) -> anyhow::Result<()> {
+    let mut shutdown_signal = Box::pin(shutdown_signal());
+
     let span = info_span!("init");
     let api_listening_addr = config.api.listening_addr;
 
@@ -1337,6 +1349,7 @@ async fn run_internal(
             clean_codegen_cache: params.clean_codegen_cache,
             ignore_missing_env_vars: false,
         },
+        shutdown_signal.as_mut(),
     ))
     .instrument(span.clone())
     .await?;
@@ -1421,9 +1434,7 @@ async fn run_internal(
         .with_graceful_shutdown(async move {
             info!("Serving gRPC requests at {api_listening_addr}");
             info!("Server is ready");
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to listen for SIGINT event");
+            shutdown_signal.await
             // Will log in ServerInitInner::close
         })
         .await
@@ -1457,6 +1468,7 @@ impl ServerVerified {
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         path_prefixes: PathPrefixes,
+        shutdown_signal: Pin<&mut impl Future<Output = ()>>,
     ) -> Result<(Self, ComponentSourceMap), anyhow::Error> {
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
         let workflows_lock_extension_leeway =
@@ -1543,6 +1555,7 @@ impl ServerVerified {
                 .global_executor_instance_limiter
                 .as_semaphore(),
             fuel,
+            shutdown_signal,
         )
         .await?;
         debug!("Verified config: {config:#?}");
@@ -1586,7 +1599,10 @@ struct ServerCompiledLinked {
 }
 
 impl ServerCompiledLinked {
-    async fn new(server_verified: ServerVerified) -> Result<Self, anyhow::Error> {
+    async fn new(
+        server_verified: ServerVerified,
+        shutdown_signal: Pin<&mut impl Future<Output = ()>>,
+    ) -> Result<Self, anyhow::Error> {
         let (compiled_components, component_registry_ro, supressed_errors) = compile_and_verify(
             &server_verified.engines,
             server_verified.config.activities_wasm,
@@ -1597,6 +1613,7 @@ impl ServerCompiledLinked {
             server_verified.config.fuel,
             server_verified.build_semaphore,
             server_verified.workflows_lock_extension_leeway,
+            shutdown_signal,
         )
         .await?;
         Ok(Self {
@@ -1873,6 +1890,7 @@ impl ConfigVerified {
         parent_preopen_dir: Option<Arc<Path>>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
+        shutdown_signal: Pin<&mut impl Future<Output = ()>>,
     ) -> Result<ConfigVerified, anyhow::Error> {
         // Check uniqueness of server and webhook names.
         {
@@ -2040,8 +2058,7 @@ impl ConfigVerified {
                     fuel
                 })
             },
-            sigint = tokio::signal::ctrl_c() => {
-                sigint.expect("failed to listen for SIGINT event");
+            _ = shutdown_signal => {
                 warn!("Received SIGINT, canceling while resolving the WASM files");
                 anyhow::bail!("canceling while resolving the WASM files")
             }
@@ -2082,6 +2099,7 @@ async fn compile_and_verify(
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
     workflows_lock_extension_leeway: Duration,
+    shutdown_signal: Pin<&mut impl Future<Output = ()>>,
 ) -> Result<
     (
         LinkedComponents,
@@ -2242,8 +2260,7 @@ async fn compile_and_verify(
                 webhooks_by_names,
             }, component_registry_ro, supressed_errors))
         },
-        sigint = tokio::signal::ctrl_c() => {
-            sigint.expect("failed to listen for SIGINT event");
+        () = shutdown_signal => {
             warn!("Received SIGINT, canceling while compiling the components");
             anyhow::bail!("canceling while compiling the components")
         }
@@ -2781,7 +2798,10 @@ impl MatchableSourceMap {
 #[cfg(test)]
 mod tests {
     use crate::{
-        command::server::{ServerCompiledLinked, ServerVerified, VerifyParams},
+        command::{
+            server::{ServerCompiledLinked, ServerVerified, VerifyParams},
+            shutdown_signal::shutdown_signal,
+        },
         config::config_holder::ConfigHolder,
     };
     use directories::BaseDirs;
@@ -2815,6 +2835,7 @@ mod tests {
         tokio::fs::create_dir_all(&wasm_cache_dir).await?;
         let metadata_dir = wasm_cache_dir.join("metadata");
         tokio::fs::create_dir_all(&metadata_dir).await?;
+        let mut shutdown_signal = std::pin::pin!(shutdown_signal());
         let (server_verified, _component_source_map) = ServerVerified::new(
             config,
             codegen_cache,
@@ -2822,9 +2843,11 @@ mod tests {
             Arc::from(metadata_dir),
             VerifyParams::default().ignore_missing_env_vars,
             config_holder.path_prefixes,
+            shutdown_signal.as_mut(),
         )
         .await?;
-        let compiled_and_linked = ServerCompiledLinked::new(server_verified).await?;
+        let compiled_and_linked =
+            ServerCompiledLinked::new(server_verified, shutdown_signal).await?;
         assert_eq!(compiled_and_linked.supressed_errors, None);
         Ok(())
     }
