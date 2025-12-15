@@ -7,8 +7,9 @@ use axum::{
 use axum_accept::AcceptExtractor;
 use concepts::{
     ExecutionId, FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
+    prefixed_ulid::DelayId,
     storage::{
-        CancelOutcome, DbErrorRead, DbErrorWrite, DbErrorWriteNonRetriable, DbPool,
+        self, CancelOutcome, DbErrorRead, DbErrorWrite, DbErrorWriteNonRetriable, DbPool,
         ExecutionEventInner,
     },
     time::{ClockFn as _, Now},
@@ -40,6 +41,7 @@ pub(crate) fn app_router(state: WebApiState) -> Router {
 
 fn v1_router() -> Router<Arc<WebApiState>> {
     Router::new()
+        .route("/delays/{delay-id}/cancel", routing::put(delay_cancel))
         .route("/execution-id", routing::get(execution_id_generate))
         .route(
             "/executions/{execution-id}/cancel",
@@ -60,6 +62,19 @@ async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader)
         AcceptHeader::Json => Json(json!(id)).into_response(),
         AcceptHeader::Text => id.to_string().into_response(),
     }
+}
+
+async fn delay_cancel(
+    Path(delay_id): Path<DelayId>,
+    state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    let conn = state.db_pool.connection();
+    let executed_at = Now.now();
+    let outcome = storage::cancel_delay(conn.as_ref(), delay_id, executed_at)
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    Ok(HttpResponse::from_cancel_outcome(outcome, accept).into_response())
 }
 
 async fn execution_cancel(
@@ -86,19 +101,7 @@ async fn execution_cancel(
         .cancel(conn.as_ref(), &execution_id, executed_at)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
-    Ok(match outcome {
-        CancelOutcome::Cancelled => HttpResponse {
-            status: StatusCode::OK,
-            message: "cancelled".to_string(),
-            accept,
-        },
-        CancelOutcome::AlreadyFinished => HttpResponse {
-            status: StatusCode::CONFLICT,
-            message: "already finished".to_string(),
-            accept,
-        },
-    }
-    .into_response())
+    Ok(HttpResponse::from_cancel_outcome(outcome, accept).into_response())
 }
 
 async fn execution_status_get(
@@ -379,6 +382,22 @@ struct HttpResponse {
     status: StatusCode,
     message: String,
     accept: AcceptHeader,
+}
+impl HttpResponse {
+    fn from_cancel_outcome(outcome: CancelOutcome, accept: AcceptHeader) -> Self {
+        match outcome {
+            CancelOutcome::Cancelled => HttpResponse {
+                status: StatusCode::OK,
+                message: "cancelled".to_string(),
+                accept,
+            },
+            CancelOutcome::AlreadyFinished => HttpResponse {
+                status: StatusCode::CONFLICT,
+                message: "already finished".to_string(),
+                accept,
+            },
+        }
+    }
 }
 
 impl IntoResponse for HttpResponse {
