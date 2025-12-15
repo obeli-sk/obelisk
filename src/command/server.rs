@@ -1422,8 +1422,8 @@ async fn run_internal(
         .map_request(accept_trace)
         .service(grpc.routes());
 
-    let foo = axum::Router::new().route("/foo", axum::routing::get(|| async { "Hello HTTP" }));
-    let app: axum::Router<()> = foo.fallback_service(grpc_service);
+    let dummy = axum::Router::new().route("/dummy", axum::routing::get(|| async { "Hello HTTP" }));
+    let app: axum::Router<()> = dummy.fallback_service(grpc_service);
     let app_svc = app.into_make_service();
 
     let listener = TcpListener::bind(api_listening_addr)
@@ -1434,7 +1434,7 @@ async fn run_internal(
         .with_graceful_shutdown(async move {
             info!("Serving gRPC requests at {api_listening_addr}");
             info!("Server is ready");
-            shutdown_signal.await
+            shutdown_signal.await;
             // Will log in ServerInitInner::close
         })
         .await
@@ -1648,6 +1648,7 @@ struct ServerInitInner {
 }
 
 #[instrument(skip_all)]
+#[expect(clippy::too_many_arguments)]
 async fn spawn_tasks_and_threads(
     mut server_compiled_linked: ServerCompiledLinked,
     sqlite_file: &Path,
@@ -1802,7 +1803,7 @@ impl ServerInitInner {
         db_close.await;
         let _ = graceful_shutdown_complete_sender
             .send(())
-            .map_err(|_| warn!("could not send the graceful shutdown complete signal"));
+            .map_err(|()| warn!("could not send the graceful shutdown complete signal"));
     }
 }
 
@@ -2058,7 +2059,7 @@ impl ConfigVerified {
                     fuel
                 })
             },
-            _ = shutdown_signal => {
+            () = shutdown_signal => {
                 warn!("Received SIGINT, canceling while resolving the WASM files");
                 anyhow::bail!("canceling while resolving the WASM files")
             }
