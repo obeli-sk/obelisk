@@ -109,10 +109,11 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::codec::CompressionEncoding;
+use tonic::service::RoutesBuilder;
 use tonic_web::GrpcWebLayer;
-use tower_http::trace::DefaultOnFailure;
+use tower::ServiceBuilder;
+use tower_http::trace::TraceLayer;
 use tracing::Instrument;
-use tracing::Level;
 use tracing::Span;
 use tracing::error;
 use tracing::info_span;
@@ -1350,42 +1351,52 @@ async fn run_internal(
         cancel_registry,
     ));
 
-    let reflection_service = tonic_reflection::server::Builder::configure()
-        .register_encoded_file_descriptor_set(grpc_gen::FILE_DESCRIPTOR_SET)
-        .build_v1()?;
-    tonic::transport::Server::builder()
-        .accept_http1(true)
-        .layer(
-            tower::ServiceBuilder::new()
-                .layer(
-                    // Enable logging with `tower_http::trace=debug`
-                    tower_http::trace::TraceLayer::new_for_grpc()
-                        .on_failure(DefaultOnFailure::new().level(Level::DEBUG))
-                        .make_span_with(make_span),
-                )
-                .layer(GrpcWebLayer::new())
-                .map_request(accept_trace),
+    let mut grpc = RoutesBuilder::default();
+
+    grpc.add_service(
+        grpc_gen::function_repository_server::FunctionRepositoryServer::from_arc(
+            grpc_server.clone(),
         )
-        .add_service(
-            grpc_gen::function_repository_server::FunctionRepositoryServer::from_arc(
-                grpc_server.clone(),
-            )
-            .send_compressed(CompressionEncoding::Zstd)
-            .accept_compressed(CompressionEncoding::Zstd)
-            .send_compressed(CompressionEncoding::Gzip)
-            .accept_compressed(CompressionEncoding::Gzip),
+        .send_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Zstd)
+        .send_compressed(CompressionEncoding::Gzip)
+        .accept_compressed(CompressionEncoding::Gzip),
+    )
+    .add_service(
+        grpc_gen::execution_repository_server::ExecutionRepositoryServer::from_arc(
+            grpc_server.clone(),
         )
-        .add_service(
-            grpc_gen::execution_repository_server::ExecutionRepositoryServer::from_arc(
-                grpc_server.clone(),
-            )
-            .send_compressed(CompressionEncoding::Zstd)
-            .accept_compressed(CompressionEncoding::Zstd)
-            .send_compressed(CompressionEncoding::Gzip)
-            .accept_compressed(CompressionEncoding::Gzip),
-        )
-        .add_service(reflection_service)
-        .serve_with_shutdown(api_listening_addr, async move {
+        .send_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Zstd)
+        .send_compressed(CompressionEncoding::Gzip)
+        .accept_compressed(CompressionEncoding::Gzip),
+    )
+    .add_service(
+        tonic_reflection::server::Builder::configure()
+            .register_encoded_file_descriptor_set(grpc_gen::FILE_DESCRIPTOR_SET)
+            .build_v1()?,
+    );
+
+    let trace_layer = TraceLayer::new_for_grpc()
+        .make_span_with(make_span)
+        .on_failure(tower_http::trace::DefaultOnFailure::new().level(tracing::Level::DEBUG));
+
+    let grpc_service = ServiceBuilder::new()
+        .layer(GrpcWebLayer::new())
+        .layer(trace_layer)
+        .map_request(accept_trace)
+        .service(grpc.routes());
+
+    let foo = axum::Router::new().route("/foo", axum::routing::get(|| async { "Hello HTTP" }));
+    let app: axum::Router<()> = foo.fallback_service(grpc_service);
+    let app_svc = app.into_make_service();
+
+    let listener = TcpListener::bind(api_listening_addr)
+        .await
+        .with_context(|| format!("cannot bind to {api_listening_addr}"))?;
+
+    axum::serve(listener, app_svc)
+        .with_graceful_shutdown(async move {
             info!("Serving gRPC requests at {api_listening_addr}");
             info!("Server is ready");
             tokio::signal::ctrl_c()
@@ -1395,7 +1406,7 @@ async fn run_internal(
             init.close().await;
         })
         .await
-        .with_context(|| format!("grpc server error listening on {api_listening_addr}"))
+        .with_context(|| format!("server error listening on {api_listening_addr}"))
 }
 
 fn make_span<B>(request: &axum::http::Request<B>) -> Span {
@@ -1581,7 +1592,7 @@ impl ServerCompiledLinked {
 
 struct ServerInit {
     db_pool: Arc<dyn DbPool>,
-    db_close: Pin<Box<dyn Future<Output = ()>>>,
+    db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
     shutdown: (watch::Sender<bool>, watch::Receiver<bool>),
     exec_join_handles: Vec<ExecutorTaskHandle>,
     #[expect(dead_code)]
