@@ -791,7 +791,7 @@ impl EventHistory {
                         let response_ffqn = response_ffqn.clone();
                         let child_execution_id = child_execution_id.clone();
                         let inner_res = result.clone().into_wast_val( || self.fn_registry.get_ret_type(&response_ffqn)
-                                        .expect("response_ffqn can only be exported and no-ext, thus must be returned by get_ret_type"));
+                                        .expect("response_ffqn must be no-ext, thus must be returned by get_ret_type"));
                         match kind {
                             JoinNextChildKind::DirectCall => Ok(FindMatchingResponse::Found(
                                 ChildReturnValue::WastVal(inner_res),
