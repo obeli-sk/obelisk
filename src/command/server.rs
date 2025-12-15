@@ -610,9 +610,10 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             };
             Ok(tonic::Response::new(output))
         } else {
-            let (tx, rx) = mpsc::channel(1); // TODO: Rename to status_stream_sender, remote_client_recv
+            let (status_stream_sender, remote_client_recv) = mpsc::channel(1);
             // send current pending status
-            tx.send(TonicResult::Ok(summary))
+            status_stream_sender
+                .send(TonicResult::Ok(summary))
                 .await
                 .expect("mpsc bounded channel requires buffer > 0");
             let db_pool = self.db_pool.clone();
@@ -626,18 +627,18 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         db_pool,
                         shutdown_requested,
                         execution_id,
-                        tx,
+                        status_stream_sender,
                         current_pending_state,
                         create_request,
                         request.send_finished_status,
                     )
                     .await;
-                    debug!("poll_status finished")
+                    debug!("poll_status finished");
                 }
                 .instrument(span),
             );
             Ok(tonic::Response::new(
-                Box::pin(ReceiverStream::new(rx)) as Self::GetStatusStream
+                Box::pin(ReceiverStream::new(remote_client_recv)) as Self::GetStatusStream,
             ))
         }
     }
@@ -984,7 +985,7 @@ async fn poll_status(
     db_pool: Arc<dyn DbPool>,
     mut shutdown_requested: watch::Receiver<bool>,
     execution_id: ExecutionId,
-    tx: mpsc::Sender<TonicResult<GetStatusResponse>>,
+    status_stream_sender: mpsc::Sender<TonicResult<GetStatusResponse>>,
     mut old_pending_state: PendingState,
     create_request: CreateRequest,
     send_finished_status: bool,
@@ -994,7 +995,7 @@ async fn poll_status(
         select! {
             res = async {
                 tokio::time::sleep(GET_STATUS_POLLING_SLEEP).await;
-                notify_status(conn.as_ref(), &execution_id, &tx, old_pending_state, &create_request, send_finished_status).await
+                notify_status(conn.as_ref(), &execution_id, &status_stream_sender, old_pending_state, &create_request, send_finished_status).await
             } => {
                 match res {
                     Ok(new_state) => {
@@ -1005,7 +1006,7 @@ async fn poll_status(
             }
             _ = shutdown_requested.changed() => {
                 debug!("Exitting get_status early, database is closing");
-                let _ = tx
+                let _ = status_stream_sender
                     .send(TonicResult::Err(tonic::Status::aborted(
                         "server is shutting down",
                     )))
@@ -1013,7 +1014,7 @@ async fn poll_status(
                 return;
             }
         }
-        if tx.is_closed() {
+        if status_stream_sender.is_closed() {
             debug!("Connection was closed by the client");
             return;
         }
@@ -1022,7 +1023,7 @@ async fn poll_status(
 async fn notify_status(
     conn: &dyn DbConnection,
     execution_id: &ExecutionId,
-    tx: &mpsc::Sender<TonicResult<GetStatusResponse>>,
+    status_stream_sender: &mpsc::Sender<TonicResult<GetStatusResponse>>,
     old_pending_state: PendingState,
     create_request: &CreateRequest,
     send_finished_status: bool,
@@ -1035,7 +1036,7 @@ async fn notify_status(
                 let message = grpc_gen::GetStatusResponse {
                     message: Some(Message::CurrentStatus(grpc_pending_status)),
                 };
-                let send_res = tx.send(TonicResult::Ok(message)).await;
+                let send_res = status_stream_sender.send(TonicResult::Ok(message)).await;
                 if let Err(err) = send_res {
                     info!("Cannot send the message - {err:?}");
                     return Err(());
@@ -1064,7 +1065,7 @@ async fn notify_status(
                         let finished_result = match finished_result {
                             Ok(finished_result) => finished_result,
                             Err(err) => {
-                                let _ = tx.send(Err(err)).await;
+                                let _ = status_stream_sender.send(Err(err)).await;
                                 return Err(());
                             }
                         };
@@ -1075,7 +1076,7 @@ async fn notify_status(
                                 pending_state_finished.finished_at,
                             ))),
                         };
-                        let send_res = tx.send(TonicResult::Ok(message)).await;
+                        let send_res = status_stream_sender.send(TonicResult::Ok(message)).await;
                         if let Err(err) = send_res {
                             error!("Cannot send the final message - {err:?}");
                         }
@@ -1086,7 +1087,9 @@ async fn notify_status(
             Ok(pending_state)
         }
         Err(db_err) => {
-            let _ = tx.send(Err(db_error_read_to_status(&db_err))).await;
+            let _ = status_stream_sender
+                .send(Err(db_error_read_to_status(&db_err)))
+                .await;
             Err(())
         }
     }
