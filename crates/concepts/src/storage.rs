@@ -1220,7 +1220,7 @@ pub struct ExpiredDelay {
 }
 
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
-#[serde(tag = "type")]
+#[serde(tag = "status")]
 pub enum PendingState {
     Locked(PendingStateLocked),
     #[display("PendingAt(`{scheduled_at}`)")]

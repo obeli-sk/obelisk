@@ -263,12 +263,10 @@ expression: execution_log
   ],
   "next_version": 10,
   "pending_state": {
-    "type": "Finished",
-    "finished": {
-      "version": 10,
-      "finished_at": "1970-01-01T00:00:00Z",
-      "result_kind": "ok"
-    },
+    "status": "Finished",
+    "version": 10,
+    "finished_at": "1970-01-01T00:00:00Z",
+    "result_kind": "ok",
     "component_id_input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   }
 }
