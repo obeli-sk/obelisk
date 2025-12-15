@@ -60,6 +60,7 @@ use concepts::storage::AppendResponseToExecution;
 use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
+use concepts::storage::DbErrorWrite;
 use concepts::storage::DbExecutor;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
@@ -93,6 +94,7 @@ use grpc::grpc_gen::get_status_response::Message;
 use grpc::grpc_mapping::TonicServerOptionExt;
 use grpc::grpc_mapping::TonicServerResultExt;
 use grpc::grpc_mapping::db_error_read_to_status;
+use grpc::grpc_mapping::db_error_write_to_status;
 use grpc::grpc_mapping::from_execution_event_to_grpc;
 use grpc_gen::ExecutionSummary;
 use hashbrown::HashMap;
@@ -262,24 +264,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         }
 
         let request = request.into_inner();
-        let grpc_gen::FunctionName {
-            interface_name,
-            function_name,
-        } = request.function_name.argument_must_exist("function")?;
+        let ffqn = FunctionFqn::try_from(request.function_name.argument_must_exist("function")?)?;
         let execution_id: ExecutionId = request
             .execution_id
             .argument_must_exist("execution_id")?
             .try_into()?;
-        let span = Span::current();
-        span.record("execution_id", tracing::field::display(&execution_id));
-        if !execution_id.is_top_level() {
-            return Err(tonic::Status::invalid_argument(
-                "argument `execution_id` must be a top-level Execution ID",
-            ));
-        }
 
         // Deserialize params JSON into `Params`
-        let mut params = {
+        let params = {
             let params = request.params.argument_must_exist("params")?;
             let params = String::from_utf8(params.value).map_err(|_err| {
                 tonic::Status::invalid_argument("argument `params` must be UTF-8 encoded")
@@ -293,130 +285,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .vec
         };
 
-        // Check that ffqn exists
-        let Some((component_id, fn_metadata)) = self
-            .component_registry_ro
-            .find_by_exported_ffqn_submittable(&concepts::FunctionFqn::new_arc(
-                Arc::from(interface_name),
-                Arc::from(function_name),
-            ))
-        else {
-            return Err(tonic::Status::not_found("function not found"));
-        };
-        span.record("component_id", tracing::field::display(component_id));
-
-        // Extract `scheduled_at`
-        let created_at = Now.now();
-        let (scheduled_at, params, fn_metadata) = if fn_metadata.extension
-            == Some(FunctionExtension::Schedule)
-        {
-            // First parameter must be `schedule-at`
-            let Some(schedule_at) = params.drain(0..1).next() else {
-                return Err(tonic::Status::invalid_argument(
-                    "argument `params` must be an array with first value of type `schedule-at`",
-                ));
-            };
-            let schedule_at_type_wrapper = fn_metadata
-                .parameter_types
-                .iter()
-                .map(|ParameterType { type_wrapper, .. }| type_wrapper.clone())
-                .next()
-                .expect("checked that `fn_metadata` is FunctionExtension::Schedule");
-            let wast_val_with_type = json!({
-                "value": schedule_at,
-                "type": schedule_at_type_wrapper
-            });
-            let wast_val_with_type: WastValWithType =
-                serde_json::from_value(wast_val_with_type).map_err(|serde_err|
-                    tonic::Status::invalid_argument(
-                        format!("argument `params` must be an array with first value of type `schedule-at` - {serde_err}")
-                    ))?;
-            let schedule_at = history_event_schedule_at_from_wast_val(&wast_val_with_type.value)
-                .map_err(|serde_err| {
-                    tonic::Status::invalid_argument(format!(
-                        "cannot convert `schedule-at` - {serde_err}"
-                    ))
-                })?;
-            // Find the target fn_metadata of the scheduled fn. No need to change the `component_id` as they belong to the same component.
-            let ffqn = FunctionFqn {
-                ifc_fqn: IfcFqnName::from_parts(
-                    fn_metadata.ffqn.ifc_fqn.namespace(),
-                    fn_metadata
-                        .ffqn
-                        .ifc_fqn
-                        .package_strip_obelisk_ext_suffix()
-                        .expect("checked that the ifc is ext"),
-                    fn_metadata.ffqn.ifc_fqn.ifc_name(),
-                    fn_metadata.ffqn.ifc_fqn.version(),
-                ),
-                function_name: FnName::from(
-                    fn_metadata
-                        .ffqn
-                        .function_name
-                        .to_string()
-                        .strip_suffix(SUFFIX_FN_SCHEDULE)
-                        .expect("checked that the function is FunctionExtension::Schedule")
-                        .to_string(),
-                ),
-            };
-            let (_component_id, fn_metadata) = self
-                .component_registry_ro
-                .find_by_exported_ffqn_submittable(&ffqn)
-                .expect("-schedule must have the original counterpart in the component registry");
-
-            (
-                schedule_at
-                    .as_date_time(created_at)
-                    .map_err(|_| tonic::Status::invalid_argument("schedule-at conversion error"))?,
-                Params::from_json_values(Arc::from(params)),
-                fn_metadata,
-            )
-        } else {
-            assert!(fn_metadata.extension.is_none());
-            (
-                created_at,
-                Params::from_json_values(Arc::from(params)),
-                fn_metadata,
-            )
-        };
-
-        let ffqn = &fn_metadata.ffqn;
-        span.record("ffqn", tracing::field::display(ffqn));
-        // Type check `params`
-        if let Err(err) = params.typecheck(
-            fn_metadata
-                .parameter_types
-                .iter()
-                .map(|ParameterType { type_wrapper, .. }| type_wrapper),
-        ) {
-            return Err(tonic::Status::invalid_argument(format!(
-                "argument `params` invalid - {err}"
-            )));
-        }
-
-        let db_connection = self.db_pool.connection();
-
-        if !execution_id.is_top_level() {
-            return Err(tonic::Status::invalid_argument(
-                "argument `execution_id` must be a top-level Execution ID",
-            ));
-        }
-        // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
-        let metadata = concepts::ExecutionMetadata::from_parent_span(&span);
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                metadata,
-                ffqn: ffqn.clone(),
-                params,
-                parent: None,
-                scheduled_at,
-                component_id: component_id.clone(),
-                scheduled_by: None,
-            })
-            .await
-            .to_status()?;
+        submit(
+            self.db_pool.connection().as_ref(),
+            execution_id,
+            ffqn,
+            params,
+            &self.component_registry_ro,
+        )
+        .await?;
 
         let resp = grpc_gen::SubmitResponse {};
         Ok(tonic::Response::new(resp))
@@ -981,6 +857,156 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SubmitError {
+    #[error("must be a top-level execution id")]
+    ExecutionIdMustBeTopLevel,
+    #[error("function not found")]
+    FunctionNotFound,
+    #[error("{0}")]
+    ParamsInvalid(String),
+    #[error(transparent)]
+    DbErrorWrite(DbErrorWrite),
+}
+impl From<SubmitError> for tonic::Status {
+    fn from(value: SubmitError) -> Self {
+        match value {
+            SubmitError::ExecutionIdMustBeTopLevel => tonic::Status::invalid_argument(
+                "argument `execution_id` must be a top-level execution id",
+            ),
+            SubmitError::FunctionNotFound => tonic::Status::not_found("function not found"),
+            SubmitError::ParamsInvalid(reason) => tonic::Status::invalid_argument(reason),
+            SubmitError::DbErrorWrite(db_err) => db_error_write_to_status(&db_err),
+        }
+    }
+}
+
+pub(crate) async fn submit(
+    db_connection: &dyn DbConnection,
+    execution_id: ExecutionId,
+    ffqn: FunctionFqn,
+    mut params: Vec<serde_json::Value>,
+    component_registry_ro: &ComponentConfigRegistryRO,
+) -> Result<(), SubmitError> {
+    let span = Span::current();
+    span.record("execution_id", tracing::field::display(&execution_id));
+    if !execution_id.is_top_level() {
+        return Err(SubmitError::ExecutionIdMustBeTopLevel);
+    }
+    // Check that ffqn exists
+    let Some((component_id, fn_metadata)) =
+        component_registry_ro.find_by_exported_ffqn_submittable(&ffqn)
+    else {
+        return Err(SubmitError::FunctionNotFound);
+    };
+    span.record("component_id", tracing::field::display(component_id));
+
+    // Extract `scheduled_at`
+    let created_at = Now.now();
+    let (scheduled_at, params, fn_metadata) = if fn_metadata.extension
+        == Some(FunctionExtension::Schedule)
+    {
+        // First parameter must be `schedule-at`
+        let Some(schedule_at) = params.drain(0..1).next() else {
+            return Err(SubmitError::ParamsInvalid(
+                "`params` must be an array with first value of type `schedule-at`".to_string(),
+            ));
+        };
+        let schedule_at_type_wrapper = fn_metadata
+            .parameter_types
+            .iter()
+            .map(|ParameterType { type_wrapper, .. }| type_wrapper.clone())
+            .next()
+            .expect("checked that `fn_metadata` is FunctionExtension::Schedule");
+        let wast_val_with_type = json!({
+            "value": schedule_at,
+            "type": schedule_at_type_wrapper
+        });
+        let wast_val_with_type: WastValWithType = serde_json::from_value(wast_val_with_type)
+            .map_err(|serde_err| {
+                SubmitError::ParamsInvalid(format!(
+                    "`params` must be an array with first value of type `schedule-at` - {serde_err}"
+                ))
+            })?;
+        let schedule_at = history_event_schedule_at_from_wast_val(&wast_val_with_type.value)
+            .map_err(|serde_err| {
+                SubmitError::ParamsInvalid(format!("cannot convert `schedule-at` - {serde_err}"))
+            })?;
+        // Find the target fn_metadata of the scheduled fn. No need to change the `component_id` as they belong to the same component.
+        let ffqn = FunctionFqn {
+            ifc_fqn: IfcFqnName::from_parts(
+                fn_metadata.ffqn.ifc_fqn.namespace(),
+                fn_metadata
+                    .ffqn
+                    .ifc_fqn
+                    .package_strip_obelisk_ext_suffix()
+                    .expect("checked that the ifc is ext"),
+                fn_metadata.ffqn.ifc_fqn.ifc_name(),
+                fn_metadata.ffqn.ifc_fqn.version(),
+            ),
+            function_name: FnName::from(
+                fn_metadata
+                    .ffqn
+                    .function_name
+                    .to_string()
+                    .strip_suffix(SUFFIX_FN_SCHEDULE)
+                    .expect("checked that the function is FunctionExtension::Schedule")
+                    .to_string(),
+            ),
+        };
+        let (_component_id, fn_metadata) = component_registry_ro
+            .find_by_exported_ffqn_submittable(&ffqn)
+            .expect("-schedule must have the original counterpart in the component registry");
+
+        (
+            schedule_at.as_date_time(created_at).map_err(|err| {
+                SubmitError::ParamsInvalid(format!("schedule-at conversion error - {err}"))
+            })?,
+            Params::from_json_values(Arc::from(params)),
+            fn_metadata,
+        )
+    } else {
+        assert!(fn_metadata.extension.is_none());
+        (
+            created_at,
+            Params::from_json_values(Arc::from(params)),
+            fn_metadata,
+        )
+    };
+
+    let ffqn = &fn_metadata.ffqn;
+    span.record("ffqn", tracing::field::display(ffqn));
+    // Type check `params`
+    if let Err(err) = params.typecheck(
+        fn_metadata
+            .parameter_types
+            .iter()
+            .map(|ParameterType { type_wrapper, .. }| type_wrapper),
+    ) {
+        return Err(SubmitError::ParamsInvalid(format!(
+            "argument `params` invalid - {err}"
+        )));
+    }
+
+    // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
+    let metadata = concepts::ExecutionMetadata::from_parent_span(&span);
+    db_connection
+        .create(CreateRequest {
+            created_at,
+            execution_id: execution_id.clone(),
+            metadata,
+            ffqn: ffqn.clone(),
+            params,
+            parent: None,
+            scheduled_at,
+            component_id: component_id.clone(),
+            scheduled_by: None,
+        })
+        .await
+        .map_err(SubmitError::DbErrorWrite)?;
+    Ok(())
+}
+
 async fn poll_status(
     db_pool: Arc<dyn DbPool>,
     mut shutdown_requested: watch::Receiver<bool>,
@@ -1455,6 +1481,7 @@ async fn run_internal(
 
     let app_router = app_router(WebApiState {
         db_pool: server_init.db_pool.clone(),
+        component_registry_ro: grpc_server.component_registry_ro.clone(),
     });
     let app: axum::Router<()> = app_router.fallback_service(grpc_service);
     let app_svc = app.into_make_service();

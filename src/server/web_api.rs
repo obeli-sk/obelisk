@@ -6,18 +6,21 @@ use axum::{
 };
 use axum_accept::AcceptExtractor;
 use concepts::{
-    ExecutionId, FinishedExecutionError, SupportedFunctionReturnValue,
-    storage::{DbErrorRead, DbPool, ExecutionEventInner},
+    ExecutionId, FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
+    storage::{DbErrorRead, DbErrorWrite, DbErrorWriteNonRetriable, DbPool, ExecutionEventInner},
 };
 use http::StatusCode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use val_json::wast_val::WastVal;
 
+use crate::command::server::{self, ComponentConfigRegistryRO, SubmitError};
+
 #[derive(Clone)]
 pub(crate) struct WebApiState {
     pub(crate) db_pool: Arc<dyn DbPool>,
+    pub(crate) component_registry_ro: ComponentConfigRegistryRO,
 }
 
 pub(crate) fn app_router(state: WebApiState) -> Router {
@@ -34,6 +37,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             routing::get(get_execution_status),
         )
         .route("/executions/{execution-id}", routing::get(get_execution))
+        .route("/executions/{execution-id}", routing::put(put_execution))
 }
 
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: ExecutionIdAccept) -> Response {
@@ -106,12 +110,48 @@ async fn get_execution(
     )
 }
 
+#[derive(Deserialize)]
+struct PutExecutionInput {
+    ffqn: FunctionFqn,
+    params: Vec<serde_json::Value>,
+}
+
+async fn put_execution(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+    Json(payload): Json<PutExecutionInput>,
+) -> Response {
+    match server::submit(
+        state.db_pool.connection().as_ref(),
+        execution_id,
+        payload.ffqn,
+        payload.params,
+        &state.component_registry_ro,
+    )
+    .await
+    {
+        Ok(()) => (StatusCode::CREATED, Json(json!({ "ok": "created" }))).into_response(),
+        Err(SubmitError::DbErrorWrite(DbErrorWrite::NonRetriable(
+            DbErrorWriteNonRetriable::IllegalState(_),
+        ))) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "err": "already exists" })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "err": err.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 #[derive(AcceptExtractor, Clone, Copy)]
 enum ExecutionIdAccept {
-    #[accept(mediatype = "application/json")]
-    Json,
     #[accept(mediatype = "text/plain")]
     Text,
+    #[accept(mediatype = "application/json")]
+    Json,
 }
 
 struct ErrorWrapper<E>(E, ExecutionIdAccept);

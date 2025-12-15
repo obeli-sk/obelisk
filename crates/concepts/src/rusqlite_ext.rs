@@ -1,12 +1,13 @@
 use crate::{
     ContentDigest, ExecutionId, JoinSetId,
-    component_id::Digest,
-    component_id::InputContentDigest,
+    component_id::{Digest, InputContentDigest},
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
-    storage::{DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite},
+    storage::{
+        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
+    },
 };
 use rusqlite::{
-    ToSql,
+    ErrorCode, ToSql,
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
 };
 use tracing::error;
@@ -162,6 +163,8 @@ impl From<rusqlite::Error> for DbErrorWrite {
     fn from(err: rusqlite::Error) -> Self {
         if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
             Self::NotFound
+        } else if err.sqlite_error().map(|err| err.code) == Some(ErrorCode::ConstraintViolation) {
+            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState("conflict".into()))
         } else {
             Self::from(DbErrorGeneric::from(err))
         }
