@@ -34,10 +34,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/execution-id", routing::get(execution_id_generate))
         .route(
             "/executions/{execution-id}/status",
-            routing::get(get_execution_status),
+            routing::get(execution_status_get),
         )
-        .route("/executions/{execution-id}", routing::get(get_execution))
-        .route("/executions/{execution-id}", routing::put(put_execution))
+        .route("/executions/{execution-id}", routing::get(execution_get))
+        .route("/executions/{execution-id}", routing::put(execution_put))
 }
 
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: ExecutionIdAccept) -> Response {
@@ -48,7 +48,7 @@ async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: ExecutionIdAc
     }
 }
 
-async fn get_execution_status(
+async fn execution_status_get(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
     accept: ExecutionIdAccept,
@@ -86,7 +86,7 @@ impl From<SupportedFunctionReturnValue> for RetVal {
     }
 }
 
-async fn get_execution(
+async fn execution_get(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
 ) -> Result<Response, ErrorWrapper<DbErrorRead>> {
@@ -111,15 +111,15 @@ async fn get_execution(
 }
 
 #[derive(Deserialize)]
-struct PutExecutionInput {
+struct ExecutionPutPayload {
     ffqn: FunctionFqn,
     params: Vec<serde_json::Value>,
 }
 
-async fn put_execution(
+async fn execution_put(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
-    Json(payload): Json<PutExecutionInput>,
+    Json(payload): Json<ExecutionPutPayload>,
 ) -> Response {
     match server::submit(
         state.db_pool.connection().as_ref(),
