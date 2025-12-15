@@ -3519,7 +3519,7 @@ impl DbConnection for SqlitePool {
                 self.notify_all(vec![notifier], created_at);
                 Ok(AppendDelayResponseOutcome::Success)
             }
-            Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState(_))) => {
+            Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)) => {
                 let delay_success = self
                     .transaction(
                         move |tx| Self::delay_response(tx, &execution_id, &delay_id),

@@ -1621,8 +1621,10 @@ async fn append_same_delay_id_twice_should_fail(
         )
         .await
         .unwrap_err();
-    let err = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState(str)) => str.to_string());
-    assert_eq!("conflicting delay id", err);
+    assert_matches!(
+        err,
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
+    );
 }
 
 async fn create_join_set(
@@ -1799,8 +1801,10 @@ async fn append_response_with_same_id_twice_should_fail(
         )
         .await
         .unwrap_err();
-    let err = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState(str)) => str.to_string());
-    assert_eq!("conflicting response id", err);
+    assert_matches!(
+        err,
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
+    );
 }
 
 #[rstest]

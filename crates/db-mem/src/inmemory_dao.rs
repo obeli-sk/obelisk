@@ -20,7 +20,7 @@ use concepts::storage::{
     VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
-use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, StrVariant};
+use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
@@ -331,9 +331,7 @@ impl DbConnection for InMemoryDbConnection {
         );
         match res {
             Ok(()) => Ok(AppendDelayResponseOutcome::Success),
-            Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState(
-                StrVariant::Static("conflicting response id"),
-            ))) => {
+            Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)) => {
                 let journal = guard
                     .journals
                     .get_mut(&execution_id)

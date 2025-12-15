@@ -132,7 +132,7 @@ async fn put_execution(
     {
         Ok(()) => (StatusCode::CREATED, Json(json!({ "ok": "created" }))).into_response(),
         Err(SubmitError::DbErrorWrite(DbErrorWrite::NonRetriable(
-            DbErrorWriteNonRetriable::IllegalState(_),
+            DbErrorWriteNonRetriable::Conflict,
         ))) => (
             StatusCode::CONFLICT,
             Json(json!({ "err": "already exists" })),

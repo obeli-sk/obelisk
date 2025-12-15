@@ -164,7 +164,7 @@ impl From<rusqlite::Error> for DbErrorWrite {
         if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
             Self::NotFound
         } else if err.sqlite_error().map(|err| err.code) == Some(ErrorCode::ConstraintViolation) {
-            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState("conflict".into()))
+            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
         } else {
             Self::from(DbErrorGeneric::from(err))
         }

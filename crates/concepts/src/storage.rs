@@ -488,6 +488,8 @@ pub enum DbErrorGeneric {
 pub enum DbErrorWriteNonRetriable {
     #[error("validation failed: {0}")]
     ValidationFailed(StrVariant),
+    #[error("conflict")]
+    Conflict,
     #[error("illegal state: {0}")]
     IllegalState(StrVariant),
     #[error("version conflict: expected: {expected}, got: {requested}")]

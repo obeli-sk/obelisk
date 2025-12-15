@@ -160,7 +160,7 @@ impl ExecutionJournal {
             })
         {
             return Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::IllegalState("conflicting delay id".into()),
+                DbErrorWriteNonRetriable::Conflict,
             ));
         }
 
@@ -202,7 +202,7 @@ impl ExecutionJournal {
                 })
             {
                 return Err(DbErrorWrite::NonRetriable(
-                    DbErrorWriteNonRetriable::IllegalState("conflicting response id".into()),
+                    DbErrorWriteNonRetriable::Conflict,
                 ));
             }
         }
@@ -223,7 +223,7 @@ impl ExecutionJournal {
                 })
             {
                 return Err(DbErrorWrite::NonRetriable(
-                    DbErrorWriteNonRetriable::IllegalState("conflicting response id".into()),
+                    DbErrorWriteNonRetriable::Conflict,
                 ));
             }
         }
