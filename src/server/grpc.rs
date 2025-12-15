@@ -1,0 +1,823 @@
+use crate::command::server;
+use crate::command::server::ComponentConfigRegistryRO;
+use crate::command::server::ComponentSourceMap;
+use chrono::DateTime;
+use chrono::Utc;
+use concepts::ComponentId;
+use concepts::ExecutionId;
+use concepts::FunctionExtension;
+use concepts::FunctionFqn;
+use concepts::FunctionMetadata;
+use concepts::SupportedFunctionReturnValue;
+use concepts::component_id::InputContentDigest;
+use concepts::prefixed_ulid::DelayId;
+use concepts::storage;
+use concepts::storage::AppendEventsToExecution;
+use concepts::storage::AppendRequest;
+use concepts::storage::AppendResponseToExecution;
+use concepts::storage::BacktraceFilter;
+use concepts::storage::CreateRequest;
+use concepts::storage::DbPool;
+use concepts::storage::ExecutionEventInner;
+use concepts::storage::ExecutionListPagination;
+use concepts::storage::ExecutionWithState;
+use concepts::storage::PendingState;
+use concepts::storage::Version;
+use concepts::storage::VersionType;
+use concepts::time::ClockFn;
+use concepts::time::Now;
+use grpc::TonicRespResult;
+use grpc::TonicResult;
+use grpc::grpc_gen;
+use grpc::grpc_gen::GenerateExecutionIdResponse;
+use grpc::grpc_gen::get_status_response::Message;
+use grpc::grpc_mapping::TonicServerOptionExt;
+use grpc::grpc_mapping::TonicServerResultExt;
+use grpc::grpc_mapping::from_execution_event_to_grpc;
+use grpc_gen::ExecutionSummary;
+use serde::Deserialize;
+use std::pin::Pin;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio::sync::watch;
+use tokio_stream::{Stream, wrappers::ReceiverStream};
+use tracing::Instrument;
+use tracing::Span;
+use tracing::debug;
+use tracing::error;
+use tracing::info_span;
+use tracing::instrument;
+use tracing::warn;
+use val_json::wast_val_ser::deserialize_slice;
+use wasm_workers::activity::cancel_registry::CancelRegistry;
+
+#[derive(derive_more::Debug)]
+pub(crate) struct GrpcServer {
+    #[debug(skip)]
+    db_pool: Arc<dyn DbPool>,
+    shutdown_requested: watch::Receiver<bool>,
+    pub(crate) component_registry_ro: ComponentConfigRegistryRO,
+    component_source_map: ComponentSourceMap,
+    #[debug(skip)]
+    cancel_registry: CancelRegistry,
+}
+
+impl GrpcServer {
+    pub(crate) fn new(
+        db_pool: Arc<dyn DbPool>,
+        shutdown_requested: watch::Receiver<bool>,
+        component_registry_ro: ComponentConfigRegistryRO,
+        component_source_map: ComponentSourceMap,
+        cancel_registry: CancelRegistry,
+    ) -> Self {
+        Self {
+            db_pool,
+            shutdown_requested,
+            component_registry_ro,
+            component_source_map,
+            cancel_registry,
+        }
+    }
+}
+
+#[tonic::async_trait]
+impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
+    async fn generate_execution_id(
+        &self,
+        _request: tonic::Request<grpc_gen::GenerateExecutionIdRequest>,
+    ) -> TonicRespResult<grpc_gen::GenerateExecutionIdResponse> {
+        let execution_id = ExecutionId::generate();
+        Ok(tonic::Response::new(GenerateExecutionIdResponse {
+            execution_id: Some(execution_id.into()),
+        }))
+    }
+
+    #[instrument(skip_all, fields(execution_id, ffqn, params, component_id))]
+    async fn submit(
+        &self,
+        request: tonic::Request<grpc_gen::SubmitRequest>,
+    ) -> TonicRespResult<grpc_gen::SubmitResponse> {
+        struct JsonVals {
+            vec: Vec<serde_json::Value>,
+        }
+
+        impl<'de> Deserialize<'de> for JsonVals {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let vec: Vec<serde_json::Value> =
+                    deserializer.deserialize_seq(concepts::serde_params::VecVisitor)?;
+                Ok(Self { vec })
+            }
+        }
+
+        let request = request.into_inner();
+        let ffqn = FunctionFqn::try_from(request.function_name.argument_must_exist("function")?)?;
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+
+        // Deserialize params JSON into `Params`
+        let params = {
+            let params = request.params.argument_must_exist("params")?;
+            let params = String::from_utf8(params.value).map_err(|_err| {
+                tonic::Status::invalid_argument("argument `params` must be UTF-8 encoded")
+            })?;
+            JsonVals::deserialize(&mut serde_json::Deserializer::from_str(&params))
+                .map_err(|serde_err| {
+                    tonic::Status::invalid_argument(format!(
+                        "argument `params` must be encoded as JSON array - {serde_err}"
+                    ))
+                })?
+                .vec
+        };
+
+        server::submit(
+            self.db_pool.connection().as_ref(),
+            execution_id,
+            ffqn,
+            params,
+            &self.component_registry_ro,
+        )
+        .await?;
+
+        let resp = grpc_gen::SubmitResponse {};
+        Ok(tonic::Response::new(resp))
+    }
+
+    #[instrument(skip_all, fields(execution_id, ffqn, params, component_id))]
+    async fn stub(
+        &self,
+        request: tonic::Request<grpc_gen::StubRequest>,
+    ) -> TonicRespResult<grpc_gen::StubResponse> {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        let span = Span::current();
+        let execution_id = match execution_id {
+            ExecutionId::TopLevel(_) => {
+                return Err(tonic::Status::invalid_argument(
+                    "execution ID value must be a derived ExecutionId",
+                ));
+            }
+            ExecutionId::Derived(derived) => derived,
+        };
+        let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
+        span.record("execution_id", tracing::field::display(&execution_id));
+        // Get FFQN
+
+        let db_connection = self.db_pool.connection();
+        let ffqn = db_connection
+            .get_create_request(&ExecutionId::Derived(execution_id.clone()))
+            .await
+            .to_status()?
+            .ffqn;
+
+        // Check that ffqn exists
+        let Some((component_id, fn_metadata)) =
+            self.component_registry_ro.find_by_exported_ffqn_stub(&ffqn)
+        else {
+            return Err(tonic::Status::not_found("function not found"));
+        };
+        span.record("component_id", tracing::field::display(component_id));
+
+        let created_at = Now.now();
+
+        let ffqn = &fn_metadata.ffqn;
+        span.record("ffqn", tracing::field::display(ffqn));
+        if ffqn.ifc_fqn.is_extension() {
+            return Err(tonic::Status::invalid_argument(
+                "argument `ffqn` must be the target, not the extension".to_string(),
+            ));
+        }
+        let return_value = request.return_value.argument_must_exist("return_value")?;
+        // Type check `return_value`
+        let return_value = {
+            let type_wrapper = fn_metadata.return_type.type_wrapper();
+            let return_value = match deserialize_slice(&return_value.value, type_wrapper) {
+                Ok(wast_val_with_type) => wast_val_with_type,
+                Err(err) => {
+                    return Err(tonic::Status::invalid_argument(format!(
+                        "cannot deserialize return value according to its type - {err}"
+                    )));
+                }
+            };
+            SupportedFunctionReturnValue::from_wast_val_with_type(return_value)
+                .expect("checked that ffqn is no-ext, return type must be Compatible")
+        };
+
+        let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
+        // Attempt to write to `execution_id` and its parent, ignoring the possible conflict error on this tx
+        let write_attempt = {
+            let finished_req = AppendRequest {
+                created_at,
+                event: ExecutionEventInner::Finished {
+                    result: return_value.clone(),
+                    http_client_traces: None,
+                },
+            };
+            db_connection
+                .append_batch_respond_to_parent(
+                    AppendEventsToExecution {
+                        execution_id: ExecutionId::Derived(execution_id.clone()),
+                        version: stub_finished_version.clone(),
+                        batch: vec![finished_req],
+                    },
+                    AppendResponseToExecution {
+                        parent_execution_id,
+                        created_at,
+                        join_set_id,
+                        child_execution_id: execution_id.clone(),
+                        finished_version: stub_finished_version.clone(),
+                        result: return_value.clone(),
+                    },
+                    created_at,
+                )
+                .await
+        };
+        if let Err(write_attempt) = write_attempt {
+            // Check that the expected value is in the database
+            debug!("Stub write attempt failed - {write_attempt:?}");
+
+            let found = db_connection
+                .get_execution_event(&ExecutionId::Derived(execution_id), &stub_finished_version)
+                .await
+                .to_status()?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
+            match found.event {
+                ExecutionEventInner::Finished {
+                    result: found_result,
+                    ..
+                } if return_value == found_result => {
+                    // Same value has already be written, RPC is successful.
+                }
+                ExecutionEventInner::Finished { .. } => {
+                    return Err(tonic::Status::already_exists(
+                        "different value found in stubbed execution's finished event",
+                    ));
+                }
+                _other => {
+                    return Err(tonic::Status::internal(
+                        "unexpected execution event at stubbed execution",
+                    ));
+                }
+            }
+        }
+        let resp = grpc_gen::StubResponse {};
+        Ok(tonic::Response::new(resp))
+    }
+
+    type GetStatusStream =
+        Pin<Box<dyn Stream<Item = Result<grpc_gen::GetStatusResponse, tonic::Status>> + Send>>;
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn get_status(
+        &self,
+        request: tonic::Request<grpc_gen::GetStatusRequest>,
+    ) -> TonicRespResult<Self::GetStatusStream> {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let conn = self.db_pool.connection();
+        let current_pending_state = conn.get_pending_state(&execution_id).await.to_status()?;
+        let (create_request, current_pending_state, grpc_pending_status) = {
+            let create_request = conn.get_create_request(&execution_id).await.to_status()?;
+            let grpc_pending_status =
+                grpc_gen::ExecutionStatus::from(current_pending_state.clone());
+            (create_request, current_pending_state, grpc_pending_status)
+        };
+        let summary = grpc_gen::GetStatusResponse {
+            message: Some(Message::Summary(ExecutionSummary {
+                created_at: Some(create_request.created_at.into()),
+                scheduled_at: Some(create_request.scheduled_at.into()),
+                execution_id: Some(grpc_gen::ExecutionId::from(&execution_id)),
+                function_name: Some(create_request.ffqn.clone().into()),
+                current_status: Some(grpc_pending_status),
+            })),
+        };
+        if current_pending_state.is_finished() || !request.follow {
+            // No waiting in this case
+            let output: Self::GetStatusStream = if let PendingState::Finished { finished, .. } =
+                current_pending_state
+                && request.send_finished_status
+            {
+                // Send summary + finished status only if the execution is finished && request.send_finished_status
+                let finished_result = conn
+                    .get_execution_event(&execution_id, &Version(finished.version))
+                    .await
+                    .to_status()?;
+                let ExecutionEventInner::Finished {
+                    result: finished_result,
+                    ..
+                } = finished_result.event
+                else {
+                    return Err(tonic::Status::internal(
+                        "pending state finished implies `Finished` event",
+                    ));
+                };
+                // .expect("checked using `current_pending_state.is_finished()` that the execution is finished");
+                let finished_message = grpc_gen::GetStatusResponse {
+                    message: Some(Message::FinishedStatus(to_finished_status(
+                        finished_result,
+                        &create_request,
+                        finished.finished_at,
+                    ))),
+                };
+                Box::pin(tokio_stream::iter([Ok(summary), Ok(finished_message)]))
+            } else {
+                Box::pin(tokio_stream::iter([Ok(summary)]))
+            };
+            Ok(tonic::Response::new(output))
+        } else {
+            let (status_stream_sender, remote_client_recv) = mpsc::channel(1);
+            // send current pending status
+            status_stream_sender
+                .send(TonicResult::Ok(summary))
+                .await
+                .expect("mpsc bounded channel requires buffer > 0");
+            let db_pool = self.db_pool.clone();
+            let shutdown_requested = self.shutdown_requested.clone();
+            let trace_id = server::gen_trace_id();
+            let span = info_span!("poll_status", trace_id);
+            tokio::spawn(
+                async move {
+                    debug!("poll_status started");
+                    server::poll_status(
+                        db_pool,
+                        shutdown_requested,
+                        execution_id,
+                        status_stream_sender,
+                        current_pending_state,
+                        create_request,
+                        request.send_finished_status,
+                    )
+                    .await;
+                    debug!("poll_status finished");
+                }
+                .instrument(span),
+            );
+            Ok(tonic::Response::new(
+                Box::pin(ReceiverStream::new(remote_client_recv)) as Self::GetStatusStream,
+            ))
+        }
+    }
+
+    #[instrument(skip_all, fields(ffqn))]
+    async fn list_executions(
+        &self,
+        request: tonic::Request<grpc_gen::ListExecutionsRequest>,
+    ) -> TonicRespResult<grpc_gen::ListExecutionsResponse> {
+        let request = request.into_inner();
+        let ffqn = request
+            .function_name
+            .map(FunctionFqn::try_from)
+            .transpose()?;
+        tracing::Span::current().record("ffqn", tracing::field::debug(&ffqn));
+        let pagination =
+            request
+                .pagination
+                .unwrap_or(grpc_gen::list_executions_request::Pagination::OlderThan(
+                    grpc_gen::list_executions_request::OlderThan {
+                        length: 20,
+                        cursor: None,
+                        including_cursor: false,
+                    },
+                ));
+        let conn = self.db_pool.connection();
+        let executions: Vec<_> = conn
+            .list_executions(
+                ffqn,
+                request.top_level_only,
+                ExecutionListPagination::try_from(pagination)?,
+            )
+            .await
+            .to_status()?
+            .into_iter()
+            .map(
+                |ExecutionWithState {
+                     execution_id,
+                     ffqn,
+                     pending_state,
+                     created_at,
+                     scheduled_at,
+                     component_id_input_digest: _,
+                 }| grpc_gen::ExecutionSummary {
+                    execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
+                    function_name: Some(ffqn.into()),
+                    current_status: Some(grpc_gen::ExecutionStatus::from(pending_state)),
+                    created_at: Some(created_at.into()),
+                    scheduled_at: Some(scheduled_at.into()),
+                },
+            )
+            .collect();
+        Ok(tonic::Response::new(grpc_gen::ListExecutionsResponse {
+            executions,
+        }))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn list_execution_events(
+        &self,
+        request: tonic::Request<grpc_gen::ListExecutionEventsRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::ListExecutionEventsResponse>, tonic::Status>
+    {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+
+        let conn = self.db_pool.connection();
+        let events = conn
+            .list_execution_events(
+                &execution_id,
+                &Version(request.version_from),
+                request.length,
+                request.include_backtrace_id,
+            )
+            .await
+            .to_status()?;
+
+        let events = events
+            .into_iter()
+            .enumerate()
+            .map(|(idx, execution_event)| {
+                from_execution_event_to_grpc(
+                    execution_event,
+                    request.version_from
+                        + VersionType::try_from(idx).expect("both from and to are VersionType"),
+                )
+            })
+            .collect();
+        Ok(tonic::Response::new(
+            grpc_gen::ListExecutionEventsResponse { events },
+        ))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn list_responses(
+        &self,
+        request: tonic::Request<grpc_gen::ListResponsesRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::ListResponsesResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let conn = self.db_pool.connection();
+        let responses = conn
+            .list_responses(
+                &execution_id,
+                concepts::storage::Pagination::NewerThan {
+                    length: request.length,
+                    cursor: request.cursor_from,
+                    including_cursor: request.including_cursor,
+                },
+            )
+            .await
+            .to_status()?
+            .into_iter()
+            .map(grpc_gen::ResponseWithCursor::from)
+            .collect();
+
+        Ok(tonic::Response::new(grpc_gen::ListResponsesResponse {
+            responses,
+        }))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn list_execution_events_and_responses(
+        &self,
+        request: tonic::Request<grpc_gen::ListExecutionEventsAndResponsesRequest>,
+    ) -> std::result::Result<
+        tonic::Response<grpc_gen::ListExecutionEventsAndResponsesResponse>,
+        tonic::Status,
+    > {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+
+        let conn = self.db_pool.connection();
+        let events = conn
+            .list_execution_events(
+                &execution_id,
+                &Version(request.version_from),
+                request.events_length,
+                request.include_backtrace_id,
+            )
+            .await
+            .to_status()?
+            .into_iter()
+            .enumerate()
+            .map(|(idx, execution_event)| {
+                from_execution_event_to_grpc(
+                    execution_event,
+                    request.version_from
+                        + VersionType::try_from(idx).expect("both from and to are VersionType"),
+                )
+            })
+            .collect();
+
+        let responses = conn
+            .list_responses(
+                &execution_id,
+                concepts::storage::Pagination::NewerThan {
+                    length: request.responses_length,
+                    cursor: request.responses_cursor_from,
+                    including_cursor: request.responses_including_cursor,
+                },
+            )
+            .await
+            .to_status()?
+            .into_iter()
+            .map(grpc_gen::ResponseWithCursor::from)
+            .collect();
+
+        Ok(tonic::Response::new(
+            grpc_gen::ListExecutionEventsAndResponsesResponse { events, responses },
+        ))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn get_backtrace(
+        &self,
+        request: tonic::Request<grpc_gen::GetBacktraceRequest>,
+    ) -> Result<tonic::Response<grpc_gen::GetBacktraceResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+
+        let conn = self.db_pool.connection();
+        let filter = match request.filter {
+            Some(grpc_gen::get_backtrace_request::Filter::Specific(
+                grpc_gen::get_backtrace_request::Specific { version },
+            )) => BacktraceFilter::Specific(Version::new(version)),
+            Some(grpc_gen::get_backtrace_request::Filter::Last(
+                grpc_gen::get_backtrace_request::Last {},
+            )) => BacktraceFilter::Last,
+            Some(grpc_gen::get_backtrace_request::Filter::First(
+                grpc_gen::get_backtrace_request::First {},
+            ))
+            | None => BacktraceFilter::First,
+        };
+        let backtrace_info = conn
+            .get_backtrace(&execution_id, filter)
+            .await
+            .to_status()?;
+
+        Ok(tonic::Response::new(grpc_gen::GetBacktraceResponse {
+            wasm_backtrace: Some(grpc_gen::WasmBacktrace {
+                version_min_including: backtrace_info.version_min_including.into(),
+                version_max_excluding: backtrace_info.version_max_excluding.into(),
+                frames: backtrace_info
+                    .wasm_backtrace
+                    .frames
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+            }),
+            component_id: Some(backtrace_info.component_id.into()),
+        }))
+    }
+
+    #[instrument(skip_all)]
+    async fn get_backtrace_source(
+        &self,
+        request: tonic::Request<grpc_gen::GetBacktraceSourceRequest>,
+    ) -> Result<tonic::Response<grpc_gen::GetBacktraceSourceResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let component_id =
+            ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
+        if let Some(matchable_source_map) = self.component_source_map.get(&component_id) {
+            if let Some(actual_path) = matchable_source_map.find_matching(&request.file) {
+                match tokio::fs::read_to_string(actual_path).await {
+                    Ok(content) => Ok(tonic::Response::new(grpc_gen::GetBacktraceSourceResponse {
+                        content,
+                    })),
+                    Err(err) => {
+                        error!(%component_id, "Cannot read backtrace source {actual_path:?} - {err:?}");
+                        Err(tonic::Status::internal("cannot read source file"))
+                    }
+                }
+            } else {
+                warn!(
+                    "Backtrace file mapping not found for {component_id}, src {}",
+                    request.file
+                );
+                Err(tonic::Status::not_found("backtrace file mapping not found"))
+            }
+        } else {
+            warn!("Component {component_id} not found");
+            Err(tonic::Status::not_found("component not found"))
+        }
+    }
+
+    #[instrument(skip_all, fields(execution_id, delay_id))]
+    async fn cancel(
+        &self,
+        request: tonic::Request<grpc_gen::CancelRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::CancelResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let executed_at = Now.now();
+        let response_id = request.request.argument_must_exist("request")?;
+        let outcome = match response_id {
+            grpc_gen::cancel_request::Request::Activity(activity_req) => {
+                let child_execution_id = activity_req
+                    .execution_id
+                    .argument_must_exist("execution_id")?;
+                let execution_id = ExecutionId::try_from(child_execution_id)?;
+                tracing::Span::current()
+                    .record("execution_id", tracing::field::display(&execution_id));
+
+                let conn = self.db_pool.connection();
+                let child_create_req = conn.get_create_request(&execution_id).await.to_status()?;
+                if !child_create_req.component_id.component_type.is_activity() {
+                    return Err(tonic::Status::invalid_argument(
+                        "cancelled execution must be an activity",
+                    ));
+                }
+                self.cancel_registry
+                    .cancel(conn.as_ref(), &execution_id, executed_at)
+                    .await
+                    .to_status()?
+            }
+            grpc_gen::cancel_request::Request::Delay(delay_req) => {
+                let delay_id = delay_req.delay_id.argument_must_exist("delay_id")?;
+                let delay_id = DelayId::try_from(delay_id)?;
+                tracing::Span::current().record("delay_id", tracing::field::display(&delay_id));
+
+                let conn = self.db_pool.connection();
+                storage::cancel_delay(conn.as_ref(), delay_id, executed_at)
+                    .await
+                    .to_status()?
+            }
+        };
+
+        Ok(tonic::Response::new(grpc_gen::CancelResponse {
+            outcome: grpc_gen::cancel_response::CancelOutcome::from(outcome).into(),
+        }))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn upgrade_execution_component(
+        &self,
+        request: tonic::Request<grpc_gen::UpgradeExecutionComponentRequest>,
+    ) -> std::result::Result<
+        tonic::Response<grpc_gen::UpgradeExecutionComponentResponse>,
+        tonic::Status,
+    > {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let old = request
+            .expected_component_digest
+            .argument_must_exist("expected_component_digest")?
+            .try_into()?;
+        let new = request
+            .new_component_digest
+            .argument_must_exist("new_component_digest")?
+            .try_into()?;
+        self.db_pool
+            .connection()
+            .upgrade_execution_component(&execution_id, &old, &new)
+            .await
+            .to_status()?;
+        Ok(tonic::Response::new(
+            grpc_gen::UpgradeExecutionComponentResponse {},
+        ))
+    }
+}
+
+pub(crate) fn to_finished_status(
+    finished_result: SupportedFunctionReturnValue,
+    create_request: &CreateRequest,
+    finished_at: DateTime<Utc>,
+) -> grpc_gen::FinishedStatus {
+    let result_detail = finished_result.into();
+    grpc_gen::FinishedStatus {
+        result_detail: Some(result_detail),
+        created_at: Some(create_request.created_at.into()),
+        scheduled_at: Some(create_request.scheduled_at.into()),
+        finished_at: Some(finished_at.into()),
+    }
+}
+
+#[tonic::async_trait]
+impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
+    #[instrument(skip_all)]
+    async fn list_components(
+        &self,
+        request: tonic::Request<grpc_gen::ListComponentsRequest>,
+    ) -> TonicRespResult<grpc_gen::ListComponentsResponse> {
+        let request = request.into_inner();
+        let all_components = self.component_registry_ro.list(request.extensions);
+        let component_digest = request
+            .component_digest
+            .map(InputContentDigest::try_from)
+            .transpose()?;
+        let mut res_components = Vec::with_capacity(all_components.len());
+        for component in all_components
+            .into_iter()
+            .filter(|component| match &component_digest {
+                None => true,
+                Some(filter) if *filter == component.component_id.input_digest => true,
+                Some(_) => false,
+            })
+        {
+            let res_component = grpc_gen::Component {
+                component_id: Some(component.component_id.into()),
+                exports: component
+                    .workflow_or_activity_config
+                    .map(|workflow_or_activity_config| {
+                        list_fns(workflow_or_activity_config.exports_ext)
+                    })
+                    .unwrap_or_default(),
+                imports: list_fns(component.imports),
+            };
+            res_components.push(res_component);
+        }
+        Ok(tonic::Response::new(grpc_gen::ListComponentsResponse {
+            components: res_components,
+        }))
+    }
+
+    async fn get_wit(
+        &self,
+        request: tonic::Request<grpc_gen::GetWitRequest>,
+    ) -> TonicRespResult<grpc_gen::GetWitResponse> {
+        let request = request.into_inner();
+        let component_id =
+            ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
+        let wit = self
+            .component_registry_ro
+            .get_wit(&component_id)
+            .entity_must_exist()?;
+        Ok(tonic::Response::new(grpc_gen::GetWitResponse {
+            content: wit.to_string(),
+        }))
+    }
+}
+
+fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
+    let mut vec = Vec::with_capacity(functions.len());
+    for FunctionMetadata {
+        ffqn,
+        parameter_types,
+        return_type,
+        extension,
+        submittable,
+    } in functions
+    {
+        let fun = grpc_gen::FunctionDetail {
+            params: parameter_types
+                .0
+                .into_iter()
+                .map(|param| grpc_gen::FunctionParameter {
+                    name: param.name.to_string(),
+                    r#type: Some(grpc_gen::WitType {
+                        wit_type: param.wit_type.to_string(),
+                        type_wrapper: serde_json::to_string(&param.type_wrapper)
+                            .expect("`TypeWrapper` must be serializable"),
+                    }),
+                })
+                .collect(),
+            return_type: Some(grpc_gen::WitType {
+                wit_type: return_type.wit_type().to_string(),
+                type_wrapper: serde_json::to_string(&return_type.type_wrapper())
+                    .expect("`TypeWrapper` must be serializable"),
+            }),
+            function_name: Some(ffqn.into()),
+            extension: extension.map(|it| {
+                match it {
+                    FunctionExtension::Submit => grpc_gen::FunctionExtension::Submit,
+                    FunctionExtension::AwaitNext => grpc_gen::FunctionExtension::AwaitNext,
+                    FunctionExtension::Schedule => grpc_gen::FunctionExtension::Schedule,
+                    FunctionExtension::Stub => grpc_gen::FunctionExtension::Stub,
+                    FunctionExtension::Get => grpc_gen::FunctionExtension::Get,
+                }
+                .into()
+            }),
+            submittable,
+        };
+        vec.push(fun);
+    }
+    vec
+}
