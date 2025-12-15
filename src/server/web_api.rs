@@ -6,12 +6,14 @@ use axum::{
 };
 use axum_accept::AcceptExtractor;
 use concepts::{
-    ExecutionId,
-    storage::{DbErrorRead, DbPool},
+    ExecutionId, FinishedExecutionError, SupportedFunctionReturnValue,
+    storage::{DbErrorRead, DbPool, ExecutionEventInner},
 };
 use http::StatusCode;
+use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
+use val_json::wast_val::WastVal;
 
 #[derive(Clone)]
 pub(crate) struct WebApiState {
@@ -31,6 +33,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             "/executions/{execution-id}/status",
             routing::get(get_execution_status),
         )
+        .route("/executions/{execution-id}", routing::get(get_execution))
 }
 
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: ExecutionIdAccept) -> Response {
@@ -56,6 +59,51 @@ async fn get_execution_status(
         ExecutionIdAccept::Json => Json(json!(pending_state)).into_response(),
         ExecutionIdAccept::Text => pending_state.to_string().into_response(),
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RetVal {
+    Ok(Option<WastVal>),
+    Err(Option<WastVal>),
+    ExecutionError(FinishedExecutionError),
+}
+impl From<SupportedFunctionReturnValue> for RetVal {
+    fn from(value: SupportedFunctionReturnValue) -> RetVal {
+        match value {
+            SupportedFunctionReturnValue::Ok { ok: val_with_type } => {
+                RetVal::Ok(val_with_type.map(|it| it.value))
+            }
+            SupportedFunctionReturnValue::Err { err: val_with_type } => {
+                RetVal::Err(val_with_type.map(|it| it.value))
+            }
+            SupportedFunctionReturnValue::ExecutionError(err) => RetVal::ExecutionError(err),
+        }
+    }
+}
+
+async fn get_execution(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+) -> Result<Response, ErrorWrapper<DbErrorRead>> {
+    let last_event = state
+        .db_pool
+        .connection()
+        .get_last_execution_event(&execution_id)
+        .await
+        .map_err(|e| ErrorWrapper(e, ExecutionIdAccept::Json))?;
+    Ok(
+        if let ExecutionEventInner::Finished { result, .. } = last_event.event {
+            let result = RetVal::from(result);
+            Json(json!(result)).into_response()
+        } else {
+            (
+                StatusCode::TOO_EARLY,
+                Json(json!({"error":"not finished yet"})),
+            )
+                .into_response()
+        },
+    )
 }
 
 #[derive(AcceptExtractor, Clone, Copy)]
