@@ -584,10 +584,19 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             {
                 // Send summary + finished status only if the execution is finished && request.send_finished_status
                 let finished_result = conn
-                    .get_finished_result(&execution_id, finished)
+                    .get_execution_event(&execution_id, &Version(finished.version))
                     .await
-                    .to_status()?
-                    .expect("checked using `current_pending_state.is_finished()` that the execution is finished");
+                    .to_status()?;
+                let ExecutionEventInner::Finished {
+                    result: finished_result,
+                    ..
+                } = finished_result.event
+                else {
+                    return Err(tonic::Status::internal(
+                        "pending state finished implies `Finished` event",
+                    ));
+                };
+                // .expect("checked using `current_pending_state.is_finished()` that the execution is finished");
                 let finished_message = grpc_gen::GetStatusResponse {
                     message: Some(Message::FinishedStatus(to_finished_status(
                         finished_result,
@@ -1028,13 +1037,27 @@ async fn notify_status(
                 {
                     if send_finished_status {
                         // Send the last message and close the RPC.
-                        let finished_result = match conn.get_finished_result(execution_id, pending_state_finished).await {
-                                Ok(ok) => ok.expect("checked using `if let PendingState::Finished` that the execution is finished"),
-                                Err(db_err) => {
-                                    let _ = tx.send(Err(db_error_read_to_status(&db_err))).await;
-                                    return Err(());
-                                }
-                            };
+                        let finished_result = conn
+                            .get_execution_event(
+                                execution_id,
+                                &Version(pending_state_finished.version),
+                            )
+                            .await
+                            .to_status()
+                            .and_then(|event| match event.event {
+                                ExecutionEventInner::Finished { result, .. } => Ok(result),
+                                _ => Err(tonic::Status::internal(
+                                    "pending state finished implies `Finished` event",
+                                )),
+                            });
+
+                        let finished_result = match finished_result {
+                            Ok(finished_result) => finished_result,
+                            Err(err) => {
+                                let _ = tx.send(Err(err)).await;
+                                return Err(());
+                            }
+                        };
                         let message = grpc_gen::GetStatusResponse {
                             message: Some(Message::FinishedStatus(to_finished_status(
                                 finished_result,

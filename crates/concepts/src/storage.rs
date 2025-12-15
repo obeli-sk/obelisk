@@ -891,21 +891,6 @@ pub trait DbConnection: DbExecutor {
         }
     }
 
-    async fn get_finished_result(
-        &self,
-        execution_id: &ExecutionId,
-        finished: PendingStateFinished,
-    ) -> Result<Option<SupportedFunctionReturnValue>, DbErrorRead> {
-        let last_event = self
-            .get_execution_event(execution_id, &Version::new(finished.version))
-            .await?;
-        if let ExecutionEventInner::Finished { result, .. } = last_event.event {
-            Ok(Some(result))
-        } else {
-            Ok(None)
-        }
-    }
-
     async fn get_pending_state(
         &self,
         execution_id: &ExecutionId,
