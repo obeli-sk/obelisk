@@ -151,11 +151,14 @@ async fn execution_submit(
 }
 
 pub(crate) mod components {
+    use super::{
+        Arc, Deserialize, ExecutionIdAccept, FunctionFqn, IntoResponse, Json, Query, Response,
+        Serialize, State, WebApiState, json,
+    };
     use concepts::{
         ComponentId, ComponentType, FunctionExtension, FunctionMetadata, ParameterType,
     };
-
-    use super::*;
+    use std::fmt::Write as _;
 
     #[derive(Deserialize, Debug)]
     pub(crate) struct ComponentsListParams {
@@ -177,14 +180,14 @@ pub(crate) mod components {
         let mut components = state.component_registry_ro.list(extensions);
 
         if let Some(name) = params.name {
-            components.retain(|c| c.component_id.name.as_ref() == &name);
+            components.retain(|c| c.component_id.name.as_ref() == name);
         }
         if let Some(digest) = params.digest {
             components
-                .retain(|c| c.component_id.input_digest.digest_base16_without_prefix() == digest)
+                .retain(|c| c.component_id.input_digest.digest_base16_without_prefix() == digest);
         }
         if let Some(ty) = params.r#type {
-            components.retain(|c| c.component_id.component_type == ty)
+            components.retain(|c| c.component_id.component_type == ty);
         }
         let exports = params.exports.unwrap_or_default();
         let imports = params.imports.unwrap_or_default();
@@ -209,7 +212,7 @@ pub(crate) mod components {
                         if export.extension.is_none() {
                             exports.push(FunctionMetadataLite::from(export));
                         } else if extensions {
-                            exports_ext.push(FunctionMetadataLite::from(export))
+                            exports_ext.push(FunctionMetadataLite::from(export));
                         }
                     }
 
@@ -244,7 +247,7 @@ pub(crate) mod components {
             ExecutionIdAccept::Text => {
                 let mut output = String::new();
                 for component in components {
-                    output += &format!("{}\n", component.component_id);
+                    writeln!(output, "{}", component.component_id).expect("writing to string");
                 }
                 output.into_response()
             }
