@@ -265,7 +265,7 @@ pub(crate) async fn submit(
                 fn_metadata
                     .ffqn
                     .ifc_fqn
-                    .package_strip_obelisk_ext_suffix()
+                    .package_strip_obelisk_schedule_suffix()
                     .expect("checked that the ifc is ext"),
                 fn_metadata.ffqn.ifc_fqn.ifc_name(),
                 fn_metadata.ffqn.ifc_fqn.version(),
