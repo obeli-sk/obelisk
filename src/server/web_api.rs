@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{IntoResponse, Response},
     routing,
 };
@@ -15,7 +15,10 @@ use serde_json::json;
 use std::sync::Arc;
 use val_json::wast_val::WastVal;
 
-use crate::command::server::{self, ComponentConfigRegistryRO, SubmitError};
+use crate::{
+    command::server::{self, ComponentConfigRegistryRO, SubmitError},
+    server::web_api::components::components_list,
+};
 
 #[derive(Clone)]
 pub(crate) struct WebApiState {
@@ -37,7 +40,8 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             routing::get(execution_status_get),
         )
         .route("/executions/{execution-id}", routing::get(execution_get))
-        .route("/executions/{execution-id}", routing::put(execution_put))
+        .route("/executions/{execution-id}", routing::put(execution_submit))
+        .route("/components", routing::get(components_list))
 }
 
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: ExecutionIdAccept) -> Response {
@@ -110,13 +114,13 @@ async fn execution_get(
     )
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct ExecutionPutPayload {
     ffqn: FunctionFqn,
     params: Vec<serde_json::Value>,
 }
 
-async fn execution_put(
+async fn execution_submit(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
     Json(payload): Json<ExecutionPutPayload>,
@@ -146,8 +150,163 @@ async fn execution_put(
     }
 }
 
+pub(crate) mod components {
+    use concepts::{
+        ComponentId, ComponentType, FunctionExtension, FunctionMetadata, ParameterType,
+    };
+
+    use super::*;
+
+    #[derive(Deserialize, Debug)]
+    pub(crate) struct ComponentsListParams {
+        r#type: Option<ComponentType>,
+        name: Option<String>,
+        digest: Option<String>,
+        exports: Option<bool>,
+        imports: Option<bool>,
+        extensions: Option<bool>,
+        submittable: Option<bool>,
+    }
+
+    pub(crate) async fn components_list(
+        state: State<Arc<WebApiState>>,
+        Query(params): Query<ComponentsListParams>,
+        accept: ExecutionIdAccept,
+    ) -> Response {
+        let extensions = params.extensions.unwrap_or_default();
+        let mut components = state.component_registry_ro.list(extensions);
+
+        if let Some(name) = params.name {
+            components.retain(|c| c.component_id.name.as_ref() == &name);
+        }
+        if let Some(digest) = params.digest {
+            components
+                .retain(|c| c.component_id.input_digest.digest_base16_without_prefix() == digest)
+        }
+        if let Some(ty) = params.r#type {
+            components.retain(|c| c.component_id.component_type == ty)
+        }
+        let exports = params.exports.unwrap_or_default();
+        let imports = params.imports.unwrap_or_default();
+        let components: Vec<_> = components
+            .into_iter()
+            .map(|c| {
+                let (exports, exports_ext) = if exports {
+                    let mut exports = Vec::new();
+                    let mut exports_ext = Vec::new();
+                    for export in c
+                        .workflow_or_activity_config
+                        .into_iter()
+                        .flat_map(|c| c.exports_ext)
+                        .filter(|e| {
+                            if let Some(submittable) = params.submittable {
+                                e.submittable == submittable
+                            } else {
+                                true
+                            }
+                        })
+                    {
+                        if export.extension.is_none() {
+                            exports.push(FunctionMetadataLite::from(export));
+                        } else if extensions {
+                            exports_ext.push(FunctionMetadataLite::from(export))
+                        }
+                    }
+
+                    (
+                        Some(exports),
+                        if extensions { Some(exports_ext) } else { None },
+                    )
+                } else {
+                    (None, None)
+                };
+
+                ComponentConfig {
+                    component_id: c.component_id,
+                    imports: if imports {
+                        Some(
+                            c.imports
+                                .into_iter()
+                                .map(FunctionMetadataLite::from)
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    },
+                    exports,
+                    exports_ext,
+                }
+            })
+            .collect();
+
+        match accept {
+            ExecutionIdAccept::Json => Json(json!(components)).into_response(),
+            ExecutionIdAccept::Text => {
+                let mut output = String::new();
+                for component in components {
+                    output += &format!("{}\n", component.component_id);
+                }
+                output.into_response()
+            }
+        }
+    }
+
+    #[derive(Serialize)]
+    pub(crate) struct ComponentConfig {
+        component_id: ComponentId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        imports: Option<Vec<FunctionMetadataLite>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exports: Option<Vec<FunctionMetadataLite>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exports_ext: Option<Vec<FunctionMetadataLite>>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct FunctionMetadataLite {
+        ffqn: FunctionFqn,
+        parameter_types: Vec<ParameterTypeLite>,
+        return_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        extension: Option<FunctionExtension>,
+        /// Externally submittable: primary functions + `-schedule` extended, but no activity stubs
+        submittable: bool,
+    }
+    impl From<FunctionMetadata> for FunctionMetadataLite {
+        fn from(value: FunctionMetadata) -> Self {
+            FunctionMetadataLite {
+                ffqn: value.ffqn,
+                parameter_types: value
+                    .parameter_types
+                    .0
+                    .into_iter()
+                    .map(ParameterTypeLite::from)
+                    .collect(),
+                return_type: value.return_type.wit_type().to_string(),
+                extension: value.extension,
+                submittable: value.submittable,
+            }
+        }
+    }
+
+    #[derive(serde::Serialize)]
+    struct ParameterTypeLite {
+        name: String,
+        wit_type: String,
+    }
+
+    impl From<ParameterType> for ParameterTypeLite {
+        fn from(value: ParameterType) -> Self {
+            ParameterTypeLite {
+                name: value.name.to_string(),
+                wit_type: value.wit_type.to_string(),
+            }
+        }
+    }
+}
+
 #[derive(AcceptExtractor, Clone, Copy)]
-enum ExecutionIdAccept {
+pub(crate) enum ExecutionIdAccept {
     #[accept(mediatype = "text/plain")]
     Text,
     #[accept(mediatype = "application/json")]
