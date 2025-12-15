@@ -610,25 +610,31 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             };
             Ok(tonic::Response::new(output))
         } else {
-            let (tx, rx) = mpsc::channel(1);
+            let (tx, rx) = mpsc::channel(1); // TODO: Rename to status_stream_sender, remote_client_recv
             // send current pending status
             tx.send(TonicResult::Ok(summary))
                 .await
                 .expect("mpsc bounded channel requires buffer > 0");
             let db_pool = self.db_pool.clone();
             let shutdown_requested = self.shutdown_requested.clone();
-
+            let trace_id = gen_trace_id();
+            let span = info_span!("poll_status", trace_id);
             tokio::spawn(
-                poll_status(
-                    db_pool,
-                    shutdown_requested,
-                    execution_id,
-                    tx,
-                    current_pending_state,
-                    create_request,
-                    request.send_finished_status,
-                )
-                .in_current_span(),
+                async move {
+                    debug!("poll_status started");
+                    poll_status(
+                        db_pool,
+                        shutdown_requested,
+                        execution_id,
+                        tx,
+                        current_pending_state,
+                        create_request,
+                        request.send_finished_status,
+                    )
+                    .await;
+                    debug!("poll_status finished")
+                }
+                .instrument(span),
             );
             Ok(tonic::Response::new(
                 Box::pin(ReceiverStream::new(rx)) as Self::GetStatusStream
@@ -1006,6 +1012,10 @@ async fn poll_status(
                     .await;
                 return;
             }
+        }
+        if tx.is_closed() {
+            debug!("Connection was closed by the client");
+            return;
         }
     }
 }
@@ -2814,6 +2824,14 @@ impl MatchableSourceMap {
             }
         }
     }
+}
+
+pub(crate) fn gen_trace_id() -> String {
+    use rand::SeedableRng;
+    let mut rng = rand::rngs::SmallRng::from_os_rng();
+    (0..5)
+        .map(|_| rand::Rng::random_range(&mut rng, b'a'..=b'z') as char)
+        .collect::<String>()
 }
 
 #[cfg(test)]
