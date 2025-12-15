@@ -692,6 +692,7 @@ async fn run_internal(
     let app_router = app_router(WebApiState {
         db_pool: server_init.db_pool.clone(),
         component_registry_ro: grpc_server.component_registry_ro.clone(),
+        cancel_registry: grpc_server.cancel_registry.clone(),
     });
     let app: axum::Router<()> = app_router.fallback_service(grpc_service);
     let app_svc = app.into_make_service();

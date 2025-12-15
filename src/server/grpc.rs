@@ -59,7 +59,7 @@ pub(crate) struct GrpcServer {
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
     component_source_map: ComponentSourceMap,
     #[debug(skip)]
-    cancel_registry: CancelRegistry,
+    pub(crate) cancel_registry: CancelRegistry,
 }
 
 impl GrpcServer {

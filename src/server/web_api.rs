@@ -7,13 +7,18 @@ use axum::{
 use axum_accept::AcceptExtractor;
 use concepts::{
     ExecutionId, FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
-    storage::{DbErrorRead, DbErrorWrite, DbErrorWriteNonRetriable, DbPool, ExecutionEventInner},
+    storage::{
+        CancelOutcome, DbErrorRead, DbErrorWrite, DbErrorWriteNonRetriable, DbPool,
+        ExecutionEventInner,
+    },
+    time::{ClockFn as _, Now},
 };
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use val_json::wast_val::WastVal;
+use wasm_workers::activity::cancel_registry::CancelRegistry;
 
 use crate::{
     command::server::{self, ComponentConfigRegistryRO, SubmitError},
@@ -24,6 +29,7 @@ use crate::{
 pub(crate) struct WebApiState {
     pub(crate) db_pool: Arc<dyn DbPool>,
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
+    pub(crate) cancel_registry: CancelRegistry,
 }
 
 pub(crate) fn app_router(state: WebApiState) -> Router {
@@ -36,6 +42,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
     Router::new()
         .route("/execution-id", routing::get(execution_id_generate))
         .route(
+            "/executions/{execution-id}/cancel",
+            routing::put(execution_cancel),
+        )
+        .route(
             "/executions/{execution-id}/status",
             routing::get(execution_status_get),
         )
@@ -44,19 +54,58 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/components", routing::get(components_list))
 }
 
-async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: ExecutionIdAccept) -> Response {
+async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader) -> Response {
     let id = ExecutionId::generate();
     match accept {
-        ExecutionIdAccept::Json => Json(json!(id)).into_response(),
-        ExecutionIdAccept::Text => id.to_string().into_response(),
+        AcceptHeader::Json => Json(json!(id)).into_response(),
+        AcceptHeader::Text => id.to_string().into_response(),
     }
+}
+
+async fn execution_cancel(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    let conn = state.db_pool.connection();
+    let create_req = conn
+        .get_create_request(&execution_id)
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    // Must verify that this is an activity
+    if !create_req.component_id.component_type.is_activity() {
+        return Err(HttpResponse {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: "cancelled execution must be an activity".to_string(),
+            accept,
+        });
+    }
+    let executed_at = Now.now();
+    let outcome = state
+        .cancel_registry
+        .cancel(conn.as_ref(), &execution_id, executed_at)
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    Ok(match outcome {
+        CancelOutcome::Cancelled => HttpResponse {
+            status: StatusCode::OK,
+            message: "cancelled".to_string(),
+            accept,
+        },
+        CancelOutcome::AlreadyFinished => HttpResponse {
+            status: StatusCode::CONFLICT,
+            message: "already finished".to_string(),
+            accept,
+        },
+    }
+    .into_response())
 }
 
 async fn execution_status_get(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
-    accept: ExecutionIdAccept,
-) -> Result<Response, ErrorWrapper<DbErrorRead>> {
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
     let pending_state = state
         .db_pool
         .connection()
@@ -64,8 +113,8 @@ async fn execution_status_get(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(match accept {
-        ExecutionIdAccept::Json => Json(json!(pending_state)).into_response(),
-        ExecutionIdAccept::Text => pending_state.to_string().into_response(),
+        AcceptHeader::Json => Json(json!(pending_state)).into_response(),
+        AcceptHeader::Text => pending_state.to_string().into_response(),
     })
 }
 
@@ -93,23 +142,24 @@ impl From<SupportedFunctionReturnValue> for RetVal {
 async fn execution_get(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
-) -> Result<Response, ErrorWrapper<DbErrorRead>> {
+) -> Result<Response, HttpResponse> {
     let last_event = state
         .db_pool
         .connection()
         .get_last_execution_event(&execution_id)
         .await
-        .map_err(|e| ErrorWrapper(e, ExecutionIdAccept::Json))?;
+        .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?;
     Ok(
         if let ExecutionEventInner::Finished { result, .. } = last_event.event {
             let result = RetVal::from(result);
             Json(json!(result)).into_response()
         } else {
-            (
-                StatusCode::TOO_EARLY,
-                Json(json!({"error":"not finished yet"})),
-            )
-                .into_response()
+            HttpResponse {
+                status: StatusCode::TOO_EARLY,
+                message: "not finished yet".to_string(),
+                accept: AcceptHeader::Json,
+            }
+            .into_response()
         },
     )
 }
@@ -134,25 +184,32 @@ async fn execution_submit(
     )
     .await
     {
-        Ok(()) => (StatusCode::CREATED, Json(json!({ "ok": "created" }))).into_response(),
+        Ok(()) => HttpResponse {
+            status: StatusCode::CREATED,
+            message: "created".to_string(),
+            accept: AcceptHeader::Json,
+        }
+        .into_response(),
         Err(SubmitError::DbErrorWrite(DbErrorWrite::NonRetriable(
             DbErrorWriteNonRetriable::Conflict,
-        ))) => (
-            StatusCode::CONFLICT,
-            Json(json!({ "err": "already exists" })),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "err": err.to_string() })),
-        )
-            .into_response(),
+        ))) => HttpResponse {
+            status: StatusCode::CONFLICT,
+            message: "already exists".to_string(),
+            accept: AcceptHeader::Json,
+        }
+        .into_response(),
+        Err(err) => HttpResponse {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: err.to_string(),
+            accept: AcceptHeader::Json,
+        }
+        .into_response(),
     }
 }
 
 pub(crate) mod components {
     use super::{
-        Arc, Deserialize, ExecutionIdAccept, FunctionFqn, IntoResponse, Json, Query, Response,
+        AcceptHeader, Arc, Deserialize, FunctionFqn, IntoResponse, Json, Query, Response,
         Serialize, State, WebApiState, json,
     };
     use concepts::{
@@ -174,7 +231,7 @@ pub(crate) mod components {
     pub(crate) async fn components_list(
         state: State<Arc<WebApiState>>,
         Query(params): Query<ComponentsListParams>,
-        accept: ExecutionIdAccept,
+        accept: AcceptHeader,
     ) -> Response {
         let extensions = params.extensions.unwrap_or_default();
         let mut components = state.component_registry_ro.list(extensions);
@@ -243,8 +300,8 @@ pub(crate) mod components {
             .collect();
 
         match accept {
-            ExecutionIdAccept::Json => Json(json!(components)).into_response(),
-            ExecutionIdAccept::Text => {
+            AcceptHeader::Json => Json(json!(components)).into_response(),
+            AcceptHeader::Text => {
                 let mut output = String::new();
                 for component in components {
                     writeln!(output, "{}", component.component_id).expect("writing to string");
@@ -309,24 +366,61 @@ pub(crate) mod components {
 }
 
 #[derive(AcceptExtractor, Clone, Copy)]
-pub(crate) enum ExecutionIdAccept {
+pub(crate) enum AcceptHeader {
     #[accept(mediatype = "text/plain")]
     Text,
     #[accept(mediatype = "application/json")]
     Json,
 }
 
-struct ErrorWrapper<E>(E, ExecutionIdAccept);
+struct ErrorWrapper<E>(E, AcceptHeader);
 
-impl IntoResponse for ErrorWrapper<DbErrorRead> {
+struct HttpResponse {
+    status: StatusCode,
+    message: String,
+    accept: AcceptHeader,
+}
+
+impl IntoResponse for HttpResponse {
     fn into_response(self) -> Response {
-        let (status, message) = match self.0 {
+        match self.accept {
+            AcceptHeader::Json => (
+                self.status,
+                Json(if self.status.is_success() {
+                    json!({ "ok": self.message })
+                } else {
+                    json!({ "err": self.message })
+                }),
+            )
+                .into_response(),
+            AcceptHeader::Text => (self.status, self.message).into_response(),
+        }
+    }
+}
+impl From<ErrorWrapper<DbErrorRead>> for HttpResponse {
+    fn from(value: ErrorWrapper<DbErrorRead>) -> Self {
+        let (status, message) = match value.0 {
             DbErrorRead::NotFound => (StatusCode::NOT_FOUND, "Not found".to_string()),
-            DbErrorRead::Generic(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            DbErrorRead::Generic(err) => (StatusCode::SERVICE_UNAVAILABLE, err.to_string()),
         };
-        match self.1 {
-            ExecutionIdAccept::Json => (status, Json(json!({ "error": message }))).into_response(),
-            ExecutionIdAccept::Text => (status, message).into_response(),
+        HttpResponse {
+            status,
+            message,
+            accept: value.1,
+        }
+    }
+}
+impl From<ErrorWrapper<DbErrorWrite>> for HttpResponse {
+    fn from(value: ErrorWrapper<DbErrorWrite>) -> Self {
+        let (status, message) = match value.0 {
+            DbErrorWrite::NotFound => (StatusCode::NOT_FOUND, "Not found".to_string()),
+            DbErrorWrite::Generic(err) => (StatusCode::SERVICE_UNAVAILABLE, err.to_string()),
+            DbErrorWrite::NonRetriable(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        };
+        HttpResponse {
+            status,
+            message,
+            accept: value.1,
         }
     }
 }
