@@ -30,6 +30,8 @@ use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::init;
 use crate::init::Guard;
 use crate::project_dirs;
+use crate::server::web_api::WebApiState;
+use crate::server::web_api::app_router;
 use anyhow::Context;
 use anyhow::bail;
 use chrono::DateTime;
@@ -1356,7 +1358,7 @@ async fn run_internal(
 
     let cancel_registry = CancelRegistry::new();
 
-    let (init, component_registry_ro) = spawn_tasks_and_threads(
+    let (server_init, component_registry_ro) = spawn_tasks_and_threads(
         compiled_and_linked,
         &sqlite_file,
         sqlite_config,
@@ -1369,18 +1371,11 @@ async fn run_internal(
     .instrument(span)
     .await?;
 
+    let server_init = server_init.0.as_ref().expect("server is not shut down");
+
     let grpc_server = Arc::new(GrpcServer::new(
-        init.0
-            .as_ref()
-            .expect("server is not shut down")
-            .db_pool
-            .clone(),
-        init.0
-            .as_ref()
-            .expect("server is not shut down")
-            .shutdown
-            .1
-            .clone(),
+        server_init.db_pool.clone(),
+        server_init.shutdown.1.clone(),
         component_registry_ro,
         component_source_map,
         cancel_registry,
@@ -1422,8 +1417,10 @@ async fn run_internal(
         .map_request(accept_trace)
         .service(grpc.routes());
 
-    let dummy = axum::Router::new().route("/dummy", axum::routing::get(|| async { "Hello HTTP" }));
-    let app: axum::Router<()> = dummy.fallback_service(grpc_service);
+    let app_router = app_router(WebApiState {
+        db_pool: server_init.db_pool.clone(),
+    });
+    let app: axum::Router<()> = app_router.fallback_service(grpc_service);
     let app_svc = app.into_make_service();
 
     let listener = TcpListener::bind(api_listening_addr)

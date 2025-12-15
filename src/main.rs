@@ -4,6 +4,7 @@ mod config;
 mod env_vars;
 mod init;
 mod oci;
+mod server;
 
 use args::{Args, Client, ClientSubcommand, Subcommand};
 use clap::Parser;

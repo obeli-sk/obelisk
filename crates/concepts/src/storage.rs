@@ -1219,9 +1219,8 @@ pub struct ExpiredDelay {
     pub delay_id: DelayId,
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
-#[cfg_attr(feature = "test", derive(Serialize))]
-#[cfg_attr(feature = "test", serde(tag = "type"))]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
+#[serde(tag = "type")]
 pub enum PendingState {
     Locked(PendingStateLocked),
     #[display("PendingAt(`{scheduled_at}`)")]
@@ -1242,6 +1241,7 @@ pub enum PendingState {
     },
     #[display("Finished({finished})")]
     Finished {
+        #[serde(flatten)]
         finished: PendingStateFinished,
         component_id_input_digest: InputContentDigest,
     },
@@ -1269,8 +1269,7 @@ impl PendingState {
     }
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
-#[cfg_attr(feature = "test", derive(Serialize))]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
 #[display("Locked(`{lock_expires_at}`, {}, {})", locked_by.executor_id, locked_by.run_id)]
 pub struct PendingStateLocked {
     pub locked_by: LockedBy,

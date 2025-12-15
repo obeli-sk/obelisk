@@ -215,6 +215,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "axum-accept"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7b9916410cc0bb215af86ac7971351264847370517da15bb08223e9e4362648"
+dependencies = [
+ "axum-accept-macros",
+ "axum-accept-shared",
+]
+
+[[package]]
+name = "axum-accept-macros"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed2afe44bdd1f00cceb2ec6f4058ad2c1db5ee2e3cceb13283dd0e2825fb117f"
+dependencies = [
+ "axum",
+ "axum-accept-shared",
+ "mediatype",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "axum-accept-shared"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "149ea54e09b1466e589ad1fc55a0ea4de384c24d63aba2c78f360bc76df29952"
+dependencies = [
+ "axum",
+ "mediatype",
+]
+
+[[package]]
 name = "axum-core"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2392,6 +2426,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4facc753ae494aeb6e3c22f839b158aebd4f9270f55cd3c79906c45476c47ab4"
 
 [[package]]
+name = "mediatype"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f490ea2ae935dd8ac89c472d4df28c7f6b87cc20767e1b21fd5ed6a16e7f61e4"
+
+[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2733,6 +2773,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "axum-accept",
  "cfg-if",
  "chrono",
  "clap",

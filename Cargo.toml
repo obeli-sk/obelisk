@@ -22,6 +22,7 @@ wasm-workers.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+axum-accept.workspace = true
 cfg-if.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -176,6 +177,7 @@ wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers"
 
 anyhow = { version = "1.0", features = ["backtrace"] }
 axum = { version = "0.8.7", features = ["http2"] }
+axum-accept = "0.0.5"
 directories = "6.0"
 arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
