@@ -49,6 +49,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/delays/{delay-id}/cancel", routing::put(delay_cancel))
         .route("/execution-id", routing::get(execution_id_generate))
         .route("/executions", routing::get(executions_list))
+        .route("/executions/submit", routing::post(execution_submit_post))
         .route(
             "/executions/{execution-id}/cancel",
             routing::put(execution_cancel),
@@ -70,7 +71,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             routing::put(execution_stub),
         )
         .route("/executions/{execution-id}", routing::get(execution_get))
-        .route("/executions/{execution-id}", routing::put(execution_submit))
+        .route(
+            "/executions/{execution-id}",
+            routing::put(execution_submit_put),
+        )
 }
 
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader) -> Response {
@@ -503,12 +507,43 @@ struct ExecutionPutPayload {
     params: Vec<serde_json::Value>,
 }
 
-async fn execution_submit(
+async fn execution_submit_put(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
     Json(payload): Json<ExecutionPutPayload>,
-) -> Response {
-    match server::submit(
+) -> Result<Response, HttpResponse> {
+    execution_submit(execution_id.clone(), state, payload, accept).await?;
+    Ok(HttpResponse {
+        status: StatusCode::CREATED,
+        message: execution_id.to_string(),
+        accept,
+    }
+    .into_response())
+}
+
+async fn execution_submit_post(
+    state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
+    Json(payload): Json<ExecutionPutPayload>,
+) -> Result<Response, HttpResponse> {
+    let execution_id = ExecutionId::generate();
+    execution_submit(execution_id.clone(), state, payload, accept).await?;
+    Ok(HttpResponse {
+        status: StatusCode::CREATED,
+        message: execution_id.to_string(),
+        accept,
+    }
+    .into_response())
+}
+
+async fn execution_submit(
+    execution_id: ExecutionId,
+    state: State<Arc<WebApiState>>,
+    payload: ExecutionPutPayload,
+    accept: AcceptHeader,
+) -> Result<(), HttpResponse> {
+    server::submit(
         state.db_pool.connection().as_ref(),
         execution_id,
         payload.ffqn,
@@ -516,28 +551,20 @@ async fn execution_submit(
         &state.component_registry_ro,
     )
     .await
-    {
-        Ok(()) => HttpResponse {
-            status: StatusCode::CREATED,
-            message: "created".to_string(),
-            accept: AcceptHeader::Json,
-        }
-        .into_response(),
-        Err(SubmitError::DbErrorWrite(DbErrorWrite::NonRetriable(
+    .map_err(|err| match err {
+        SubmitError::DbErrorWrite(DbErrorWrite::NonRetriable(
             DbErrorWriteNonRetriable::Conflict,
-        ))) => HttpResponse {
+        )) => HttpResponse {
             status: StatusCode::CONFLICT,
             message: "already exists".to_string(),
-            accept: AcceptHeader::Json,
-        }
-        .into_response(),
-        Err(err) => HttpResponse {
+            accept,
+        },
+        err => HttpResponse {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: err.to_string(),
-            accept: AcceptHeader::Json,
-        }
-        .into_response(),
-    }
+            accept,
+        },
+    })
 }
 
 pub(crate) mod components {
