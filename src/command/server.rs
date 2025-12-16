@@ -1949,6 +1949,7 @@ pub struct ComponentConfigRegistryRO {
 
 impl ComponentConfigRegistryRO {
     /// Return `None` if component is not found, `Some(None)` if component has no WIT content.
+    #[expect(clippy::option_option)]
     pub fn get_wit(&self, input_digest: &InputContentDigest) -> Option<Option<&str>> {
         self.inner
             .ids_to_components
