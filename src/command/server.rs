@@ -57,7 +57,7 @@ use concepts::storage::DbErrorWrite;
 use concepts::storage::DbExecutor;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
-use concepts::storage::ExecutionEventInner;
+use concepts::storage::ExecutionRequest;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
 use concepts::time::ClockFn;
@@ -409,7 +409,7 @@ async fn notify_status(
                             .await
                             .to_status()
                             .and_then(|event| match event.event {
-                                ExecutionEventInner::Finished { result, .. } => Ok(result),
+                                ExecutionRequest::Finished { result, .. } => Ok(result),
                                 _ => Err(tonic::Status::internal(
                                     "pending state finished implies `Finished` event",
                                 )),

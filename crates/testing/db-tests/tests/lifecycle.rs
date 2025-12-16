@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, RunId};
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CancelOutcome,
-    CreateRequest, DbConnection, ExecutionEventInner, ExpiredDelay, ExpiredLock, ExpiredTimer,
+    CreateRequest, DbConnection, ExecutionRequest, ExpiredDelay, ExpiredLock, ExpiredTimer,
     JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution,
     PendingState, Version,
 };
@@ -146,7 +146,7 @@ async fn append_after_finish_should_not_be_possible(
         let created_at = sim_clock.now();
         debug!(now = %created_at, "Finish execution");
         let req = AppendRequest {
-            event: ExecutionEventInner::Finished {
+            event: ExecutionRequest::Finished {
                 result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
             },
@@ -161,7 +161,7 @@ async fn append_after_finish_should_not_be_possible(
         let created_at = sim_clock.now();
         debug!(now = %created_at, "Append after finish should fail");
         let req = AppendRequest {
-            event: ExecutionEventInner::Finished {
+            event: ExecutionRequest::Finished {
                 result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
             },
@@ -291,7 +291,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
         let created_at = sim_clock.now();
         info!(now = %created_at, "unlock");
         let req = AppendRequest {
-            event: ExecutionEventInner::Unlocked {
+            event: ExecutionRequest::Unlocked {
                 backoff_expires_at,
                 reason: StrVariant::Static("reason"),
             },
@@ -548,7 +548,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
         info!(now = %created_at, "Temporary timeout");
         let req = AppendRequest {
             created_at,
-            event: ExecutionEventInner::TemporarilyTimedOut {
+            event: ExecutionRequest::TemporarilyTimedOut {
                 backoff_expires_at: created_at + backoff,
                 http_client_traces: None,
             },
@@ -876,7 +876,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_cl
             version,
             AppendRequest {
                 created_at: sim_clock.now(),
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id.clone(),
                     },
@@ -920,7 +920,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_cl
                 version,
                 AppendRequest {
                     created_at: sim_clock.now(),
-                    event: ExecutionEventInner::HistoryEvent {
+                    event: ExecutionRequest::HistoryEvent {
                         event: HistoryEvent::JoinNext {
                             join_set_id: join_set_id.clone(),
                             run_expires_at: sim_clock.now(),
@@ -951,7 +951,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_cl
                     version: child_version.clone(),
                     batch: vec![AppendRequest {
                         created_at: sim_clock.now(),
-                        event: ExecutionEventInner::Finished {
+                        event: ExecutionRequest::Finished {
                             result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                             http_client_traces: None,
                         },
@@ -995,7 +995,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_cl
             .unwrap();
         let batch = vec![AppendRequest {
             created_at: sim_clock.now(),
-            event: ExecutionEventInner::Finished {
+            event: ExecutionRequest::Finished {
                 result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
             },
@@ -1028,7 +1028,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_cl
                 version,
                 AppendRequest {
                     created_at: sim_clock.now(),
-                    event: ExecutionEventInner::HistoryEvent {
+                    event: ExecutionRequest::HistoryEvent {
                         event: HistoryEvent::JoinNext {
                             join_set_id: join_set_id.clone(),
                             run_expires_at: sim_clock.now(),
@@ -1212,7 +1212,7 @@ async fn test_lock_inner(db_connection: &dyn DbConnection, sim_clock: SimClock) 
                 version,
                 AppendRequest {
                     created_at: sim_clock.now(),
-                    event: ExecutionEventInner::HistoryEvent {
+                    event: ExecutionRequest::HistoryEvent {
                         event: HistoryEvent::JoinSetRequest {
                             request: JoinSetRequest::DelayRequest {
                                 delay_id: DelayId::new(&execution_id, &join_set_id),
@@ -1369,7 +1369,7 @@ async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock
             version,
             AppendRequest {
                 created_at: sim_clock.now(),
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id.clone(),
                     },
@@ -1386,7 +1386,7 @@ async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock
             version,
             AppendRequest {
                 created_at: Now.now(),
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),
                         request: JoinSetRequest::DelayRequest {
@@ -1481,7 +1481,7 @@ async fn get_expired_times_with_execution_that_made_progress(
             Version::new(2),
             AppendRequest {
                 created_at: sim_clock.now(),
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id.clone(),
                     },
@@ -1586,7 +1586,7 @@ async fn append_same_delay_id_twice_should_fail(
             version,
             AppendRequest {
                 created_at: Now.now(),
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),
                         request: JoinSetRequest::DelayRequest {
@@ -1607,7 +1607,7 @@ async fn append_same_delay_id_twice_should_fail(
             version,
             AppendRequest {
                 created_at: Now.now(),
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),
                         request: JoinSetRequest::DelayRequest {
@@ -1640,7 +1640,7 @@ async fn create_join_set(
             version.clone(),
             AppendRequest {
                 created_at,
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate { join_set_id },
                 },
             },
@@ -1768,7 +1768,7 @@ async fn append_response_with_same_id_twice_should_fail(
             version,
             AppendRequest {
                 created_at: Now.now(),
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),
                         request,
@@ -1862,7 +1862,7 @@ async fn delay_cancellation_should_be_idempotent(
             version,
             AppendRequest {
                 created_at: Now.now(),
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),
                         request: JoinSetRequest::DelayRequest {

@@ -8,7 +8,7 @@ use assert_matches::assert_matches;
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, CreateRequest, DbErrorReadWithTimeout, DbErrorWrite, DbPool,
-    ExecutionEventInner, HistoryEvent, JoinSetRequest, Version,
+    ExecutionRequest, HistoryEvent, JoinSetRequest, Version,
 };
 use concepts::time::ClockFn;
 use concepts::{
@@ -512,7 +512,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     WebhookEndpointFunctionError::UncategorizedError("schedule-at conversion error")
                 })?;
                 let child_exec_req = AppendRequest {
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                     created_at,
                 };
 
@@ -574,7 +574,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
 
             let req_join_set_created = AppendRequest {
                 created_at,
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id_direct.clone(),
                     },
@@ -583,7 +583,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             let params = Params::from_wasmtime(Arc::from(params));
             let req_child_exec = AppendRequest {
                 created_at,
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id_direct.clone(),
                         request: JoinSetRequest::ChildExecutionRequest {
@@ -596,7 +596,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             };
             let req_join_next = AppendRequest {
                 created_at,
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinNext {
                         join_set_id: join_set_id_direct.clone(),
                         run_expires_at: created_at, // does not matter what the pending state is.
@@ -816,7 +816,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     version,
                     AppendRequest {
                         created_at: self.clock_fn.now(),
-                        event: ExecutionEventInner::Finished {
+                        event: ExecutionRequest::Finished {
                             result,
                             http_client_traces: None,
                         },

@@ -11,7 +11,7 @@ use concepts::{
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool,
-        DbPoolCloseable, ExecutionEvent, ExecutionEventInner, ExecutionListPagination,
+        DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest,
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
         Locked, LockedBy, LockedExecution, Pagination, PendingState, PendingStateFinished,
@@ -1053,7 +1053,7 @@ impl SqlitePool {
             |row| {
                 let created_at = row.get("created_at")?;
                 let event = row
-                    .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                    .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
                     .map_err(|serde| {
                         error!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
                         consistency_rusqlite("cannot deserialize `Created` event")
@@ -1061,7 +1061,7 @@ impl SqlitePool {
                 Ok((created_at, event.0))
             },
         )?;
-        if let ExecutionEventInner::Created {
+        if let ExecutionRequest::Created {
             ffqn,
             params,
             parent,
@@ -1120,7 +1120,7 @@ impl SqlitePool {
         let created_at = req.created_at;
         let scheduled_at = req.scheduled_at;
         let component_id = req.component_id.clone();
-        let event = ExecutionEventInner::from(req);
+        let event = ExecutionRequest::from(req);
         let event_ser = serde_json::to_string(&event).map_err(|err| {
             error!("Cannot serialize {event:?} - {err:?}");
             DbErrorWriteNonRetriable::ValidationFailed("parameter serialization error".into())
@@ -1749,7 +1749,7 @@ impl SqlitePool {
             run_id,
             retry_config,
         };
-        let event = ExecutionEventInner::Locked(locked_event.clone());
+        let event = ExecutionRequest::Locked(locked_event.clone());
         let event_ser = serde_json::to_string(&event).map_err(|err| {
             warn!("Cannot serialize {event:?} - {err:?}");
             DbErrorWriteNonRetriable::ValidationFailed("parameter serialization error".into())
@@ -1804,7 +1804,7 @@ impl SqlitePool {
                 |row| {
                     let created_at_fake = DateTime::from_timestamp_nanos(0); // not used
                     let event = row
-                        .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                        .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
                         .map_err(|serde| {
                             error!("Cannot deserialize {row:?} - {serde:?}");
                             consistency_rusqlite("cannot deserialize event")
@@ -1823,7 +1823,7 @@ impl SqlitePool {
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .collect::<VecDeque<_>>();
-        let Some(ExecutionEventInner::Created {
+        let Some(ExecutionRequest::Created {
             ffqn,
             params,
             parent,
@@ -1838,7 +1838,7 @@ impl SqlitePool {
         let event_history = events
             .into_iter()
             .map(|ExecutionEvent { event, version, .. }| {
-                if let ExecutionEventInner::HistoryEvent { event } = event {
+                if let ExecutionRequest::HistoryEvent { event } = event {
                     Ok((event, version))
                 } else {
                     error!("Rows can only contain `Created` and `HistoryEvent` event kinds");
@@ -1890,7 +1890,7 @@ impl SqlitePool {
         req: AppendRequest,
         appending_version: Version,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
-        if matches!(req.event, ExecutionEventInner::Created { .. }) {
+        if matches!(req.event, ExecutionRequest::Created { .. }) {
             return Err(DbErrorWrite::NonRetriable(
                 DbErrorWriteNonRetriable::ValidationFailed(
                     "cannot append `Created` event - use `create` instead".into(),
@@ -1899,7 +1899,7 @@ impl SqlitePool {
         }
         if let AppendRequest {
             event:
-                ExecutionEventInner::Locked(Locked {
+                ExecutionRequest::Locked(Locked {
                     component_id,
                     executor_id,
                     run_id,
@@ -1955,18 +1955,18 @@ impl SqlitePool {
         // Calculate current pending state
 
         match &req.event {
-            ExecutionEventInner::Created { .. } => {
+            ExecutionRequest::Created { .. } => {
                 unreachable!("handled in the caller")
             }
 
-            ExecutionEventInner::Locked { .. } => {
+            ExecutionRequest::Locked { .. } => {
                 unreachable!("handled above")
             }
 
-            ExecutionEventInner::TemporarilyFailed {
+            ExecutionRequest::TemporarilyFailed {
                 backoff_expires_at, ..
             }
-            | ExecutionEventInner::TemporarilyTimedOut {
+            | ExecutionRequest::TemporarilyTimedOut {
                 backoff_expires_at, ..
             } => {
                 let (next_version, notifier) = Self::update_state_pending_after_event_appended(
@@ -1983,7 +1983,7 @@ impl SqlitePool {
                 return Ok((next_version, notifier));
             }
 
-            ExecutionEventInner::Unlocked {
+            ExecutionRequest::Unlocked {
                 backoff_expires_at, ..
             } => {
                 let (next_version, notifier) = Self::update_state_pending_after_event_appended(
@@ -2000,7 +2000,7 @@ impl SqlitePool {
                 return Ok((next_version, notifier));
             }
 
-            ExecutionEventInner::Finished { result, .. } => {
+            ExecutionRequest::Finished { result, .. } => {
                 Self::update_state_finished(
                     tx,
                     execution_id,
@@ -2021,7 +2021,7 @@ impl SqlitePool {
                 ));
             }
 
-            ExecutionEventInner::HistoryEvent {
+            ExecutionRequest::HistoryEvent {
                 event:
                     HistoryEvent::JoinSetCreate { .. }
                     | HistoryEvent::JoinSetRequest {
@@ -2039,7 +2039,7 @@ impl SqlitePool {
                 ));
             }
 
-            ExecutionEventInner::HistoryEvent {
+            ExecutionRequest::HistoryEvent {
                 event:
                     HistoryEvent::JoinSetRequest {
                         join_set_id,
@@ -2066,7 +2066,7 @@ impl SqlitePool {
                 ));
             }
 
-            ExecutionEventInner::HistoryEvent {
+            ExecutionRequest::HistoryEvent {
                 event:
                     HistoryEvent::JoinNext {
                         join_set_id,
@@ -2250,7 +2250,7 @@ impl SqlitePool {
                 |row| {
                     let created_at = row.get("created_at")?;
                     let event = row
-                        .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                        .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
                         .map_err(|serde| {
                             error!("Cannot deserialize {row:?} - {serde:?}");
                             consistency_rusqlite("cannot deserialize event")
@@ -2333,7 +2333,7 @@ impl SqlitePool {
                     let version = Version(row.get("version")?);
 
                     let event = row
-                        .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                        .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
                         .map(|event| ExecutionEvent {
                             created_at,
                             event: event.0,
@@ -2368,7 +2368,7 @@ impl SqlitePool {
             |row| {
                 let created_at = row.get("created_at")?;
                 let event = row
-                    .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                    .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
                     .map_err(|serde| {
                         error!("Cannot deserialize {row:?} - {serde:?}");
                         consistency_rusqlite("cannot deserialize event")
@@ -2401,7 +2401,7 @@ impl SqlitePool {
             |row| {
                 let created_at = row.get("created_at")?;
                 let event = row
-                    .get::<_, JsonWrapper<ExecutionEventInner>>("json_value")
+                    .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
                     .map_err(|serde| {
                         error!("Cannot deserialize {row:?} - {serde:?}");
                         consistency_rusqlite("cannot deserialize event")
@@ -2476,7 +2476,7 @@ impl SqlitePool {
             row.get::<_, Option<bool>>("delay_success")?,
             row.get::<_, Option<ExecutionIdDerived>>("child_execution_id")?,
             row.get::<_, Option<VersionType>>("finished_version")?,
-            row.get::<_, Option<JsonWrapper<ExecutionEventInner>>>("json_value")?,
+            row.get::<_, Option<JsonWrapper<ExecutionRequest>>>("json_value")?,
         ) {
             (Some(delay_id), Some(delay_success), None, None, None) => {
                 JoinSetResponse::DelayFinished {
@@ -2489,7 +2489,7 @@ impl SqlitePool {
                 None,
                 Some(child_execution_id),
                 Some(finished_version),
-                Some(JsonWrapper(ExecutionEventInner::Finished { result, .. })),
+                Some(JsonWrapper(ExecutionRequest::Finished { result, .. })),
             ) => JoinSetResponse::ChildExecutionFinished {
                 child_execution_id,
                 finished_version: Version(finished_version),
@@ -3419,7 +3419,7 @@ impl DbConnection for SqlitePool {
                 if let PendingState::Finished { finished, .. } = pending_state {
                     let event =
                         Self::get_execution_event(tx, &execution_id, finished.version)?;
-                    if let ExecutionEventInner::Finished { result, ..} = event.event {
+                    if let ExecutionRequest::Finished { result, ..} = event.event {
                         Ok(itertools::Either::Left(result))
                     } else {
                         error!("Mismatch, expected Finished row: {event:?} based on t_state {finished}");

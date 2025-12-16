@@ -705,7 +705,7 @@ pub(crate) mod tests {
         };
         use concepts::{
             prefixed_ulid::RunId,
-            storage::{ExecutionEventInner, Version},
+            storage::{ExecutionRequest, Version},
         };
         use executor::executor::LockingStrategy;
         use insta::assert_debug_snapshot;
@@ -1094,7 +1094,7 @@ pub(crate) mod tests {
             info!("Finished in {stopwatch:?}");
             let (res, http_client_traces) = assert_matches!(
                 exec_log.last_event().event.clone(),
-                ExecutionEventInner::Finished { result, http_client_traces: Some(http_client_traces) }
+                ExecutionRequest::Finished { result, http_client_traces: Some(http_client_traces) }
                 => (result, http_client_traces));
             let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(wast_val_with_type)} => wast_val_with_type);
             let val = assert_matches!(wast_val_with_type.value, WastVal::String(val) => val);
@@ -1207,7 +1207,7 @@ pub(crate) mod tests {
             info!("Finished in {stopwatch:?}");
             let (res, http_client_traces) = assert_matches!(
                 exec_log.last_event().event.clone(),
-                ExecutionEventInner::Finished { result, http_client_traces: Some(http_client_traces) }
+                ExecutionRequest::Finished { result, http_client_traces: Some(http_client_traces) }
                 => (result, http_client_traces));
             let res =
                 assert_matches!(res, SupportedFunctionReturnValue::ExecutionError(err) => err);
@@ -1334,7 +1334,7 @@ pub(crate) mod tests {
 
                 let (reason, detail, found_expires_at, http_client_traces) = assert_matches!(
                     &exec_log.last_event().event,
-                    ExecutionEventInner::TemporarilyFailed {
+                    ExecutionRequest::TemporarilyFailed {
                         backoff_expires_at,
                         reason,
                         detail: Some(detail),
@@ -1403,7 +1403,7 @@ pub(crate) mod tests {
                     .len()
             );
             let exec_log = db_connection.get(&execution_id).await.unwrap();
-            let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionEventInner::Finished { result, .. } => result);
+            let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionRequest::Finished { result, .. } => result);
             let wast_val_with_type = if succeed_eventually {
                 let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(wast_val_with_type)} => wast_val_with_type);
                 let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);

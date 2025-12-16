@@ -15,8 +15,8 @@ use concepts::storage;
 use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbPool;
-use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionListPagination;
+use concepts::storage::ExecutionRequest;
 use concepts::storage::ExecutionWithState;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
@@ -258,7 +258,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     .get_execution_event(&execution_id, &Version(finished.version))
                     .await
                     .to_status()?;
-                let ExecutionEventInner::Finished {
+                let ExecutionRequest::Finished {
                     result: finished_result,
                     ..
                 } = finished_result.event

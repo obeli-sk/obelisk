@@ -16,7 +16,7 @@ use concepts::{
     prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
         self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, DbErrorWriteNonRetriable,
-        DbPool, ExecutionEventInner, ExecutionListPagination, ExecutionWithState, Pagination,
+        DbPool, ExecutionListPagination, ExecutionRequest, ExecutionWithState, Pagination,
         PendingState,
     },
     time::{ClockFn as _, Now},
@@ -383,7 +383,7 @@ async fn execution_get(
         .await
         .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?;
     Ok(
-        if let ExecutionEventInner::Finished { result, .. } = last_event.event {
+        if let ExecutionRequest::Finished { result, .. } = last_event.event {
             let result = RetVal::from(result);
             Json(json!(result)).into_response()
         } else {

@@ -14,7 +14,7 @@ use concepts::storage::{
     AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
     DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
     DbErrorWriteNonRetriable, DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent,
-    ExecutionEventInner, ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredDelay,
+    ExecutionListPagination, ExecutionLog, ExecutionRequest, ExecutionWithState, ExpiredDelay,
     ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetResponse, JoinSetResponseEventOuter,
     LockPendingResponse, Locked, LockedExecution, Pagination, ResponseWithCursor, Version,
     VersionType,
@@ -823,7 +823,7 @@ impl DbHolder {
         ),
         DbErrorWrite,
     > {
-        let event = ExecutionEventInner::Locked(locked_event);
+        let event = ExecutionRequest::Locked(locked_event);
         self.append(created_at, execution_id, version, event)
             .map(|next_version| {
                 let journal = self.journals.get(execution_id).unwrap();
@@ -836,10 +836,10 @@ impl DbHolder {
         created_at: DateTime<Utc>,
         execution_id: &ExecutionId,
         appending_version: Version,
-        event: ExecutionEventInner,
+        event: ExecutionRequest,
     ) -> Result<AppendResponse, DbErrorWrite> {
         // Disallow `Created` event
-        if let ExecutionEventInner::Created { .. } = event {
+        if let ExecutionRequest::Created { .. } = event {
             panic!("Cannot append `Created` event - use `create` instead");
         }
         // Check version
@@ -891,9 +891,7 @@ impl DbHolder {
                     .enumerate()
                     .rev()
                     .find_map(|(idx, outer)| {
-                        if let ExecutionEventInner::Locked(Locked { retry_config, .. }) =
-                            outer.event
-                        {
+                        if let ExecutionRequest::Locked(Locked { retry_config, .. }) = outer.event {
                             Some((
                                 Version::new(VersionType::try_from(idx).unwrap()),
                                 retry_config,
@@ -929,9 +927,10 @@ impl DbHolder {
         mut appending_version: Version,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         assert!(!batch.is_empty(), "Empty batch request");
-        if batch.iter().any(|append_request| {
-            matches!(append_request.event, ExecutionEventInner::Created { .. })
-        }) {
+        if batch
+            .iter()
+            .any(|append_request| matches!(append_request.event, ExecutionRequest::Created { .. }))
+        {
             panic!("Cannot append `Created` event - use `create` instead");
         }
         let Some(journal) = self.journals.get_mut(execution_id) else {

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use concepts::storage::{
-    CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionEventInner,
+    CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionRequest,
     HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
     Locked, LockedBy, PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
     VersionType,
@@ -33,7 +33,7 @@ impl ExecutionJournal {
         let execution_id = req.execution_id.clone();
         let created_at = req.created_at;
         let event = ExecutionEvent {
-            event: ExecutionEventInner::from(req),
+            event: ExecutionRequest::from(req),
             created_at,
             backtrace_id: None,
             version: Version(0),
@@ -62,7 +62,7 @@ impl ExecutionJournal {
     pub fn ffqn(&self) -> &FunctionFqn {
         match self.execution_events.front().unwrap() {
             ExecutionEvent {
-                event: ExecutionEventInner::Created { ffqn, .. },
+                event: ExecutionRequest::Created { ffqn, .. },
                 ..
             } => ffqn,
             _ => panic!("first event must be `Created`"),
@@ -75,7 +75,7 @@ impl ExecutionJournal {
             last_component_id
         } else {
             let ExecutionEvent {
-                event: ExecutionEventInner::Created { component_id, .. },
+                event: ExecutionRequest::Created { component_id, .. },
                 ..
             } = self.execution_events.front().unwrap()
             else {
@@ -102,7 +102,7 @@ impl ExecutionJournal {
     pub fn metadata(&self) -> &ExecutionMetadata {
         match self.execution_events.front().unwrap() {
             ExecutionEvent {
-                event: ExecutionEventInner::Created { metadata, .. },
+                event: ExecutionRequest::Created { metadata, .. },
                 ..
             } => metadata,
             _ => panic!("first event must be `Created`"),
@@ -112,7 +112,7 @@ impl ExecutionJournal {
     pub(crate) fn append(
         &mut self,
         created_at: DateTime<Utc>,
-        event: ExecutionEventInner,
+        event: ExecutionRequest,
         appending_version: Version,
     ) -> Result<Version, DbErrorWrite> {
         assert_eq!(self.version(), appending_version);
@@ -122,7 +122,7 @@ impl ExecutionJournal {
             ));
         }
 
-        if let ExecutionEventInner::Locked(Locked {
+        if let ExecutionRequest::Locked(Locked {
             executor_id,
             lock_expires_at,
             run_id,
@@ -139,7 +139,7 @@ impl ExecutionJournal {
         }
 
         // Make sure delay id is unique
-        if let ExecutionEventInner::HistoryEvent {
+        if let ExecutionRequest::HistoryEvent {
             event:
                 HistoryEvent::JoinSetRequest {
                     request: JoinSetRequest::DelayRequest { delay_id, .. },
@@ -147,7 +147,7 @@ impl ExecutionJournal {
                 },
         } = &event
             && self.execution_events.iter().any(|event| {
-                matches!(&event.event, ExecutionEventInner::HistoryEvent {
+                matches!(&event.event, ExecutionRequest::HistoryEvent {
                         event:
                             HistoryEvent::JoinSetRequest {
                                 request:
@@ -246,7 +246,7 @@ impl ExecutionJournal {
             .iter()
             .rev()
             .find_map(|event| match &event.event {
-                ExecutionEventInner::Locked(Locked {
+                ExecutionRequest::Locked(Locked {
                     executor_id,
                     lock_expires_at: _,
                     run_id,
@@ -265,7 +265,7 @@ impl ExecutionJournal {
 
     fn get_create_request(&self) -> CreateRequest {
         let execution_event = self.execution_events.front().expect("must not be empty");
-        let ExecutionEventInner::Created {
+        let ExecutionRequest::Created {
             ffqn,
             params,
             parent,
@@ -296,7 +296,7 @@ impl ExecutionJournal {
             .enumerate()
             .rev()
             .find_map(|(idx, event)| match &event.event {
-                ExecutionEventInner::Created {
+                ExecutionRequest::Created {
                     scheduled_at,
                     component_id,
                     ..
@@ -306,7 +306,7 @@ impl ExecutionJournal {
                     component_id_input_digest: component_id.input_digest.clone(),
                 }),
 
-                ExecutionEventInner::Finished { result, .. } => {
+                ExecutionRequest::Finished { result, .. } => {
                     let component_id_input_digest = self
                         .find_last_lock()
                         .map(|l| l.1.input_digest.clone())
@@ -322,7 +322,7 @@ impl ExecutionJournal {
                     })
                 }
 
-                ExecutionEventInner::Locked(Locked {
+                ExecutionRequest::Locked(Locked {
                     executor_id,
                     lock_expires_at,
                     run_id,
@@ -337,15 +337,15 @@ impl ExecutionJournal {
                     component_id_input_digest: component_id.input_digest.clone(),
                 })),
 
-                ExecutionEventInner::TemporarilyFailed {
+                ExecutionRequest::TemporarilyFailed {
                     backoff_expires_at: expires_at,
                     ..
                 }
-                | ExecutionEventInner::TemporarilyTimedOut {
+                | ExecutionRequest::TemporarilyTimedOut {
                     backoff_expires_at: expires_at,
                     ..
                 }
-                | ExecutionEventInner::Unlocked {
+                | ExecutionRequest::Unlocked {
                     backoff_expires_at: expires_at,
                     ..
                 } => {
@@ -360,7 +360,7 @@ impl ExecutionJournal {
                     })
                 }
 
-                ExecutionEventInner::HistoryEvent {
+                ExecutionRequest::HistoryEvent {
                     event:
                         HistoryEvent::JoinNext {
                             join_set_id: expected_join_set_id,
@@ -418,7 +418,7 @@ impl ExecutionJournal {
                     }
                 }
                 // No pending state change for following events:
-                ExecutionEventInner::HistoryEvent {
+                ExecutionRequest::HistoryEvent {
                     event:
                         HistoryEvent::JoinSetCreate { .. }
                         | HistoryEvent::JoinSetRequest {
@@ -439,7 +439,7 @@ impl ExecutionJournal {
 
     pub fn event_history(&self) -> impl Iterator<Item = (HistoryEvent, Version)> + '_ {
         self.execution_events.iter().filter_map(|event| {
-            if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {
+            if let ExecutionRequest::HistoryEvent { event: eh, .. } = &event.event {
                 Some((eh.clone(), event.version.clone()))
             } else {
                 None

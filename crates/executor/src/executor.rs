@@ -14,7 +14,7 @@ use concepts::{ExecutionFailureKind, JoinSetId};
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use concepts::{
     FinishedExecutionError,
-    storage::{ExecutionEventInner, Version},
+    storage::{ExecutionRequest, Version},
 };
 use std::{
     sync::{
@@ -431,7 +431,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                     );
                 let primary_event = AppendRequest {
                     created_at: result_obtained_at,
-                    event: ExecutionEventInner::Finished {
+                    event: ExecutionRequest::Finished {
                         result,
                         http_client_traces,
                     },
@@ -460,7 +460,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                                 "Temporary timeout, retrying after {duration:?} at {backoff_expires_at}"
                             );
                             (
-                                ExecutionEventInner::TemporarilyTimedOut {
+                                ExecutionRequest::TemporarilyTimedOut {
                                     backoff_expires_at,
                                     http_client_traces,
                                 },
@@ -485,7 +485,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                                     }
                                 });
                             (
-                                ExecutionEventInner::Finished {
+                                ExecutionRequest::Finished {
                                     result,
                                     http_client_traces,
                                 },
@@ -510,7 +510,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                                 "Retrying activity with `{trap_kind}` execution after {duration:?} at {expires_at}"
                             );
                             (
-                                ExecutionEventInner::TemporarilyFailed {
+                                ExecutionRequest::TemporarilyFailed {
                                     reason: StrVariant::from(reason_generic),
                                     backoff_expires_at: expires_at,
                                     detail,
@@ -539,7 +539,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                                     }
                                 });
                             (
-                                ExecutionEventInner::Finished {
+                                ExecutionRequest::Finished {
                                     result,
                                     http_client_traces,
                                 },
@@ -560,7 +560,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                                 "Retrying activity with ActivityPreopenedDirError `{reason}` execution after {duration:?} at {expires_at}"
                             );
                             (
-                                ExecutionEventInner::TemporarilyFailed {
+                                ExecutionRequest::TemporarilyFailed {
                                     reason: StrVariant::from(reason_generic),
                                     backoff_expires_at: expires_at,
                                     detail: Some(detail),
@@ -589,7 +589,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                                     }
                                 });
                             (
-                                ExecutionEventInner::Finished {
+                                ExecutionRequest::Finished {
                                     result,
                                     http_client_traces,
                                 },
@@ -609,7 +609,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                         let expires_at = result_obtained_at + duration;
                         debug!("Retrying ActivityReturnedError after {duration:?} at {expires_at}");
                         (
-                            ExecutionEventInner::TemporarilyFailed {
+                            ExecutionRequest::TemporarilyFailed {
                                 backoff_expires_at: expires_at,
                                 reason: StrVariant::Static("activity returned error"), // is same as the variant's display message.
                                 detail, // contains the backtrace
@@ -628,7 +628,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                             "Limit reached: {reason}, unlocking after {unlock_expiry_on_limit_reached:?} at {expires_at}"
                         );
                         (
-                            ExecutionEventInner::Unlocked {
+                            ExecutionRequest::Unlocked {
                                 backoff_expires_at: expires_at,
                                 reason: StrVariant::from(reason),
                             },
@@ -657,7 +657,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                                 }
                             });
                         (
-                            ExecutionEventInner::Finished {
+                            ExecutionRequest::Finished {
                                 result,
                                 http_client_traces: None,
                             },
@@ -713,7 +713,7 @@ impl Append {
             assert_matches!(
                 &self.primary_event,
                 AppendRequest {
-                    event: ExecutionEventInner::Finished { .. },
+                    event: ExecutionRequest::Finished { .. },
                     ..
                 }
             );
@@ -841,7 +841,7 @@ mod tests {
         CreateRequest, DbConnection, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
     };
     use concepts::storage::{DbPoolCloseable, LockedBy};
-    use concepts::storage::{ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState};
+    use concepts::storage::{ExecutionEvent, ExecutionRequest, HistoryEvent, PendingState};
     use concepts::time::Now;
     use concepts::{
         FunctionMetadata, JoinSetKind, ParameterTypes, Params, RETURN_TYPE_DUMMY,
@@ -948,7 +948,7 @@ mod tests {
         assert_matches!(
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
-                event: ExecutionEventInner::Finished {
+                event: ExecutionRequest::Finished {
                     result: SupportedFunctionReturnValue::Ok { ok: None },
                     http_client_traces: None
                 },
@@ -999,7 +999,7 @@ mod tests {
         assert_matches!(
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
-                event: ExecutionEventInner::Finished {
+                event: ExecutionRequest::Finished {
                     result: SupportedFunctionReturnValue::Ok { ok: None },
                     http_client_traces: None
                 },
@@ -1054,7 +1054,7 @@ mod tests {
         assert_matches!(
             execution_log.events.first().unwrap(),
             ExecutionEvent {
-                event: ExecutionEventInner::Created { .. },
+                event: ExecutionRequest::Created { .. },
                 created_at: actually_created_at,
                 backtrace_id: None,
                 version: Version(0),
@@ -1064,7 +1064,7 @@ mod tests {
         let locked_at = assert_matches!(
             execution_log.events.get(1).unwrap(),
             ExecutionEvent {
-                event: ExecutionEventInner::Locked { .. },
+                event: ExecutionRequest::Locked { .. },
                 created_at: locked_at,
                 backtrace_id: None,
                 version: Version(1),
@@ -1131,7 +1131,7 @@ mod tests {
             let (reason, detail, at, expires_at) = assert_matches!(
                 &execution_log.events.get(2).unwrap(),
                 ExecutionEvent {
-                    event: ExecutionEventInner::TemporarilyFailed {
+                    event: ExecutionRequest::TemporarilyFailed {
                         reason,
                         detail,
                         backoff_expires_at,
@@ -1190,7 +1190,7 @@ mod tests {
         assert_matches!(
             execution_log.events.get(3).unwrap(),
             ExecutionEvent {
-                event: ExecutionEventInner::Locked { .. },
+                event: ExecutionRequest::Locked { .. },
                 created_at: at,
                 backtrace_id: None,
                 version: Version(3),
@@ -1199,7 +1199,7 @@ mod tests {
         assert_matches!(
             execution_log.events.get(4).unwrap(),
             ExecutionEvent {
-                event: ExecutionEventInner::Finished {
+                event: ExecutionRequest::Finished {
                     result: SupportedFunctionReturnValue::Ok{ok:None},
                     http_client_traces: None
                 },
@@ -1258,7 +1258,7 @@ mod tests {
         let (reason, kind, detail) = assert_matches!(
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
-                event: ExecutionEventInner::Finished{
+                event: ExecutionRequest::Finished{
                     result: SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError{reason, kind, detail}),
                     http_client_traces: None
                 },
@@ -1379,7 +1379,7 @@ mod tests {
             let current_time = sim_clock.now();
             let join_set = AppendRequest {
                 created_at: current_time,
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetCreate {
                         join_set_id: join_set_id.clone(),
                     },
@@ -1387,7 +1387,7 @@ mod tests {
             };
             let child_exec_req = AppendRequest {
                 created_at: current_time,
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),
                         request: JoinSetRequest::ChildExecutionRequest {
@@ -1400,7 +1400,7 @@ mod tests {
             };
             let join_next = AppendRequest {
                 created_at: current_time,
-                event: ExecutionEventInner::HistoryEvent {
+                event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinNext {
                         join_set_id: join_set_id.clone(),
                         run_expires_at: sim_clock.now(),
@@ -1462,7 +1462,7 @@ mod tests {
             "created = 0, locked = 1, with_single_result = 2"
         );
         assert_eq!(
-            ExecutionEventInner::Finished {
+            ExecutionRequest::Finished {
                 result: SupportedFunctionReturnValue::ExecutionError(expected_child_err),
                 http_client_traces: None
             },
@@ -1628,7 +1628,7 @@ mod tests {
         assert_matches!(
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
-                event: ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at, .. },
+                event: ExecutionRequest::TemporarilyTimedOut { backoff_expires_at, .. },
                 created_at: at,
                 backtrace_id: None,
                 version: Version(2),

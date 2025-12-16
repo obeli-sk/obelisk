@@ -38,8 +38,7 @@ use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::Locked;
 use concepts::storage::PersistKind;
 use concepts::storage::{
-    AppendRequest, CreateRequest, ExecutionEventInner, JoinSetResponse, JoinSetResponseEvent,
-    Version,
+    AppendRequest, CreateRequest, ExecutionRequest, JoinSetResponse, JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
@@ -292,7 +291,7 @@ impl EventHistory {
         self.locked_event.lock_expires_at = self.deadline_tracker.extend_by(self.lock_extension);
         let append_req = AppendRequest {
             created_at: called_at,
-            event: ExecutionEventInner::Locked(self.locked_event.clone()),
+            event: ExecutionRequest::Locked(self.locked_event.clone()),
         };
         info!(
             "Extending the lock at version {version}",
@@ -1007,7 +1006,7 @@ impl EventHistory {
                 let history_event = (event.clone(), db_connection.version.clone());
                 let join_set_create = AppendRequest {
                     created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                 };
                 let cacheable_event = CacheableDbEvent::JoinSetCreate {
                     request: join_set_create,
@@ -1036,7 +1035,7 @@ impl EventHistory {
                 let history_event = (event.clone(), db_connection.version.clone());
                 let request = AppendRequest {
                     created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                 };
                 let cacheable_event = CacheableDbEvent::Persist {
                     request,
@@ -1076,7 +1075,7 @@ impl EventHistory {
                 let history_event = (event.clone(), db_connection.version.clone());
                 let append_req = AppendRequest {
                     created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                 };
                 let child_req = CreateRequest {
                     created_at: called_at,
@@ -1129,7 +1128,7 @@ impl EventHistory {
                 let history_event = (event.clone(), db_connection.version.clone());
                 let delay_req = AppendRequest {
                     created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                 };
                 let cacheable_event = CacheableDbEvent::SubmitDelay {
                     request: delay_req,
@@ -1165,7 +1164,7 @@ impl EventHistory {
 
                 let history_event = (event.clone(), db_connection.version.clone());
                 let append_req = AppendRequest {
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                     created_at: called_at,
                 };
                 debug!(%new_execution_id, "ScheduleRequest: appending");
@@ -1234,7 +1233,7 @@ impl EventHistory {
                 let write_attempt = {
                     let finished_req = AppendRequest {
                         created_at: called_at,
-                        event: ExecutionEventInner::Finished {
+                        event: ExecutionRequest::Finished {
                             result: result.clone(),
                             http_client_traces: None,
                         },
@@ -1275,11 +1274,11 @@ impl EventHistory {
                             )
                             .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
                         match found.event {
-                            ExecutionEventInner::Finished {
+                            ExecutionRequest::Finished {
                                 result: found_result,
                                 ..
                             } if result == found_result => Ok(()),
-                            ExecutionEventInner::Finished { .. } => {
+                            ExecutionRequest::Finished { .. } => {
                                 info!(%target_ffqn, %target_execution_id, "Different value found in stubbed execution's finished event");
                                 Err(())
                             }
@@ -1302,7 +1301,7 @@ impl EventHistory {
                 let history_event = (event.clone(), db_connection.version.clone());
                 let history_event_req = AppendRequest {
                     created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                 };
                 db_connection
                     .append_batch(
@@ -1351,7 +1350,7 @@ impl EventHistory {
                 let history_events = vec![(event.clone(), db_connection.version.clone())];
                 let join_next = AppendRequest {
                     created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                 };
                 db_connection
                     .append_blocking(
@@ -1388,7 +1387,7 @@ impl EventHistory {
                 let history_events = vec![(event.clone(), db_connection.version.clone())];
                 let append_request = AppendRequest {
                     created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                 };
                 db_connection
                     .append_blocking(
@@ -1420,7 +1419,7 @@ impl EventHistory {
                 let mut version = db_connection.version.clone();
                 history_events.push((event.clone(), version.clone()));
                 let join_set = AppendRequest {
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                     created_at: called_at,
                 };
                 let event = HistoryEvent::JoinSetRequest {
@@ -1434,7 +1433,7 @@ impl EventHistory {
                 version = version.increment();
                 history_events.push((event.clone(), version.clone()));
                 let child_exec_req = AppendRequest {
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                     created_at: called_at,
                 };
                 let event = HistoryEvent::JoinNext {
@@ -1446,7 +1445,7 @@ impl EventHistory {
                 version = version.increment();
                 history_events.push((event.clone(), version.clone()));
                 let join_next = AppendRequest {
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                     created_at: called_at,
                 };
 
@@ -1491,7 +1490,7 @@ impl EventHistory {
                 history_events.push((event.clone(), version.clone()));
                 let join_set = AppendRequest {
                     created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                 };
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id: join_set_id.clone(),
@@ -1505,7 +1504,7 @@ impl EventHistory {
                 history_events.push((event.clone(), version.clone()));
                 let delay_req = AppendRequest {
                     created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                 };
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
@@ -1517,7 +1516,7 @@ impl EventHistory {
                 history_events.push((event.clone(), version.clone()));
                 let join_next = AppendRequest {
                     created_at: called_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
+                    event: ExecutionRequest::HistoryEvent { event },
                 };
 
                 db_connection

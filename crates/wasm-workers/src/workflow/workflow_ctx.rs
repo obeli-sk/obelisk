@@ -1559,9 +1559,9 @@ pub(crate) mod tests {
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest,
-        DbExecutor, DbPool, ExecutionEvent, ExecutionEventInner, HistoryEvent,
-        HistoryEventScheduleAt, JoinSetRequest, Locked, PendingState, PendingStateFinished,
-        PendingStateFinishedError, PendingStateFinishedResultKind,
+        DbExecutor, DbPool, ExecutionEvent, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt,
+        JoinSetRequest, Locked, PendingState, PendingStateFinished, PendingStateFinishedError,
+        PendingStateFinishedResultKind,
     };
     use concepts::storage::{DbPoolCloseable, ExecutionLog};
     use concepts::time::{ClockFn, Now};
@@ -2017,13 +2017,13 @@ pub(crate) mod tests {
             );
             let sanitize = |mut event| {
                 match &mut event {
-                    ExecutionEventInner::HistoryEvent {
+                    ExecutionRequest::HistoryEvent {
                         event: HistoryEvent::JoinNext { run_expires_at, .. },
                         ..
                     } => {
                         *run_expires_at = DateTime::UNIX_EPOCH;
                     }
-                    ExecutionEventInner::HistoryEvent {
+                    ExecutionRequest::HistoryEvent {
                         event:
                             HistoryEvent::JoinSetRequest {
                                 request: JoinSetRequest::DelayRequest { expires_at, .. },
@@ -2293,7 +2293,7 @@ pub(crate) mod tests {
                     version,
                     AppendRequest {
                         created_at: sim_clock.now(),
-                        event: concepts::storage::ExecutionEventInner::Finished {
+                        event: concepts::storage::ExecutionRequest::Finished {
                             result: finished_value,
                             http_client_traces: None,
                         },
@@ -2600,7 +2600,7 @@ pub(crate) mod tests {
                     version: child_log.next_version.clone(),
                     batch: vec![AppendRequest {
                         created_at: sim_clock.now(),
-                        event: concepts::storage::ExecutionEventInner::Finished {
+                        event: concepts::storage::ExecutionRequest::Finished {
                             result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                             http_client_traces: None,
                         },
@@ -2632,9 +2632,9 @@ pub(crate) mod tests {
 
     fn skip_locked<'a>(
         events_iter: impl Iterator<Item = &'a ExecutionEvent>,
-    ) -> impl Iterator<Item = &'a ExecutionEventInner> {
+    ) -> impl Iterator<Item = &'a ExecutionRequest> {
         events_iter.filter_map(|event| {
-            if matches!(event.event, ExecutionEventInner::Locked { .. }) {
+            if matches!(event.event, ExecutionRequest::Locked { .. }) {
                 None
             } else {
                 Some(&event.event)

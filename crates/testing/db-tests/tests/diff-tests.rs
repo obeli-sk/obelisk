@@ -7,8 +7,8 @@ use concepts::prefixed_ulid::ExecutorId;
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPoolCloseable;
-use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
+use concepts::storage::ExecutionRequest;
 use concepts::storage::Version;
 use concepts::storage::{AppendRequest, CreateRequest};
 use concepts::time::ClockFn as _;
@@ -55,7 +55,7 @@ async fn diff_proptest_inner(seed: u64) {
             .filter_map(|req| {
                 // filter out Create requests
                 if let AppendRequest {
-                    event: ExecutionEventInner::Created { .. },
+                    event: ExecutionRequest::Created { .. },
                     ..
                 } = req
                 {
@@ -151,7 +151,7 @@ const WVWT_RECORD_UNSORTED: &str = r#"
 
 async fn persist_finished_event(
     db_connection: &dyn DbConnection,
-) -> (ExecutionId, Version, ExecutionEventInner) {
+) -> (ExecutionId, Version, ExecutionRequest) {
     const LOCK_EXPIRY: Duration = Duration::from_millis(500);
     let component_id = ComponentId::dummy_activity();
     let sim_clock = SimClock::default();
@@ -200,7 +200,7 @@ async fn persist_finished_event(
     };
 
     let wast_val_with_type: WastValWithType = serde_json::from_str(WVWT_RECORD_UNSORTED).unwrap();
-    let inner = ExecutionEventInner::Finished {
+    let inner = ExecutionRequest::Finished {
         result: SupportedFunctionReturnValue::Ok {
             ok: Some(wast_val_with_type),
         },

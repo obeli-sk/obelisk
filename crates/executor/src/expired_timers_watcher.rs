@@ -15,7 +15,7 @@ use concepts::storage::ExpiredDelay;
 use concepts::time::ClockFn;
 use concepts::{
     FinishedExecutionError,
-    storage::{ExecutionEventInner, ExpiredTimer},
+    storage::{ExecutionRequest, ExpiredTimer},
 };
 use std::{sync::Arc, time::Duration};
 use tracing::Level;
@@ -105,7 +105,7 @@ pub(crate) async fn tick(
                         created_at: executed_at,
                         primary_event: AppendRequest {
                             created_at: executed_at,
-                            event: ExecutionEventInner::Unlocked {
+                            event: ExecutionRequest::Unlocked {
                                 backoff_expires_at: executed_at,
                                 reason: StrVariant::Static("made progress"),
                             },
@@ -127,7 +127,7 @@ pub(crate) async fn tick(
                         created_at: executed_at,
                         primary_event: AppendRequest {
                             created_at: executed_at,
-                            event: ExecutionEventInner::TemporarilyTimedOut {
+                            event: ExecutionRequest::TemporarilyTimedOut {
                                 backoff_expires_at,
                                 http_client_traces: None,
                             },
@@ -162,7 +162,7 @@ pub(crate) async fn tick(
                         created_at: executed_at,
                         primary_event: AppendRequest {
                             created_at: executed_at,
-                            event: ExecutionEventInner::Finished {
+                            event: ExecutionRequest::Finished {
                                 result: finished_exec_result,
                                 http_client_traces: None,
                             },

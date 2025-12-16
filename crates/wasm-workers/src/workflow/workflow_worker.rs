@@ -750,7 +750,7 @@ pub(crate) mod tests {
         AppendEventsToExecution, AppendResponseToExecution, Locked, LockedBy,
         PendingStateFinishedError,
     };
-    use concepts::storage::{AppendRequest, DbConnection, DbExecutor, ExecutionEventInner};
+    use concepts::storage::{AppendRequest, DbConnection, DbExecutor, ExecutionRequest};
     use concepts::time::TokioSleep;
     use concepts::{ComponentRetryConfig, ExecutionId, Params, SupportedFunctionReturnValue};
     use concepts::{
@@ -2351,7 +2351,7 @@ pub(crate) mod tests {
         let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
         let finished_req = AppendRequest {
             created_at,
-            event: ExecutionEventInner::Finished {
+            event: ExecutionRequest::Finished {
                 result: result.clone(),
                 http_client_traces: None,
             },

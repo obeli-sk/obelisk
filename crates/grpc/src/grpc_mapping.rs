@@ -6,7 +6,7 @@ use concepts::{
     prefixed_ulid::{DelayId, RunId},
     storage::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
-        ExecutionEventInner, ExecutionListPagination, HistoryEvent, HistoryEventScheduleAt,
+        ExecutionListPagination, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt,
         JoinSetRequest, Locked, LockedBy, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateLocked, VersionType,
         http_client_trace::HttpClientTrace,
@@ -528,7 +528,7 @@ pub fn from_execution_event_to_grpc(
             version,
             backtrace_id: event.backtrace_id.map(|v|v.0),
             event: Some(match event.event {
-                ExecutionEventInner::Created {
+                ExecutionRequest::Created {
                     ffqn,
                     params,
                     parent: _,
@@ -546,7 +546,7 @@ pub fn from_execution_event_to_grpc(
                     component_id: Some(component_id.into()),
                     scheduled_by: scheduled_by.map(|id| grpc_gen::ExecutionId { id: id.to_string() }),
                 }),
-                ExecutionEventInner::Locked(Locked{
+                ExecutionRequest::Locked(Locked{
                     component_id,
                     executor_id: _,
                     run_id,
@@ -557,13 +557,13 @@ pub fn from_execution_event_to_grpc(
                     run_id: run_id.to_string(),
                     lock_expires_at: Some(prost_wkt_types::Timestamp::from(lock_expires_at)),
                 }),
-                ExecutionEventInner::Unlocked { backoff_expires_at, reason } => {
+                ExecutionRequest::Unlocked { backoff_expires_at, reason } => {
                     grpc_gen::execution_event::Event::Unlocked(grpc_gen::execution_event::Unlocked {
                         backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                         reason: reason.to_string(),
                     })
                 },
-                ExecutionEventInner::TemporarilyFailed {
+                ExecutionRequest::TemporarilyFailed {
                     backoff_expires_at,
                     reason,
                     detail,
@@ -574,7 +574,7 @@ pub fn from_execution_event_to_grpc(
                     backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                     http_client_traces: http_client_traces.unwrap_or_default().into_iter().map(grpc_gen::HttpClientTrace::from).collect(),
                 }),
-                ExecutionEventInner::TemporarilyTimedOut { backoff_expires_at, http_client_traces } => {
+                ExecutionRequest::TemporarilyTimedOut { backoff_expires_at, http_client_traces } => {
                     grpc_gen::execution_event::Event::TemporarilyTimedOut(grpc_gen::execution_event::TemporarilyTimedOut {
                         backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
                         http_client_traces: http_client_traces
@@ -584,14 +584,14 @@ pub fn from_execution_event_to_grpc(
                             .collect(),
                     })
                 },
-                ExecutionEventInner::Finished { result, http_client_traces } => grpc_gen::execution_event::Event::Finished(grpc_gen::execution_event::Finished {
+                ExecutionRequest::Finished { result, http_client_traces } => grpc_gen::execution_event::Event::Finished(grpc_gen::execution_event::Finished {
                     result_detail: Some(
                         grpc_gen::ResultDetail::from(result)
                     ),
                     http_client_traces: http_client_traces.unwrap_or_default().into_iter().map(grpc_gen::HttpClientTrace::from).collect(),
 
                 }),
-                ExecutionEventInner::HistoryEvent { event } => grpc_gen::execution_event::Event::HistoryVariant(grpc_gen::execution_event::HistoryEvent {
+                ExecutionRequest::HistoryEvent { event } => grpc_gen::execution_event::Event::HistoryVariant(grpc_gen::execution_event::HistoryEvent {
                     event: Some(match event {
                         HistoryEvent::Persist { value, kind } => history_event::Event::Persist(history_event::Persist {
                             data: Some(prost_wkt_types::Any {

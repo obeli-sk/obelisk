@@ -70,7 +70,7 @@ impl ExecutionLog {
     #[must_use]
     pub fn ffqn(&self) -> &FunctionFqn {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
-            event: ExecutionEventInner::Created { ffqn, .. },
+            event: ExecutionRequest::Created { ffqn, .. },
             ..
         }) => ffqn)
     }
@@ -78,7 +78,7 @@ impl ExecutionLog {
     #[must_use]
     pub fn parent(&self) -> Option<(ExecutionId, JoinSetId)> {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
-            event: ExecutionEventInner::Created { parent, .. },
+            event: ExecutionRequest::Created { parent, .. },
             ..
         }) => parent.clone())
     }
@@ -91,7 +91,7 @@ impl ExecutionLog {
     #[must_use]
     pub fn into_finished_result(mut self) -> Option<SupportedFunctionReturnValue> {
         if let ExecutionEvent {
-            event: ExecutionEventInner::Finished { result, .. },
+            event: ExecutionRequest::Finished { result, .. },
             ..
         } = self.events.pop().expect("must contain at least one event")
         {
@@ -104,7 +104,7 @@ impl ExecutionLog {
     #[cfg(feature = "test")]
     pub fn event_history(&self) -> impl Iterator<Item = (HistoryEvent, Version)> + '_ {
         self.events.iter().filter_map(|event| {
-            if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {
+            if let ExecutionRequest::HistoryEvent { event: eh, .. } = &event.event {
                 Some((eh.clone(), event.version.clone()))
             } else {
                 None
@@ -118,7 +118,7 @@ impl ExecutionLog {
         self.events
             .iter()
             .find_map(move |event| match &event.event {
-                ExecutionEventInner::HistoryEvent {
+                ExecutionRequest::HistoryEvent {
                     event:
                         HistoryEvent::JoinSetRequest {
                             join_set_id: found,
@@ -164,7 +164,7 @@ impl Version {
 #[display("{event}")]
 pub struct ExecutionEvent {
     pub created_at: DateTime<Utc>,
-    pub event: ExecutionEventInner,
+    pub event: ExecutionRequest,
     pub backtrace_id: Option<Version>,
     pub version: Version,
 }
@@ -199,7 +199,7 @@ pub enum JoinSetResponse {
     },
 }
 
-pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
+pub const DUMMY_CREATED: ExecutionRequest = ExecutionRequest::Created {
     ffqn: FunctionFqn::new_static("", ""),
     params: Params::empty(),
     parent: None,
@@ -208,7 +208,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     metadata: ExecutionMetadata::empty(),
     scheduled_by: None,
 };
-pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
+pub const DUMMY_HISTORY_EVENT: ExecutionRequest = ExecutionRequest::HistoryEvent {
     event: HistoryEvent::JoinSetCreate {
         join_set_id: JoinSetId {
             kind: crate::JoinSetKind::OneOff,
@@ -229,7 +229,7 @@ pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::Histor
 )]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[allow(clippy::large_enum_variant)]
-pub enum ExecutionEventInner {
+pub enum ExecutionRequest {
     #[display("Created({ffqn}, `{scheduled_at}`)")]
     Created {
         ffqn: FunctionFqn,
@@ -289,7 +289,7 @@ pub enum ExecutionEventInner {
     },
 }
 
-impl ExecutionEventInner {
+impl ExecutionRequest {
     #[must_use]
     pub fn is_temporary_event(&self) -> bool {
         matches!(
@@ -567,7 +567,7 @@ pub type AppendBatchResponse = Version;
 #[display("{event}")]
 pub struct AppendRequest {
     pub created_at: DateTime<Utc>,
-    pub event: ExecutionEventInner,
+    pub event: ExecutionRequest,
 }
 
 #[derive(Debug, Clone)]
@@ -583,7 +583,7 @@ pub struct CreateRequest {
     pub scheduled_by: Option<ExecutionId>,
 }
 
-impl From<CreateRequest> for ExecutionEventInner {
+impl From<CreateRequest> for ExecutionRequest {
     fn from(value: CreateRequest) -> Self {
         Self::Created {
             ffqn: value.ffqn,
@@ -735,7 +735,7 @@ pub trait DbExecutor: Send + Sync {
             .get_last_execution_event(execution_id)
             .await
             .map_err(DbErrorWrite::from)?;
-        if let ExecutionEventInner::Finished {
+        if let ExecutionRequest::Finished {
             result:
                 SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
                     kind: ExecutionFailureKind::Cancelled,
@@ -745,7 +745,7 @@ pub trait DbExecutor: Send + Sync {
         } = last_event.event
         {
             return Ok(CancelOutcome::Cancelled);
-        } else if matches!(last_event.event, ExecutionEventInner::Finished { .. }) {
+        } else if matches!(last_event.event, ExecutionRequest::Finished { .. }) {
             debug!("Not cancelling, {execution_id} is already finished");
             return Ok(CancelOutcome::AlreadyFinished);
         }
@@ -757,7 +757,7 @@ pub trait DbExecutor: Send + Sync {
         });
         let cancel_request = AppendRequest {
             created_at: cancelled_at,
-            event: ExecutionEventInner::Finished {
+            event: ExecutionRequest::Finished {
                 result: child_result.clone(),
                 http_client_traces: None,
             },
@@ -864,7 +864,7 @@ pub trait DbConnection: DbExecutor {
         let execution_event = self
             .get_execution_event(execution_id, &Version::new(0))
             .await?;
-        if let ExecutionEventInner::Created {
+        if let ExecutionRequest::Created {
             ffqn,
             params,
             parent,
@@ -983,7 +983,7 @@ pub async fn stub_execution(
     let write_attempt = {
         let finished_req = AppendRequest {
             created_at,
-            event: ExecutionEventInner::Finished {
+            event: ExecutionRequest::Finished {
                 result: return_value.clone(),
                 http_client_traces: None,
             },
@@ -1015,14 +1015,14 @@ pub async fn stub_execution(
             .get_execution_event(&ExecutionId::Derived(execution_id), &stub_finished_version)
             .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
         match found.event {
-            ExecutionEventInner::Finished {
+            ExecutionRequest::Finished {
                 result: found_result,
                 ..
             } if return_value == found_result => {
                 // Same value has already be written, RPC is successful.
                 Ok(())
             }
-            ExecutionEventInner::Finished { .. } => Err(DbErrorWrite::NonRetriable(
+            ExecutionRequest::Finished { .. } => Err(DbErrorWrite::NonRetriable(
                 DbErrorWriteNonRetriable::Conflict,
             )),
             _other => Err(DbErrorWrite::NonRetriable(
