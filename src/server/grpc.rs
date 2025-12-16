@@ -709,11 +709,14 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
         request: tonic::Request<grpc_gen::GetWitRequest>,
     ) -> TonicRespResult<grpc_gen::GetWitResponse> {
         let request = request.into_inner();
-        let component_id =
-            ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
+        let component_digest = InputContentDigest::try_from(
+            request
+                .component_digest
+                .argument_must_exist("component_digest")?,
+        )?;
         let wit = self
             .component_registry_ro
-            .get_wit(&component_id)
+            .get_wit(&component_digest)
             .entity_must_exist()?;
         Ok(tonic::Response::new(grpc_gen::GetWitResponse {
             content: wit.to_string(),

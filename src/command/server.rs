@@ -50,6 +50,7 @@ use concepts::ParameterType;
 use concepts::Params;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
+use concepts::component_id::InputContentDigest;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbErrorWrite;
@@ -1766,7 +1767,7 @@ pub struct ComponentConfigRegistry {
 struct ComponentConfigRegistryInner {
     exported_ffqns_ext: hashbrown::HashMap<FunctionFqn, (ComponentId, FunctionMetadata)>,
     export_hierarchy: Vec<PackageIfcFns>,
-    ids_to_components: hashbrown::HashMap<ComponentId, ComponentConfig>,
+    ids_to_components: hashbrown::HashMap<InputContentDigest, ComponentConfig>,
 }
 
 impl ComponentConfigRegistry {
@@ -1775,9 +1776,12 @@ impl ComponentConfigRegistry {
         if self
             .inner
             .ids_to_components
-            .contains_key(&component.component_id)
+            .contains_key(&component.component_id.input_digest)
         {
-            bail!("component {} is already inserted", component.component_id);
+            bail!(
+                "component {} is already inserted with the same digest",
+                component.component_id
+            );
         }
         if let Some(workflow_or_activity_config) = &component.workflow_or_activity_config {
             for exported_ffqn in workflow_or_activity_config
@@ -1810,7 +1814,7 @@ impl ComponentConfigRegistry {
         let old = self
             .inner
             .ids_to_components
-            .insert(component.component_id.clone(), component);
+            .insert(component.component_id.input_digest.clone(), component);
         assert!(old.is_none());
 
         Ok(())
@@ -1827,8 +1831,12 @@ impl ComponentConfigRegistry {
         Option<String>, /* supressed_errors */
     ) {
         let mut errors = Vec::new();
-        for (component_id, examined_component) in &self.inner.ids_to_components {
-            self.verify_imports_component(component_id, &examined_component.imports, &mut errors);
+        for examined_component in self.inner.ids_to_components.values() {
+            self.verify_imports_component(
+                &examined_component.component_id,
+                &examined_component.imports,
+                &mut errors,
+            );
         }
         let errors = if !errors.is_empty() {
             let errors = errors.join("\n");
@@ -1940,10 +1948,10 @@ pub struct ComponentConfigRegistryRO {
 }
 
 impl ComponentConfigRegistryRO {
-    pub fn get_wit(&self, id: &ComponentId) -> Option<&str> {
+    pub fn get_wit(&self, input_digest: &InputContentDigest) -> Option<&str> {
         self.inner
             .ids_to_components
-            .get(id)
+            .get(input_digest)
             .and_then(|component_config| component_config.wit.as_deref())
     }
 
