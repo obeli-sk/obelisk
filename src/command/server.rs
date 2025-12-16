@@ -1972,6 +1972,7 @@ impl ComponentConfigRegistryRO {
             .get(ffqn)
             .and_then(|(component_id, fn_metadata)| {
                 if component_id.component_type == ComponentType::ActivityStub {
+                    assert!(!ffqn.ifc_fqn.is_extension());
                     Some((component_id, fn_metadata))
                 } else {
                     None

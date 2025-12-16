@@ -970,6 +970,72 @@ pub enum CancelOutcome {
     AlreadyFinished,
 }
 
+pub async fn stub_execution(
+    db_connection: &dyn DbConnection,
+    execution_id: ExecutionIdDerived,
+    parent_execution_id: ExecutionId,
+    join_set_id: JoinSetId,
+    created_at: DateTime<Utc>,
+    return_value: SupportedFunctionReturnValue,
+) -> Result<(), DbErrorWrite> {
+    let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
+    // Attempt to write to `execution_id` and its parent, ignoring the possible conflict error on this tx
+    let write_attempt = {
+        let finished_req = AppendRequest {
+            created_at,
+            event: ExecutionEventInner::Finished {
+                result: return_value.clone(),
+                http_client_traces: None,
+            },
+        };
+        db_connection
+            .append_batch_respond_to_parent(
+                AppendEventsToExecution {
+                    execution_id: ExecutionId::Derived(execution_id.clone()),
+                    version: stub_finished_version.clone(),
+                    batch: vec![finished_req],
+                },
+                AppendResponseToExecution {
+                    parent_execution_id,
+                    created_at,
+                    join_set_id,
+                    child_execution_id: execution_id.clone(),
+                    finished_version: stub_finished_version.clone(),
+                    result: return_value.clone(),
+                },
+                created_at,
+            )
+            .await
+    };
+    if let Err(write_attempt) = write_attempt {
+        // Check that the expected value is in the database
+        debug!("Stub write attempt failed - {write_attempt:?}");
+
+        let found = db_connection
+            .get_execution_event(&ExecutionId::Derived(execution_id), &stub_finished_version)
+            .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
+        match found.event {
+            ExecutionEventInner::Finished {
+                result: found_result,
+                ..
+            } if return_value == found_result => {
+                // Same value has already be written, RPC is successful.
+                Ok(())
+            }
+            ExecutionEventInner::Finished { .. } => Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::Conflict,
+            )),
+            _other => Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::IllegalState(
+                    "unexpected execution event at stubbed execution".into(),
+                ),
+            )),
+        }
+    } else {
+        Ok(())
+    }
+}
+
 pub async fn cancel_delay(
     db_connection: &dyn DbConnection,
     delay_id: DelayId,

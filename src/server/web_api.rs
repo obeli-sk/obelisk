@@ -1,3 +1,7 @@
+use crate::{
+    command::server::{self, ComponentConfigRegistryRO, SubmitError},
+    server::web_api::components::components_list,
+};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -7,7 +11,7 @@ use axum::{
 use axum_accept::AcceptExtractor;
 use concepts::{
     ExecutionId, FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
-    prefixed_ulid::DelayId,
+    prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
         self, CancelOutcome, DbErrorRead, DbErrorWrite, DbErrorWriteNonRetriable, DbPool,
         ExecutionEventInner,
@@ -18,13 +22,8 @@ use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
-use val_json::wast_val::WastVal;
+use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::activity::cancel_registry::CancelRegistry;
-
-use crate::{
-    command::server::{self, ComponentConfigRegistryRO, SubmitError},
-    server::web_api::components::components_list,
-};
 
 #[derive(Clone)]
 pub(crate) struct WebApiState {
@@ -50,6 +49,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route(
             "/executions/{execution-id}/status",
             routing::get(execution_status_get),
+        )
+        .route(
+            "/executions/{execution-id}/stub",
+            routing::put(execution_stub),
         )
         .route("/executions/{execution-id}", routing::get(execution_get))
         .route("/executions/{execution-id}", routing::put(execution_submit))
@@ -119,6 +122,74 @@ async fn execution_status_get(
         AcceptHeader::Json => Json(json!(pending_state)).into_response(),
         AcceptHeader::Text => pending_state.to_string().into_response(),
     })
+}
+
+#[derive(Deserialize)]
+struct ExecutionStubPayload(serde_json::Value);
+
+async fn execution_stub(
+    Path(execution_id): Path<ExecutionIdDerived>,
+    state: State<Arc<WebApiState>>,
+    Json(ExecutionStubPayload(return_value)): Json<ExecutionStubPayload>,
+) -> Result<Response, HttpResponse> {
+    let accept = AcceptHeader::Json;
+    let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
+    // Get FFQN
+    let db_connection = state.db_pool.connection();
+    let ffqn = db_connection
+        .get_create_request(&ExecutionId::Derived(execution_id.clone()))
+        .await
+        .map_err(|err| ErrorWrapper(err, accept))?
+        .ffqn;
+
+    // Check that ffqn exists
+    let Some((_component_id, fn_metadata)) = state
+        .component_registry_ro
+        .find_by_exported_ffqn_stub(&ffqn)
+    else {
+        return Err(HttpResponse {
+            status: StatusCode::NOT_FOUND,
+            message: "function not found".to_string(),
+            accept,
+        });
+    };
+    let created_at = Now.now();
+
+    // Type check `return_value`
+    let return_value = {
+        let type_wrapper = fn_metadata.return_type.type_wrapper();
+        let return_value = match deserialize_value(&return_value, type_wrapper) {
+            Ok(wast_val_with_type) => wast_val_with_type,
+            Err(err) => {
+                return Err(HttpResponse {
+                    status: StatusCode::UNPROCESSABLE_ENTITY,
+                    message: format!(
+                        "cannot deserialize return value according to its type - {err}"
+                    ),
+                    accept,
+                });
+            }
+        };
+        SupportedFunctionReturnValue::from_wast_val_with_type(return_value)
+            .expect("checked that ffqn is no-ext, return type must be Compatible")
+    };
+    storage::stub_execution(
+        db_connection.as_ref(),
+        execution_id,
+        parent_execution_id,
+        join_set_id,
+        created_at,
+        return_value,
+    )
+    .await
+    .map_err(|err| ErrorWrapper(err, accept))?;
+
+    Ok(HttpResponse {
+        status: StatusCode::OK,
+        message: "stubbed".to_string(),
+        accept,
+    }
+    .into_response())
 }
 
 #[derive(Serialize)]

@@ -12,9 +12,6 @@ use concepts::SupportedFunctionReturnValue;
 use concepts::component_id::InputContentDigest;
 use concepts::prefixed_ulid::DelayId;
 use concepts::storage;
-use concepts::storage::AppendEventsToExecution;
-use concepts::storage::AppendRequest;
-use concepts::storage::AppendResponseToExecution;
 use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbPool;
@@ -169,7 +166,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
         span.record("execution_id", tracing::field::display(&execution_id));
         // Get FFQN
-
         let db_connection = self.db_pool.connection();
         let ffqn = db_connection
             .get_create_request(&ExecutionId::Derived(execution_id.clone()))
@@ -186,14 +182,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         span.record("component_id", tracing::field::display(component_id));
 
         let created_at = Now.now();
-
         let ffqn = &fn_metadata.ffqn;
         span.record("ffqn", tracing::field::display(ffqn));
-        if ffqn.ifc_fqn.is_extension() {
-            return Err(tonic::Status::invalid_argument(
-                "argument `ffqn` must be the target, not the extension".to_string(),
-            ));
-        }
+
         let return_value = request.return_value.argument_must_exist("return_value")?;
         // Type check `return_value`
         let return_value = {
@@ -209,63 +200,17 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             SupportedFunctionReturnValue::from_wast_val_with_type(return_value)
                 .expect("checked that ffqn is no-ext, return type must be Compatible")
         };
+        storage::stub_execution(
+            db_connection.as_ref(),
+            execution_id,
+            parent_execution_id,
+            join_set_id,
+            created_at,
+            return_value,
+        )
+        .await
+        .to_status()?;
 
-        let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
-        // Attempt to write to `execution_id` and its parent, ignoring the possible conflict error on this tx
-        let write_attempt = {
-            let finished_req = AppendRequest {
-                created_at,
-                event: ExecutionEventInner::Finished {
-                    result: return_value.clone(),
-                    http_client_traces: None,
-                },
-            };
-            db_connection
-                .append_batch_respond_to_parent(
-                    AppendEventsToExecution {
-                        execution_id: ExecutionId::Derived(execution_id.clone()),
-                        version: stub_finished_version.clone(),
-                        batch: vec![finished_req],
-                    },
-                    AppendResponseToExecution {
-                        parent_execution_id,
-                        created_at,
-                        join_set_id,
-                        child_execution_id: execution_id.clone(),
-                        finished_version: stub_finished_version.clone(),
-                        result: return_value.clone(),
-                    },
-                    created_at,
-                )
-                .await
-        };
-        if let Err(write_attempt) = write_attempt {
-            // Check that the expected value is in the database
-            debug!("Stub write attempt failed - {write_attempt:?}");
-
-            let found = db_connection
-                .get_execution_event(&ExecutionId::Derived(execution_id), &stub_finished_version)
-                .await
-                .to_status()?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
-            match found.event {
-                ExecutionEventInner::Finished {
-                    result: found_result,
-                    ..
-                } if return_value == found_result => {
-                    // Same value has already be written, RPC is successful.
-                }
-                ExecutionEventInner::Finished { .. } => {
-                    return Err(tonic::Status::already_exists(
-                        "different value found in stubbed execution's finished event",
-                    ));
-                }
-                _other => {
-                    return Err(tonic::Status::internal(
-                        "unexpected execution event at stubbed execution",
-                    ));
-                }
-            }
-        }
         let resp = grpc_gen::StubResponse {};
         Ok(tonic::Response::new(resp))
     }

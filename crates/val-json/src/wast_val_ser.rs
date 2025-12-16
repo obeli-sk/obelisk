@@ -117,8 +117,8 @@ impl<'de> Visitor<'de> for WastValWithTypeVisitor {
                     if value.is_some() {
                         return Err(de::Error::duplicate_field("value"));
                     }
-                    if let Some(t) = &r#type {
-                        value = Some(map.next_value_seed(WastValDeserialize(t))?);
+                    if let Some(ty) = &r#type {
+                        value = Some(map.next_value_seed(WastValDeserialize(ty))?);
                     } else {
                         return Err(de::Error::custom("`type` field must preceed `value` field"));
                     }
@@ -127,7 +127,7 @@ impl<'de> Visitor<'de> for WastValWithTypeVisitor {
         }
         let r#type = r#type.ok_or_else(|| de::Error::missing_field("type"))?;
         let value = value.ok_or_else(|| de::Error::missing_field("value"))?;
-        Ok(Self::Value { r#type, value })
+        Ok(WastValWithType { r#type, value })
     }
 }
 
@@ -694,6 +694,17 @@ pub fn deserialize_slice(
             r#type: type_wrapper,
             value,
         })
+}
+
+pub fn deserialize_value(
+    value: &serde_json::Value,
+    ty: TypeWrapper,
+) -> Result<WastValWithType, serde_json::Error> {
+    let value = value.to_string(); //FIXME: serializing to string and then deserializing
+    let mut deserializer = serde_json::Deserializer::from_str(value.as_ref());
+    let seed = WastValDeserialize(&ty);
+    seed.deserialize(&mut deserializer)
+        .map(|value| WastValWithType { r#type: ty, value })
 }
 
 #[cfg(test)]
