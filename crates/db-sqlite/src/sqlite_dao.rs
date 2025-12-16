@@ -159,7 +159,7 @@ ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 /// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
 /// `Finished` :            `result_kind`.
 ///
-/// pending_expires_finished - either pending at, lock expires at or finished at based on state.
+/// `pending_expires_finished` - either pending at, lock expires at or finished at based on state.
 ///
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
@@ -1610,7 +1610,7 @@ impl SqlitePool {
             Ok(StatementModifier {
                 where_vec,
                 params,
-                limit: limit as u32,
+                limit: u32::from(limit),
                 limit_desc,
             })
         }

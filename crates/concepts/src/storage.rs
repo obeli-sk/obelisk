@@ -1183,6 +1183,7 @@ impl Default for ExecutionListPagination {
     }
 }
 impl ExecutionListPagination {
+    #[must_use]
     pub fn length(&self) -> u8 {
         match self {
             ExecutionListPagination::CreatedBy(pagination) => pagination.length(),

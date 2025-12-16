@@ -129,61 +129,60 @@ async fn executions_list(
         pub component_digest: InputContentDigest,
     }
     let default_pagination = ExecutionListPagination::default();
-    let pagination = match params {
-        ExecutionsListParams {
+    let pagination = {
+        let ExecutionsListParams {
             cursor,
             length,
             including_cursor,
             direction,
             ..
-        } => {
-            let length = length.unwrap_or(default_pagination.length());
-            match cursor {
-                Some(ExecutionListCursorDeser::CreatedBy(cursor)) => {
-                    ExecutionListPagination::CreatedBy(match direction {
-                        PaginationDirection::Older => Pagination::OlderThan {
-                            length,
-                            cursor: Some(cursor),
-                            including_cursor,
-                        },
-                        PaginationDirection::Newer => Pagination::NewerThan {
-                            length,
-                            cursor: Some(cursor),
-                            including_cursor,
-                        },
-                    })
-                }
-                Some(ExecutionListCursorDeser::ExecutionId(cursor)) => {
-                    ExecutionListPagination::ExecutionId(match direction {
-                        PaginationDirection::Older => Pagination::OlderThan {
-                            length,
-                            cursor: Some(cursor),
-                            including_cursor,
-                        },
-                        PaginationDirection::Newer => Pagination::NewerThan {
-                            length,
-                            cursor: Some(cursor),
-                            including_cursor,
-                        },
-                    })
-                }
-                None => ExecutionListPagination::CreatedBy(
-                    // CreatedBy because it is the current default
-                    match direction {
-                        PaginationDirection::Older => Pagination::OlderThan {
-                            length,
-                            cursor: None,
-                            including_cursor, // does not matter
-                        },
-
-                        PaginationDirection::Newer => Pagination::NewerThan {
-                            length,
-                            cursor: None,
-                            including_cursor, // does not matter
-                        },
+        } = params;
+        let length = length.unwrap_or(default_pagination.length());
+        match cursor {
+            Some(ExecutionListCursorDeser::CreatedBy(cursor)) => {
+                ExecutionListPagination::CreatedBy(match direction {
+                    PaginationDirection::Older => Pagination::OlderThan {
+                        length,
+                        cursor: Some(cursor),
+                        including_cursor,
                     },
-                ),
+                    PaginationDirection::Newer => Pagination::NewerThan {
+                        length,
+                        cursor: Some(cursor),
+                        including_cursor,
+                    },
+                })
             }
+            Some(ExecutionListCursorDeser::ExecutionId(cursor)) => {
+                ExecutionListPagination::ExecutionId(match direction {
+                    PaginationDirection::Older => Pagination::OlderThan {
+                        length,
+                        cursor: Some(cursor),
+                        including_cursor,
+                    },
+                    PaginationDirection::Newer => Pagination::NewerThan {
+                        length,
+                        cursor: Some(cursor),
+                        including_cursor,
+                    },
+                })
+            }
+            None => ExecutionListPagination::CreatedBy(
+                // CreatedBy because it is the current default
+                match direction {
+                    PaginationDirection::Older => Pagination::OlderThan {
+                        length,
+                        cursor: None,
+                        including_cursor, // does not matter
+                    },
+
+                    PaginationDirection::Newer => Pagination::NewerThan {
+                        length,
+                        cursor: None,
+                        including_cursor, // does not matter
+                    },
+                },
+            ),
         }
     };
 
@@ -201,9 +200,9 @@ async fn executions_list(
         AcceptHeader::Text => {
             let mut output = String::new();
             for execution in executions {
-                write!(
+                writeln!(
                     &mut output,
-                    "{id} `{pending_state}` {ffqn} `{first_scheduled_at}`\n",
+                    "{id} `{pending_state}` {ffqn} `{first_scheduled_at}`",
                     id = execution.execution_id,
                     ffqn = execution.ffqn,
                     pending_state = execution.pending_state,
