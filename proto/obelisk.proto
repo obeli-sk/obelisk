@@ -175,6 +175,12 @@ message SubmitRequest {
 }
 
 message SubmitResponse {
+    enum Outcome {
+        CREATED = 0;
+        EXISTS_WITH_SAME_PARAMETERS = 1;
+    }
+
+    Outcome outcome = 1;
 }
 
 message StubRequest {

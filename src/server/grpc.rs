@@ -1,6 +1,7 @@
 use crate::command::server;
 use crate::command::server::ComponentConfigRegistryRO;
 use crate::command::server::ComponentSourceMap;
+use crate::command::server::SubmitError;
 use chrono::DateTime;
 use chrono::Utc;
 use concepts::ComponentId;
@@ -30,6 +31,7 @@ use grpc::grpc_gen::get_status_response::Message;
 use grpc::grpc_mapping::TonicServerOptionExt;
 use grpc::grpc_mapping::TonicServerResultExt;
 use grpc::grpc_mapping::convert_length;
+use grpc::grpc_mapping::db_error_write_to_status;
 use grpc::grpc_mapping::from_execution_event_to_grpc;
 use grpc_gen::ExecutionSummary;
 use serde::Deserialize;
@@ -131,7 +133,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .vec
         };
 
-        server::submit(
+        let outcome = server::submit(
             self.db_pool.connection().as_ref(),
             execution_id,
             ffqn,
@@ -140,7 +142,15 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         )
         .await?;
 
-        let resp = grpc_gen::SubmitResponse {};
+        let resp = grpc_gen::SubmitResponse {
+            outcome: match outcome {
+                server::SubmitOutcome::Created => grpc_gen::submit_response::Outcome::Created,
+                server::SubmitOutcome::ExistsWithSameParameters => {
+                    grpc_gen::submit_response::Outcome::ExistsWithSameParameters
+                }
+            }
+            .into(),
+        };
         Ok(tonic::Response::new(resp))
     }
 
@@ -754,4 +764,18 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
         vec.push(fun);
     }
     vec
+}
+
+impl From<SubmitError> for tonic::Status {
+    fn from(value: SubmitError) -> Self {
+        match value {
+            SubmitError::ExecutionIdMustBeTopLevel => tonic::Status::invalid_argument(
+                "argument `execution_id` must be a top-level execution id",
+            ),
+            SubmitError::FunctionNotFound => tonic::Status::not_found("function not found"),
+            SubmitError::ParamsInvalid(reason) => tonic::Status::invalid_argument(reason),
+            err @ SubmitError::Conflict => tonic::Status::already_exists(err.to_string()),
+            SubmitError::DbErrorWrite(db_err) => db_error_write_to_status(&db_err),
+        }
+    }
 }

@@ -54,6 +54,7 @@ use concepts::component_id::InputContentDigest;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbErrorWrite;
+use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::DbExecutor;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
@@ -81,7 +82,6 @@ use grpc::grpc_gen::GetStatusResponse;
 use grpc::grpc_gen::get_status_response::Message;
 use grpc::grpc_mapping::TonicServerResultExt;
 use grpc::grpc_mapping::db_error_read_to_status;
-use grpc::grpc_mapping::db_error_write_to_status;
 use hashbrown::HashMap;
 use itertools::Either;
 use serde_json::json;
@@ -192,20 +192,15 @@ pub(crate) enum SubmitError {
     FunctionNotFound,
     #[error("{0}")]
     ParamsInvalid(String),
+    #[error("execution already exists with the same id and different parameters")]
+    Conflict,
     #[error(transparent)]
     DbErrorWrite(DbErrorWrite),
 }
-impl From<SubmitError> for tonic::Status {
-    fn from(value: SubmitError) -> Self {
-        match value {
-            SubmitError::ExecutionIdMustBeTopLevel => tonic::Status::invalid_argument(
-                "argument `execution_id` must be a top-level execution id",
-            ),
-            SubmitError::FunctionNotFound => tonic::Status::not_found("function not found"),
-            SubmitError::ParamsInvalid(reason) => tonic::Status::invalid_argument(reason),
-            SubmitError::DbErrorWrite(db_err) => db_error_write_to_status(&db_err),
-        }
-    }
+
+pub(crate) enum SubmitOutcome {
+    Created,
+    ExistsWithSameParameters,
 }
 
 pub(crate) async fn submit(
@@ -214,7 +209,7 @@ pub(crate) async fn submit(
     ffqn: FunctionFqn,
     mut params: Vec<serde_json::Value>,
     component_registry_ro: &ComponentConfigRegistryRO,
-) -> Result<(), SubmitError> {
+) -> Result<SubmitOutcome, SubmitError> {
     let span = Span::current();
     span.record("execution_id", tracing::field::display(&execution_id));
     if !execution_id.is_top_level() {
@@ -317,21 +312,34 @@ pub(crate) async fn submit(
 
     // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
     let metadata = concepts::ExecutionMetadata::from_parent_span(&span);
-    db_connection
+    let res = db_connection
         .create(CreateRequest {
             created_at,
             execution_id: execution_id.clone(),
             metadata,
             ffqn: ffqn.clone(),
-            params,
+            params: params.clone(),
             parent: None,
             scheduled_at,
             component_id: component_id.clone(),
             scheduled_by: None,
         })
-        .await
-        .map_err(SubmitError::DbErrorWrite)?;
-    Ok(())
+        .await;
+    match res {
+        Ok(_) => Ok(SubmitOutcome::Created),
+        Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)) => {
+            let create_req = db_connection
+                .get_create_request(&execution_id)
+                .await
+                .map_err(|err| SubmitError::DbErrorWrite(err.into()))?;
+            if create_req.params == params {
+                Ok(SubmitOutcome::ExistsWithSameParameters)
+            } else {
+                Err(SubmitError::Conflict)
+            }
+        }
+        Err(err) => Err(SubmitError::DbErrorWrite(err)),
+    }
 }
 
 pub(crate) async fn poll_status(

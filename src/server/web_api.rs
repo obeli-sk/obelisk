@@ -1,5 +1,5 @@
 use crate::{
-    command::server::{self, ComponentConfigRegistryRO, SubmitError},
+    command::server::{self, ComponentConfigRegistryRO, SubmitError, SubmitOutcome},
     server::web_api::components::{component_wit, components_list},
 };
 use axum::{
@@ -15,9 +15,9 @@ use concepts::{
     component_id::InputContentDigest,
     prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
-        self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, DbErrorWriteNonRetriable,
-        DbPool, ExecutionListPagination, ExecutionRequest, ExecutionWithState, Pagination,
-        PendingState, Version, VersionType,
+        self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, DbPool,
+        ExecutionListPagination, ExecutionRequest, ExecutionWithState, Pagination, PendingState,
+        Version, VersionType,
     },
     time::{ClockFn as _, Now},
 };
@@ -49,7 +49,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/delays/{delay-id}/cancel", routing::put(delay_cancel))
         .route("/execution-id", routing::get(execution_id_generate))
         .route("/executions", routing::get(executions_list))
-        .route("/executions/submit", routing::post(execution_submit_post))
+        .route("/executions", routing::post(execution_submit_post))
         .route(
             "/executions/{execution-id}/cancel",
             routing::put(execution_cancel),
@@ -513,13 +513,7 @@ async fn execution_submit_put(
     accept: AcceptHeader,
     Json(payload): Json<ExecutionPutPayload>,
 ) -> Result<Response, HttpResponse> {
-    execution_submit(execution_id.clone(), state, payload, accept).await?;
-    Ok(HttpResponse {
-        status: StatusCode::CREATED,
-        message: execution_id.to_string(),
-        accept,
-    }
-    .into_response())
+    execution_submit(execution_id, state, payload, accept).await
 }
 
 async fn execution_submit_post(
@@ -528,13 +522,7 @@ async fn execution_submit_post(
     Json(payload): Json<ExecutionPutPayload>,
 ) -> Result<Response, HttpResponse> {
     let execution_id = ExecutionId::generate();
-    execution_submit(execution_id.clone(), state, payload, accept).await?;
-    Ok(HttpResponse {
-        status: StatusCode::CREATED,
-        message: execution_id.to_string(),
-        accept,
-    }
-    .into_response())
+    execution_submit(execution_id, state, payload, accept).await
 }
 
 async fn execution_submit(
@@ -542,29 +530,32 @@ async fn execution_submit(
     state: State<Arc<WebApiState>>,
     payload: ExecutionPutPayload,
     accept: AcceptHeader,
-) -> Result<(), HttpResponse> {
-    server::submit(
-        state.db_pool.connection().as_ref(),
-        execution_id,
+) -> Result<Response, HttpResponse> {
+    let conn = state.db_pool.connection();
+    let res = server::submit(
+        conn.as_ref(),
+        execution_id.clone(),
         payload.ffqn,
         payload.params,
         &state.component_registry_ro,
     )
-    .await
-    .map_err(|err| match err {
-        SubmitError::DbErrorWrite(DbErrorWrite::NonRetriable(
-            DbErrorWriteNonRetriable::Conflict,
-        )) => HttpResponse {
-            status: StatusCode::CONFLICT,
-            message: "already exists".to_string(),
+    .await;
+
+    match res {
+        Ok(SubmitOutcome::Created) => Ok(HttpResponse {
+            status: StatusCode::CREATED,
+            message: execution_id.to_string(),
             accept,
-        },
-        err => HttpResponse {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: err.to_string(),
+        }
+        .into_response()),
+        Ok(SubmitOutcome::ExistsWithSameParameters) => Ok(HttpResponse {
+            status: StatusCode::OK,
+            message: execution_id.to_string(),
             accept,
-        },
-    })
+        }
+        .into_response()),
+        Err(err) => Err(ErrorWrapper(err, accept).into()),
+    }
 }
 
 pub(crate) mod components {
@@ -601,7 +592,10 @@ pub(crate) mod components {
         state: State<Arc<WebApiState>>,
     ) -> Result<Response, HttpResponse> {
         let Some(wit) = state.component_registry_ro.get_wit(&digest) else {
-            return Err(HttpResponse::not_found(AcceptHeader::Text));
+            return Err(HttpResponse::not_found(
+                AcceptHeader::Text,
+                Some("component"),
+            ));
         };
         Ok(if let Some(wit) = wit {
             wit.to_string().into_response()
@@ -778,10 +772,14 @@ impl HttpResponse {
         }
     }
 
-    fn not_found(accept: AcceptHeader) -> Self {
+    fn not_found(accept: AcceptHeader, what: Option<&str>) -> Self {
         HttpResponse {
             status: StatusCode::NOT_FOUND,
-            message: "not found".to_string(),
+            message: if let Some(what) = what {
+                format!("{what} not found")
+            } else {
+                "not found".to_string()
+            },
             accept,
         }
     }
@@ -817,7 +815,7 @@ impl From<ErrorWrapper<DbErrorRead>> for HttpResponse {
     fn from(value: ErrorWrapper<DbErrorRead>) -> Self {
         let accept = value.1;
         let (status, message) = match value.0 {
-            DbErrorRead::NotFound => return HttpResponse::not_found(accept),
+            DbErrorRead::NotFound => return HttpResponse::not_found(accept, None),
             DbErrorRead::Generic(err) => (StatusCode::SERVICE_UNAVAILABLE, err.to_string()),
         };
         HttpResponse {
@@ -831,7 +829,7 @@ impl From<ErrorWrapper<DbErrorWrite>> for HttpResponse {
     fn from(value: ErrorWrapper<DbErrorWrite>) -> Self {
         let accept = value.1;
         let (status, message) = match value.0 {
-            DbErrorWrite::NotFound => return HttpResponse::not_found(accept),
+            DbErrorWrite::NotFound => return HttpResponse::not_found(accept, None),
             DbErrorWrite::Generic(err) => (StatusCode::SERVICE_UNAVAILABLE, err.to_string()),
             DbErrorWrite::NonRetriable(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         };
@@ -839,6 +837,29 @@ impl From<ErrorWrapper<DbErrorWrite>> for HttpResponse {
             status,
             message,
             accept,
+        }
+    }
+}
+impl From<ErrorWrapper<SubmitError>> for HttpResponse {
+    fn from(value: ErrorWrapper<SubmitError>) -> Self {
+        let accept = value.1;
+        match value.0 {
+            err @ SubmitError::Conflict => HttpResponse {
+                status: StatusCode::CONFLICT,
+                message: err.to_string(),
+                accept,
+            },
+            SubmitError::FunctionNotFound => HttpResponse::not_found(accept, Some("ffqn")),
+            SubmitError::DbErrorWrite(db_error_write) => {
+                HttpResponse::from(ErrorWrapper(db_error_write, accept))
+            }
+            err @ (SubmitError::ExecutionIdMustBeTopLevel | SubmitError::ParamsInvalid(_)) => {
+                HttpResponse {
+                    status: StatusCode::BAD_REQUEST,
+                    message: err.to_string(),
+                    accept,
+                }
+            }
         }
     }
 }
