@@ -505,7 +505,7 @@ message GetWitRequest {
 }
 
 message GetWitResponse {
-    string content = 1;
+    optional string content = 1;
 }
 
 message GetBacktraceRequest {

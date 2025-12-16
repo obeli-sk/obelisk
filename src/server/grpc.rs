@@ -719,7 +719,7 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
             .get_wit(&component_digest)
             .entity_must_exist()?;
         Ok(tonic::Response::new(grpc_gen::GetWitResponse {
-            content: wit.to_string(),
+            content: wit.map(|it| it.to_string()),
         }))
     }
 }

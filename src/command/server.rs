@@ -1948,11 +1948,12 @@ pub struct ComponentConfigRegistryRO {
 }
 
 impl ComponentConfigRegistryRO {
-    pub fn get_wit(&self, input_digest: &InputContentDigest) -> Option<&str> {
+    /// Return `None` if component is not found, `Some(None)` if component has no WIT content.
+    pub fn get_wit(&self, input_digest: &InputContentDigest) -> Option<Option<&str>> {
         self.inner
             .ids_to_components
             .get(input_digest)
-            .and_then(|component_config| component_config.wit.as_deref())
+            .map(|component_config| component_config.wit.as_deref())
     }
 
     pub fn find_by_exported_ffqn_submittable(
