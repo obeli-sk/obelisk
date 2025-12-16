@@ -165,6 +165,7 @@ impl Version {
 pub struct ExecutionEvent {
     pub created_at: DateTime<Utc>,
     pub event: ExecutionRequest,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub backtrace_id: Option<Version>,
     pub version: Version,
 }

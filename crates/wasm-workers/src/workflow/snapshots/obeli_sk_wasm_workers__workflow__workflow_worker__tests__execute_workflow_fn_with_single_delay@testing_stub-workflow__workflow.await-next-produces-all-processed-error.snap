@@ -22,7 +22,6 @@ expression: execution_log
           "scheduled_by": null
         }
       },
-      "backtrace_id": null,
       "version": 0
     },
     {
@@ -46,7 +45,6 @@ expression: execution_log
           }
         }
       },
-      "backtrace_id": null,
       "version": 1
     },
     {
@@ -59,7 +57,6 @@ expression: execution_log
           }
         }
       },
-      "backtrace_id": null,
       "version": 2
     },
     {
@@ -73,7 +70,6 @@ expression: execution_log
           }
         }
       },
-      "backtrace_id": null,
       "version": 3
     },
     {
@@ -88,7 +84,6 @@ expression: execution_log
           "http_client_traces": null
         }
       },
-      "backtrace_id": null,
       "version": 4
     }
   ],
