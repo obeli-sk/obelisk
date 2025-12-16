@@ -12,6 +12,9 @@ Allows self referential exports, also enables generating on import side.
 `obelisk generate wit --oci path` - add WIT files + extensions
 `obelisk new` - show templates, blank workflow should have obelisk types and workflow support
 
+## feat: Multiple versions of a component
+dont use global registry, mock locally using imports, allow same component twice. Toml dependency routing using `requires = "auto" | ["dep1"]`
+
 ## feat: KV host activity
 Allow using the underlying database.
 Also a conf KV backed by toml file to configure workflows.
