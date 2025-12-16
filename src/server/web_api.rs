@@ -17,7 +17,7 @@ use concepts::{
     storage::{
         self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, DbErrorWriteNonRetriable,
         DbPool, ExecutionListPagination, ExecutionRequest, ExecutionWithState, Pagination,
-        PendingState,
+        PendingState, Version, VersionType,
     },
     time::{ClockFn as _, Now},
 };
@@ -52,6 +52,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route(
             "/executions/{execution-id}/cancel",
             routing::put(execution_cancel),
+        )
+        .route(
+            "/executions/{execution-id}/events",
+            routing::get(execution_events),
         )
         .route(
             "/executions/{execution-id}/status",
@@ -211,7 +215,7 @@ async fn executions_list(
                 )
                 .expect("writing to string");
             }
-            (StatusCode::OK, output).into_response()
+            output.into_response()
         }
         AcceptHeader::Json => {
             let executions: Vec<_> = executions
@@ -234,7 +238,7 @@ async fn executions_list(
                     },
                 )
                 .collect();
-            (StatusCode::OK, Json(executions)).into_response()
+            Json(executions).into_response()
         }
     })
 }
@@ -264,6 +268,50 @@ async fn execution_cancel(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(HttpResponse::from_cancel_outcome(outcome, accept).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct ExecutionEventsParams {
+    #[serde(default)]
+    version_from: VersionType,
+    length: Option<u8>,
+    #[serde(default)]
+    include_backtrace_id: bool,
+}
+async fn execution_events(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+    Query(params): Query<ExecutionEventsParams>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    const DEFAULT_LENGTH: u8 = 20;
+    let conn = state.db_pool.connection();
+    let events = conn
+        .list_execution_events(
+            &execution_id,
+            &Version(params.version_from),
+            params.length.unwrap_or(DEFAULT_LENGTH).into(),
+            params.include_backtrace_id,
+        )
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    Ok(match accept {
+        AcceptHeader::Json => Json(json!(events)).into_response(),
+        AcceptHeader::Text => {
+            let mut output = String::new();
+            for event in events {
+                writeln!(
+                    &mut output,
+                    "{version} {event} {created_at}",
+                    version = event.version,
+                    event = event.event,
+                    created_at = humantime_fmt::format_relative(event.created_at.into()),
+                )
+                .expect("writing to string");
+            }
+            output.into_response()
+        }
+    })
 }
 
 async fn execution_status_get(
@@ -477,7 +525,7 @@ pub(crate) mod components {
             return Err(HttpResponse::not_found(AcceptHeader::Text));
         };
         Ok(if let Some(wit) = wit {
-            (StatusCode::OK, wit.to_string()).into_response()
+            wit.to_string().into_response()
         } else {
             (StatusCode::NO_CONTENT, "").into_response()
         })
