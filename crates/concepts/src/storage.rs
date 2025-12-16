@@ -1172,22 +1172,39 @@ pub enum ExecutionListPagination {
     CreatedBy(Pagination<Option<DateTime<Utc>>>),
     ExecutionId(Pagination<Option<ExecutionId>>),
 }
+impl Default for ExecutionListPagination {
+    fn default() -> ExecutionListPagination {
+        ExecutionListPagination::CreatedBy(Pagination::OlderThan {
+            length: 20,
+            cursor: None,
+            including_cursor: false, // does not matter when `cursor` is not specified
+        })
+    }
+}
+impl ExecutionListPagination {
+    pub fn length(&self) -> u8 {
+        match self {
+            ExecutionListPagination::CreatedBy(pagination) => pagination.length(),
+            ExecutionListPagination::ExecutionId(pagination) => pagination.length(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Pagination<T> {
     NewerThan {
-        length: ResponseCursorType,
+        length: u8,
         cursor: T,
         including_cursor: bool,
     },
     OlderThan {
-        length: ResponseCursorType,
+        length: u8,
         cursor: T,
         including_cursor: bool,
     },
 }
 impl<T> Pagination<T> {
-    pub fn length(&self) -> ResponseCursorType {
+    pub fn length(&self) -> u8 {
         match self {
             Pagination::NewerThan { length, .. } | Pagination::OlderThan { length, .. } => *length,
         }

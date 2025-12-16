@@ -1609,7 +1609,7 @@ impl SqlitePool {
             Ok(StatementModifier {
                 where_vec,
                 params,
-                limit,
+                limit: limit as u32,
                 limit_desc,
             })
         }

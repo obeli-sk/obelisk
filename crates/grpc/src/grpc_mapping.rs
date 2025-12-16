@@ -392,6 +392,10 @@ impl From<grpc_gen::ExecutionFailureKind> for ExecutionFailureKind {
     }
 }
 
+pub fn convert_length(l: u32) -> Result<u8, tonic::Status> {
+    u8::try_from(l).map_err(|_| tonic::Status::invalid_argument("`length` must be an u8"))
+}
+
 impl TryFrom<grpc_gen::list_executions_request::Pagination> for ExecutionListPagination {
     type Error = tonic::Status;
 
@@ -402,6 +406,7 @@ impl TryFrom<grpc_gen::list_executions_request::Pagination> for ExecutionListPag
         use grpc_gen::list_executions_request::{
             Cursor as OuterCursor, NewerThan, OlderThan, cursor::Cursor as InnerCursor,
         };
+
         Ok(match pagination {
             GPagination::NewerThan(NewerThan {
                 length,
@@ -411,19 +416,19 @@ impl TryFrom<grpc_gen::list_executions_request::Pagination> for ExecutionListPag
                 Some(OuterCursor {
                     cursor: Some(InnerCursor::ExecutionId(id)),
                 }) => ExecutionListPagination::ExecutionId(Pagination::NewerThan {
-                    length,
+                    length: convert_length(length)?,
                     cursor: Some(ExecutionId::try_from(id)?),
                     including_cursor,
                 }),
                 Some(OuterCursor {
                     cursor: Some(InnerCursor::CreatedAt(timestamp)),
                 }) => ExecutionListPagination::CreatedBy(Pagination::NewerThan {
-                    length,
+                    length: convert_length(length)?,
                     cursor: Some(timestamp.into()),
                     including_cursor,
                 }),
                 _ => ExecutionListPagination::CreatedBy(Pagination::NewerThan {
-                    length,
+                    length: convert_length(length)?,
                     cursor: None,
                     including_cursor,
                 }),
@@ -436,19 +441,19 @@ impl TryFrom<grpc_gen::list_executions_request::Pagination> for ExecutionListPag
                 Some(OuterCursor {
                     cursor: Some(InnerCursor::ExecutionId(id)),
                 }) => ExecutionListPagination::ExecutionId(Pagination::OlderThan {
-                    length,
+                    length: convert_length(length)?,
                     cursor: Some(ExecutionId::try_from(id)?),
                     including_cursor,
                 }),
                 Some(OuterCursor {
                     cursor: Some(InnerCursor::CreatedAt(timestamp)),
                 }) => ExecutionListPagination::CreatedBy(Pagination::OlderThan {
-                    length,
+                    length: convert_length(length)?,
                     cursor: Some(timestamp.into()),
                     including_cursor,
                 }),
                 _ => ExecutionListPagination::CreatedBy(Pagination::OlderThan {
-                    length,
+                    length: convert_length(length)?,
                     cursor: None,
                     including_cursor,
                 }),

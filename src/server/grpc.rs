@@ -30,6 +30,7 @@ use grpc::grpc_gen::GenerateExecutionIdResponse;
 use grpc::grpc_gen::get_status_response::Message;
 use grpc::grpc_mapping::TonicServerOptionExt;
 use grpc::grpc_mapping::TonicServerResultExt;
+use grpc::grpc_mapping::convert_length;
 use grpc::grpc_mapping::from_execution_event_to_grpc;
 use grpc_gen::ExecutionSummary;
 use serde::Deserialize;
@@ -422,7 +423,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .list_responses(
                 &execution_id,
                 concepts::storage::Pagination::NewerThan {
-                    length: request.length,
+                    length: convert_length(request.length)?,
                     cursor: request.cursor_from,
                     including_cursor: request.including_cursor,
                 },
@@ -478,7 +479,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .list_responses(
                 &execution_id,
                 concepts::storage::Pagination::NewerThan {
-                    length: request.responses_length,
+                    length: convert_length(request.responses_length)?,
                     cursor: request.responses_cursor_from,
                     including_cursor: request.responses_including_cursor,
                 },
