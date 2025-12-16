@@ -5,7 +5,7 @@ use concepts::{
     IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType,
     ReturnTypeNonExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_SCHEDULE,
     SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB,
-    StrVariant, component_id::HASH_TYPE,
+    StrVariant,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -60,10 +60,7 @@ impl WasmComponent {
             anyhow::bail!("not a WASM Component or a Core WASM Module");
         }
         let content_digest = calculate_sha256_file(wasm_path).await?;
-        let output_file = output_parent.join(format!(
-            "{HASH_TYPE}_{}.wasm",
-            content_digest.digest_base16_without_prefix(),
-        ));
+        let output_file = output_parent.join(format!("{}.wasm", content_digest.with_infix("_"),));
         // already transformed?
         if output_file.exists() {
             debug!("Found the transformed WASM Component {output_file:?}");

@@ -1,5 +1,5 @@
 use anyhow::{Context, bail, ensure};
-use concepts::{ContentDigest, component_id::Digest, component_id::HASH_TYPE};
+use concepts::{ContentDigest, component_id::Digest};
 use futures_util::TryFutureExt;
 use oci_client::{
     Reference,
@@ -20,18 +20,13 @@ use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
 
 const OCI_CLIENT_RETRIES: u64 = 10;
 
+// Content of this file is a sha sum of the downloaded WASM file.
 fn digest_to_metadata_file(metadata_dir: &Path, metadata_file: &Digest) -> PathBuf {
-    metadata_dir.join(format!(
-        "{HASH_TYPE}_{}.txt",
-        metadata_file.digest_base16_without_prefix()
-    ))
+    metadata_dir.join(format!("{}.txt", metadata_file.with_infix("_")))
 }
 
 fn content_digest_to_wasm_file(wasm_cache_dir: &Path, content_digest: &ContentDigest) -> PathBuf {
-    wasm_cache_dir.join(format!(
-        "{HASH_TYPE}_{content_digest}.wasm",
-        content_digest = content_digest.digest_base16_without_prefix(),
-    ))
+    wasm_cache_dir.join(format!("{}.wasm", content_digest.with_infix("_"),))
 }
 
 async fn verify_wasm_file(wasm_path: &Path, content_digest: &ContentDigest) -> Result<(), ()> {

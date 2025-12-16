@@ -144,17 +144,22 @@ pub struct ContentDigest(pub Digest);
 pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest([0; 32]));
 
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
+    Clone, PartialEq, Eq, Hash, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
 )]
 pub struct Digest(pub [u8; 32]);
 impl Digest {
     #[must_use]
-    pub fn digest_base16_without_prefix(&self) -> String {
+    fn digest_base16_without_prefix(&self) -> String {
         let mut out = String::with_capacity(self.0.len() * 2);
         for &b in &self.0 {
             write!(&mut out, "{b:02x}").expect("writing to string");
         }
         out
+    }
+
+    #[must_use]
+    pub fn with_infix(&self, infix: &str) -> String {
+        format!("{HASH_TYPE}{infix}{}", self.digest_base16_without_prefix())
     }
 
     fn parse_without_prefix(hash_base16: &str) -> Result<Digest, DigestParseErrror> {
@@ -169,9 +174,8 @@ impl Digest {
         Ok(Digest(digest))
     }
 }
-pub const HASH_TYPE: &str = "sha256";
+const HASH_TYPE: &str = "sha256";
 const HASH_TYPE_WITH_DELIMITER: &str = const_format::formatcp!("{}:", HASH_TYPE);
-
 impl Display for Digest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{HASH_TYPE_WITH_DELIMITER}")?;
@@ -179,6 +183,11 @@ impl Display for Digest {
             write!(f, "{b:02x}")?;
         }
         Ok(())
+    }
+}
+impl Debug for Digest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self, f)
     }
 }
 
