@@ -1168,6 +1168,7 @@ pub struct ExecutionWithState {
     pub component_digest: InputContentDigest,
 }
 
+#[derive(Debug, Clone)]
 pub enum ExecutionListPagination {
     CreatedBy(Pagination<Option<DateTime<Utc>>>),
     ExecutionId(Pagination<Option<ExecutionId>>),

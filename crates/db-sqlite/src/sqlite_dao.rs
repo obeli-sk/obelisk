@@ -1569,6 +1569,7 @@ impl SqlitePool {
         top_level_only: bool,
         pagination: &ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
+        #[derive(Debug)]
         struct StatementModifier<'a> {
             where_vec: Vec<String>,
             params: Vec<(&'static str, ToSqlOutput<'a>)>,
@@ -1703,7 +1704,7 @@ impl SqlitePool {
             .filter_map(|row| match row {
                 Ok(row) => Some(row),
                 Err(err) => {
-                    warn!("Skipping row - {err:?}");
+                    error!("Skipping row - {err:?}");
                     None
                 }
             })

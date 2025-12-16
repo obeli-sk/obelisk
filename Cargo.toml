@@ -21,8 +21,8 @@ wasm-workers.workspace = true
 
 anyhow.workspace = true
 async-trait.workspace = true
-axum.workspace = true
 axum-accept.workspace = true
+axum.workspace = true
 cfg-if.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -34,6 +34,7 @@ docker_credential.workspace = true
 futures-util.workspace = true
 hashbrown.workspace = true
 http.workspace = true
+humantime_fmt.workspace = true
 itertools.workspace = true
 oci-client.workspace = true
 oci-wasm.workspace = true
@@ -47,8 +48,8 @@ serde.workspace = true
 sha2.workspace = true
 strum.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
 tokio-stream.workspace = true
+tokio.workspace = true
 toml.workspace = true
 tonic = { workspace = true, default-features = true, features = [
     "zstd",
@@ -217,6 +218,7 @@ hashbrown = { version = "0.16.1", features = ["serde"] }
 hdrhistogram = "7.5.4"
 http = "1.4.0"
 http-body-util = "0.1"
+humantime_fmt = { version = "0.1.0", features = ["with-chrono"] }
 hyper = "1.8.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 id-arena = "2.2.1"

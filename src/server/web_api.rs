@@ -9,18 +9,22 @@ use axum::{
     routing,
 };
 use axum_accept::AcceptExtractor;
+use chrono::{DateTime, Utc};
 use concepts::{
     ExecutionId, FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
+    component_id::InputContentDigest,
     prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
-        self, CancelOutcome, DbErrorRead, DbErrorWrite, DbErrorWriteNonRetriable, DbPool,
-        ExecutionEventInner,
+        self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, DbErrorWriteNonRetriable,
+        DbPool, ExecutionEventInner, ExecutionListPagination, ExecutionWithState, Pagination,
+        PendingState,
     },
     time::{ClockFn as _, Now},
 };
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::fmt::Write as _;
 use std::sync::Arc;
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::activity::cancel_registry::CancelRegistry;
@@ -44,6 +48,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/components/{digest}/wit", routing::get(component_wit))
         .route("/delays/{delay-id}/cancel", routing::put(delay_cancel))
         .route("/execution-id", routing::get(execution_id_generate))
+        .route("/executions", routing::get(executions_list))
         .route(
             "/executions/{execution-id}/cancel",
             routing::put(execution_cancel),
@@ -79,6 +84,160 @@ async fn delay_cancel(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(HttpResponse::from_cancel_outcome(outcome, accept).into_response())
+}
+
+#[derive(Deserialize, Debug)]
+struct ExecutionsListParams {
+    ffqn: Option<FunctionFqn>,
+    #[serde(default)]
+    show_nested: bool,
+    cursor: Option<ExecutionListCursorDeser>,
+    length: Option<u8>,
+    #[serde(default)]
+    including_cursor: bool,
+    #[serde(default)]
+    direction: PaginationDirection,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+enum PaginationDirection {
+    #[default]
+    Older,
+    Newer,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+enum ExecutionListCursorDeser {
+    CreatedBy(DateTime<Utc>),
+    ExecutionId(ExecutionId),
+}
+
+async fn executions_list(
+    state: State<Arc<WebApiState>>,
+    Query(params): Query<ExecutionsListParams>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    #[derive(Serialize)]
+    pub struct ExecutionWithStateSer {
+        pub execution_id: ExecutionId,
+        pub ffqn: FunctionFqn,
+        pub pending_state: PendingState,
+        pub created_at: DateTime<Utc>,
+        pub first_scheduled_at: DateTime<Utc>,
+        pub component_digest: InputContentDigest,
+    }
+    let default_pagination = ExecutionListPagination::default();
+    let pagination = match params {
+        ExecutionsListParams {
+            cursor,
+            length,
+            including_cursor,
+            direction,
+            ..
+        } => {
+            let length = length.unwrap_or(default_pagination.length());
+            match cursor {
+                Some(ExecutionListCursorDeser::CreatedBy(cursor)) => {
+                    ExecutionListPagination::CreatedBy(match direction {
+                        PaginationDirection::Older => Pagination::OlderThan {
+                            length,
+                            cursor: Some(cursor),
+                            including_cursor,
+                        },
+                        PaginationDirection::Newer => Pagination::NewerThan {
+                            length,
+                            cursor: Some(cursor),
+                            including_cursor,
+                        },
+                    })
+                }
+                Some(ExecutionListCursorDeser::ExecutionId(cursor)) => {
+                    ExecutionListPagination::ExecutionId(match direction {
+                        PaginationDirection::Older => Pagination::OlderThan {
+                            length,
+                            cursor: Some(cursor),
+                            including_cursor,
+                        },
+                        PaginationDirection::Newer => Pagination::NewerThan {
+                            length,
+                            cursor: Some(cursor),
+                            including_cursor,
+                        },
+                    })
+                }
+                None => ExecutionListPagination::CreatedBy(
+                    // CreatedBy because it is the current default
+                    match direction {
+                        PaginationDirection::Older => Pagination::OlderThan {
+                            length,
+                            cursor: None,
+                            including_cursor, // does not matter
+                        },
+
+                        PaginationDirection::Newer => Pagination::NewerThan {
+                            length,
+                            cursor: None,
+                            including_cursor, // does not matter
+                        },
+                    },
+                ),
+            }
+        }
+    };
+
+    let conn = state.db_pool.connection();
+
+    let executions = conn
+        .list_executions(
+            params.ffqn,
+            !params.show_nested, // top level only
+            pagination,
+        )
+        .await
+        .map_err(|err| ErrorWrapper(err, accept))?;
+    Ok(match accept {
+        AcceptHeader::Text => {
+            let mut output = String::new();
+            for execution in executions {
+                write!(
+                    &mut output,
+                    "{id} `{pending_state}` {ffqn} `{first_scheduled_at}`\n",
+                    id = execution.execution_id,
+                    ffqn = execution.ffqn,
+                    pending_state = execution.pending_state,
+                    first_scheduled_at =
+                        humantime_fmt::format_relative(execution.first_scheduled_at.into()),
+                )
+                .expect("writing to string");
+            }
+            (StatusCode::OK, output).into_response()
+        }
+        AcceptHeader::Json => {
+            let executions: Vec<_> = executions
+                .into_iter()
+                .map(
+                    |ExecutionWithState {
+                         execution_id,
+                         ffqn,
+                         pending_state,
+                         created_at,
+                         first_scheduled_at,
+                         component_digest,
+                     }| ExecutionWithStateSer {
+                        execution_id,
+                        ffqn,
+                        pending_state,
+                        created_at,
+                        first_scheduled_at,
+                        component_digest,
+                    },
+                )
+                .collect();
+            (StatusCode::OK, Json(executions)).into_response()
+        }
+    })
 }
 
 async fn execution_cancel(
@@ -302,9 +461,12 @@ pub(crate) mod components {
         r#type: Option<ComponentType>,
         name: Option<String>,
         digest: Option<InputContentDigest>,
-        exports: Option<bool>,
-        imports: Option<bool>,
-        extensions: Option<bool>,
+        #[serde(default)]
+        exports: bool,
+        #[serde(default)]
+        imports: bool,
+        #[serde(default)]
+        extensions: bool,
         submittable: Option<bool>,
     }
 
@@ -327,8 +489,7 @@ pub(crate) mod components {
         Query(params): Query<ComponentsListParams>,
         accept: AcceptHeader,
     ) -> Response {
-        let extensions = params.extensions.unwrap_or_default();
-        let mut components = state.component_registry_ro.list(extensions);
+        let mut components = state.component_registry_ro.list(params.extensions);
 
         if let Some(name) = params.name {
             components.retain(|c| c.component_id.name.as_ref() == name);
@@ -339,12 +500,10 @@ pub(crate) mod components {
         if let Some(ty) = params.r#type {
             components.retain(|c| c.component_id.component_type == ty);
         }
-        let exports = params.exports.unwrap_or_default();
-        let imports = params.imports.unwrap_or_default();
         let components: Vec<_> = components
             .into_iter()
             .map(|c| {
-                let (exports, exports_ext) = if exports {
+                let (exports, exports_ext) = if params.exports {
                     let mut exports = Vec::new();
                     let mut exports_ext = Vec::new();
                     for export in c
@@ -361,14 +520,18 @@ pub(crate) mod components {
                     {
                         if export.extension.is_none() {
                             exports.push(FunctionMetadataLite::from(export));
-                        } else if extensions {
+                        } else if params.extensions {
                             exports_ext.push(FunctionMetadataLite::from(export));
                         }
                     }
 
                     (
                         Some(exports),
-                        if extensions { Some(exports_ext) } else { None },
+                        if params.extensions {
+                            Some(exports_ext)
+                        } else {
+                            None
+                        },
                     )
                 } else {
                     (None, None)
@@ -376,7 +539,7 @@ pub(crate) mod components {
 
                 ComponentConfig {
                     component_id: c.component_id,
-                    imports: if imports {
+                    imports: if params.imports {
                         Some(
                             c.imports
                                 .into_iter()
@@ -511,6 +674,16 @@ impl IntoResponse for HttpResponse {
             )
                 .into_response(),
             AcceptHeader::Text => (self.status, self.message).into_response(),
+        }
+    }
+}
+impl From<ErrorWrapper<DbErrorGeneric>> for HttpResponse {
+    fn from(value: ErrorWrapper<DbErrorGeneric>) -> Self {
+        let accept = value.1;
+        HttpResponse {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: value.0.to_string(),
+            accept,
         }
     }
 }
