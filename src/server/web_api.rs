@@ -1,6 +1,6 @@
 use crate::{
     command::server::{self, ComponentConfigRegistryRO, SubmitError},
-    server::web_api::components::components_list,
+    server::web_api::components::{component_wit, components_list},
 };
 use axum::{
     Json, Router,
@@ -40,6 +40,8 @@ pub(crate) fn app_router(state: WebApiState) -> Router {
 
 fn v1_router() -> Router<Arc<WebApiState>> {
     Router::new()
+        .route("/components", routing::get(components_list))
+        .route("/components/{digest}/wit", routing::get(component_wit))
         .route("/delays/{delay-id}/cancel", routing::put(delay_cancel))
         .route("/execution-id", routing::get(execution_id_generate))
         .route(
@@ -56,7 +58,6 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         )
         .route("/executions/{execution-id}", routing::get(execution_get))
         .route("/executions/{execution-id}", routing::put(execution_submit))
-        .route("/components", routing::get(components_list))
 }
 
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader) -> Response {
@@ -282,24 +283,43 @@ async fn execution_submit(
 }
 
 pub(crate) mod components {
+    use crate::server::web_api::HttpResponse;
+
     use super::{
         AcceptHeader, Arc, Deserialize, FunctionFqn, IntoResponse, Json, Query, Response,
         Serialize, State, WebApiState, json,
     };
+    use axum::extract::Path;
     use concepts::{
         ComponentId, ComponentType, FunctionExtension, FunctionMetadata, ParameterType,
+        component_id::InputContentDigest,
     };
+    use http::StatusCode;
     use std::fmt::Write as _;
 
     #[derive(Deserialize, Debug)]
     pub(crate) struct ComponentsListParams {
         r#type: Option<ComponentType>,
         name: Option<String>,
-        digest: Option<String>,
+        digest: Option<InputContentDigest>,
         exports: Option<bool>,
         imports: Option<bool>,
         extensions: Option<bool>,
         submittable: Option<bool>,
+    }
+
+    pub(crate) async fn component_wit(
+        Path(digest): Path<InputContentDigest>,
+        state: State<Arc<WebApiState>>,
+    ) -> Result<Response, HttpResponse> {
+        let Some(wit) = state.component_registry_ro.get_wit(&digest) else {
+            return Err(HttpResponse::not_found(AcceptHeader::Text));
+        };
+        Ok(if let Some(wit) = wit {
+            (StatusCode::OK, wit.to_string()).into_response()
+        } else {
+            (StatusCode::NO_CONTENT, "").into_response()
+        })
     }
 
     pub(crate) async fn components_list(
@@ -314,8 +334,7 @@ pub(crate) mod components {
             components.retain(|c| c.component_id.name.as_ref() == name);
         }
         if let Some(digest) = params.digest {
-            components
-                .retain(|c| c.component_id.input_digest.digest_base16_without_prefix() == digest);
+            components.retain(|c| c.component_id.input_digest == digest);
         }
         if let Some(ty) = params.r#type {
             components.retain(|c| c.component_id.component_type == ty);
@@ -449,7 +468,7 @@ pub(crate) enum AcceptHeader {
 
 struct ErrorWrapper<E>(E, AcceptHeader);
 
-struct HttpResponse {
+pub(crate) struct HttpResponse {
     status: StatusCode,
     message: String,
     accept: AcceptHeader,
@@ -467,6 +486,14 @@ impl HttpResponse {
                 message: "already finished".to_string(),
                 accept,
             },
+        }
+    }
+
+    fn not_found(accept: AcceptHeader) -> Self {
+        HttpResponse {
+            status: StatusCode::NOT_FOUND,
+            message: "not found".to_string(),
+            accept,
         }
     }
 }
@@ -489,28 +516,30 @@ impl IntoResponse for HttpResponse {
 }
 impl From<ErrorWrapper<DbErrorRead>> for HttpResponse {
     fn from(value: ErrorWrapper<DbErrorRead>) -> Self {
+        let accept = value.1;
         let (status, message) = match value.0 {
-            DbErrorRead::NotFound => (StatusCode::NOT_FOUND, "Not found".to_string()),
+            DbErrorRead::NotFound => return HttpResponse::not_found(accept),
             DbErrorRead::Generic(err) => (StatusCode::SERVICE_UNAVAILABLE, err.to_string()),
         };
         HttpResponse {
             status,
             message,
-            accept: value.1,
+            accept,
         }
     }
 }
 impl From<ErrorWrapper<DbErrorWrite>> for HttpResponse {
     fn from(value: ErrorWrapper<DbErrorWrite>) -> Self {
+        let accept = value.1;
         let (status, message) = match value.0 {
-            DbErrorWrite::NotFound => (StatusCode::NOT_FOUND, "Not found".to_string()),
+            DbErrorWrite::NotFound => return HttpResponse::not_found(accept),
             DbErrorWrite::Generic(err) => (StatusCode::SERVICE_UNAVAILABLE, err.to_string()),
             DbErrorWrite::NonRetriable(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         };
         HttpResponse {
             status,
             message,
-            accept: value.1,
+            accept,
         }
     }
 }
