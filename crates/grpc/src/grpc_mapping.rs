@@ -8,7 +8,7 @@ use concepts::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt,
         JoinSetRequest, Locked, LockedBy, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateLocked, VersionType,
+        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateLocked,
         http_client_trace::HttpClientTrace,
     },
 };
@@ -519,13 +519,10 @@ impl From<SupportedFunctionReturnValue> for grpc_gen::ResultDetail {
     }
 }
 
-pub fn from_execution_event_to_grpc(
-    event: ExecutionEvent,
-    version: VersionType,
-) -> grpc_gen::ExecutionEvent {
+pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::ExecutionEvent {
     grpc_gen::ExecutionEvent {
             created_at: Some(prost_wkt_types::Timestamp::from(event.created_at)),
-            version,
+            version: event.version.into(),
             backtrace_id: event.backtrace_id.map(|v|v.0),
             event: Some(match event.event {
                 ExecutionRequest::Created {

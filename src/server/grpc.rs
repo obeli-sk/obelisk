@@ -20,7 +20,6 @@ use concepts::storage::ExecutionRequest;
 use concepts::storage::ExecutionWithState;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
-use concepts::storage::VersionType;
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use grpc::TonicRespResult;
@@ -393,14 +392,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         let events = events
             .into_iter()
-            .enumerate()
-            .map(|(idx, execution_event)| {
-                from_execution_event_to_grpc(
-                    execution_event,
-                    request.version_from
-                        + VersionType::try_from(idx).expect("both from and to are VersionType"),
-                )
-            })
+            .map(from_execution_event_to_grpc)
             .collect();
         Ok(tonic::Response::new(
             grpc_gen::ListExecutionEventsResponse { events },
@@ -465,14 +457,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .await
             .to_status()?
             .into_iter()
-            .enumerate()
-            .map(|(idx, execution_event)| {
-                from_execution_event_to_grpc(
-                    execution_event,
-                    request.version_from
-                        + VersionType::try_from(idx).expect("both from and to are VersionType"),
-                )
-            })
+            .map(from_execution_event_to_grpc)
             .collect();
 
         let responses = conn
