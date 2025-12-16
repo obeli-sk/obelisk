@@ -182,14 +182,16 @@ pub struct JoinSetResponseEvent {
     pub event: JoinSetResponse,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type")]
 pub enum JoinSetResponse {
+    #[display("delay {}: {delay_id}", if result.is_ok() { "finished" } else { "cancelled"})]
     DelayFinished {
         delay_id: DelayId,
         result: Result<(), ()>,
     },
+    #[display("{result}: {child_execution_id}")] // execution completed..
     ChildExecutionFinished {
         child_execution_id: ExecutionIdDerived,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = Version(2)))]
@@ -1152,7 +1154,7 @@ mod wasm_backtrace {
 
 pub type ResponseCursorType = u32; // FIXME: Switch to u64
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ResponseWithCursor {
     pub event: JoinSetResponseEventOuter,
     pub cursor: ResponseCursorType,
@@ -1369,14 +1371,6 @@ impl Display for PendingStateFinished {
         }
     }
 }
-impl Display for SupportedFunctionReturnValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.as_pending_state_finished_result() {
-            PendingStateFinishedResultKind::Ok => write!(f, "ok"),
-            PendingStateFinishedResultKind::Err(err) => write!(f, "{err}"),
-        }
-    }
-}
 
 // This is not a Result so that it can be customized for serialization
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1402,9 +1396,9 @@ impl From<&SupportedFunctionReturnValue> for PendingStateFinishedResultKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum PendingStateFinishedError {
-    #[display("execution failed: {_0}")]
+    #[display("execution terminated: {_0}")]
     ExecutionFailure(ExecutionFailureKind),
-    #[display("returned error variant")]
+    #[display("execution completed with an error")]
     FallibleError,
 }
 

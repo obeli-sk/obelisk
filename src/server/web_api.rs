@@ -58,6 +58,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             routing::get(execution_events),
         )
         .route(
+            "/executions/{execution-id}/responses",
+            routing::get(execution_responses),
+        )
+        .route(
             "/executions/{execution-id}/status",
             routing::get(execution_status_get),
         )
@@ -302,10 +306,58 @@ async fn execution_events(
             for event in events {
                 writeln!(
                     &mut output,
-                    "{version} {event} {created_at}",
+                    "{version} `{created_at}` {event}",
                     version = event.version,
-                    event = event.event,
                     created_at = humantime_fmt::format_relative(event.created_at.into()),
+                    event = event.event,
+                )
+                .expect("writing to string");
+            }
+            output.into_response()
+        }
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct ExecutionResponsesParams {
+    #[serde(default)]
+    cursor_from: u32,
+    length: Option<u8>,
+    #[serde(default)]
+    including_cursor: bool,
+}
+async fn execution_responses(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+    Query(params): Query<ExecutionResponsesParams>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    const DEFAULT_LENGTH: u8 = 20;
+    let conn = state.db_pool.connection();
+    let responses = conn
+        .list_responses(
+            &execution_id,
+            Pagination::NewerThan {
+                length: params.length.unwrap_or(DEFAULT_LENGTH),
+                cursor: params.cursor_from,
+                including_cursor: params.including_cursor,
+            },
+        )
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+
+    Ok(match accept {
+        AcceptHeader::Json => Json(json!(responses)).into_response(),
+        AcceptHeader::Text => {
+            let mut output = String::new();
+            for response in responses {
+                writeln!(
+                    &mut output,
+                    "{cursor} `{created_at}` {join_set_id} {resp}",
+                    cursor = response.cursor,
+                    created_at = humantime_fmt::format_relative(response.event.created_at.into()),
+                    join_set_id = response.event.event.join_set_id,
+                    resp = response.event.event.event,
                 )
                 .expect("writing to string");
             }

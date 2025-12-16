@@ -537,6 +537,15 @@ pub enum SupportedFunctionReturnValue {
     },
     ExecutionError(FinishedExecutionError),
 }
+impl Display for SupportedFunctionReturnValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.as_pending_state_finished_result() {
+            PendingStateFinishedResultKind::Ok => write!(f, "execution completed successfully"),
+            PendingStateFinishedResultKind::Err(err) => write!(f, "{err}"),
+        }
+    }
+}
+
 pub const SUPPORTED_RETURN_VALUE_OK_EMPTY: SupportedFunctionReturnValue =
     SupportedFunctionReturnValue::Ok { ok: None };
 
