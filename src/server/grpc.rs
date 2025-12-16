@@ -240,7 +240,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let summary = grpc_gen::GetStatusResponse {
             message: Some(Message::Summary(ExecutionSummary {
                 created_at: Some(create_request.created_at.into()),
-                scheduled_at: Some(create_request.scheduled_at.into()),
+                first_scheduled_at: Some(create_request.scheduled_at.into()),
                 execution_id: Some(grpc_gen::ExecutionId::from(&execution_id)),
                 function_name: Some(create_request.ffqn.clone().into()),
                 current_status: Some(grpc_pending_status),
@@ -350,14 +350,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                      ffqn,
                      pending_state,
                      created_at,
-                     scheduled_at,
-                     component_id_input_digest: _,
+                     first_scheduled_at,
+                     component_digest: _,
                  }| grpc_gen::ExecutionSummary {
                     execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
                     function_name: Some(ffqn.into()),
                     current_status: Some(grpc_gen::ExecutionStatus::from(pending_state)),
                     created_at: Some(created_at.into()),
-                    scheduled_at: Some(scheduled_at.into()),
+                    first_scheduled_at: Some(first_scheduled_at.into()),
                 },
             )
             .collect();

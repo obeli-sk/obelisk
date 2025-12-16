@@ -1164,8 +1164,8 @@ pub struct ExecutionWithState {
     pub ffqn: FunctionFqn,
     pub pending_state: PendingState,
     pub created_at: DateTime<Utc>,
-    pub scheduled_at: DateTime<Utc>,
-    pub component_id_input_digest: InputContentDigest,
+    pub first_scheduled_at: DateTime<Utc>,
+    pub component_digest: InputContentDigest,
 }
 
 pub enum ExecutionListPagination {

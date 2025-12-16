@@ -158,6 +158,9 @@ ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 /// `Locked`:               `max_retries`, `retry_exp_backoff_millis`, `last_lock_version`, `executor_id`, `run_id`
 /// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
 /// `Finished` :            `result_kind`.
+///
+/// pending_expires_finished - either pending at, lock expires at or finished at based on state.
+///
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
@@ -166,11 +169,11 @@ CREATE TABLE IF NOT EXISTS t_state (
     ffqn TEXT NOT NULL,
     created_at TEXT NOT NULL,
     component_id_input_digest BLOB NOT NULL,
+    first_scheduled_at TEXT NOT NULL,
 
     pending_expires_finished TEXT NOT NULL,
     state TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    scheduled_at TEXT NOT NULL,
     intermittent_event_count INTEGER NOT NULL,
 
     max_retries INTEGER,
@@ -1149,7 +1152,7 @@ impl SqlitePool {
                     created_at,
                     component_id_input_digest,
                     updated_at,
-                    scheduled_at,
+                    first_scheduled_at,
                     intermittent_event_count
                     )
                 VALUES (
@@ -1162,7 +1165,7 @@ impl SqlitePool {
                     :created_at,
                     :component_id_input_digest,
                     CURRENT_TIMESTAMP,
-                    :scheduled_at,
+                    :first_scheduled_at,
                     0
                     )
                 ",
@@ -1176,7 +1179,7 @@ impl SqlitePool {
                 ":state": STATE_PENDING_AT,
                 ":created_at": created_at,
                 ":component_id_input_digest": component_id.input_digest,
-                ":scheduled_at": scheduled_at,
+                ":first_scheduled_at": scheduled_at,
             })?;
             AppendNotifier {
                 pending_at: Some(NotifierPendingAt {
@@ -1582,7 +1585,6 @@ impl SqlitePool {
             let mut params: Vec<(&'static str, ToSqlOutput<'a>)> = vec![];
             let limit = pagination.length();
             let limit_desc = pagination.is_desc();
-            let rel = pagination.rel();
             match pagination {
                 Pagination::NewerThan {
                     cursor: Some(cursor),
@@ -1592,7 +1594,7 @@ impl SqlitePool {
                     cursor: Some(cursor),
                     ..
                 } => {
-                    where_vec.push(format!("{column} {rel} :cursor"));
+                    where_vec.push(format!("{column} {rel} :cursor", rel = pagination.rel()));
                     let cursor = cursor.to_sql().map_err(|err| {
                         error!("Possible program error - cannot convert cursor to sql - {err:?}");
                         DbErrorGeneric::Uncategorized("cannot convert cursor to sql".into())
@@ -1639,7 +1641,7 @@ impl SqlitePool {
         };
         let sql = format!(
             r"
-            SELECT created_at, scheduled_at, component_id_input_digest,
+            SELECT created_at, first_scheduled_at, component_id_input_digest,
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
@@ -1662,7 +1664,7 @@ impl SqlitePool {
                     let component_id_input_digest: InputContentDigest =
                         row.get("component_id_input_digest")?;
                     let created_at = row.get("created_at")?;
-                    let scheduled_at = row.get("scheduled_at")?;
+                    let first_scheduled_at = row.get("first_scheduled_at")?;
                     let combined_state = CombinedState::new(
                         CombinedStateDTO {
                             component_id_input_digest: component_id_input_digest.clone(),
@@ -1691,8 +1693,8 @@ impl SqlitePool {
                         ffqn: combined_state.ffqn,
                         pending_state: combined_state.pending_state,
                         created_at,
-                        scheduled_at,
-                        component_id_input_digest,
+                        first_scheduled_at,
+                        component_digest: component_id_input_digest,
                     })
                 },
             )?
