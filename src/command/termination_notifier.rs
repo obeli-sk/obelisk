@@ -1,7 +1,7 @@
-use tokio::signal;
+use tokio::{signal, sync::watch};
 use tracing::warn;
 
-pub(crate) async fn shutdown_signal() {
+pub(crate) async fn termination_notifier(termination_sender: watch::Sender<bool>) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -25,4 +25,5 @@ pub(crate) async fn shutdown_signal() {
     }
 
     warn!("Received shutdown signal");
+    drop(termination_sender);
 }

@@ -38,7 +38,7 @@ pub(crate) struct WebApiState {
     pub(crate) db_pool: Arc<dyn DbPool>,
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
     pub(crate) cancel_registry: CancelRegistry,
-    pub(crate) shutdown_requested: watch::Receiver<bool>,
+    pub(crate) termination_watcher: watch::Receiver<bool>,
 }
 
 pub(crate) fn app_router(state: WebApiState) -> Router {
@@ -602,7 +602,7 @@ fn stream_execution_response(
             execution_id,
             state.db_pool.clone(),
             tx,
-            state.shutdown_requested.clone(),
+            state.termination_watcher.clone(),
         )
         .instrument(span),
     );

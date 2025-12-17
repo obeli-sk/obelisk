@@ -1,5 +1,5 @@
 use crate::args::Server;
-use crate::command::shutdown_signal::shutdown_signal;
+use crate::command::termination_notifier::termination_notifier;
 use crate::config::ComponentConfig;
 use crate::config::ComponentConfigImportable;
 use crate::config::ComponentLocation;
@@ -473,12 +473,15 @@ pub(crate) async fn run(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
+    let (termination_sender, termination_watcher) = watch::channel(false);
+    tokio::spawn(async move { termination_notifier(termination_sender).await });
 
     Box::pin(run_internal(
         config,
         config_holder,
         params,
         graceful_shutdown_complete_sender,
+        termination_watcher,
     ))
     .await?;
 
@@ -502,12 +505,13 @@ pub(crate) async fn verify(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
-    let shutdown_signal = std::pin::pin!(shutdown_signal());
+    let (termination_sender, mut termination_watcher) = watch::channel(false);
+    tokio::spawn(async move { termination_notifier(termination_sender).await });
     Box::pin(verify_internal(
         config,
         config_holder,
         verify_params,
-        shutdown_signal,
+        &mut termination_watcher,
     ))
     .await?;
     Ok(())
@@ -526,7 +530,7 @@ async fn verify_internal(
     config: ConfigToml,
     config_holder: ConfigHolder,
     params: VerifyParams,
-    mut shutdown_signal: Pin<&mut impl Future<Output = ()>>,
+    termination_watcher: &mut watch::Receiver<bool>,
 ) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
     info!("Verifying server configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
@@ -574,10 +578,11 @@ async fn verify_internal(
         Arc::from(metadata_dir),
         params.ignore_missing_env_vars,
         config_holder.path_prefixes,
-        shutdown_signal.as_mut(),
+        termination_watcher,
     )
     .await?;
-    let compiled_and_linked = ServerCompiledLinked::new(server_verified, shutdown_signal).await?;
+    let compiled_and_linked =
+        ServerCompiledLinked::new(server_verified, termination_watcher).await?;
     info!(
         "Server configuration was verified{}",
         if compiled_and_linked.supressed_errors.is_some() {
@@ -594,9 +599,8 @@ async fn run_internal(
     config_holder: ConfigHolder,
     params: RunParams,
     graceful_shutdown_complete_sender: oneshot::Sender<()>,
+    mut termination_watcher: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
-    let mut shutdown_signal = Box::pin(shutdown_signal());
-
     let span = info_span!("init");
     let api_listening_addr = config.api.listening_addr;
 
@@ -632,13 +636,12 @@ async fn run_internal(
             clean_codegen_cache: params.clean_codegen_cache,
             ignore_missing_env_vars: false,
         },
-        shutdown_signal.as_mut(),
+        &mut termination_watcher,
     ))
     .instrument(span.clone())
     .await?;
 
     let cancel_registry = CancelRegistry::new();
-    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let (server_init, component_registry_ro) = spawn_tasks_and_threads(
         compiled_and_linked,
         &sqlite_file,
@@ -648,7 +651,6 @@ async fn run_internal(
         cancel_watcher,
         &cancel_registry,
         graceful_shutdown_complete_sender,
-        shutdown_sender,
     )
     .instrument(span)
     .await?;
@@ -657,7 +659,7 @@ async fn run_internal(
 
     let grpc_server = Arc::new(GrpcServer::new(
         server_init_internal.db_pool.clone(),
-        shutdown_receiver.clone(),
+        termination_watcher.clone(),
         component_registry_ro.clone(),
         component_source_map,
         cancel_registry.clone(),
@@ -703,7 +705,7 @@ async fn run_internal(
         db_pool: server_init_internal.db_pool.clone(),
         component_registry_ro,
         cancel_registry,
-        shutdown_requested: shutdown_receiver,
+        termination_watcher: termination_watcher.clone(),
     });
     let app: axum::Router<()> = app_router.fallback_service(grpc_service);
     let app_svc = app.into_make_service();
@@ -716,12 +718,8 @@ async fn run_internal(
         .with_graceful_shutdown(async move {
             info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
             info!("Server is ready");
-            shutdown_signal.await;
-            tokio::spawn(async move {
-                // Drop `server_init` asynchronously. Once the shutdown sender is closed,
-                // all web-api and grpc streaming tasks are terminated.
-                drop(server_init);
-            });
+            let _: Result<_, _> = termination_watcher.changed().await;
+            drop(server_init); // must be moved from outer scope, otherwise HTTP/gRPC streams will not be terminated and server will not exit `serve`.
         })
         .await
         .with_context(|| format!("server error listening on {api_listening_addr}"))?;
@@ -757,7 +755,7 @@ impl ServerVerified {
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         path_prefixes: PathPrefixes,
-        shutdown_signal: Pin<&mut impl Future<Output = ()>>,
+        termination_watcher: &mut watch::Receiver<bool>,
     ) -> Result<(Self, ComponentSourceMap), anyhow::Error> {
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
         let workflows_lock_extension_leeway =
@@ -844,7 +842,7 @@ impl ServerVerified {
                 .global_executor_instance_limiter
                 .as_semaphore(),
             fuel,
-            shutdown_signal,
+            termination_watcher,
         )
         .await?;
         debug!("Verified config: {config:#?}");
@@ -890,7 +888,7 @@ struct ServerCompiledLinked {
 impl ServerCompiledLinked {
     async fn new(
         server_verified: ServerVerified,
-        shutdown_signal: Pin<&mut impl Future<Output = ()>>,
+        termination_watcher: &mut watch::Receiver<bool>,
     ) -> Result<Self, anyhow::Error> {
         let (compiled_components, component_registry_ro, supressed_errors) = compile_and_verify(
             &server_verified.engines,
@@ -902,7 +900,7 @@ impl ServerCompiledLinked {
             server_verified.config.fuel,
             server_verified.build_semaphore,
             server_verified.workflows_lock_extension_leeway,
-            shutdown_signal,
+            termination_watcher,
         )
         .await?;
         Ok(Self {
@@ -921,7 +919,6 @@ struct ServerInit(Option<ServerInitInner>);
 struct ServerInitInner {
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
-    shutdown_sender: watch::Sender<bool>,
     exec_join_handles: Vec<ExecutorTaskHandle>,
     timers_watcher: Option<AbortOnDropHandle>,
     cancel_watcher: Option<AbortOnDropHandle>,
@@ -942,7 +939,6 @@ async fn spawn_tasks_and_threads(
     cancel_watcher: CancelWatcherTomlConfig,
     cancel_registry: &CancelRegistry,
     graceful_shutdown_complete_sender: oneshot::Sender<()>,
-    shutdown_sender: watch::Sender<bool>,
 ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
     // Start components requiring a database
     let epoch_ticker = EpochTicker::spawn_new(
@@ -1034,7 +1030,6 @@ async fn spawn_tasks_and_threads(
         db_close: Box::pin(async move {
             db.close().await;
         }),
-        shutdown_sender,
         exec_join_handles,
         timers_watcher,
         cancel_watcher,
@@ -1065,7 +1060,6 @@ impl ServerInitInner {
             let ServerInitInner {
                 db_pool,
                 db_close,
-                shutdown_sender,
                 exec_join_handles,
                 timers_watcher,
                 cancel_watcher,
@@ -1076,7 +1070,6 @@ impl ServerInitInner {
             } = self;
             // Explicit drop! Otherwise fields are dropped at the end of this function.
             drop(db_pool);
-            drop(shutdown_sender);
             drop(timers_watcher);
             drop(cancel_watcher);
             drop(http_servers_handles);
@@ -1185,7 +1178,7 @@ impl ConfigVerified {
         parent_preopen_dir: Option<Arc<Path>>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
-        shutdown_signal: Pin<&mut impl Future<Output = ()>>,
+        termination_watcher: &mut watch::Receiver<bool>,
     ) -> Result<ConfigVerified, anyhow::Error> {
         // Check uniqueness of server and webhook names.
         {
@@ -1353,7 +1346,7 @@ impl ConfigVerified {
                     fuel
                 })
             },
-            () = shutdown_signal => {
+            _ = termination_watcher.changed() => {
                 warn!("Received SIGINT, canceling while resolving the WASM files");
                 anyhow::bail!("canceling while resolving the WASM files")
             }
@@ -1394,7 +1387,7 @@ async fn compile_and_verify(
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
     workflows_lock_extension_leeway: Duration,
-    shutdown_signal: Pin<&mut impl Future<Output = ()>>,
+    termination_watcher: &mut watch::Receiver<bool>,
 ) -> Result<
     (
         LinkedComponents,
@@ -1555,7 +1548,7 @@ async fn compile_and_verify(
                 webhooks_by_names,
             }, component_registry_ro, supressed_errors))
         },
-        () = shutdown_signal => {
+        _ = termination_watcher.changed() => {
             warn!("Received SIGINT, canceling while compiling the components");
             anyhow::bail!("canceling while compiling the components")
         }
@@ -2111,15 +2104,13 @@ pub(crate) fn gen_trace_id() -> String {
 #[cfg(test)]
 mod tests {
     use crate::{
-        command::{
-            server::{ServerCompiledLinked, ServerVerified, VerifyParams},
-            shutdown_signal::shutdown_signal,
-        },
+        command::server::{ServerCompiledLinked, ServerVerified, VerifyParams},
         config::config_holder::ConfigHolder,
     };
     use directories::BaseDirs;
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
+    use tokio::sync::watch;
 
     fn get_workspace_dir() -> PathBuf {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
@@ -2148,7 +2139,9 @@ mod tests {
         tokio::fs::create_dir_all(&wasm_cache_dir).await?;
         let metadata_dir = wasm_cache_dir.join("metadata");
         tokio::fs::create_dir_all(&metadata_dir).await?;
-        let mut shutdown_signal = std::pin::pin!(shutdown_signal());
+
+        let (_termination_sender, mut termination_watcher) = watch::channel(false);
+
         let (server_verified, _component_source_map) = ServerVerified::new(
             config,
             codegen_cache,
@@ -2156,11 +2149,11 @@ mod tests {
             Arc::from(metadata_dir),
             VerifyParams::default().ignore_missing_env_vars,
             config_holder.path_prefixes,
-            shutdown_signal.as_mut(),
+            &mut termination_watcher,
         )
         .await?;
         let compiled_and_linked =
-            ServerCompiledLinked::new(server_verified, shutdown_signal).await?;
+            ServerCompiledLinked::new(server_verified, &mut termination_watcher).await?;
         assert_eq!(compiled_and_linked.supressed_errors, None);
         Ok(())
     }

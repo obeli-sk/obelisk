@@ -54,7 +54,7 @@ use wasm_workers::activity::cancel_registry::CancelRegistry;
 pub(crate) struct GrpcServer {
     #[debug(skip)]
     db_pool: Arc<dyn DbPool>,
-    shutdown_requested: watch::Receiver<bool>,
+    termination_watcher: watch::Receiver<bool>,
     component_registry_ro: ComponentConfigRegistryRO,
     component_source_map: ComponentSourceMap,
     #[debug(skip)]
@@ -64,14 +64,14 @@ pub(crate) struct GrpcServer {
 impl GrpcServer {
     pub(crate) fn new(
         db_pool: Arc<dyn DbPool>,
-        shutdown_requested: watch::Receiver<bool>,
+        termination_watcher: watch::Receiver<bool>,
         component_registry_ro: ComponentConfigRegistryRO,
         component_source_map: ComponentSourceMap,
         cancel_registry: CancelRegistry,
     ) -> Self {
         Self {
             db_pool,
-            shutdown_requested,
+            termination_watcher,
             component_registry_ro,
             component_source_map,
             cancel_registry,
@@ -297,7 +297,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .await
                 .expect("mpsc bounded channel requires buffer > 0");
             let db_pool = self.db_pool.clone();
-            let shutdown_requested = self.shutdown_requested.clone();
+            let shutdown_requested = self.termination_watcher.clone();
             let trace_id = server::gen_trace_id();
             let span = info_span!("poll_status", trace_id);
             tokio::spawn(
