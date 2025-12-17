@@ -921,18 +921,12 @@ struct ServerInit(Option<ServerInitInner>);
 struct ServerInitInner {
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
-    #[expect(dead_code)] // Will notify streaming tasks in close
     shutdown_sender: watch::Sender<bool>,
     exec_join_handles: Vec<ExecutorTaskHandle>,
-    #[expect(dead_code)]
     timers_watcher: Option<AbortOnDropHandle>,
-    #[expect(dead_code)]
     cancel_watcher: Option<AbortOnDropHandle>,
-    #[expect(dead_code)] // http servers will be aborted automatically
     http_servers_handles: Vec<AbortOnDropHandle>,
-    #[expect(dead_code)] // Shuts itself down in drop
     epoch_ticker: EpochTicker,
-    #[expect(dead_code)]
     preopens_cleaner: Option<AbortOnDropHandle>,
     graceful_shutdown_complete_sender: oneshot::Sender<()>,
 }
@@ -1069,18 +1063,25 @@ impl ServerInitInner {
         info!("Server is shutting down");
         let (db_close, exec_join_handles, graceful_shutdown_complete_sender) = {
             let ServerInitInner {
-                db_pool: _,
+                db_pool,
                 db_close,
-                shutdown_sender: _,
+                shutdown_sender,
                 exec_join_handles,
-                timers_watcher: _,
-                cancel_watcher: _,
-                http_servers_handles: _,
-                epoch_ticker: _,
-                preopens_cleaner: _,
+                timers_watcher,
+                cancel_watcher,
+                http_servers_handles,
+                epoch_ticker,
+                preopens_cleaner,
                 graceful_shutdown_complete_sender,
             } = self;
-            // drop AbortOnDropHandles
+            // Explicit drop! Otherwise fields are dropped at the end of this function.
+            drop(db_pool);
+            drop(shutdown_sender);
+            drop(timers_watcher);
+            drop(cancel_watcher);
+            drop(http_servers_handles);
+            drop(epoch_ticker);
+            drop(preopens_cleaner);
             (
                 db_close,
                 exec_join_handles,
