@@ -647,10 +647,8 @@ async fn run_internal(
     .instrument(span)
     .await?;
 
-    let server_init_internal = &server_init.0;
-
     let grpc_server = Arc::new(GrpcServer::new(
-        server_init_internal.db_pool.clone(),
+        server_init.db_pool.clone(),
         termination_watcher.clone(),
         component_registry_ro.clone(),
         component_source_map,
@@ -694,7 +692,7 @@ async fn run_internal(
         .service(grpc.routes());
 
     let app_router = app_router(WebApiState {
-        db_pool: server_init_internal.db_pool.clone(),
+        db_pool: server_init.db_pool.clone(),
         component_registry_ro,
         cancel_registry,
         termination_watcher: termination_watcher.clone(),
@@ -711,7 +709,7 @@ async fn run_internal(
             info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
             info!("Server is ready");
             let _: Result<_, _> = termination_watcher.changed().await;
-            server_init.0.close().await; // must be closed here, otherwise HTTP/gRPC streams will not be terminated and server will not exit `serve`.
+            server_init.close().await; // must be closed here, otherwise HTTP/gRPC streams will not be terminated and server will not exit `serve`.
         })
         .await
         .with_context(|| format!("server error listening on {api_listening_addr}"))?;
@@ -907,18 +905,6 @@ impl ServerCompiledLinked {
     }
 }
 
-struct ServerInit(ServerInitInner);
-struct ServerInitInner {
-    db_pool: Arc<dyn DbPool>,
-    db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
-    exec_join_handles: Vec<ExecutorTaskHandle>,
-    timers_watcher: Option<AbortOnDropHandle>,
-    cancel_watcher: Option<AbortOnDropHandle>,
-    http_servers_handles: Vec<AbortOnDropHandle>,
-    epoch_ticker: EpochTicker,
-    preopens_cleaner: Option<AbortOnDropHandle>,
-}
-
 #[instrument(skip_all)]
 async fn spawn_tasks_and_threads(
     mut server_compiled_linked: ServerCompiledLinked,
@@ -1014,7 +1000,7 @@ async fn spawn_tasks_and_threads(
         global_webhook_instance_limiter.clone(),
     )
     .await?;
-    let inner = ServerInitInner {
+    let server_init = ServerInit {
         db_pool,
         db_close: Box::pin(async move {
             db.close().await;
@@ -1026,16 +1012,24 @@ async fn spawn_tasks_and_threads(
         epoch_ticker,
         preopens_cleaner,
     };
-    Ok((
-        ServerInit(inner),
-        server_compiled_linked.component_registry_ro,
-    ))
+    Ok((server_init, server_compiled_linked.component_registry_ro))
 }
-impl ServerInitInner {
+
+struct ServerInit {
+    db_pool: Arc<dyn DbPool>,
+    db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
+    exec_join_handles: Vec<ExecutorTaskHandle>,
+    timers_watcher: Option<AbortOnDropHandle>,
+    cancel_watcher: Option<AbortOnDropHandle>,
+    http_servers_handles: Vec<AbortOnDropHandle>,
+    epoch_ticker: EpochTicker,
+    preopens_cleaner: Option<AbortOnDropHandle>,
+}
+impl ServerInit {
     async fn close(self) {
         info!("Server is shutting down");
 
-        let ServerInitInner {
+        let ServerInit {
             db_pool,
             db_close,
             exec_join_handles,
