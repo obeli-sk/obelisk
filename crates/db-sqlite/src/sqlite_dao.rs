@@ -846,7 +846,7 @@ impl SqlitePool {
         let mut ltx = match command_rx.blocking_recv() {
             Some(ThreadCommand::LogicalTx(ltx)) => ltx,
             Some(ThreadCommand::Shutdown) => {
-                debug!("shutdown message received");
+                debug!("Shutdown message received");
                 return Err(());
             }
             None => {
@@ -866,7 +866,7 @@ impl SqlitePool {
         while let Ok(more) = command_rx.try_recv() {
             let mut ltx = match more {
                 ThreadCommand::Shutdown => {
-                    debug!("shutdown message received");
+                    debug!("Shutdown message received");
                     return Err(());
                 }
                 ThreadCommand::LogicalTx(ltx) => ltx,

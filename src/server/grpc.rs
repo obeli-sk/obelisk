@@ -55,10 +55,10 @@ pub(crate) struct GrpcServer {
     #[debug(skip)]
     db_pool: Arc<dyn DbPool>,
     shutdown_requested: watch::Receiver<bool>,
-    pub(crate) component_registry_ro: ComponentConfigRegistryRO,
+    component_registry_ro: ComponentConfigRegistryRO,
     component_source_map: ComponentSourceMap,
     #[debug(skip)]
-    pub(crate) cancel_registry: CancelRegistry,
+    cancel_registry: CancelRegistry,
 }
 
 impl GrpcServer {

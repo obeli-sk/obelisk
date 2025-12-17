@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use std::{fmt::Write as _, time::Duration};
+use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{Instrument as _, debug, error, info_span, trace};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
@@ -37,6 +38,7 @@ pub(crate) struct WebApiState {
     pub(crate) db_pool: Arc<dyn DbPool>,
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
     pub(crate) cancel_registry: CancelRegistry,
+    pub(crate) shutdown_requested: watch::Receiver<bool>,
 }
 
 pub(crate) fn app_router(state: WebApiState) -> Router {
@@ -504,7 +506,7 @@ async fn execution_get(
                 });
             }
         };
-        Ok(Json(json!(result)).into_response())
+        Ok(Json(result).into_response())
     } else if params.follow {
         Ok(stream_execution_response(
             execution_id,
@@ -592,49 +594,18 @@ fn stream_execution_response(
     state: State<Arc<WebApiState>>,
     status: StatusCode,
 ) -> http::Response<Body> {
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+    let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
     let trace_id = server::gen_trace_id();
     let span = info_span!("stream_execution_response", trace_id, %execution_id);
-    tokio::spawn(async move {
-        debug!("Started streaming execution response");
-        loop {
-            tokio::select! {
-                () = tx.closed() => {
-                    debug!("Client disconnected");
-                    return;
-                }
-                () = tokio::time::sleep(Duration::from_secs(1)) => {
-                    let last_event = state
-                            .db_pool
-                            .connection()
-                            .get_last_execution_event(&execution_id)
-                            .await;
-                    match last_event {
-                        Ok(ExecutionEvent{event: ExecutionRequest::Finished { result, .. }, ..}) => {
-                            let result = RetVal::from(result);
-                            let result = match serde_json::to_vec(&result) {
-                                Ok(ok) => ok,
-                                Err(err) => {
-                                    error!("Result {result:?} should be serializable - {err:?}");
-                                    return;
-                                }
-                            };
-                            let _ = tx.try_send(Ok(Bytes::from(result))); // Ignore if the remote side is closed.
-                            debug!("Sent execution result");
-                            return;
-                        },
-                        Err(db_err) => {
-                            debug!("Database error, disconnecting - {db_err:?}");
-                            return;
-                        }
-                        Ok(other) =>{
-                            trace!("Ignoring {other}");
-                        }
-                    }
-                }
-            }
-        }
-    }.instrument(span));
+    tokio::spawn(
+        stream_execution_response_task(
+            execution_id,
+            state.db_pool.clone(),
+            tx,
+            state.shutdown_requested.clone(),
+        )
+        .instrument(span),
+    );
     // Send response headers immediately.
     let stream = ReceiverStream::new(rx);
     let mut response = (status, Body::from_stream(stream)).into_response();
@@ -643,6 +614,56 @@ fn stream_execution_response(
         header::HeaderValue::from_static("application/json"),
     );
     response
+}
+
+async fn stream_execution_response_task(
+    execution_id: ExecutionId,
+    db_pool: Arc<dyn DbPool>,
+    tx: mpsc::Sender<Result<Bytes, std::io::Error>>,
+    mut shutdown_requested: watch::Receiver<bool>,
+) {
+    debug!("Started streaming execution response");
+    loop {
+        tokio::select! {
+            () = tx.closed() => {
+                debug!("Client disconnected");
+                return;
+            }
+            _ = shutdown_requested.changed() => {
+                debug!("Shutdown requested");
+                // Not writing any response as the successful status header was already sent.
+                return;
+            }
+            () = tokio::time::sleep(Duration::from_secs(1)) => {
+                let last_event = db_pool
+                        .connection()
+                        .get_last_execution_event(&execution_id)
+                        .await;
+                match last_event {
+                    Ok(ExecutionEvent{event: ExecutionRequest::Finished { result, .. }, ..}) => {
+                        let result = RetVal::from(result);
+                        let result = match serde_json::to_vec(&result) {
+                            Ok(ok) => ok,
+                            Err(err) => {
+                                error!("Result {result:?} should be serializable - {err:?}");
+                                return;
+                            }
+                        };
+                        let _ = tx.try_send(Ok(Bytes::from(result))); // Ignore if the remote side is closed.
+                        debug!("Sent execution result");
+                        return;
+                    },
+                    Err(db_err) => {
+                        debug!("Database error, disconnecting - {db_err:?}");
+                        return;
+                    }
+                    Ok(other) =>{
+                        trace!("Ignoring {other}");
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub(crate) mod components {

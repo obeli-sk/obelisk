@@ -14,6 +14,9 @@ use tracing::info;
 pub const CANCEL_RETRIES: u8 = 5;
 
 #[derive(Clone)]
+/// All currently running activities in this process.
+/// Activity worker tasks register themselves and listen on cancellation token.
+/// RPCs can trigger `cancel` which writes the new state to db and triggers the cancellation token.
 pub struct CancelRegistry {
     tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, oneshot::Sender<()>>>>,
 }

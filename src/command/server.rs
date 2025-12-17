@@ -366,7 +366,7 @@ pub(crate) async fn poll_status(
                 }
             }
             _ = shutdown_requested.changed() => {
-                debug!("Exitting get_status early, database is closing");
+                debug!("Shutdown requested");
                 let _ = status_stream_sender
                     .send(TonicResult::Err(tonic::Status::aborted(
                         "server is shutting down",
@@ -638,7 +638,7 @@ async fn run_internal(
     .await?;
 
     let cancel_registry = CancelRegistry::new();
-
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let (server_init, component_registry_ro) = spawn_tasks_and_threads(
         compiled_and_linked,
         &sqlite_file,
@@ -648,18 +648,19 @@ async fn run_internal(
         cancel_watcher,
         &cancel_registry,
         graceful_shutdown_complete_sender,
+        shutdown_sender,
     )
     .instrument(span)
     .await?;
 
-    let server_init = server_init.0.as_ref().expect("server is not shut down");
+    let server_init_internal = server_init.0.as_ref().expect("server is not shut down");
 
     let grpc_server = Arc::new(GrpcServer::new(
-        server_init.db_pool.clone(),
-        server_init.shutdown.1.clone(),
-        component_registry_ro,
+        server_init_internal.db_pool.clone(),
+        shutdown_receiver.clone(),
+        component_registry_ro.clone(),
         component_source_map,
-        cancel_registry,
+        cancel_registry.clone(),
     ));
 
     let mut grpc = RoutesBuilder::default();
@@ -699,9 +700,10 @@ async fn run_internal(
         .service(grpc.routes());
 
     let app_router = app_router(WebApiState {
-        db_pool: server_init.db_pool.clone(),
-        component_registry_ro: grpc_server.component_registry_ro.clone(),
-        cancel_registry: grpc_server.cancel_registry.clone(),
+        db_pool: server_init_internal.db_pool.clone(),
+        component_registry_ro,
+        cancel_registry,
+        shutdown_requested: shutdown_receiver,
     });
     let app: axum::Router<()> = app_router.fallback_service(grpc_service);
     let app_svc = app.into_make_service();
@@ -712,13 +714,20 @@ async fn run_internal(
 
     axum::serve(listener, app_svc)
         .with_graceful_shutdown(async move {
-            info!("Serving gRPC requests at {api_listening_addr}");
+            info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
             info!("Server is ready");
             shutdown_signal.await;
-            // Will log in ServerInitInner::close
+            tokio::spawn(async move {
+                // Drop `server_init` asynchronously. Once the shutdown sender is closed,
+                // all web-api and grpc streaming tasks are terminated.
+                drop(server_init);
+            });
         })
         .await
-        .with_context(|| format!("server error listening on {api_listening_addr}"))
+        .with_context(|| format!("server error listening on {api_listening_addr}"))?;
+    // Normally Axum blocks before this point until all clients are disconnected.
+    debug!("Server {api_listening_addr} has been closed");
+    Ok(())
 }
 
 fn make_span<B>(request: &axum::http::Request<B>) -> Span {
@@ -912,7 +921,8 @@ struct ServerInit(Option<ServerInitInner>);
 struct ServerInitInner {
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
-    shutdown: (watch::Sender<bool>, watch::Receiver<bool>),
+    #[expect(dead_code)] // Will notify streaming tasks in close
+    shutdown_sender: watch::Sender<bool>,
     exec_join_handles: Vec<ExecutorTaskHandle>,
     #[expect(dead_code)]
     timers_watcher: Option<AbortOnDropHandle>,
@@ -938,6 +948,7 @@ async fn spawn_tasks_and_threads(
     cancel_watcher: CancelWatcherTomlConfig,
     cancel_registry: &CancelRegistry,
     graceful_shutdown_complete_sender: oneshot::Sender<()>,
+    shutdown_sender: watch::Sender<bool>,
 ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
     // Start components requiring a database
     let epoch_ticker = EpochTicker::spawn_new(
@@ -1029,7 +1040,7 @@ async fn spawn_tasks_and_threads(
         db_close: Box::pin(async move {
             db.close().await;
         }),
-        shutdown: watch::channel(false),
+        shutdown_sender,
         exec_join_handles,
         timers_watcher,
         cancel_watcher,
@@ -1060,7 +1071,7 @@ impl ServerInitInner {
             let ServerInitInner {
                 db_pool: _,
                 db_close,
-                shutdown: _, // Dropping notifies follower tasks.
+                shutdown_sender: _,
                 exec_join_handles,
                 timers_watcher: _,
                 cancel_watcher: _,
@@ -1076,11 +1087,13 @@ impl ServerInitInner {
                 graceful_shutdown_complete_sender,
             )
         };
+        debug!("Closed the shutdown watcher");
         // Close most of the services. Worker tasks might still be running.
         for exec_join_handle in exec_join_handles {
             exec_join_handle.close().await;
         }
         db_close.await;
+        // Notify the main task that the shutdown is finished.
         let _ = graceful_shutdown_complete_sender
             .send(())
             .map_err(|()| warn!("could not send the graceful shutdown complete signal"));
