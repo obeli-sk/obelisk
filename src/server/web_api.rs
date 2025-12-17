@@ -510,7 +510,7 @@ async fn execution_get(
     } else if params.follow {
         Ok(stream_execution_response(
             execution_id,
-            state,
+            &state,
             StatusCode::OK,
         ))
     } else {
@@ -577,7 +577,7 @@ async fn execution_submit(
         SubmitOutcome::ExistsWithSameParameters => StatusCode::OK,
     };
     if follow {
-        Ok(stream_execution_response(execution_id, state, status))
+        Ok(stream_execution_response(execution_id, &state, status))
     } else {
         Ok(HttpResponse {
             status,
@@ -591,7 +591,7 @@ async fn execution_submit(
 /// Wait until the execution finishes, return `RetVal` as JSON.
 fn stream_execution_response(
     execution_id: ExecutionId,
-    state: State<Arc<WebApiState>>,
+    state: &WebApiState,
     status: StatusCode,
 ) -> http::Response<Body> {
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
