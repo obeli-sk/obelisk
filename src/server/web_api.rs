@@ -4,6 +4,7 @@ use crate::{
 };
 use axum::{
     Json, Router,
+    body::{Body, Bytes},
     extract::{Path, Query, State},
     response::{IntoResponse, Response},
     routing,
@@ -15,17 +16,19 @@ use concepts::{
     component_id::InputContentDigest,
     prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
-        self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, DbPool,
+        self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, DbPool, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState, Pagination, PendingState,
         Version, VersionType,
     },
     time::{ClockFn as _, Now},
 };
-use http::StatusCode;
+use http::{StatusCode, header};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::fmt::Write as _;
 use std::sync::Arc;
+use std::{fmt::Write as _, time::Duration};
+use tokio_stream::wrappers::ReceiverStream;
+use tracing::{Instrument as _, debug, error, info_span, trace};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 
@@ -455,7 +458,7 @@ async fn execution_stub(
     .into_response())
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum RetVal {
     Ok(Option<WastVal>),
@@ -478,59 +481,85 @@ impl From<SupportedFunctionReturnValue> for RetVal {
 
 async fn execution_get(
     Path(execution_id): Path<ExecutionId>,
+    Query(params): Query<ExecutionFollowParam>,
     state: State<Arc<WebApiState>>,
-) -> Result<Response, HttpResponse> {
+) -> Result<http::Response<Body>, HttpResponse> {
     let last_event = state
         .db_pool
         .connection()
         .get_last_execution_event(&execution_id)
         .await
         .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?;
-    Ok(
-        if let ExecutionRequest::Finished { result, .. } = last_event.event {
-            let result = RetVal::from(result);
-            Json(json!(result)).into_response()
-        } else {
-            HttpResponse {
-                status: StatusCode::TOO_EARLY,
-                message: "not finished yet".to_string(),
-                accept: AcceptHeader::Json,
+
+    if let ExecutionRequest::Finished { result, .. } = last_event.event {
+        let result = RetVal::from(result);
+        let result = match serde_json::to_vec(&result) {
+            Ok(ok) => ok,
+            Err(err) => {
+                error!("Result {result:?} should be serializable - {err:?}");
+                return Err(HttpResponse {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    message: "cannot serialize".to_string(),
+                    accept: AcceptHeader::Json,
+                });
             }
-            .into_response()
-        },
-    )
+        };
+        Ok(Json(json!(result)).into_response())
+    } else if params.follow {
+        Ok(stream_execution_response(
+            execution_id,
+            state,
+            StatusCode::OK,
+        ))
+    } else {
+        Ok(HttpResponse {
+            status: StatusCode::TOO_EARLY,
+            message: "not finished yet".to_string(),
+            accept: AcceptHeader::Json,
+        }
+        .into_response())
+    }
 }
 
 #[derive(Deserialize, Debug)]
-struct ExecutionPutPayload {
+struct ExecutionSubmitPayload {
     ffqn: FunctionFqn,
     params: Vec<serde_json::Value>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ExecutionFollowParam {
+    #[serde(default)]
+    follow: bool,
 }
 
 async fn execution_submit_put(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
+    Query(params): Query<ExecutionFollowParam>,
     accept: AcceptHeader,
-    Json(payload): Json<ExecutionPutPayload>,
-) -> Result<Response, HttpResponse> {
-    execution_submit(execution_id, state, payload, accept).await
+    Json(payload): Json<ExecutionSubmitPayload>,
+) -> Result<http::Response<Body>, HttpResponse> {
+    execution_submit(execution_id, state, payload, params.follow, accept).await
 }
 
 async fn execution_submit_post(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
-    Json(payload): Json<ExecutionPutPayload>,
-) -> Result<Response, HttpResponse> {
+    Query(params): Query<ExecutionFollowParam>,
+    Json(payload): Json<ExecutionSubmitPayload>,
+) -> Result<http::Response<Body>, HttpResponse> {
     let execution_id = ExecutionId::generate();
-    execution_submit(execution_id, state, payload, accept).await
+    execution_submit(execution_id, state, payload, params.follow, accept).await
 }
 
 async fn execution_submit(
     execution_id: ExecutionId,
     state: State<Arc<WebApiState>>,
-    payload: ExecutionPutPayload,
+    payload: ExecutionSubmitPayload,
+    follow: bool,
     accept: AcceptHeader,
-) -> Result<Response, HttpResponse> {
+) -> Result<http::Response<Body>, HttpResponse> {
     let conn = state.db_pool.connection();
     let res = server::submit(
         conn.as_ref(),
@@ -539,23 +568,81 @@ async fn execution_submit(
         payload.params,
         &state.component_registry_ro,
     )
-    .await;
-
-    match res {
-        Ok(SubmitOutcome::Created) => Ok(HttpResponse {
-            status: StatusCode::CREATED,
+    .await
+    .map_err(|err| ErrorWrapper(err, accept))?;
+    let status = match res {
+        SubmitOutcome::Created => StatusCode::CREATED,
+        SubmitOutcome::ExistsWithSameParameters => StatusCode::OK,
+    };
+    if follow {
+        Ok(stream_execution_response(execution_id, state, status))
+    } else {
+        Ok(HttpResponse {
+            status,
             message: execution_id.to_string(),
             accept,
         }
-        .into_response()),
-        Ok(SubmitOutcome::ExistsWithSameParameters) => Ok(HttpResponse {
-            status: StatusCode::OK,
-            message: execution_id.to_string(),
-            accept,
-        }
-        .into_response()),
-        Err(err) => Err(ErrorWrapper(err, accept).into()),
+        .into_response())
     }
+}
+
+/// Wait until the execution finishes, return `RetVal` as JSON.
+fn stream_execution_response(
+    execution_id: ExecutionId,
+    state: State<Arc<WebApiState>>,
+    status: StatusCode,
+) -> http::Response<Body> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+    let trace_id = server::gen_trace_id();
+    let span = info_span!("stream_execution_response", trace_id, %execution_id);
+    tokio::spawn(async move {
+        debug!("Started streaming execution response");
+        loop {
+            tokio::select! {
+                () = tx.closed() => {
+                    debug!("Client disconnected");
+                    return;
+                }
+                () = tokio::time::sleep(Duration::from_secs(1)) => {
+                    let last_event = state
+                            .db_pool
+                            .connection()
+                            .get_last_execution_event(&execution_id)
+                            .await;
+                    match last_event {
+                        Ok(ExecutionEvent{event: ExecutionRequest::Finished { result, .. }, ..}) => {
+                            let result = RetVal::from(result);
+                            let result = match serde_json::to_vec(&result) {
+                                Ok(ok) => ok,
+                                Err(err) => {
+                                    error!("Result {result:?} should be serializable - {err:?}");
+                                    return;
+                                }
+                            };
+                            let _ = tx.try_send(Ok(Bytes::from(result))); // Ignore if the remote side is closed.
+                            debug!("Sent execution result");
+                            return;
+                        },
+                        Err(db_err) => {
+                            debug!("Database error, disconnecting - {db_err:?}");
+                            return;
+                        }
+                        Ok(other) =>{
+                            trace!("Ignoring {other}");
+                        }
+                    }
+                }
+            }
+        }
+    }.instrument(span));
+    // Send response headers immediately.
+    let stream = ReceiverStream::new(rx);
+    let mut response = (status, Body::from_stream(stream)).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/json"),
+    );
+    response
 }
 
 pub(crate) mod components {
