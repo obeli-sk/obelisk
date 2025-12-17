@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::{fmt::Write as _, time::Duration};
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{Instrument as _, debug, error, info_span, trace};
+use tracing::{Instrument as _, debug, info_span, trace};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 
@@ -85,7 +85,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader) -> Response {
     let id = ExecutionId::generate();
     match accept {
-        AcceptHeader::Json => Json(json!(id)).into_response(),
+        AcceptHeader::Json => Json(id).into_response(),
         AcceptHeader::Text => id.to_string().into_response(),
     }
 }
@@ -309,7 +309,7 @@ async fn execution_events(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(match accept {
-        AcceptHeader::Json => Json(json!(events)).into_response(),
+        AcceptHeader::Json => Json(events).into_response(),
         AcceptHeader::Text => {
             let mut output = String::new();
             for event in events {
@@ -356,7 +356,7 @@ async fn execution_responses(
         .map_err(|e| ErrorWrapper(e, accept))?;
 
     Ok(match accept {
-        AcceptHeader::Json => Json(json!(responses)).into_response(),
+        AcceptHeader::Json => Json(responses).into_response(),
         AcceptHeader::Text => {
             let mut output = String::new();
             for response in responses {
@@ -387,7 +387,7 @@ async fn execution_status_get(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(match accept {
-        AcceptHeader::Json => Json(json!(pending_state)).into_response(),
+        AcceptHeader::Json => Json(pending_state).into_response(),
         AcceptHeader::Text => pending_state.to_string().into_response(),
     })
 }
@@ -495,17 +495,6 @@ async fn execution_get(
 
     if let ExecutionRequest::Finished { result, .. } = last_event.event {
         let result = RetVal::from(result);
-        let result = match serde_json::to_vec(&result) {
-            Ok(ok) => ok,
-            Err(err) => {
-                error!("Result {result:?} should be serializable - {err:?}");
-                return Err(HttpResponse {
-                    status: StatusCode::INTERNAL_SERVER_ERROR,
-                    message: "cannot serialize".to_string(),
-                    accept: AcceptHeader::Json,
-                });
-            }
-        };
         Ok(Json(result).into_response())
     } else if params.follow {
         Ok(stream_execution_response(
@@ -642,13 +631,7 @@ async fn stream_execution_response_task(
                 match last_event {
                     Ok(ExecutionEvent{event: ExecutionRequest::Finished { result, .. }, ..}) => {
                         let result = RetVal::from(result);
-                        let result = match serde_json::to_vec(&result) {
-                            Ok(ok) => ok,
-                            Err(err) => {
-                                error!("Result {result:?} should be serializable - {err:?}");
-                                return;
-                            }
-                        };
+                        let result = serde_json::to_vec(&result).expect("serialization of already stored retval cannot fail");
                         let _ = tx.try_send(Ok(Bytes::from(result))); // Ignore if the remote side is closed.
                         debug!("Sent execution result");
                         return;
@@ -671,7 +654,7 @@ pub(crate) mod components {
 
     use super::{
         AcceptHeader, Arc, Deserialize, FunctionFqn, IntoResponse, Json, Query, Response,
-        Serialize, State, WebApiState, json,
+        Serialize, State, WebApiState,
     };
     use axum::extract::Path;
     use concepts::{
@@ -784,7 +767,7 @@ pub(crate) mod components {
             .collect();
 
         match accept {
-            AcceptHeader::Json => Json(json!(components)).into_response(),
+            AcceptHeader::Json => Json(components).into_response(),
             AcceptHeader::Text => {
                 let mut output = String::new();
                 for component in components {
