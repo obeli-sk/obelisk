@@ -95,7 +95,6 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::select;
 use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tonic::codec::CompressionEncoding;
 use tonic::service::RoutesBuilder;
@@ -468,8 +467,6 @@ pub(crate) async fn run(
     config: Option<PathBuf>,
     params: RunParams,
 ) -> anyhow::Result<()> {
-    let (graceful_shutdown_complete_sender, graceful_shutdown_complete_receiver) =
-        oneshot::channel();
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
@@ -480,12 +477,9 @@ pub(crate) async fn run(
         config,
         config_holder,
         params,
-        graceful_shutdown_complete_sender,
         termination_watcher,
     ))
     .await?;
-
-    let _ = graceful_shutdown_complete_receiver.await; // Dropped the server before `InitServer` was created.
     Ok(())
 }
 
@@ -598,7 +592,6 @@ async fn run_internal(
     config: ConfigToml,
     config_holder: ConfigHolder,
     params: RunParams,
-    graceful_shutdown_complete_sender: oneshot::Sender<()>,
     mut termination_watcher: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let span = info_span!("init");
@@ -650,12 +643,11 @@ async fn run_internal(
         timers_watcher,
         cancel_watcher,
         &cancel_registry,
-        graceful_shutdown_complete_sender,
     )
     .instrument(span)
     .await?;
 
-    let server_init_internal = server_init.0.as_ref().expect("server is not shut down");
+    let server_init_internal = &server_init.0;
 
     let grpc_server = Arc::new(GrpcServer::new(
         server_init_internal.db_pool.clone(),
@@ -719,7 +711,7 @@ async fn run_internal(
             info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
             info!("Server is ready");
             let _: Result<_, _> = termination_watcher.changed().await;
-            drop(server_init); // must be moved from outer scope, otherwise HTTP/gRPC streams will not be terminated and server will not exit `serve`.
+            server_init.0.close().await; // must be closed here, otherwise HTTP/gRPC streams will not be terminated and server will not exit `serve`.
         })
         .await
         .with_context(|| format!("server error listening on {api_listening_addr}"))?;
@@ -915,7 +907,7 @@ impl ServerCompiledLinked {
     }
 }
 
-struct ServerInit(Option<ServerInitInner>);
+struct ServerInit(ServerInitInner);
 struct ServerInitInner {
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
@@ -925,11 +917,9 @@ struct ServerInitInner {
     http_servers_handles: Vec<AbortOnDropHandle>,
     epoch_ticker: EpochTicker,
     preopens_cleaner: Option<AbortOnDropHandle>,
-    graceful_shutdown_complete_sender: oneshot::Sender<()>,
 }
 
 #[instrument(skip_all)]
-#[expect(clippy::too_many_arguments)]
 async fn spawn_tasks_and_threads(
     mut server_compiled_linked: ServerCompiledLinked,
     sqlite_file: &Path,
@@ -938,7 +928,6 @@ async fn spawn_tasks_and_threads(
     timers_watcher: TimersWatcherTomlConfig,
     cancel_watcher: CancelWatcherTomlConfig,
     cancel_registry: &CancelRegistry,
-    graceful_shutdown_complete_sender: oneshot::Sender<()>,
 ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
     // Start components requiring a database
     let epoch_ticker = EpochTicker::spawn_new(
@@ -1036,61 +1025,39 @@ async fn spawn_tasks_and_threads(
         http_servers_handles,
         epoch_ticker,
         preopens_cleaner,
-        graceful_shutdown_complete_sender,
     };
     Ok((
-        ServerInit(Some(inner)),
+        ServerInit(inner),
         server_compiled_linked.component_registry_ro,
     ))
-}
-impl Drop for ServerInit {
-    fn drop(&mut self) {
-        if let Some(inner) = self.0.take() {
-            let handle = tokio::runtime::Handle::current();
-            handle.spawn(inner.close());
-        } else {
-            unreachable!("ServerInitInner is taken only once")
-        }
-    }
 }
 impl ServerInitInner {
     async fn close(self) {
         info!("Server is shutting down");
-        let (db_close, exec_join_handles, graceful_shutdown_complete_sender) = {
-            let ServerInitInner {
-                db_pool,
-                db_close,
-                exec_join_handles,
-                timers_watcher,
-                cancel_watcher,
-                http_servers_handles,
-                epoch_ticker,
-                preopens_cleaner,
-                graceful_shutdown_complete_sender,
-            } = self;
-            // Explicit drop! Otherwise fields are dropped at the end of this function.
-            drop(db_pool);
-            drop(timers_watcher);
-            drop(cancel_watcher);
-            drop(http_servers_handles);
-            drop(epoch_ticker);
-            drop(preopens_cleaner);
-            (
-                db_close,
-                exec_join_handles,
-                graceful_shutdown_complete_sender,
-            )
-        };
-        debug!("Closed the shutdown watcher");
+
+        let ServerInitInner {
+            db_pool,
+            db_close,
+            exec_join_handles,
+            timers_watcher,
+            cancel_watcher,
+            http_servers_handles,
+            epoch_ticker,
+            preopens_cleaner,
+        } = self;
+        // Explicit drop! Using inner scope won't work, fields would be dropped at the end of the async function.
+        drop(db_pool);
+        drop(timers_watcher);
+        drop(cancel_watcher);
+        drop(http_servers_handles);
+        drop(epoch_ticker);
+        drop(preopens_cleaner);
+        debug!("Closing executors");
         // Close most of the services. Worker tasks might still be running.
         for exec_join_handle in exec_join_handles {
             exec_join_handle.close().await;
         }
         db_close.await;
-        // Notify the main task that the shutdown is finished.
-        let _ = graceful_shutdown_complete_sender
-            .send(())
-            .map_err(|()| warn!("could not send the graceful shutdown complete signal"));
     }
 }
 
