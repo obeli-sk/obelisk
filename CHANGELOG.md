@@ -6,6 +6,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0](https://github.com/obeli-sk/obelisk/compare/v0.30.0...v0.31.0)
+
+This release adds Web API - JSON over HTTP API next to existing gRPC and gRPC-Web protocols.
+
+### Added
+- *(cli)* Add `client generate execution-id` - ([170a672](https://github.com/obeli-sk/obelisk/commit/170a67236e80ee22879e567b62aaf3059c5ac876))
+- *(webapi)* Add POST `/v1/executions` - ([d8b8202](https://github.com/obeli-sk/obelisk/commit/d8b820260a468e18403452cbb6c54dc5258b36b0))
+- *(webapi)* Implement GET `/v1/executions/:id/responses` - ([733ecc0](https://github.com/obeli-sk/obelisk/commit/733ecc086f9f70d669fd7d95b1107fcab59af23e))
+- *(webapi)* Implement GET `/v1/executions/:id/events` - ([53f4b9a](https://github.com/obeli-sk/obelisk/commit/53f4b9a55506f3312d3739e62326123e4d25eeb0))
+- *(webapi)* Implement GET `/v1/executions` with filtering - ([88c1235](https://github.com/obeli-sk/obelisk/commit/88c12353a0bcecd7c2e62a61d81d97cdcb36e6b0))
+- *(webapi)* Implement GET `/v1/components/:digest/wit` - ([c2852b4](https://github.com/obeli-sk/obelisk/commit/c2852b48344248aac8676430592befab5ab410a6))
+- *(webapi)* Implement PUT `/v1/executions/:id/stub` - ([c028e35](https://github.com/obeli-sk/obelisk/commit/c028e353b8aa4d372645baaa6a06361506f82dcb))
+- *(webapi)* Implement PUT `/v1/delays/:id/cancel` - ([935fd20](https://github.com/obeli-sk/obelisk/commit/935fd200583e8e00e330e000fcb3ae2af72270b7))
+- *(webapi)* Implement PUT `/v1/executions/:id/cancel` - ([4f98796](https://github.com/obeli-sk/obelisk/commit/4f9879616662cbb094934853775a52d104a7613a))
+- *(webapi)* Implement `/v1/components` - ([c036eaf](https://github.com/obeli-sk/obelisk/commit/c036eaf4130035bd3eac2d6c587613bc21227392))
+- *(webapi)* Implement GET `/executions/{execution-id}` - ([8913cec](https://github.com/obeli-sk/obelisk/commit/8913cecb49b596e19cd6fea526d90b57b5f420c9))
+- *(webapi)* Add router with `/execution-id` gen, `/executions/{execution-id}/status` - ([6f71f92](https://github.com/obeli-sk/obelisk/commit/6f71f9220d048b7c46ec73e3861e38ef0426b051))
+- *(webapi)* Add `follow` param to stream the execution result - ([4c93ae5](https://github.com/obeli-sk/obelisk/commit/4c93ae51b913f652e03d9074be5846ba0da51497))
+- *(webapi)* Implement PUT `/v1/executions/:id` - ([235f535](https://github.com/obeli-sk/obelisk/commit/235f535bb14a7289c60063370e9e9332962012e4))
+
+### Removed
+The `-invoke` extension has been removed as it was just a syntax sugar over `-submit` and `-await-next`.
+- *(grpc,wit)* [**breaking**] Remove `-invoke` extension - ([b80fefe](https://github.com/obeli-sk/obelisk/commit/b80fefe3441125c7877a7871ae660dfc62d172ef))
+
+### Fixed
+- *(grpc)* Close tokio task if client aborts `GetStatus` connection - ([cc10fcc](https://github.com/obeli-sk/obelisk/commit/cc10fcc1f1c3befa92054fb42bdd4ad31c2eb86c))
+- *(grpc,webapi)* Strip correct suffix when submitting `-schedule` ext fns - ([03d7725](https://github.com/obeli-sk/obelisk/commit/03d77254ea244bca0df5430ff0d7d5cc628ef966))
+
+### Changed
+Sqlite and gRPC schemas have been changed slightly.
+- *(db)* [**breaking**] Use string representation for FFQN serde - ([222fd00](https://github.com/obeli-sk/obelisk/commit/222fd009072a1d6ead0ffc219119b08514092fc0))
+- *(grpc)* [**breaking**] Make `GetWitResponse.content` optional - ([60493f8](https://github.com/obeli-sk/obelisk/commit/60493f8cf0c6ef0205ab97edae54f24fe1a3743b))
+- *(grpc)* [**breaking**] Request WIT by components' digest - ([70e7eba](https://github.com/obeli-sk/obelisk/commit/70e7ebaddb114de57a9c03757dde2cf94e6d2fbf))
+- *(grpc,sqlite)* [**breaking**] Rename `scheduled_at` to `first_scheduled_at` - ([7bc30ae](https://github.com/obeli-sk/obelisk/commit/7bc30ae326b3331684654826251f45e2c8cf49b0))
+- *(ser)* Skip serializing `backtrace_id` if empty - ([28fe01b](https://github.com/obeli-sk/obelisk/commit/28fe01be5e9ce846032d3c08b7069ffc757f4ebb))
+- Make `submit` return ok if parameters are the same - ([944e78e](https://github.com/obeli-sk/obelisk/commit/944e78e2adab6256c9fd9fce71540868d382f53f))
+
+
 ## [0.30.0](https://github.com/obeli-sk/obelisk/compare/v0.29.1...v0.30.0)
 
 ### Added
