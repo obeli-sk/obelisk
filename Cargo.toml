@@ -224,7 +224,7 @@ hyper = "1.8.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 id-arena = "2.2.1"
 indexmap = { version = "2.12", features = ["serde"] }
-insta = { version = "1.44.3", features = ["json"] }
+insta = { version = "1.45.0", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
 libc = "0.2.178"
@@ -270,7 +270,7 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.17"
-toml = { version = "0.9.8", features = ["preserve_order"] }
+toml = { version = "0.9.10", features = ["preserve_order"] }
 tonic = { version = "0.14.2", default-features = false }
 tonic-prost = "0.14.2"
 tonic-reflection = "0.14.2"
