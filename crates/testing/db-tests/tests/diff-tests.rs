@@ -6,6 +6,7 @@ use concepts::SupportedFunctionReturnValue;
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::DbConnection;
+use concepts::storage::DbConnectionTest;
 use concepts::storage::DbPoolCloseable;
 use concepts::storage::ExecutionLog;
 use concepts::storage::ExecutionRequest;
@@ -71,7 +72,7 @@ async fn diff_proptest_inner(seed: u64) {
         println!("{idx}: {step:?}");
     }
     let (_mem_guard, db_mem_pool, _db_exec, db_mem_close) = Database::Memory.set_up().await;
-    let mem_conn = db_mem_pool.connection();
+    let mem_conn = db_mem_pool.connection_test().await.unwrap();
     let mem_log = create_and_append(
         mem_conn.as_ref(),
         execution_id.clone(),
@@ -81,7 +82,7 @@ async fn diff_proptest_inner(seed: u64) {
     .await;
     db_mem_close.close().await;
     let (_sqlite_guard, sqlite_pool, _db_exec, db_sqlite_close) = Database::Sqlite.set_up().await;
-    let sqlite_conn = sqlite_pool.connection();
+    let sqlite_conn = sqlite_pool.connection_test().await.unwrap();
     let sqlite_log = create_and_append(
         sqlite_conn.as_ref(),
         execution_id,
@@ -108,7 +109,7 @@ async fn diff_proptest_inner(seed: u64) {
 }
 
 async fn create_and_append(
-    db_connection: &dyn DbConnection,
+    db_connection: &dyn DbConnectionTest,
     execution_id: ExecutionId,
     create_req: CreateRequest,
     append_requests: &[AppendRequest],
@@ -229,7 +230,7 @@ async fn get_execution_event_should_not_break_json_order(
 ) {
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
 
     let (execution_id, version, expected_inner) =
         persist_finished_event(db_connection.as_ref()).await;
@@ -249,7 +250,7 @@ async fn get_execution_event_should_not_break_json_order(
 async fn list_execution_events_should_not_break_json_order() {
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
-    let db_connection = db_pool.external_api_conn();
+    let db_connection = db_pool.external_api_conn().await.unwrap();
 
     let (execution_id, version, expected_inner) =
         persist_finished_event(db_connection.as_ref()).await;

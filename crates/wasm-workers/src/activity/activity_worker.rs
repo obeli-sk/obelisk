@@ -655,7 +655,7 @@ pub(crate) mod tests {
         test_utils::set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         let exec = new_activity_fibo(db_exec, sim_clock.clone(), TokioSleep);
         // Create an execution.
         let execution_id = ExecutionId::generate();
@@ -859,7 +859,7 @@ pub(crate) mod tests {
             let execution_id = ExecutionId::generate();
             info!("Testing {execution_id}");
             let created_at = Now.now();
-            let db_connection = db_pool.connection();
+            let db_connection = db_pool.connection().await.unwrap();
             db_connection
                 .create(CreateRequest {
                     created_at,
@@ -1054,7 +1054,7 @@ pub(crate) mod tests {
             let params = Params::from_json_values_test(vec![json!(uri.clone())]);
             let execution_id = ExecutionId::generate();
             let created_at = sim_clock.now();
-            let db_connection = db_pool.connection();
+            let db_connection = db_pool.connection_test().await.unwrap();
             info!("Creating execution");
             let stopwatch = std::time::Instant::now();
             db_connection
@@ -1167,7 +1167,7 @@ pub(crate) mod tests {
             let params = Params::from_json_values_test(vec![json!(uri.clone())]);
             let execution_id = ExecutionId::generate();
             let created_at = sim_clock.now();
-            let db_connection = db_pool.connection();
+            let db_connection = db_pool.connection_test().await.unwrap();
             info!("Creating execution");
             let stopwatch = std::time::Instant::now();
             db_connection
@@ -1294,7 +1294,7 @@ pub(crate) mod tests {
             let params = Params::from_json_values_test(vec![json!(uri.clone())]);
             let execution_id = ExecutionId::generate();
             let created_at = sim_clock.now();
-            let db_connection = db_pool.connection();
+            let db_connection = db_pool.connection_test().await.unwrap();
             db_connection
                 .create(CreateRequest {
                     created_at,
@@ -1427,7 +1427,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             let sim_clock = SimClock::default();
             let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
-            let db_connection = db_pool.connection();
+            let db_connection = db_pool.connection().await.unwrap();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
             let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
             let retry_config = ComponentRetryConfig {
@@ -1522,7 +1522,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             let sim_clock = SimClock::default();
             let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
-            let db_connection = db_pool.connection();
+            let db_connection = db_pool.connection().await.unwrap();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
             let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
             let exec = new_activity_with_config(
@@ -1596,7 +1596,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             let sim_clock = SimClock::default();
             let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
-            let db_connection = db_pool.connection();
+            let db_connection = db_pool.connection().await.unwrap();
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
             let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
             let exec = new_activity_with_config(
@@ -1677,7 +1677,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             let sim_clock = SimClock::default();
             let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
-            let db_connection = db_pool.connection();
+            let db_connection = db_pool.connection().await.unwrap();
             let exec = new_activity_with_config(
                 db_exec,
                 test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
@@ -1736,7 +1736,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             let sim_clock = SimClock::default();
             let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
-            let db_connection = db_pool.connection();
+            let db_connection = db_pool.connection().await.unwrap();
             let exec = new_activity_with_config(
                 db_exec,
                 test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,

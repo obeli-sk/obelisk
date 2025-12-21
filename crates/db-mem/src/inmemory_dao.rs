@@ -242,12 +242,6 @@ impl DbConnection for InMemoryDbConnection {
             .append_batch_create_child(batch, &execution_id, version, child_req)
     }
 
-    #[cfg(feature = "test")]
-    #[instrument(skip_all, %execution_id)]
-    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead> {
-        self.0.lock().unwrap().get(execution_id)
-    }
-
     async fn get_execution_event(
         &self,
         execution_id: &ExecutionId,
@@ -284,23 +278,6 @@ impl DbConnection for InMemoryDbConnection {
                 }
             }
         }
-    }
-
-    #[cfg(feature = "test")]
-    #[instrument(skip_all, %execution_id)]
-    async fn append_response(
-        &self,
-        created_at: DateTime<Utc>,
-        execution_id: ExecutionId,
-        response_event: JoinSetResponseEvent,
-    ) -> Result<(), DbErrorWrite> {
-        self.0.lock().unwrap().append_response(
-            &execution_id,
-            JoinSetResponseEventOuter {
-                created_at,
-                event: response_event,
-            },
-        )
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -404,6 +381,31 @@ impl DbConnection for InMemoryDbConnection {
     async fn append_backtrace_batch(&self, _batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite> {
         // noop, backtrace functionality is for reporting only and its absence should not affect the system.
         Ok(())
+    }
+}
+
+#[cfg(feature = "test")]
+#[async_trait]
+impl concepts::storage::DbConnectionTest for InMemoryDbConnection {
+    #[instrument(skip_all, %execution_id)]
+    async fn append_response(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+        response_event: JoinSetResponseEvent,
+    ) -> Result<(), DbErrorWrite> {
+        self.0.lock().unwrap().append_response(
+            &execution_id,
+            JoinSetResponseEventOuter {
+                created_at,
+                event: response_event,
+            },
+        )
+    }
+
+    #[instrument(skip_all, %execution_id)]
+    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead> {
+        self.0.lock().unwrap().get(execution_id)
     }
 }
 
@@ -608,11 +610,25 @@ impl DbPoolCloseable for InMemoryPool {
 
 #[async_trait]
 impl DbPool for InMemoryPool {
-    fn connection(&self) -> Box<dyn DbConnection> {
-        Box::new(InMemoryDbConnection(self.0.clone()))
+    async fn connection(&self) -> Result<Box<dyn DbConnection>, DbErrorGeneric> {
+        if self.1.load(Ordering::Relaxed) {
+            return Err(DbErrorGeneric::Close);
+        }
+        Ok(Box::new(InMemoryDbConnection(self.0.clone())))
     }
-    fn external_api_conn(&self) -> Box<dyn DbExternalApi> {
-        unimplemented!()
+    async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric> {
+        Err(DbErrorGeneric::Uncategorized(
+            "external_api_conn not implemented for in-memory DB".into(),
+        ))
+    }
+    #[cfg(feature = "test")]
+    async fn connection_test(
+        &self,
+    ) -> Result<Box<dyn concepts::storage::DbConnectionTest>, DbErrorGeneric> {
+        if self.1.load(Ordering::Relaxed) {
+            return Err(DbErrorGeneric::Close);
+        }
+        Ok(Box::new(InMemoryDbConnection(self.0.clone())))
     }
 }
 

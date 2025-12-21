@@ -2605,7 +2605,7 @@ mod tests {
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
-    use concepts::storage::{CreateRequest, HistoryEventScheduleAt, Locked};
+    use concepts::storage::{CreateRequest, DbConnectionTest, HistoryEventScheduleAt, Locked};
     use concepts::storage::{
         DbConnection, DbPoolCloseable, JoinSetResponse, JoinSetResponseEvent, Version,
     };
@@ -2636,7 +2636,7 @@ mod tests {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
 
         // Create an execution.
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
@@ -2644,7 +2644,7 @@ mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
 
         let (mut event_history, mut caching_db_connection) = load_event_history(
-            db_pool.connection(),
+            db_pool.connection_test().await.unwrap(),
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
@@ -2690,7 +2690,7 @@ mod tests {
 
         info!("Second run");
         let (mut event_history, mut caching_db_connection) = load_event_history(
-            db_pool.connection(),
+            db_pool.connection_test().await.unwrap(),
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
@@ -2734,12 +2734,12 @@ mod tests {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
         // Create an execution.
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
         let (mut event_history, mut caching_db_connection) = load_event_history(
-            db_pool.connection(),
+            db_pool.connection_test().await.unwrap(),
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
@@ -2783,7 +2783,7 @@ mod tests {
         info!("Second run");
 
         let (mut event_history, mut caching_db_connection) = load_event_history(
-            db_pool.connection(),
+            db_pool.connection_test().await.unwrap(),
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
@@ -2863,13 +2863,13 @@ mod tests {
 
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
 
         // Create an execution.
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
         let (mut event_history, mut caching_db_connection) = load_event_history(
-            db_pool.connection(),
+            db_pool.connection_test().await.unwrap(),
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
@@ -2944,7 +2944,7 @@ mod tests {
         info!("Second run");
 
         let (mut event_history, mut caching_db_connection) = load_event_history(
-            db_pool.connection(),
+            db_pool.connection_test().await.unwrap(),
             execution_id,
             sim_clock.now(),
             Duration::ZERO, // deadline
@@ -3014,14 +3014,14 @@ mod tests {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         let db_connection = db_connection.as_ref();
 
         // Create an execution.
         let execution_id = create_execution(db_connection, &sim_clock).await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
         let (mut event_history, mut caching_db_connection) = load_event_history(
-            db_pool.connection(),
+            db_pool.connection_test().await.unwrap(),
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
@@ -3074,7 +3074,7 @@ mod tests {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         let db_connection = db_connection.as_ref();
 
         let execution_id = create_execution(db_connection, &sim_clock).await;
@@ -3085,7 +3085,7 @@ mod tests {
         for run_id in 0..=1 {
             info!("Run {run_id}");
             let (mut event_history, mut caching_db_connection) = load_event_history(
-                db_pool.connection(),
+                db_pool.connection_test().await.unwrap(),
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1), // execution deadline
@@ -3165,7 +3165,7 @@ mod tests {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         let db_connection = db_connection.as_ref();
 
         let execution_id = create_execution(db_connection, &sim_clock).await;
@@ -3177,7 +3177,7 @@ mod tests {
         for run_id in 0..=1 {
             info!("Run {run_id}");
             let (mut event_history, mut caching_db_connection) = load_event_history(
-                db_pool.connection(),
+                db_pool.connection_test().await.unwrap(),
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1),
@@ -3226,7 +3226,7 @@ mod tests {
         {
             let execution_id = create_execution(db_connection, &sim_clock).await;
             let (mut event_history, mut caching_db_connection) = load_event_history(
-                db_pool.connection(),
+                db_pool.connection_test().await.unwrap(),
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1),
@@ -3274,7 +3274,7 @@ mod tests {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
 
         // Create an execution.
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
@@ -3282,7 +3282,7 @@ mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
 
         let (mut event_history, mut caching_db_connection) = load_event_history(
-            db_pool.connection(),
+            db_pool.connection_test().await.unwrap(),
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
@@ -3328,7 +3328,7 @@ mod tests {
 
         info!("Second run attemts to finish with no requests");
         let (mut event_history, _caching_db_connection) = load_event_history(
-            db_pool.connection(),
+            db_pool.connection_test().await.unwrap(),
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
@@ -3382,7 +3382,7 @@ mod tests {
     }
 
     async fn load_event_history(
-        db_connection: Box<dyn DbConnection>,
+        db_connection: Box<dyn DbConnectionTest>,
         execution_id: ExecutionId,
         now: DateTime<Utc>,
         lock_expires_at: Duration,

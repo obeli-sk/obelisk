@@ -608,8 +608,12 @@ impl From<CreateRequest> for ExecutionRequest {
 
 #[async_trait]
 pub trait DbPool: Send + Sync {
-    fn connection(&self) -> Box<dyn DbConnection>;
-    fn external_api_conn(&self) -> Box<dyn DbExternalApi>;
+    async fn connection(&self) -> Result<Box<dyn DbConnection>, DbErrorGeneric>;
+
+    async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric>;
+
+    #[cfg(feature = "test")]
+    async fn connection_test(&self) -> Result<Box<dyn DbConnectionTest>, DbErrorGeneric>;
 }
 
 #[async_trait]
@@ -851,14 +855,6 @@ pub trait DbExternalApi: DbConnection {
 
 #[async_trait]
 pub trait DbConnection: DbExecutor {
-    #[cfg(feature = "test")]
-    async fn append_response(
-        &self,
-        created_at: DateTime<Utc>,
-        execution_id: ExecutionId,
-        response_event: JoinSetResponseEvent,
-    ) -> Result<(), DbErrorWrite>;
-
     async fn append_delay_response(
         &self,
         created_at: DateTime<Utc>,
@@ -888,10 +884,6 @@ pub trait DbConnection: DbExecutor {
         version: Version,
         child_req: Vec<CreateRequest>,
     ) -> Result<AppendBatchResponse, DbErrorWrite>;
-
-    #[cfg(feature = "test")]
-    /// Get execution log.
-    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead>;
 
     /// Get a single event specified by version. Impls may set `ExecutionEvent::backtrace_id` to `None`.
     async fn get_execution_event(
@@ -972,6 +964,20 @@ pub trait DbConnection: DbExecutor {
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite>;
 
     async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite>;
+}
+
+#[cfg(feature = "test")]
+#[async_trait]
+pub trait DbConnectionTest: DbConnection {
+    async fn append_response(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+        response_event: JoinSetResponseEvent,
+    ) -> Result<(), DbErrorWrite>;
+
+    /// Get execution log.
+    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1244,11 +1250,16 @@ impl<T> Pagination<T> {
     pub fn is_desc(&self) -> bool {
         matches!(self, Pagination::OlderThan { .. })
     }
+    pub fn cursor(&self) -> &T {
+        match self {
+            Pagination::NewerThan { cursor, .. } | Pagination::OlderThan { cursor, .. } => cursor,
+        }
+    }
 }
 
 #[cfg(feature = "test")]
 pub async fn wait_for_pending_state_fn<T: Debug>(
-    db_connection: &dyn DbConnection,
+    db_connection: &dyn DbConnectionTest,
     execution_id: &ExecutionId,
     predicate: impl Fn(ExecutionLog) -> Option<T> + Send,
     timeout: Option<Duration>,

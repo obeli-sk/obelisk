@@ -387,7 +387,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         let version_at_start = ctx.version.clone();
         let seed = ctx.execution_id.random_seed();
         let db_connection = CachingDbConnection {
-            db_connection: self.db_pool.connection(),
+            db_connection: self.db_pool.connection().await.unwrap(),
             execution_id: ctx.execution_id.clone(),
             caching_buffer: CachingBuffer::new(self.config.join_next_blocking_strategy),
             version: ctx.version,
@@ -951,7 +951,7 @@ pub(crate) mod tests {
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
 
         let params =
             Params::from_json_values_test(vec![json!(FIBO_10_INPUT), json!(INPUT_ITERATIONS)]);
@@ -1146,7 +1146,7 @@ pub(crate) mod tests {
         let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
         let sim_clock = SimClock::epoch();
         let execution_id = ExecutionId::generate();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         {
             let params = Params::from_json_values_test(vec![json!("now")]);
             db_connection
@@ -1267,7 +1267,7 @@ pub(crate) mod tests {
         ]);
 
         let execution_id = ExecutionId::generate();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -1421,7 +1421,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
         let created_at = sim_clock.now();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -1505,7 +1505,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
         let created_at = sim_clock.now();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -1598,7 +1598,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::new(DateTime::default());
         let created_at = sim_clock.now();
         let (_guard, db_pool, db_exec, db_close) = db.set_up().await;
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -1724,7 +1724,7 @@ pub(crate) mod tests {
             CancelRegistry::new(),
         );
         let execution_id = ExecutionId::generate();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
 
         let params = Params::from_json_values_test(vec![
             json!({"milliseconds": SLEEP_DURATION.as_millis()}),
@@ -1768,7 +1768,13 @@ pub(crate) mod tests {
                 .len();
             assert_eq!(1, task_count);
         }
-        let res = db_pool.connection().get(&execution_id).await.unwrap();
+        let res = db_pool
+            .connection_test()
+            .await
+            .unwrap()
+            .get(&execution_id)
+            .await
+            .unwrap();
         assert_matches!(
             res.into_finished_result().unwrap(),
             SupportedFunctionReturnValue::Ok { ok: None }
@@ -1776,7 +1782,7 @@ pub(crate) mod tests {
         sim_clock.move_time_forward(SLEEP_DURATION);
         // The scheduled `noop` execution should be pending.
         let mut next_pending = db_pool
-            .connection()
+            .connection().await.unwrap()
             .lock_pending_by_ffqns(
                 10,
                 sim_clock.now(),
@@ -1807,7 +1813,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, db_exec, db_close) = database.set_up().await;
         let created_at = sim_clock.now();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -1920,7 +1926,7 @@ pub(crate) mod tests {
             CancelRegistry::new(),
         );
         let execution_id = ExecutionId::generate();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
 
         let params =
             Params::from_json_values_test(vec![serde_json::Value::String(INPUT_PARAM.to_string())]);
@@ -2082,7 +2088,7 @@ pub(crate) mod tests {
         );
 
         let execution_id = ExecutionId::from_parts(0, 0);
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -2260,7 +2266,7 @@ pub(crate) mod tests {
             CancelRegistry::new(),
         );
         let execution_id = ExecutionId::generate();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
 
         db_connection
             .create(CreateRequest {
@@ -2404,7 +2410,7 @@ pub(crate) mod tests {
             CancelRegistry::new(),
         );
         let execution_id = ExecutionId::generate();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
 
         db_connection
             .create(CreateRequest {

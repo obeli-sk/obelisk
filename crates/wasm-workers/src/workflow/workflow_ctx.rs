@@ -1697,7 +1697,7 @@ pub(crate) mod tests {
             let seed = ctx.execution_id.random_seed();
             let join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt; // Cannot Await: when moving time forward both worker and timers watcher would race.
             let caching_db_connection = CachingDbConnection {
-                db_connection: self.db_pool.connection(),
+                db_connection: self.db_pool.connection().await.unwrap(),
                 execution_id: ctx.execution_id.clone(),
                 caching_buffer: CachingBuffer::new(join_next_blocking_strategy),
                 version: ctx.version,
@@ -1959,7 +1959,7 @@ pub(crate) mod tests {
                 )
             };
             // Create an execution.
-            let db_connection = db_pool.connection();
+            let db_connection = db_pool.connection_test().await.unwrap();
             db_connection
                 .create(CreateRequest {
                     created_at: sim_clock.now(),
@@ -2174,7 +2174,7 @@ pub(crate) mod tests {
         test_utils::set_up();
         let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
         let sim_clock = SimClock::new(Now.now());
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
 
         // Create an execution.
         let execution_id = ExecutionId::generate();
@@ -2455,7 +2455,7 @@ pub(crate) mod tests {
             .count();
 
         let created_at = sim_clock.now();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
         let fn_registry = steps_to_registry(&steps);
         let workflow_exec = {
             let worker = Arc::new(WorkflowWorkerMock::new(
@@ -2584,7 +2584,7 @@ pub(crate) mod tests {
         sim_clock: SimClock,
     ) {
         info!("Executing child {child_execution_id}");
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
         let child_log = db_connection
             .get(&ExecutionId::Derived(child_execution_id.clone()))
             .await

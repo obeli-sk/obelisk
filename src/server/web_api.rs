@@ -95,7 +95,11 @@ async fn delay_cancel(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
-    let conn = state.db_pool.external_api_conn();
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
     let executed_at = Now.now();
     let outcome = storage::cancel_delay(conn.as_ref(), delay_id, executed_at)
         .await
@@ -203,7 +207,11 @@ async fn executions_list(
         }
     };
 
-    let conn = state.db_pool.external_api_conn();
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
 
     let executions = conn
         .list_executions(
@@ -261,7 +269,11 @@ async fn execution_cancel(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
-    let conn = state.db_pool.external_api_conn();
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
     let create_req = conn
         .get_create_request(&execution_id)
         .await
@@ -298,7 +310,11 @@ async fn execution_events(
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
     const DEFAULT_LENGTH: u8 = 20;
-    let conn = state.db_pool.external_api_conn();
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
     let events = conn
         .list_execution_events(
             &execution_id,
@@ -342,7 +358,11 @@ async fn execution_responses(
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
     const DEFAULT_LENGTH: u8 = 20;
-    let conn = state.db_pool.external_api_conn();
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
     let responses = conn
         .list_responses(
             &execution_id,
@@ -383,6 +403,8 @@ async fn execution_status_get(
     let pending_state = state
         .db_pool
         .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?
         .get_pending_state(&execution_id)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
@@ -403,7 +425,11 @@ async fn execution_stub(
     let accept = AcceptHeader::Json;
     let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
     // Get FFQN
-    let db_connection = state.db_pool.external_api_conn();
+    let db_connection = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
     let ffqn = db_connection
         .get_create_request(&ExecutionId::Derived(execution_id.clone()))
         .await
@@ -489,6 +515,8 @@ async fn execution_get(
     let last_event = state
         .db_pool
         .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?
         .get_last_execution_event(&execution_id)
         .await
         .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?;
@@ -551,7 +579,11 @@ async fn execution_submit(
     follow: bool,
     accept: AcceptHeader,
 ) -> Result<http::Response<Body>, HttpResponse> {
-    let conn = state.db_pool.external_api_conn();
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
     let res = server::submit(
         conn.as_ref(),
         execution_id.clone(),
@@ -624,10 +656,13 @@ async fn stream_execution_response_task(
                 return;
             }
             () = tokio::time::sleep(Duration::from_secs(1)) => {
-                let last_event = db_pool
-                        .external_api_conn()
-                        .get_last_execution_event(&execution_id)
-                        .await;
+                let last_event = match db_pool.external_api_conn().await {
+                    Ok(conn) => conn.get_last_execution_event(&execution_id).await,
+                    Err(err) => {
+                        debug!("Database error, disconnecting - {err:?}");
+                        return;
+                    }
+                };
                 match last_event {
                     Ok(ExecutionEvent{event: ExecutionRequest::Finished { result, .. }, ..}) => {
                         let result = RetVal::from(result);

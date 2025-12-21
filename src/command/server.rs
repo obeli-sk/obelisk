@@ -351,7 +351,13 @@ pub(crate) async fn poll_status(
     create_request: CreateRequest,
     send_finished_status: bool,
 ) {
-    let conn = db_pool.connection();
+    let conn = match db_pool.connection().await {
+        Ok(conn) => conn,
+        Err(err) => {
+            debug!("Failed to acquire db connection for poll_status: {err:?}");
+            return;
+        }
+    };
     loop {
         select! {
             res = async {

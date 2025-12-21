@@ -3,9 +3,9 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, RunId};
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CancelOutcome,
-    CreateRequest, DbConnection, ExecutionRequest, ExpiredDelay, ExpiredLock, ExpiredTimer,
-    JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution,
-    PendingState, Version,
+    CreateRequest, DbConnection, DbConnectionTest, ExecutionRequest, ExpiredDelay, ExpiredLock,
+    ExpiredTimer, JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedBy,
+    LockedExecution, PendingState, Version,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
@@ -32,7 +32,7 @@ async fn test_expired_lock_should_be_found_mem(
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
     db_close.close().await;
 }
@@ -45,7 +45,7 @@ async fn test_append_batch_respond_to_parent(
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection_test().await.unwrap();
     append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
     db_close.close().await;
 }
@@ -60,7 +60,7 @@ async fn test_lock_pending_should_sort_by_scheduled_at(
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock, locking_strategy)
         .await;
     db_close.close().await;
@@ -72,7 +72,7 @@ async fn test_lock(#[values(Database::Memory, Database::Sqlite)] database: Datab
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     test_lock_inner(db_connection.as_ref(), sim_clock).await;
     db_close.close().await;
 }
@@ -83,7 +83,7 @@ async fn test_get_expired_lock(#[values(Database::Memory, Database::Sqlite)] dat
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     get_expired_lock(db_connection.as_ref(), sim_clock).await;
     db_close.close().await;
 }
@@ -94,7 +94,7 @@ async fn test_get_expired_delay(#[values(Database::Memory, Database::Sqlite)] da
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     get_expired_delay(db_connection.as_ref(), sim_clock).await;
     db_close.close().await;
 }
@@ -108,7 +108,7 @@ async fn append_after_finish_should_not_be_possible(
 ) {
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     let sim_clock = SimClock::default();
 
     let execution_id = ExecutionId::generate();
@@ -248,7 +248,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
 ) {
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     let sim_clock = SimClock::default();
 
     let execution_id = ExecutionId::generate();
@@ -362,7 +362,7 @@ async fn lock_extended_with_the_same_executor_should_work(
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     {
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         let lock_resp = lock_and_attept_to_extend(true, true, db_connection.as_ref())
             .await
             .unwrap();
@@ -378,7 +378,7 @@ async fn lock_extended_with_another_executor_should_fail(
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
     {
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
         lock_and_attept_to_extend(false, true, db_connection.as_ref())
             .await
             .unwrap_err();
@@ -487,7 +487,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
 ) {
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     let sim_clock = SimClock::default();
 
     let execution_id = ExecutionId::generate();
@@ -592,7 +592,7 @@ async fn lock_pending_while_nothing_is_pending_should_be_noop(
 ) {
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     let sim_clock = SimClock::default();
 
     let exec1 = ExecutorId::generate();
@@ -628,7 +628,7 @@ async fn creating_execution_twice_should_fail(
 ) {
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     let sim_clock = SimClock::default();
 
     let execution_id = ExecutionId::generate();
@@ -698,7 +698,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing(
     set_up();
 
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     lock_pending_while_expired_lock_should_return_nothing_inner(db_connection.as_ref()).await;
     db_close.close().await;
 }
@@ -850,7 +850,7 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
     }
 }
 
-async fn append_batch_respond_to_parent(db_connection: &dyn DbConnection, sim_clock: SimClock) {
+async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, sim_clock: SimClock) {
     let parent_id = ExecutionId::generate();
 
     // Create parent
@@ -1435,7 +1435,7 @@ async fn get_expired_times_with_execution_that_made_progress(
     set_up();
 
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     let sim_clock = SimClock::default();
 
     let execution_id = ExecutionId::generate();
@@ -1532,7 +1532,7 @@ async fn test_append_same_delay_id_twice_should_fail(
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
     append_same_delay_id_twice_should_fail(db_connection.as_ref(), sim_clock).await;
     db_close.close().await;
 }
@@ -1658,7 +1658,7 @@ async fn test_append_response_with_same_delay_id_twice_should_fail(
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection_test().await.unwrap();
     let execution_id = ExecutionId::generate();
     let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
     let delay_id = DelayId::new(&execution_id, &join_set_id);
@@ -1691,7 +1691,7 @@ async fn test_append_response_with_same_child_id_twice_should_fail(
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection_test().await.unwrap();
     let execution_id = ExecutionId::generate();
     let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
     let child_execution_id = execution_id.next_level(&join_set_id);
@@ -1718,7 +1718,7 @@ async fn test_append_response_with_same_child_id_twice_should_fail(
 }
 
 async fn append_response_with_same_id_twice_should_fail(
-    db_connection: &dyn DbConnection,
+    db_connection: &dyn DbConnectionTest,
     sim_clock: SimClock,
     execution_id: ExecutionId,
     join_set_id: JoinSetId,
@@ -1815,7 +1815,7 @@ async fn delay_cancellation_should_be_idempotent(
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.connection().await.unwrap();
 
     let execution_id = ExecutionId::generate();
     // Create
