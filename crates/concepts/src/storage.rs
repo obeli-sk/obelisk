@@ -137,7 +137,7 @@ impl ExecutionLog {
     }
 }
 
-pub type VersionType = u32;
+pub type VersionType = u32; // FIXME: Convert to u16
 #[derive(
     Debug,
     Default,

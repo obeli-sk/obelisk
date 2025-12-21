@@ -1278,7 +1278,7 @@ impl SqlitePool {
         component_input_digest: InputContentDigest,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
-        // If response idx is unknown, use 0. This distinguishs the two paths.
+        // If response idx is unknown, use 0. This distinguishes the two paths.
         // JoinNext will always send an actual idx.
         let mut stmt = tx
             .prepare_cached(
@@ -1337,8 +1337,8 @@ impl SqlitePool {
         retry_config: ComponentRetryConfig,
     ) -> Result<u32, DbErrorWrite> {
         debug!("Setting t_state to Locked(`{lock_expires_at:?}`)");
-        let backoff_millis =
-            u64::try_from(retry_config.retry_exp_backoff.as_millis()).expect("backoff too big");
+        let backoff_millis = i64::try_from(retry_config.retry_exp_backoff.as_millis())
+            .map_err(|_| DbErrorGeneric::Uncategorized("backoff too big".into()))?; // Keep equal to Postgres' BIGINT = i64
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx
             .prepare_cached(
@@ -1726,7 +1726,7 @@ impl SqlitePool {
             .filter_map(|row| match row {
                 Ok(row) => Some(row),
                 Err(err) => {
-                    error!("Skipping row - {err:?}");
+                    warn!("Skipping row - {err:?}");
                     None
                 }
             })
@@ -1918,7 +1918,7 @@ impl SqlitePool {
                     ":variant2": DUMMY_HISTORY_EVENT.variant(),
                 },
                 |row| {
-                    let created_at_fake = DateTime::from_timestamp_nanos(0); // not used
+                    let created_at_fake = DateTime::from_timestamp_nanos(0); // not used, only the inner event and version
                     let event = row
                         .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
                         .map_err(|serde| {
@@ -3227,7 +3227,7 @@ impl DbExternalApi for SqlitePool {
         execution_id: &ExecutionId,
         filter: BacktraceFilter,
     ) -> Result<BacktraceInfo, DbErrorRead> {
-        debug!("get_last_backtrace");
+        debug!("get_backtrace");
         let execution_id = execution_id.clone();
 
         self.transaction(
@@ -3479,16 +3479,15 @@ impl DbConnection for SqlitePool {
         match resp_or_receiver {
             itertools::Either::Left(resp) => Ok(resp), // no need for cleanup
             itertools::Either::Right(receiver) => {
-                let res = async move {
-                    tokio::select! {
-                        resp = receiver => {
-                            let resp = resp.map_err(|_| DbErrorGeneric::Close)?;
-                            Ok(vec![resp])
+                let res = tokio::select! {
+                    resp = receiver => {
+                        match resp {
+                            Ok(resp) => Ok(vec![resp]),
+                            Err(_) => Err(DbErrorReadWithTimeout::from(DbErrorGeneric::Close)),
                         }
-                        () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
                     }
-                }
-                .await;
+                    () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
+                };
                 cleanup();
                 res
             }

@@ -116,7 +116,19 @@ Check out the [Getting Started Guide](https://obeli.sk/docs/latest/getting-start
 obelisk server run
 ```
 
-### CLI Usage
+### Running with Postgres
+```sh
+docker run -it --rm \
+  --name obelisk-postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -p 5432:5432 \
+  postgres:18
+
+
+obelisk server run --config obelisk-postgres.toml
+```
+
+### [CLI Usage](https://obeli.sk/docs/latest/cli/)
 ```sh
 obelisk client component list
 # Call fibonacci(10) activity from the workflow 500 times in series.
