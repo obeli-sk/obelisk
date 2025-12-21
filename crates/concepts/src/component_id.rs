@@ -144,7 +144,13 @@ pub struct ContentDigest(pub Digest);
 pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest([0; 32]));
 
 #[derive(
-    Clone, PartialEq, Eq, Hash, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+    derive_more::Deref,
 )]
 pub struct Digest(pub [u8; 32]);
 impl Digest {
@@ -164,7 +170,7 @@ impl Digest {
 
     fn parse_without_prefix(hash_base16: &str) -> Result<Digest, DigestParseErrror> {
         if hash_base16.len() != 64 {
-            return Err(DigestParseErrror::SuffixLength(hash_base16.len()));
+            return Err(DigestParseErrror::SuffixHexLength(hash_base16.len()));
         }
         let mut digest = [0u8; 32];
         for i in 0..32 {
@@ -174,6 +180,19 @@ impl Digest {
         Ok(Digest(digest))
     }
 }
+
+impl TryFrom<&[u8]> for Digest {
+    type Error = DigestParseErrror;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        if let Ok(value) = value.try_into() {
+            Ok(Digest(value))
+        } else {
+            Err(DigestParseErrror::BinLength(value.len()))
+        }
+    }
+}
+
 const HASH_TYPE: &str = "sha256";
 const HASH_TYPE_WITH_DELIMITER: &str = const_format::formatcp!("{}:", HASH_TYPE);
 impl Display for Digest {
@@ -196,9 +215,11 @@ pub enum DigestParseErrror {
     #[error("cannot parse Digest - invalid prefix")]
     InvalidPrefix,
     #[error("cannot parse Digest - invalid suffix length, expected 64 hex digits, got {0}")]
-    SuffixLength(usize),
+    SuffixHexLength(usize),
     #[error("cannot parse Digest - suffix must be hex encoded")]
     InvalidHex,
+    #[error("cannot parse Digest - expected 32 bytes, got {0}")]
+    BinLength(usize),
 }
 
 impl FromStr for Digest {
