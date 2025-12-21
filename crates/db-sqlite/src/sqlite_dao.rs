@@ -12,11 +12,12 @@ use concepts::{
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool,
         DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
-        Locked, LockedBy, LockedExecution, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor, Version,
-        VersionType,
+        ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT,
+        HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+        JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedBy, LockedExecution,
+        Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
+        PendingStateLocked, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite};
@@ -190,11 +191,6 @@ CREATE TABLE IF NOT EXISTS t_state (
     PRIMARY KEY (execution_id)
 ) STRICT
 ";
-const STATE_PENDING_AT: &str = "PendingAt";
-const STATE_BLOCKED_BY_JOIN_SET: &str = "BlockedByJoinSet";
-const STATE_LOCKED: &str = "Locked";
-const STATE_FINISHED: &str = "Finished";
-const HISTORY_EVENT_TYPE_JOIN_NEXT: &str = "JoinNext";
 
 // TODO: partial indexes
 const IDX_T_STATE_LOCK_PENDING: &str = r"
