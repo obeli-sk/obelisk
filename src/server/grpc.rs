@@ -134,7 +134,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         };
 
         let outcome = server::submit(
-            self.db_pool.connection().as_ref(),
+            self.db_pool.external_api_conn().as_ref(),
             execution_id,
             ffqn,
             params,
@@ -176,7 +176,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
         span.record("execution_id", tracing::field::display(&execution_id));
         // Get FFQN
-        let db_connection = self.db_pool.connection();
+        let db_connection = self.db_pool.external_api_conn();
         let ffqn = db_connection
             .get_create_request(&ExecutionId::Derived(execution_id.clone()))
             .await
@@ -239,7 +239,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
-        let conn = self.db_pool.connection();
+        let conn = self.db_pool.external_api_conn();
         let current_pending_state = conn.get_pending_state(&execution_id).await.to_status()?;
         let (create_request, current_pending_state, grpc_pending_status) = {
             let create_request = conn.get_create_request(&execution_id).await.to_status()?;
@@ -344,7 +344,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         including_cursor: false,
                     },
                 ));
-        let conn = self.db_pool.connection();
+        let conn = self.db_pool.external_api_conn();
         let executions: Vec<_> = conn
             .list_executions(
                 ffqn,
@@ -389,7 +389,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
 
-        let conn = self.db_pool.connection();
+        let conn = self.db_pool.external_api_conn();
         let events = conn
             .list_execution_events(
                 &execution_id,
@@ -420,7 +420,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
-        let conn = self.db_pool.connection();
+        let conn = self.db_pool.external_api_conn();
         let responses = conn
             .list_responses(
                 &execution_id,
@@ -456,7 +456,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
 
-        let conn = self.db_pool.connection();
+        let conn = self.db_pool.external_api_conn();
         let events = conn
             .list_execution_events(
                 &execution_id,
@@ -503,7 +503,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
 
-        let conn = self.db_pool.connection();
+        let conn = self.db_pool.external_api_conn();
         let filter = match request.filter {
             Some(grpc_gen::get_backtrace_request::Filter::Specific(
                 grpc_gen::get_backtrace_request::Specific { version },
@@ -585,7 +585,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 tracing::Span::current()
                     .record("execution_id", tracing::field::display(&execution_id));
 
-                let conn = self.db_pool.connection();
+                let conn = self.db_pool.external_api_conn();
                 let child_create_req = conn.get_create_request(&execution_id).await.to_status()?;
                 if !child_create_req.component_id.component_type.is_activity() {
                     return Err(tonic::Status::invalid_argument(
@@ -602,7 +602,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 let delay_id = DelayId::try_from(delay_id)?;
                 tracing::Span::current().record("delay_id", tracing::field::display(&delay_id));
 
-                let conn = self.db_pool.connection();
+                let conn = self.db_pool.external_api_conn();
                 storage::cancel_delay(conn.as_ref(), delay_id, executed_at)
                     .await
                     .to_status()?
@@ -637,7 +637,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("new_component_digest")?
             .try_into()?;
         self.db_pool
-            .connection()
+            .external_api_conn()
             .upgrade_execution_component(&execution_id, &old, &new)
             .await
             .to_status()?;

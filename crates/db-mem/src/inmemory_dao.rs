@@ -7,17 +7,14 @@ use self::index::JournalsIndex;
 use crate::journal::ExecutionJournal;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::component_id::InputContentDigest;
 use concepts::prefixed_ulid::{DelayId, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
-    AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
-    DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
-    DbErrorWriteNonRetriable, DbExecutor, DbPool, DbPoolCloseable, ExecutionEvent,
-    ExecutionListPagination, ExecutionLog, ExecutionRequest, ExecutionWithState, ExpiredDelay,
-    ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetResponse, JoinSetResponseEventOuter,
-    LockPendingResponse, Locked, LockedExecution, Pagination, ResponseWithCursor, Version,
-    VersionType,
+    AppendResponse, AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection,
+    DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
+    DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionLog,
+    ExecutionRequest, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetResponse,
+    JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedExecution, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
@@ -408,50 +405,6 @@ impl DbConnection for InMemoryDbConnection {
         // noop, backtrace functionality is for reporting only and its absence should not affect the system.
         Ok(())
     }
-
-    async fn get_backtrace(
-        &self,
-        _execution_id: &ExecutionId,
-        _filter: BacktraceFilter,
-    ) -> Result<BacktraceInfo, DbErrorRead> {
-        unimplemented!("only needed for gRPC")
-    }
-
-    async fn list_executions(
-        &self,
-        _ffqn: Option<FunctionFqn>,
-        _top_level_only: bool,
-        _pagination: ExecutionListPagination,
-    ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
-        unimplemented!("only needed for gRPC")
-    }
-
-    async fn list_execution_events(
-        &self,
-        _execution_id: &ExecutionId,
-        _since: &Version,
-        _max_length: VersionType,
-        _include_backtrace_id: bool,
-    ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
-        unimplemented!("only needed for gRPC")
-    }
-
-    async fn list_responses(
-        &self,
-        _execution_id: &ExecutionId,
-        _pagination: Pagination<u32>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
-        unimplemented!("only needed for gRPC")
-    }
-
-    async fn upgrade_execution_component(
-        &self,
-        _execution_id: &ExecutionId,
-        _old: &InputContentDigest,
-        _new: &InputContentDigest,
-    ) -> Result<(), DbErrorWrite> {
-        unimplemented!("only needed for gRPC")
-    }
 }
 
 mod index {
@@ -657,6 +610,9 @@ impl DbPoolCloseable for InMemoryPool {
 impl DbPool for InMemoryPool {
     fn connection(&self) -> Box<dyn DbConnection> {
         Box::new(InMemoryDbConnection(self.0.clone()))
+    }
+    fn external_api_conn(&self) -> Box<dyn DbExternalApi> {
+        unimplemented!()
     }
 }
 
