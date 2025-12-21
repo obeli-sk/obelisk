@@ -1,4 +1,4 @@
-cargo-binstall 1.16.3
+cargo-binstall 1.16.4
 cargo-edit-upgrade 0.13.8
 cargo-expand 1.0.118
 cargo-insta 1.44.3
