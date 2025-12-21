@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::ExecutionId,
-    storage::{CancelOutcome, DbConnection, DbErrorWrite, DbPool},
+    storage::{CancelOutcome, DbConnection, DbErrorGeneric, DbErrorWrite, DbPool},
 };
 use executor::AbortOnDropHandle;
 use std::{
@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::oneshot;
-use tracing::info;
+use tracing::{info, warn};
 
 pub const CANCEL_RETRIES: u8 = 5;
 
@@ -45,8 +45,14 @@ impl CancelRegistry {
         AbortOnDropHandle::new(
             tokio::spawn({
                 async move {
+                    let mut old_err = None;
                     loop {
-                        clone.tick(db_pool.connection().as_ref()).await;
+                        let res = db_pool.connection().await;
+                        let res = match res {
+                            Ok(conn) => Ok(clone.tick(conn.as_ref()).await),
+                            Err(err) => Err(err),
+                        };
+                        log_err_if_new(res, &mut old_err);
                         tokio::time::sleep(sleep_duration).await;
                     }
                 }
@@ -109,5 +115,18 @@ impl CancelRegistry {
         db_connection
             .cancel_activity_with_retries(execution_id, cancelled_at)
             .await
+    }
+}
+
+fn log_err_if_new(res: Result<(), DbErrorGeneric>, old_err: &mut Option<DbErrorGeneric>) {
+    match (res, &old_err) {
+        (Ok(_), _) => {
+            *old_err = None;
+        }
+        (Err(err), Some(old)) if err == *old => {}
+        (Err(err), _) => {
+            warn!("Tick failed: {err:?}");
+            *old_err = Some(err);
+        }
     }
 }

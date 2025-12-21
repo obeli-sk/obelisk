@@ -51,7 +51,10 @@ pub fn spawn_new<C: ClockFn + 'static>(
                 let mut old_err = None;
                 loop {
                     let executed_at = config.clock_fn.now() - config.leeway;
-                    let res = tick(db_pool.connection().as_ref(), executed_at).await;
+                    let res = match db_pool.connection().await {
+                        Ok(conn) => tick(conn.as_ref(), executed_at).await,
+                        Err(err) => Err(DbErrorWrite::from(err)),
+                    };
                     log_err_if_new(res, &mut old_err);
                     tokio::time::sleep(tick_sleep).await;
                 }

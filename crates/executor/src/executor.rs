@@ -838,7 +838,8 @@ mod tests {
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::storage::{
-        CreateRequest, DbConnection, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+        CreateRequest, DbConnection, DbConnectionTest, JoinSetRequest, JoinSetResponse,
+        JoinSetResponseEvent,
     };
     use concepts::storage::{DbPoolCloseable, LockedBy};
     use concepts::storage::{ExecutionEvent, ExecutionRequest, HistoryEvent, PendingState};
@@ -880,8 +881,9 @@ mod tests {
     ) {
         let created_at = Now.now();
         let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
         execute_simple_lifecycle_tick_based(
-            db_pool.connection().as_ref(),
+            db_connection.as_ref(),
             db_exec.clone(),
             ConstClock(created_at),
             locking_strategy,
@@ -898,8 +900,9 @@ mod tests {
     ) {
         let created_at = Now.now();
         let (_guard, db_pool, db_exec, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
         execute_simple_lifecycle_tick_based(
-            db_pool.connection().as_ref(),
+            db_connection.as_ref(),
             db_exec.clone(),
             ConstClock(created_at),
             locking_strategy,
@@ -909,7 +912,7 @@ mod tests {
     }
 
     async fn execute_simple_lifecycle_tick_based<C: ClockFn + 'static>(
-        db_connection: &dyn DbConnection,
+        db_connection: &dyn DbConnectionTest,
         db_exec: Arc<dyn DbExecutor>,
         clock_fn: C,
         locking_strategy: LockingStrategy,
@@ -981,6 +984,7 @@ mod tests {
             Version::new(2),
             None,
         )));
+        let db_connection = db_pool.connection_test().await.unwrap();
 
         let execution_log = create_and_tick(
             CreateAndTickConfig {
@@ -989,7 +993,7 @@ mod tests {
                 executed_at: created_at,
             },
             clock_fn,
-            db_pool.connection().as_ref(),
+            db_connection.as_ref(),
             db_exec,
             exec_config,
             worker,
@@ -1025,7 +1029,7 @@ mod tests {
     >(
         config: CreateAndTickConfig,
         clock_fn: C,
-        db_connection: &dyn DbConnection,
+        db_connection: &dyn DbConnectionTest,
         db_exec: Arc<dyn DbExecutor>,
         exec_config: ExecConfig,
         worker: Arc<W>,
@@ -1112,6 +1116,7 @@ mod tests {
             },
         )));
         debug!(now = %sim_clock.now(), "Creating an execution that should fail");
+        let db_connection = db_pool.connection_test().await.unwrap();
         let execution_log = create_and_tick(
             CreateAndTickConfig {
                 execution_id: ExecutionId::generate(),
@@ -1119,7 +1124,7 @@ mod tests {
                 executed_at: sim_clock.now(),
             },
             sim_clock.clone(),
-            db_pool.connection().as_ref(),
+            db_connection.as_ref(),
             db_exec.clone(),
             exec_config.clone(),
             worker,
@@ -1180,7 +1185,7 @@ mod tests {
         )
         .await;
         let execution_log = {
-            let db_connection = db_pool.connection();
+            let db_connection = db_pool.connection_test().await.unwrap();
             db_connection
                 .get(&execution_log.execution_id)
                 .await
@@ -1247,7 +1252,7 @@ mod tests {
                 executed_at: created_at,
             },
             clock_fn,
-            db_pool.connection().as_ref(),
+            db_pool.connection_test().await.unwrap().as_ref(),
             db_exec,
             exec_config.clone(),
             worker,
@@ -1328,6 +1333,8 @@ mod tests {
         let parent_execution_id = ExecutionId::generate();
         db_pool
             .connection()
+            .await
+            .unwrap()
             .create(CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id: parent_execution_id.clone(),
@@ -1411,6 +1418,8 @@ mod tests {
             };
             db_pool
                 .connection()
+                .await
+                .unwrap()
                 .append_batch_create_new_execution(
                     current_time,
                     vec![join_set, child_exec_req, join_next],
@@ -1446,12 +1455,17 @@ mod tests {
         if matches!(expected_child_err.kind, ExecutionFailureKind::TimedOut) {
             // In case of timeout, let the timers watcher handle it
             sim_clock.move_time_forward(LOCK_EXPIRY);
-            expired_timers_watcher::tick(db_pool.connection().as_ref(), sim_clock.now())
+            expired_timers_watcher::tick(
+                db_pool.connection().await.unwrap().as_ref(),
+                sim_clock.now(),
+            )
                 .await
                 .unwrap();
         }
         let child_log = db_pool
-            .connection()
+            .connection_test()
+            .await
+            .unwrap()
             .get(&ExecutionId::Derived(child_execution_id.clone()))
             .await
             .unwrap();
@@ -1469,7 +1483,9 @@ mod tests {
             child_log.last_event().event
         );
         let parent_log = db_pool
-            .connection()
+            .connection_test()
+            .await
+            .unwrap()
             .get(&parent_execution_id)
             .await
             .unwrap();
@@ -1563,7 +1579,7 @@ mod tests {
         });
         // Create an execution
         let execution_id = ExecutionId::generate();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection_test().await.unwrap();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -1606,7 +1622,7 @@ mod tests {
         }
         {
             let expired_locks = expired_timers_watcher::tick(
-                db_pool.connection().as_ref(),
+                db_pool.connection().await.unwrap().as_ref(),
                 now_after_first_lock_expiry,
             )
             .await
@@ -1669,7 +1685,7 @@ mod tests {
         }
         {
             let expired_locks = expired_timers_watcher::tick(
-                db_pool.connection().as_ref(),
+                db_pool.connection().await.unwrap().as_ref(),
                 now_after_second_lock_expiry,
             )
             .await

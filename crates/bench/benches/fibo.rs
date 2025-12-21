@@ -318,7 +318,7 @@ mod bench {
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = Now.now();
-        let db_connection = db_pool.connection();
+        let db_connection = db_pool.connection().await.unwrap();
 
         let params = Params::from_json_values_test(vec![json!(fibo_n), json!(iterations)]);
         db_connection

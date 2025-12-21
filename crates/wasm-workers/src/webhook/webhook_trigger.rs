@@ -7,8 +7,8 @@ use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
 use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
-    AppendRequest, BacktraceInfo, CreateRequest, DbErrorReadWithTimeout, DbErrorWrite, DbPool,
-    ExecutionRequest, HistoryEvent, JoinSetRequest, Version,
+    AppendRequest, BacktraceInfo, CreateRequest, DbErrorGeneric, DbErrorReadWithTimeout,
+    DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent, JoinSetRequest, Version,
 };
 use concepts::time::ClockFn;
 use concepts::{
@@ -406,6 +406,11 @@ enum WebhookEndpointFunctionError {
     #[error("uncategorized error: {0}")]
     UncategorizedError(&'static str),
 }
+impl From<DbErrorGeneric> for WebhookEndpointFunctionError {
+    fn from(value: DbErrorGeneric) -> Self {
+        WebhookEndpointFunctionError::DbError(DbErrorWrite::Generic(value))
+    }
+}
 
 impl<C: ClockFn> wasmtime::component::HasData for WebhookEndpointCtx<C> {
     type Data<'a> = &'a mut WebhookEndpointCtx<C>;
@@ -431,7 +436,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             component_id: self.component_id.clone(),
             scheduled_by: None,
         };
-        let conn = self.db_pool.connection();
+        let conn = self.db_pool.connection().await?;
         let version = conn.create(create_request).await?;
         self.version = Some(version.clone());
         Ok(version)
@@ -527,7 +532,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                     component_id,
                     scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
                 };
-                let db_connection = self.db_pool.connection();
+                let db_connection = self.db_pool.connection().await?;
                 let version_min_including = version.0;
                 let version = db_connection
                     .append_batch_create_new_execution(
@@ -616,7 +621,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 component_id,
                 scheduled_by: None,
             };
-            let db_connection = self.db_pool.connection();
+            let db_connection = self.db_pool.connection().await?;
             let version_min_including = version.0;
             let appended = vec![req_join_set_created, req_child_exec, req_join_next];
             let version_max_excluding = version_min_including + 3; // obvious from line above
@@ -811,6 +816,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
         if let Some(version) = self.version {
             self.db_pool
                 .connection()
+                .await?
                 .append(
                     ExecutionId::TopLevel(self.execution_id),
                     version,
@@ -1286,7 +1292,7 @@ pub(crate) mod tests {
                 .strip_prefix(&format!("fiboa({n}, {iterations}) = scheduled: "))
                 .unwrap();
             let execution_id = ExecutionId::from_str(execution_id).unwrap();
-            let conn = fibo_webhook_harness.db_pool.connection();
+            let conn = fibo_webhook_harness.db_pool.connection().await.unwrap();
             let create_req = conn.get_create_request(&execution_id).await.unwrap();
             assert_eq!(FIBOA_WORKFLOW_FFQN, create_req.ffqn);
             let expected_params = Params::from_json_values_test(vec![json!(10), json!(1)]);

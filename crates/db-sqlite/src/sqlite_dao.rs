@@ -623,13 +623,29 @@ impl DbPoolCloseable for SqlitePool {
 
 #[async_trait]
 impl DbPool for SqlitePool {
-    fn connection(&self) -> Box<dyn DbConnection> {
-        Box::new(self.clone())
+    async fn connection(&self) -> Result<Box<dyn DbConnection>, DbErrorGeneric> {
+        if self.0.shutdown_finished.load(Ordering::Acquire) {
+            return Err(DbErrorGeneric::Close);
+        }
+        Ok(Box::new(self.clone()))
     }
-    fn external_api_conn(&self) -> Box<dyn DbExternalApi> {
-        Box::new(self.clone())
+    async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric> {
+        if self.0.shutdown_finished.load(Ordering::Acquire) {
+            return Err(DbErrorGeneric::Close);
+        }
+        Ok(Box::new(self.clone()))
+    }
+    #[cfg(feature = "test")]
+    async fn connection_test(
+        &self,
+    ) -> Result<Box<dyn concepts::storage::DbConnectionTest>, DbErrorGeneric> {
+        if self.0.shutdown_finished.load(Ordering::Acquire) {
+            return Err(DbErrorGeneric::Close);
+        }
+        Ok(Box::new(self.clone()))
     }
 }
+
 impl Drop for SqlitePool {
     fn drop(&mut self) {
         let arc = self.0.join_handle.take().expect("join_handle was set");
@@ -1199,7 +1215,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
         scheduled_at: DateTime<Utc>,     // Changing to state PendingAt
-        corresponding_version: &Version, // t_execution_log is not be changed
+        corresponding_version: &Version, // t_execution_log is not changed
         component_input_digest: InputContentDigest,
     ) -> Result<AppendNotifier, DbErrorWrite> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after response appended");
@@ -1716,6 +1732,100 @@ impl SqlitePool {
         Ok(vec)
     }
 
+    fn list_responses(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        pagination: Option<Pagination<u32>>,
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
+        // TODO: Add test
+        let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
+        let mut sql = "SELECT \
+            r.id, r.created_at, r.join_set_id,  r.delay_id, r.delay_success, r.child_execution_id, r.finished_version, l.json_value \
+            FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
+            WHERE \
+            r.execution_id = :execution_id \
+            AND ( r.finished_version = l.version OR r.child_execution_id IS NULL ) \
+            "
+        .to_string();
+        let limit = match &pagination {
+            Some(
+                pagination @ (Pagination::NewerThan { cursor, .. }
+                | Pagination::OlderThan { cursor, .. }),
+            ) => {
+                params.push((":cursor", Box::new(cursor)));
+                write!(sql, " AND r.id {rel} :cursor", rel = pagination.rel()).unwrap();
+                Some(pagination.length())
+            }
+            None => None,
+        };
+        sql.push_str(" ORDER BY id");
+        if pagination.as_ref().is_some_and(Pagination::is_desc) {
+            sql.push_str(" DESC");
+        }
+        if let Some(limit) = limit {
+            write!(sql, " LIMIT {limit}").unwrap();
+        }
+        params.push((":execution_id", Box::new(execution_id.to_string())));
+        tx.prepare(&sql)?
+            .query_map::<_, &[(&'static str, &dyn ToSql)], _>(
+                params
+                    .iter()
+                    .map(|(key, value)| (*key, value.as_ref()))
+                    .collect::<Vec<_>>()
+                    .as_ref(),
+                Self::parse_response_with_cursor,
+            )?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()
+            .map_err(DbErrorRead::from)
+    }
+
+    fn parse_response_with_cursor(
+        row: &rusqlite::Row<'_>,
+    ) -> Result<ResponseWithCursor, rusqlite::Error> {
+        let id = row.get("id")?;
+        let created_at: DateTime<Utc> = row.get("created_at")?;
+        let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
+        let event = match (
+            row.get::<_, Option<DelayId>>("delay_id")?,
+            row.get::<_, Option<bool>>("delay_success")?,
+            row.get::<_, Option<ExecutionIdDerived>>("child_execution_id")?,
+            row.get::<_, Option<VersionType>>("finished_version")?,
+            row.get::<_, Option<JsonWrapper<ExecutionRequest>>>("json_value")?,
+        ) {
+            (Some(delay_id), Some(delay_success), None, None, None) => {
+                JoinSetResponse::DelayFinished {
+                    delay_id,
+                    result: delay_success.then_some(()).ok_or(()),
+                }
+            }
+            (
+                None,
+                None,
+                Some(child_execution_id),
+                Some(finished_version),
+                Some(JsonWrapper(ExecutionRequest::Finished { result, .. })),
+            ) => JoinSetResponse::ChildExecutionFinished {
+                child_execution_id,
+                finished_version: Version(finished_version),
+                result,
+            },
+            (delay, delay_success, child, finished, result) => {
+                error!(
+                    "Invalid row in t_join_set_response {id} - {delay:?} {delay_success:?} {child:?} {finished:?} {:?}",
+                    result.map(|it| it.0)
+                );
+                return Err(consistency_rusqlite("invalid row in t_join_set_response"));
+            }
+        };
+        Ok(ResponseWithCursor {
+            cursor: id,
+            event: JoinSetResponseEventOuter {
+                event: JoinSetResponseEvent { join_set_id, event },
+                created_at,
+            },
+        })
+    }
+
     #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %run_id, %executor_id))]
     #[expect(clippy::too_many_arguments)]
     fn lock_single_execution(
@@ -1879,6 +1989,42 @@ impl SqlitePool {
             },
             |row| row.get("count"),
         )?)
+    }
+
+    fn nth_response(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        join_set_id: &JoinSetId,
+        skip_rows: u64,
+    ) -> Result<Option<ResponseWithCursor>, DbErrorRead> {
+        // TODO: Add test
+        tx
+            .prepare(
+                "SELECT r.id, r.created_at, r.join_set_id, \
+                    r.delay_id, r.delay_success, \
+                    r.child_execution_id, r.finished_version, l.json_value \
+                    FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
+                    WHERE \
+                    r.execution_id = :execution_id AND r.join_set_id = :join_set_id AND \
+                    (
+                    r.finished_version = l.version \
+                    OR \
+                    r.child_execution_id IS NULL \
+                    ) \
+                    ORDER BY id \
+                    LIMIT 1 OFFSET :offset",
+            )
+            ?
+            .query_row(
+                named_params! {
+                    ":execution_id": execution_id.to_string(),
+                    ":join_set_id": join_set_id.to_string(),
+                    ":offset": skip_rows,
+                },
+                Self::parse_response_with_cursor,
+            )
+            .optional()
+            .map_err(DbErrorRead::from)
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(%execution_id))]
@@ -2415,136 +2561,6 @@ impl SqlitePool {
             },
         )
         .map_err(DbErrorRead::from)
-    }
-
-    fn list_responses(
-        tx: &Transaction,
-        execution_id: &ExecutionId,
-        pagination: Option<Pagination<u32>>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
-        // TODO: Add test
-        let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
-        let mut sql = "SELECT \
-            r.id, r.created_at, r.join_set_id,  r.delay_id, r.delay_success, r.child_execution_id, r.finished_version, l.json_value \
-            FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
-            WHERE \
-            r.execution_id = :execution_id \
-            AND ( r.finished_version = l.version OR r.child_execution_id IS NULL ) \
-            "
-        .to_string();
-        let limit = match &pagination {
-            Some(
-                pagination @ (Pagination::NewerThan { cursor, .. }
-                | Pagination::OlderThan { cursor, .. }),
-            ) => {
-                params.push((":cursor", Box::new(cursor)));
-                write!(sql, " AND r.id {rel} :cursor", rel = pagination.rel()).unwrap();
-                Some(pagination.length())
-            }
-            None => None,
-        };
-        sql.push_str(" ORDER BY id");
-        if pagination.as_ref().is_some_and(Pagination::is_desc) {
-            sql.push_str(" DESC");
-        }
-        if let Some(limit) = limit {
-            write!(sql, " LIMIT {limit}").unwrap();
-        }
-        params.push((":execution_id", Box::new(execution_id.to_string())));
-        tx.prepare(&sql)?
-            .query_map::<_, &[(&'static str, &dyn ToSql)], _>(
-                params
-                    .iter()
-                    .map(|(key, value)| (*key, value.as_ref()))
-                    .collect::<Vec<_>>()
-                    .as_ref(),
-                Self::parse_response_with_cursor,
-            )?
-            .collect::<Result<Vec<_>, rusqlite::Error>>()
-            .map_err(DbErrorRead::from)
-    }
-
-    fn parse_response_with_cursor(
-        row: &rusqlite::Row<'_>,
-    ) -> Result<ResponseWithCursor, rusqlite::Error> {
-        let id = row.get("id")?;
-        let created_at: DateTime<Utc> = row.get("created_at")?;
-        let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
-        let event = match (
-            row.get::<_, Option<DelayId>>("delay_id")?,
-            row.get::<_, Option<bool>>("delay_success")?,
-            row.get::<_, Option<ExecutionIdDerived>>("child_execution_id")?,
-            row.get::<_, Option<VersionType>>("finished_version")?,
-            row.get::<_, Option<JsonWrapper<ExecutionRequest>>>("json_value")?,
-        ) {
-            (Some(delay_id), Some(delay_success), None, None, None) => {
-                JoinSetResponse::DelayFinished {
-                    delay_id,
-                    result: delay_success.then_some(()).ok_or(()),
-                }
-            }
-            (
-                None,
-                None,
-                Some(child_execution_id),
-                Some(finished_version),
-                Some(JsonWrapper(ExecutionRequest::Finished { result, .. })),
-            ) => JoinSetResponse::ChildExecutionFinished {
-                child_execution_id,
-                finished_version: Version(finished_version),
-                result,
-            },
-            (delay, delay_success, child, finished, result) => {
-                error!(
-                    "Invalid row in t_join_set_response {id} - {delay:?} {delay_success:?} {child:?} {finished:?} {:?}",
-                    result.map(|it| it.0)
-                );
-                return Err(consistency_rusqlite("invalid row in t_join_set_response"));
-            }
-        };
-        Ok(ResponseWithCursor {
-            cursor: id,
-            event: JoinSetResponseEventOuter {
-                event: JoinSetResponseEvent { join_set_id, event },
-                created_at,
-            },
-        })
-    }
-
-    fn nth_response(
-        tx: &Transaction,
-        execution_id: &ExecutionId,
-        join_set_id: &JoinSetId,
-        skip_rows: u64,
-    ) -> Result<Option<ResponseWithCursor>, DbErrorRead> {
-        // TODO: Add test
-        tx
-            .prepare(
-                "SELECT r.id, r.created_at, r.join_set_id, \
-                    r.delay_id, r.delay_success, \
-                    r.child_execution_id, r.finished_version, l.json_value \
-                    FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
-                    WHERE \
-                    r.execution_id = :execution_id AND r.join_set_id = :join_set_id AND \
-                    (
-                    r.finished_version = l.version \
-                    OR \
-                    r.child_execution_id IS NULL \
-                    ) \
-                    ORDER BY id \
-                    LIMIT 1 OFFSET :offset",
-            )
-            ?
-            .query_row(
-                named_params! {
-                    ":execution_id": execution_id.to_string(),
-                    ":join_set_id": join_set_id.to_string(),
-                    ":offset": skip_rows,
-                },
-                Self::parse_response_with_cursor,
-            )
-            .optional()
-            .map_err(DbErrorRead::from)
     }
 
     fn delay_response(
@@ -3402,18 +3418,6 @@ impl DbConnection for SqlitePool {
         Ok(version)
     }
 
-    #[cfg(feature = "test")]
-    #[instrument(level = Level::DEBUG, skip(self))]
-    async fn get(
-        &self,
-        execution_id: &ExecutionId,
-    ) -> Result<concepts::storage::ExecutionLog, DbErrorRead> {
-        trace!("get");
-        let execution_id = execution_id.clone();
-        self.transaction(move |tx| Self::get(tx, &execution_id), "get")
-            .await
-    }
-
     // Supports only one subscriber per execution id.
     // A new call will overwrite the old subscriber, the old one will end
     // with a timeout, which is fine.
@@ -3553,29 +3557,6 @@ impl DbConnection for SqlitePool {
                 res
             }
         }
-    }
-
-    #[cfg(feature = "test")]
-    #[instrument(level = Level::DEBUG, skip(self, response_event), fields(join_set_id = %response_event.join_set_id))]
-    async fn append_response(
-        &self,
-        created_at: DateTime<Utc>,
-        execution_id: ExecutionId,
-        response_event: JoinSetResponseEvent,
-    ) -> Result<(), DbErrorWrite> {
-        debug!("append_response");
-        let event = JoinSetResponseEventOuter {
-            created_at,
-            event: response_event,
-        };
-        let notifier = self
-            .transaction(
-                move |tx| Self::append_response(tx, &execution_id, event.clone()),
-                "append_response",
-            )
-            .await?;
-        self.notify_all(vec![notifier], created_at);
-        Ok(())
     }
 
     #[instrument(level = Level::DEBUG, skip_all, fields(%join_set_id, %execution_id))]
@@ -3751,6 +3732,43 @@ impl DbConnection for SqlitePool {
             )
             .await?
             .pending_state)
+    }
+}
+
+#[cfg(feature = "test")]
+#[async_trait]
+impl concepts::storage::DbConnectionTest for SqlitePool {
+    #[instrument(level = Level::DEBUG, skip(self, response_event), fields(join_set_id = %response_event.join_set_id))]
+    async fn append_response(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+        response_event: JoinSetResponseEvent,
+    ) -> Result<(), DbErrorWrite> {
+        debug!("append_response");
+        let event = JoinSetResponseEventOuter {
+            created_at,
+            event: response_event,
+        };
+        let notifier = self
+            .transaction(
+                move |tx| Self::append_response(tx, &execution_id, event.clone()),
+                "append_response",
+            )
+            .await?;
+        self.notify_all(vec![notifier], created_at);
+        Ok(())
+    }
+
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn get(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<concepts::storage::ExecutionLog, DbErrorRead> {
+        trace!("get");
+        let execution_id = execution_id.clone();
+        self.transaction(move |tx| Self::get(tx, &execution_id), "get")
+            .await
     }
 }
 
