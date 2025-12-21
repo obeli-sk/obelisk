@@ -30,6 +30,12 @@ use strum::IntoStaticStr;
 use tracing::debug;
 use tracing::error;
 
+pub const STATE_PENDING_AT: &str = "PendingAt";
+pub const STATE_BLOCKED_BY_JOIN_SET: &str = "BlockedByJoinSet";
+pub const STATE_LOCKED: &str = "Locked";
+pub const STATE_FINISHED: &str = "Finished";
+pub const HISTORY_EVENT_TYPE_JOIN_NEXT: &str = "JoinNext";
+
 /// Remote client representation of the execution journal.
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
