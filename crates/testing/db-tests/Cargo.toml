@@ -1,5 +1,5 @@
 [package]
-name = "db-tests"
+name = "obeli-db-tests"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,6 +12,7 @@ version.workspace = true
 concepts = { workspace = true, features = ["test"] }
 db-mem = { workspace = true, features = ["test"] }
 db-sqlite = { workspace = true, features = ["tempfile", "test"] }
+db-postgres = { workspace = true, features = ["test"] }
 test-utils.workspace = true
 utils.workspace = true
 val-json.workspace = true

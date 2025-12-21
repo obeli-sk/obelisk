@@ -3,9 +3,13 @@ use concepts::FunctionFqn;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
 use db_mem::inmemory_dao::InMemoryPool;
+use db_postgres::postgres_dao::DbInitialzationOutcome;
+use db_postgres::postgres_dao::PostgresConfig;
+use db_postgres::postgres_dao::PostgresPool;
 use db_sqlite::sqlite_dao::SqlitePool;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
+use tracing::debug;
 
 pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
 
@@ -13,6 +17,7 @@ pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
 pub enum Database {
     Memory,
     Sqlite,
+    Postgres,
 }
 impl Database {
     pub const ALL: [Database; 3] = [Database::Sqlite, Database::Memory, Database::Postgres];
@@ -21,6 +26,7 @@ impl Database {
 pub enum DbGuard {
     Memory,
     Sqlite(Option<NamedTempFile>),
+    Postgres,
 }
 
 impl Database {
@@ -37,13 +43,43 @@ impl Database {
                 let closeable = DbPoolCloseableWrapper::Sqlite(sqlite.clone());
                 (DbGuard::Sqlite(guard), Arc::new(sqlite.clone()), closeable)
             }
+            Database::Postgres => {
+                let config = PostgresConfig {
+                    host: get_env_val("TEST_POSTGRES_HOST"),
+                    user: get_env_val("TEST_POSTGRES_USER"),
+                    password: get_env_val("TEST_POSTGRES_PASSWORD"),
+                    db_name: get_env_val("TEST_POSTGRES_DATABASE_PREFIX"),
+                };
+                loop {
+                    let mut config = config.clone();
+                    use rand::SeedableRng;
+                    let mut rng = rand::rngs::SmallRng::from_os_rng();
+                    let suffix = (0..5)
+                        .map(|_| rand::Rng::random_range(&mut rng, b'a'..=b'z') as char)
+                        .collect::<String>();
+                    config.db_name = format!("{}_{}", config.db_name, suffix);
+                    debug!("Using database {}", config.db_name);
+                    let (pool, outcome) = PostgresPool::new_with_outcome(config).await.unwrap();
+                    if outcome == DbInitialzationOutcome::Created {
+                        let pool = Arc::new(pool);
+                        let closeable = DbPoolCloseableWrapper::Postgres(pool.clone());
+                        return (DbGuard::Postgres, pool, closeable);
+                    }
+                }
+            }
         }
     }
+}
+
+fn get_env_val(name: &'static str) -> String {
+    std::env::var(name)
+        .unwrap_or_else(|_| panic!("cannot get value of environment variable `{name}`"))
 }
 
 pub enum DbPoolCloseableWrapper {
     Memory(InMemoryPool),
     Sqlite(SqlitePool),
+    Postgres(Arc<PostgresPool>),
 }
 
 #[async_trait]
@@ -52,6 +88,10 @@ impl DbPoolCloseable for DbPoolCloseableWrapper {
         match self {
             DbPoolCloseableWrapper::Memory(db) => db.close().await,
             DbPoolCloseableWrapper::Sqlite(db) => db.close().await,
+            DbPoolCloseableWrapper::Postgres(db) => {
+                db.close().await; // Close the target db.
+                db.drop_database().await; // Drop it using the admin database.
+            }
         }
     }
 }

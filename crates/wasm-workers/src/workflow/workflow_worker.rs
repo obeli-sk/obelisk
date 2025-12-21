@@ -1227,7 +1227,7 @@ pub(crate) mod tests {
                 ..
             }
         );
-
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -1393,7 +1393,7 @@ pub(crate) mod tests {
                 ..
             }
         );
-
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -1468,6 +1468,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -1564,6 +1565,7 @@ pub(crate) mod tests {
             assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val.value);
         let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -1673,6 +1675,7 @@ pub(crate) mod tests {
             let val = assert_matches!(val, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());
         }
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -1785,6 +1788,7 @@ pub(crate) mod tests {
         assert!(next_pending.parent.is_none());
         let params = serde_json::to_string(&Params::empty()).unwrap();
         assert_eq!(params, serde_json::to_string(&next_pending.params).unwrap());
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -1879,6 +1883,7 @@ pub(crate) mod tests {
                 component_id_input_digest: _,
             }
         );
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -1988,7 +1993,7 @@ pub(crate) mod tests {
              } => value
         );
         assert_eq!(WastVal::String(format!("stubbing {INPUT_PARAM}")), value);
-
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -2155,7 +2160,7 @@ pub(crate) mod tests {
             execution_log.into_finished_result(),
             Some(SupportedFunctionReturnValue::Ok { ok: None })
         );
-
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -2319,6 +2324,7 @@ pub(crate) mod tests {
             res.into_finished_result().unwrap(),
             SupportedFunctionReturnValue::Ok { ok: None }
         );
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -2502,6 +2508,7 @@ pub(crate) mod tests {
                 component_id_input_digest: _,
             }
         );
+        drop(db_connection);
         db_close.close().await;
     }
 }

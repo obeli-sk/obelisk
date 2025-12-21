@@ -14,8 +14,8 @@ use concepts::storage::Version;
 use concepts::storage::{AppendRequest, CreateRequest};
 use concepts::time::ClockFn as _;
 use concepts::time::Now;
-use db_tests::Database;
-use db_tests::SOME_FFQN;
+use obeli_db_tests::Database;
+use obeli_db_tests::SOME_FFQN;
 use rstest::rstest;
 use std::sync::Arc;
 use std::time::Duration;
@@ -223,7 +223,7 @@ async fn persist_finished_event(
     (execution_id, version, inner)
 }
 
-// Test that the sqlite database no longer uses serde_json::Value during deserialization as it
+// Test that the database does not use `serde_json::Value` during deserialization as it
 // would sorts attributes and thus break `TypeWrapper` and `WastVal`,
 #[expand_enum_database]
 #[rstest]
@@ -241,11 +241,11 @@ async fn get_execution_event_should_not_break_json_order(database: Database) {
         .unwrap()
         .event;
     assert_eq!(expected_inner, found_inner);
-
+    drop(db_connection);
     db_close.close().await;
 }
 
-// Test that no database uses serde_json::Value during deserialization as it
+// Test that the database does not use `serde_json::Value` during deserialization as it
 // would sort attributes and thus break `TypeWrapper` and `WastVal`,
 #[expand_enum_database]
 #[rstest]
@@ -267,6 +267,6 @@ async fn list_execution_events_should_not_break_json_order(database: Database) {
     assert_eq!(1, found_inner.len());
     let found_inner = &found_inner[0].event;
     assert_eq!(expected_inner, *found_inner);
-
+    drop(db_connection);
     db_close.close().await;
 }

@@ -1,4 +1,6 @@
 pub mod component_id;
+#[cfg(feature = "postgres")]
+mod postgres_ext;
 #[cfg(feature = "rusqlite")]
 mod rusqlite_ext;
 pub mod storage;
@@ -2059,7 +2061,7 @@ pub struct PackageIfcFns {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComponentRetryConfig {
-    pub max_retries: u32,
+    pub max_retries: u32, // FIXME: u16
     pub retry_exp_backoff: Duration,
 }
 impl ComponentRetryConfig {

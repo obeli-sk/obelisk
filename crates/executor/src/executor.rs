@@ -911,6 +911,7 @@ mod tests {
         #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
         locking_strategy: LockingStrategy,
     ) {
+        set_up();
         let created_at = Now.now();
         let (_guard, db_pool, db_close) = database.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
@@ -921,6 +922,7 @@ mod tests {
             locking_strategy,
         )
         .await;
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -930,7 +932,6 @@ mod tests {
         clock_fn: C,
         locking_strategy: LockingStrategy,
     ) {
-        set_up();
         let created_at = clock_fn.now();
         let exec_config = ExecConfig {
             batch_size: 1,
@@ -1068,7 +1069,7 @@ mod tests {
         let execution_log = db_connection.get(&config.execution_id).await.unwrap();
         debug!("Execution history after tick: {execution_log:?}");
         // check that DB contains Created and Locked events.
-        assert_matches!(
+        let actually_created_at = assert_matches!(
             execution_log.events.first().unwrap(),
             ExecutionEvent {
                 event: ExecutionRequest::Created { .. },
@@ -1076,8 +1077,9 @@ mod tests {
                 backtrace_id: None,
                 version: Version(0),
             }
-            if config.created_at == *actually_created_at
+            => *actually_created_at
         );
+        assert_eq!(config.created_at, actually_created_at);
         let locked_at = assert_matches!(
             execution_log.events.get(1).unwrap(),
             ExecutionEvent {

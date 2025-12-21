@@ -6,5 +6,5 @@ set -exuo pipefail
 cd "$(dirname "$0")/.."
 
 RUST_BACKTRACE=1 \
-RUST_LOG="${RUST_LOG:-obeli=debug,app=trace}" \
+RUST_LOG="${RUST_LOG:-info,obeli=debug,app=trace}" \
 cargo nextest run  --no-output-indent --workspace -P ci-test "$@"

@@ -31,7 +31,13 @@ pub fn now_tokio_instant() -> tokio::time::Instant {
 pub struct Now;
 
 impl ClockFn for Now {
+    #[cfg(not(feature = "test"))]
     fn now(&self) -> DateTime<Utc> {
         Utc::now()
+    }
+    #[cfg(feature = "test")]
+    fn now(&self) -> DateTime<Utc> {
+        let micros = Utc::now().timestamp_micros();
+        chrono::TimeZone::timestamp_micros(&Utc, micros).unwrap()
     }
 }

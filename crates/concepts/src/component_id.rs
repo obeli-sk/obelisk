@@ -152,7 +152,7 @@ pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest([0; 32]));
     serde_with::DeserializeFromStr,
     derive_more::Deref,
 )]
-pub struct Digest(pub [u8; 32]);
+pub struct Digest(pub [u8; 32]); // FIXME: Remove pub, use slice
 impl Digest {
     #[must_use]
     fn digest_base16_without_prefix(&self) -> String {

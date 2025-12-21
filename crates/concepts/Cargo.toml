@@ -24,6 +24,7 @@ fxhash.workspace = true
 hashbrown.workspace = true
 indexmap.workspace = true
 opentelemetry.workspace = true
+tokio-postgres = { optional = true, workspace = true }
 rand.workspace = true
 rusqlite = { optional = true, workspace = true }
 serde.workspace = true
@@ -45,6 +46,7 @@ rstest.workspace = true
 [features]
 test = []
 rusqlite = ["dep:rusqlite"]
+postgres = ["dep:tokio-postgres"]
 
 [lints]
 workspace = true

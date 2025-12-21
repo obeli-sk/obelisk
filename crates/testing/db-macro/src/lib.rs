@@ -7,7 +7,7 @@ pub fn expand_enum_database(_attr: TokenStream, item: TokenStream) -> TokenStrea
     let mut func = parse_macro_input!(item as ItemFn);
 
     // Hardcoded variants
-    let variants = ["Sqlite", "Memory"];
+    let variants = ["Sqlite", "Memory", "Postgres"];
 
     // Apply #[values(...)] to the first argument
     if let Some(arg) = func.sig.inputs.iter_mut().next() {

@@ -13,6 +13,7 @@ version.workspace = true
 [dependencies]
 concepts.workspace = true
 db-sqlite.workspace = true
+db-postgres.workspace = true
 executor.workspace = true
 grpc.workspace = true
 utils.workspace = true
@@ -68,13 +69,15 @@ tracing.workspace = true
 wasmtime.workspace = true
 
 # Optional deps:
-# otlp
+
+## otlp
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry-semantic-conventions = { workspace = true, optional = true }
 tracing-opentelemetry.workspace = true
-# tokio-console
+
+## tokio-console
 console-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -104,6 +107,7 @@ members = [
     "crates/testing/component-builder",
     "crates/concepts",
     "crates/db-mem",
+    "crates/db-postgres",
     "crates/db-sqlite",
     "crates/executor",
     "crates/grpc",
@@ -154,8 +158,9 @@ rust-version = "1.91.0"
 [workspace.dependencies]
 concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.31.0" }
 db-mem = { path = "crates/db-mem" }
+db-postgres = { package = "obeli-sk-db-postgres", path = "crates/db-postgres", version = "0.31.0" }
 db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.31.0" }
-db-tests = { path = "crates/testing/db-tests" }
+db-tests = { package = "obeli-db-tests", path = "crates/testing/db-tests" }
 executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.31.0" }
 grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.31.0" }
 obelisk-component-builder = { path = "crates/testing/component-builder", features = [
@@ -202,6 +207,7 @@ console-subscriber = "0.5.0"
 const_format = "0.2.35"
 criterion = "0.8"
 crossterm = "0.29.0"
+deadpool-postgres = "0.14.1"
 derive_more = { version = "2.1.0", features = [
     "debug",
     "deref",
@@ -236,6 +242,7 @@ oci-client = { version = "0.15.0", default-features = false, features = [
 oci-wasm = { version = "0.3.0", default-features = false, features = [ # Dependent on matching oci-client
     "rustls-tls",
 ] }
+tokio-postgres = { version = "0.7.15", features = ["with-chrono-0_4", "with-serde_json-1"] }
 prost = "0.14.1"
 prost-wkt-types = "0.7"
 quote = "1"
