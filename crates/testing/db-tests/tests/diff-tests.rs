@@ -249,7 +249,7 @@ async fn get_execution_event_should_not_break_json_order(
 async fn list_execution_events_should_not_break_json_order() {
     set_up();
     let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
-    let db_connection = db_pool.connection();
+    let db_connection = db_pool.external_api_conn();
 
     let (execution_id, version, expected_inner) =
         persist_finished_event(db_connection.as_ref()).await;

@@ -56,6 +56,7 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::DbExecutor;
+use concepts::storage::DbExternalApi;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
 use concepts::storage::ExecutionRequest;
@@ -203,7 +204,7 @@ pub(crate) enum SubmitOutcome {
 }
 
 pub(crate) async fn submit(
-    db_connection: &dyn DbConnection,
+    db_connection: &dyn DbExternalApi,
     execution_id: ExecutionId,
     ffqn: FunctionFqn,
     mut params: Vec<serde_json::Value>,

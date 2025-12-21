@@ -95,7 +95,7 @@ async fn delay_cancel(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
-    let conn = state.db_pool.connection();
+    let conn = state.db_pool.external_api_conn();
     let executed_at = Now.now();
     let outcome = storage::cancel_delay(conn.as_ref(), delay_id, executed_at)
         .await
@@ -203,7 +203,7 @@ async fn executions_list(
         }
     };
 
-    let conn = state.db_pool.connection();
+    let conn = state.db_pool.external_api_conn();
 
     let executions = conn
         .list_executions(
@@ -261,7 +261,7 @@ async fn execution_cancel(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
-    let conn = state.db_pool.connection();
+    let conn = state.db_pool.external_api_conn();
     let create_req = conn
         .get_create_request(&execution_id)
         .await
@@ -298,7 +298,7 @@ async fn execution_events(
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
     const DEFAULT_LENGTH: u8 = 20;
-    let conn = state.db_pool.connection();
+    let conn = state.db_pool.external_api_conn();
     let events = conn
         .list_execution_events(
             &execution_id,
@@ -342,7 +342,7 @@ async fn execution_responses(
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
     const DEFAULT_LENGTH: u8 = 20;
-    let conn = state.db_pool.connection();
+    let conn = state.db_pool.external_api_conn();
     let responses = conn
         .list_responses(
             &execution_id,
@@ -382,7 +382,7 @@ async fn execution_status_get(
 ) -> Result<Response, HttpResponse> {
     let pending_state = state
         .db_pool
-        .connection()
+        .external_api_conn()
         .get_pending_state(&execution_id)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
@@ -403,7 +403,7 @@ async fn execution_stub(
     let accept = AcceptHeader::Json;
     let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
     // Get FFQN
-    let db_connection = state.db_pool.connection();
+    let db_connection = state.db_pool.external_api_conn();
     let ffqn = db_connection
         .get_create_request(&ExecutionId::Derived(execution_id.clone()))
         .await
@@ -488,7 +488,7 @@ async fn execution_get(
 ) -> Result<http::Response<Body>, HttpResponse> {
     let last_event = state
         .db_pool
-        .connection()
+        .external_api_conn()
         .get_last_execution_event(&execution_id)
         .await
         .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?;
@@ -551,7 +551,7 @@ async fn execution_submit(
     follow: bool,
     accept: AcceptHeader,
 ) -> Result<http::Response<Body>, HttpResponse> {
-    let conn = state.db_pool.connection();
+    let conn = state.db_pool.external_api_conn();
     let res = server::submit(
         conn.as_ref(),
         execution_id.clone(),
@@ -625,7 +625,7 @@ async fn stream_execution_response_task(
             }
             () = tokio::time::sleep(Duration::from_secs(1)) => {
                 let last_event = db_pool
-                        .connection()
+                        .external_api_conn()
                         .get_last_execution_event(&execution_id)
                         .await;
                 match last_event {

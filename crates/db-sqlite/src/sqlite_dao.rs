@@ -10,8 +10,8 @@ use concepts::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool,
-        DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
+        DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
+        DbPool, DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT,
         HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedBy, LockedExecution,
@@ -624,6 +624,9 @@ impl DbPoolCloseable for SqlitePool {
 #[async_trait]
 impl DbPool for SqlitePool {
     fn connection(&self) -> Box<dyn DbConnection> {
+        Box::new(self.clone())
+    }
+    fn external_api_conn(&self) -> Box<dyn DbExternalApi> {
         Box::new(self.clone())
     }
 }
@@ -3194,6 +3197,122 @@ impl DbExecutor for SqlitePool {
 }
 
 #[async_trait]
+impl DbExternalApi for SqlitePool {
+    #[instrument(level = Level::DEBUG, skip_all)]
+    async fn get_backtrace(
+        &self,
+        execution_id: &ExecutionId,
+        filter: BacktraceFilter,
+    ) -> Result<BacktraceInfo, DbErrorRead> {
+        debug!("get_last_backtrace");
+        let execution_id = execution_id.clone();
+
+        self.transaction(
+            move |tx| {
+                let select = "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_backtrace \
+                                WHERE execution_id = :execution_id";
+                let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![(":execution_id", Box::new(execution_id.to_string()))];
+                let select = match &filter {
+                    BacktraceFilter::Specific(version) =>{
+                        params.push((":version", Box::new(version.0)));
+                        format!("{select} AND version_min_including <= :version AND version_max_excluding > :version")
+                    },
+                    BacktraceFilter::First => format!("{select} ORDER BY version_min_including LIMIT 1"),
+                    BacktraceFilter::Last => format!("{select} ORDER BY version_min_including DESC LIMIT 1")
+                };
+                tx
+                    .prepare(&select)
+                    ?
+                    .query_row::<_, &[(&'static str, &dyn ToSql)], _>(
+                        params
+                            .iter()
+                            .map(|(key, value)| (*key, value.as_ref()))
+                            .collect::<Vec<_>>()
+                            .as_ref(),
+                    |row| {
+                        Ok(BacktraceInfo {
+                            execution_id: execution_id.clone(),
+                            component_id: row.get::<_, JsonWrapper<_> >("component_id")?.0,
+                            version_min_including: Version::new(row.get::<_, VersionType>("version_min_including")?),
+                            version_max_excluding: Version::new(row.get::<_, VersionType>("version_max_excluding")?),
+                            wasm_backtrace: row.get::<_, JsonWrapper<_>>("wasm_backtrace")?.0,
+                        })
+                    },
+                ).map_err(DbErrorRead::from)
+            },
+            "get_last_backtrace",
+        ).await
+    }
+
+    async fn list_executions(
+        &self,
+        ffqn: Option<FunctionFqn>,
+        top_level_only: bool,
+        pagination: ExecutionListPagination,
+    ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
+        self.transaction(
+            move |tx| Self::list_executions(tx, ffqn.as_ref(), top_level_only, &pagination),
+            "list_executions",
+        )
+        .await
+    }
+
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn list_execution_events(
+        &self,
+        execution_id: &ExecutionId,
+        since: &Version,
+        max_length: VersionType,
+        include_backtrace_id: bool,
+    ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
+        let execution_id = execution_id.clone();
+        let since = since.0;
+        self.transaction(
+            move |tx| {
+                Self::list_execution_events(
+                    tx,
+                    &execution_id,
+                    since,
+                    since + max_length,
+                    include_backtrace_id,
+                )
+            },
+            "get",
+        )
+        .await
+    }
+
+    async fn list_responses(
+        &self,
+        execution_id: &ExecutionId,
+        pagination: Pagination<u32>,
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| Self::list_responses(tx, &execution_id, Some(pagination)),
+            "list_responses",
+        )
+        .await
+    }
+
+    async fn upgrade_execution_component(
+        &self,
+        execution_id: &ExecutionId,
+        old: &InputContentDigest,
+        new: &InputContentDigest,
+    ) -> Result<(), DbErrorWrite> {
+        let execution_id = execution_id.clone();
+        let old = old.clone();
+        let new = new.clone();
+        self.transaction(
+            move |tx| Self::upgrade_execution_component(tx, &execution_id, &old, &new),
+            "upgrade_execution_component",
+        )
+        .await
+    }
+}
+
+#[async_trait]
 impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
@@ -3293,31 +3412,6 @@ impl DbConnection for SqlitePool {
         let execution_id = execution_id.clone();
         self.transaction(move |tx| Self::get(tx, &execution_id), "get")
             .await
-    }
-
-    #[instrument(level = Level::DEBUG, skip(self))]
-    async fn list_execution_events(
-        &self,
-        execution_id: &ExecutionId,
-        since: &Version,
-        max_length: VersionType,
-        include_backtrace_id: bool,
-    ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
-        let execution_id = execution_id.clone();
-        let since = since.0;
-        self.transaction(
-            move |tx| {
-                Self::list_execution_events(
-                    tx,
-                    &execution_id,
-                    since,
-                    since + max_length,
-                    include_backtrace_id,
-                )
-            },
-            "get",
-        )
-        .await
     }
 
     // Supports only one subscriber per execution id.
@@ -3562,52 +3656,6 @@ impl DbConnection for SqlitePool {
         .await
     }
 
-    #[instrument(level = Level::DEBUG, skip_all)]
-    async fn get_backtrace(
-        &self,
-        execution_id: &ExecutionId,
-        filter: BacktraceFilter,
-    ) -> Result<BacktraceInfo, DbErrorRead> {
-        debug!("get_last_backtrace");
-        let execution_id = execution_id.clone();
-
-        self.transaction(
-            move |tx| {
-                let select = "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_backtrace \
-                                WHERE execution_id = :execution_id";
-                let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![(":execution_id", Box::new(execution_id.to_string()))];
-                let select = match &filter {
-                    BacktraceFilter::Specific(version) =>{
-                        params.push((":version", Box::new(version.0)));
-                        format!("{select} AND version_min_including <= :version AND version_max_excluding > :version")
-                    },
-                    BacktraceFilter::First => format!("{select} ORDER BY version_min_including LIMIT 1"),
-                    BacktraceFilter::Last => format!("{select} ORDER BY version_min_including DESC LIMIT 1")
-                };
-                tx
-                    .prepare(&select)
-                    ?
-                    .query_row::<_, &[(&'static str, &dyn ToSql)], _>(
-                        params
-                            .iter()
-                            .map(|(key, value)| (*key, value.as_ref()))
-                            .collect::<Vec<_>>()
-                            .as_ref(),
-                    |row| {
-                        Ok(BacktraceInfo {
-                            execution_id: execution_id.clone(),
-                            component_id: row.get::<_, JsonWrapper<_> >("component_id")?.0,
-                            version_min_including: Version::new(row.get::<_, VersionType>("version_min_including")?),
-                            version_max_excluding: Version::new(row.get::<_, VersionType>("version_max_excluding")?),
-                            wasm_backtrace: row.get::<_, JsonWrapper<_>>("wasm_backtrace")?.0,
-                        })
-                    },
-                ).map_err(DbErrorRead::from)
-            },
-            "get_last_backtrace",
-        ).await
-    }
-
     /// Get currently expired delays and locks.
     #[instrument(level = Level::TRACE, skip(self))]
     async fn get_expired_timers(
@@ -3703,48 +3751,6 @@ impl DbConnection for SqlitePool {
             )
             .await?
             .pending_state)
-    }
-
-    async fn list_executions(
-        &self,
-        ffqn: Option<FunctionFqn>,
-        top_level_only: bool,
-        pagination: ExecutionListPagination,
-    ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
-        self.transaction(
-            move |tx| Self::list_executions(tx, ffqn.as_ref(), top_level_only, &pagination),
-            "list_executions",
-        )
-        .await
-    }
-
-    async fn list_responses(
-        &self,
-        execution_id: &ExecutionId,
-        pagination: Pagination<u32>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
-        let execution_id = execution_id.clone();
-        self.transaction(
-            move |tx| Self::list_responses(tx, &execution_id, Some(pagination)),
-            "list_responses",
-        )
-        .await
-    }
-
-    async fn upgrade_execution_component(
-        &self,
-        execution_id: &ExecutionId,
-        old: &InputContentDigest,
-        new: &InputContentDigest,
-    ) -> Result<(), DbErrorWrite> {
-        let execution_id = execution_id.clone();
-        let old = old.clone();
-        let new = new.clone();
-        self.transaction(
-            move |tx| Self::upgrade_execution_component(tx, &execution_id, &old, &new),
-            "upgrade_execution_component",
-        )
-        .await
     }
 }
 

@@ -609,6 +609,7 @@ impl From<CreateRequest> for ExecutionRequest {
 #[async_trait]
 pub trait DbPool: Send + Sync {
     fn connection(&self) -> Box<dyn DbConnection>;
+    fn external_api_conn(&self) -> Box<dyn DbExternalApi>;
 }
 
 #[async_trait]
@@ -808,6 +809,47 @@ pub enum AppendDelayResponseOutcome {
 }
 
 #[async_trait]
+pub trait DbExternalApi: DbConnection {
+    /// Get the latest backtrace if version is not set.
+    async fn get_backtrace(
+        &self,
+        execution_id: &ExecutionId,
+        filter: BacktraceFilter,
+    ) -> Result<BacktraceInfo, DbErrorRead>;
+
+    /// Returns executions sorted in descending order.
+    async fn list_executions(
+        &self,
+        ffqn: Option<FunctionFqn>,
+        top_level_only: bool,
+        pagination: ExecutionListPagination,
+    ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric>;
+
+    async fn list_execution_events(
+        &self,
+        execution_id: &ExecutionId,
+        since: &Version,
+        max_length: VersionType,
+        include_backtrace_id: bool,
+    ) -> Result<Vec<ExecutionEvent>, DbErrorRead>;
+
+    /// Returns responses of an execution ordered as they arrived,
+    /// enabling matching each `JoinNext` to its corresponding response.
+    async fn list_responses(
+        &self,
+        execution_id: &ExecutionId,
+        pagination: Pagination<u32>,
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead>;
+
+    async fn upgrade_execution_component(
+        &self,
+        execution_id: &ExecutionId,
+        old: &InputContentDigest,
+        new: &InputContentDigest,
+    ) -> Result<(), DbErrorWrite>;
+}
+
+#[async_trait]
 pub trait DbConnection: DbExecutor {
     #[cfg(feature = "test")]
     async fn append_response(
@@ -850,14 +892,6 @@ pub trait DbConnection: DbExecutor {
     #[cfg(feature = "test")]
     /// Get execution log.
     async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead>;
-
-    async fn list_execution_events(
-        &self,
-        execution_id: &ExecutionId,
-        since: &Version,
-        max_length: VersionType,
-        include_backtrace_id: bool,
-    ) -> Result<Vec<ExecutionEvent>, DbErrorRead>;
 
     /// Get a single event specified by version. Impls may set `ExecutionEvent::backtrace_id` to `None`.
     async fn get_execution_event(
@@ -938,39 +972,6 @@ pub trait DbConnection: DbExecutor {
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite>;
 
     async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite>;
-
-    /// Used by gRPC only.
-    /// Get the latest backtrace if version is not set.
-    async fn get_backtrace(
-        &self,
-        execution_id: &ExecutionId,
-        filter: BacktraceFilter,
-    ) -> Result<BacktraceInfo, DbErrorRead>;
-
-    /// Returns executions sorted in descending order.
-    /// Used by gRPC only.
-    async fn list_executions(
-        &self,
-        ffqn: Option<FunctionFqn>,
-        top_level_only: bool,
-        pagination: ExecutionListPagination,
-    ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric>;
-
-    /// Returns responses of an execution ordered as they arrived,
-    /// enabling matching each `JoinNext` to its corresponding response.
-    /// Used by gRPC only.
-    async fn list_responses(
-        &self,
-        execution_id: &ExecutionId,
-        pagination: Pagination<u32>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead>;
-
-    async fn upgrade_execution_component(
-        &self,
-        execution_id: &ExecutionId,
-        old: &InputContentDigest,
-        new: &InputContentDigest,
-    ) -> Result<(), DbErrorWrite>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
