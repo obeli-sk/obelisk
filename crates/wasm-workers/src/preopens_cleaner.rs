@@ -67,7 +67,8 @@ impl<S: Sleep + 'static, C: ClockFn + 'static> PreopensCleaner<S, C> {
             if let Ok(execution_id) = ExecutionId::from_str(&subfolder.to_string_lossy()) {
                 match self
                     .db_pool
-                    .connection().await?
+                    .connection()
+                    .await?
                     .get_pending_state(&execution_id)
                     .await
                 {

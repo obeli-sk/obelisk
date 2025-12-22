@@ -610,7 +610,7 @@ async fn run_internal(
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
     let path_prefixes = Arc::new(config_holder.path_prefixes);
-    let database = std::mem::replace(&mut config.database, DatabaseConfigToml::default());
+    let database = std::mem::take(&mut config.database); // not used later, so we replace it with a dummy SQLite config.
     let (compiled_and_linked, component_source_map) = Box::pin(verify_internal(
         config,
         path_prefixes.clone(),
@@ -674,7 +674,7 @@ async fn run_internal(
             let db_pool = Arc::new(
                 db_postgres::postgres_dao::PostgresPool::new(config)
                     .await
-                    .with_context(|| format!("canont initialize postgres connection pool"))?,
+                    .context("canont initialize postgres connection pool")?,
             );
             let db_close = Box::pin({
                 let db_pool = db_pool.clone();
@@ -1032,7 +1032,7 @@ async fn spawn_tasks_and_threads(
         .compiled_components
         .workers_linked
         .into_iter()
-        .map(|pre_spawn| pre_spawn.spawn(db_pool.clone(), cancel_registry.clone()))
+        .map(|pre_spawn| pre_spawn.spawn(&db_pool, cancel_registry.clone()))
         .collect();
 
     // Start webhook HTTP servers
@@ -1753,7 +1753,7 @@ struct WorkerLinked {
 impl WorkerLinked {
     fn spawn(
         self,
-        db_pool: Arc<dyn DbPool>,
+        db_pool: &Arc<dyn DbPool>,
         cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
         let worker: Arc<dyn Worker> = match self.worker {
