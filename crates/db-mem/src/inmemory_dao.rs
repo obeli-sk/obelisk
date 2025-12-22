@@ -592,11 +592,6 @@ impl InMemoryPool {
             Arc::new(AtomicBool::default()),
         )
     }
-
-    #[must_use]
-    pub fn db_executor(&self) -> Arc<dyn DbExecutor> {
-        Arc::new(InMemoryDbConnection(self.0.clone()))
-    }
 }
 
 #[async_trait]
@@ -610,22 +605,31 @@ impl DbPoolCloseable for InMemoryPool {
 
 #[async_trait]
 impl DbPool for InMemoryPool {
-    async fn connection(&self) -> Result<Box<dyn DbConnection>, DbErrorGeneric> {
-        if self.1.load(Ordering::Relaxed) {
+    async fn db_exec_conn(&self) -> Result<Box<dyn DbExecutor>, DbErrorGeneric> {
+        if self.1.load(Ordering::Acquire) {
             return Err(DbErrorGeneric::Close);
         }
         Ok(Box::new(InMemoryDbConnection(self.0.clone())))
     }
+
+    async fn connection(&self) -> Result<Box<dyn DbConnection>, DbErrorGeneric> {
+        if self.1.load(Ordering::Acquire) {
+            return Err(DbErrorGeneric::Close);
+        }
+        Ok(Box::new(InMemoryDbConnection(self.0.clone())))
+    }
+
     async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric> {
         Err(DbErrorGeneric::Uncategorized(
             "external_api_conn not implemented for in-memory DB".into(),
         ))
     }
+
     #[cfg(feature = "test")]
     async fn connection_test(
         &self,
     ) -> Result<Box<dyn concepts::storage::DbConnectionTest>, DbErrorGeneric> {
-        if self.1.load(Ordering::Relaxed) {
+        if self.1.load(Ordering::Acquire) {
             return Err(DbErrorGeneric::Close);
         }
         Ok(Box::new(InMemoryDbConnection(self.0.clone())))
