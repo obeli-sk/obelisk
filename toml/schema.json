@@ -30,6 +30,9 @@
     "cancel_watcher": {
       "$ref": "#/$defs/CancelWatcherTomlConfig"
     },
+    "database": {
+      "$ref": "#/$defs/DatabaseConfigToml"
+    },
     "http_server": {
       "type": "array",
       "items": {
@@ -48,9 +51,6 @@
           "type": "null"
         }
       ]
-    },
-    "sqlite": {
-      "$ref": "#/$defs/SqliteConfigToml"
     },
     "timers_watcher": {
       "$ref": "#/$defs/TimersWatcherTomlConfig"
@@ -389,6 +389,34 @@
       "description": "Activity, Webhook, Workflow or a Http server",
       "type": "string"
     },
+    "DatabaseConfigToml": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "sqlite": {
+              "$ref": "#/$defs/SqliteConfigToml"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "sqlite"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "postgres": {
+              "$ref": "#/$defs/PostgresConfigToml"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "postgres"
+          ]
+        }
+      ]
+    },
     "DurationConfig": {
       "oneOf": [
         {
@@ -581,6 +609,30 @@
       "additionalProperties": false,
       "required": [
         "enabled"
+      ]
+    },
+    "PostgresConfigToml": {
+      "type": "object",
+      "properties": {
+        "db_name": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "user",
+        "password",
+        "db_name"
       ]
     },
     "Rotation": {

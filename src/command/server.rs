@@ -16,6 +16,7 @@ use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
+use crate::config::toml::DatabaseConfigToml;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::StdOutput;
 use crate::config::toml::TimersWatcherTomlConfig;
@@ -64,7 +65,6 @@ use concepts::storage::Version;
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::time::TokioSleep;
-use db_sqlite::sqlite_dao::SqliteConfig;
 use db_sqlite::sqlite_dao::SqlitePool;
 use directories::BaseDirs;
 use directories::ProjectDirs;
@@ -509,7 +509,7 @@ pub(crate) async fn verify(
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     Box::pin(verify_internal(
         config,
-        config_holder,
+        Arc::new(config_holder.path_prefixes),
         verify_params,
         &mut termination_watcher,
     ))
@@ -528,7 +528,7 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
 #[instrument(skip_all, name = "verify")]
 async fn verify_internal(
     config: ConfigToml,
-    config_holder: ConfigHolder,
+    path_prefixes: Arc<PathPrefixes>,
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<bool>,
 ) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
@@ -537,12 +537,12 @@ async fn verify_internal(
 
     let wasm_cache_dir = config
         .wasm_global_config
-        .get_wasm_cache_directory(&config_holder.path_prefixes)
+        .get_wasm_cache_directory(&path_prefixes)
         .await?;
     let codegen_cache = config
         .wasm_global_config
         .codegen_cache
-        .get_directory(&config_holder.path_prefixes)
+        .get_directory(&path_prefixes)
         .await?;
     debug!("Using codegen cache? {codegen_cache:?}");
     if params.clean_cache {
@@ -577,7 +577,7 @@ async fn verify_internal(
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
         params.ignore_missing_env_vars,
-        config_holder.path_prefixes,
+        path_prefixes,
         termination_watcher,
     )
     .await?;
@@ -595,7 +595,7 @@ async fn verify_internal(
 }
 
 async fn run_internal(
-    config: ConfigToml,
+    mut config: ConfigToml,
     config_holder: ConfigHolder,
     params: RunParams,
     mut termination_watcher: watch::Receiver<bool>,
@@ -603,33 +603,17 @@ async fn run_internal(
     let span = info_span!("init");
     let api_listening_addr = config.api.listening_addr;
 
-    let db_dir = config
-        .sqlite
-        .get_sqlite_dir(&config_holder.path_prefixes)
-        .await?;
-    let sqlite_config = config.sqlite.as_sqlite_config();
-    let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
-    if params.clean_sqlite_directory {
-        warn!("Deleting sqlite directory {db_dir:?}");
-        tokio::fs::remove_dir_all(&db_dir)
-            .await
-            .or_else(ignore_not_found)
-            .with_context(|| format!("cannot delete database directory `{db_dir:?}`"))?;
-        tokio::fs::create_dir_all(&db_dir)
-            .await
-            .with_context(|| format!("cannot create database directory {db_dir:?}"))?;
-    }
-
     let global_webhook_instance_limiter = config
         .wasm_global_config
         .global_webhook_instance_limiter
         .as_semaphore();
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
-
+    let path_prefixes = Arc::new(config_holder.path_prefixes);
+    let database = std::mem::replace(&mut config.database, DatabaseConfigToml::default());
     let (compiled_and_linked, component_source_map) = Box::pin(verify_internal(
         config,
-        config_holder,
+        path_prefixes.clone(),
         VerifyParams {
             clean_cache: params.clean_cache,
             clean_codegen_cache: params.clean_codegen_cache,
@@ -641,17 +625,76 @@ async fn run_internal(
     .await?;
 
     let cancel_registry = CancelRegistry::new();
-    let (server_init, component_registry_ro) = spawn_tasks_and_threads(
-        compiled_and_linked,
-        &sqlite_file,
-        sqlite_config,
-        global_webhook_instance_limiter,
-        timers_watcher,
-        cancel_watcher,
-        &cancel_registry,
-    )
-    .instrument(span)
-    .await?;
+
+    let (server_init, component_registry_ro) = match database {
+        DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
+            let db_dir = sqlite_config_toml.get_sqlite_dir(&path_prefixes).await?;
+            let sqlite_config = sqlite_config_toml.as_sqlite_config();
+            let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
+            if params.clean_sqlite_directory {
+                warn!("Deleting sqlite directory {db_dir:?}");
+                tokio::fs::remove_dir_all(&db_dir)
+                    .await
+                    .or_else(ignore_not_found)
+                    .with_context(|| format!("cannot delete database directory `{db_dir:?}`"))?;
+                tokio::fs::create_dir_all(&db_dir)
+                    .await
+                    .with_context(|| format!("cannot create database directory {db_dir:?}"))?;
+            }
+            let db_pool = Arc::new(
+                SqlitePool::new(&sqlite_file, sqlite_config)
+                    .await
+                    .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
+            );
+            let db_close = Box::pin({
+                let db_pool = db_pool.clone();
+                async move {
+                    db_pool.close().await;
+                }
+            });
+            spawn_tasks_and_threads(
+                db_pool,
+                db_close,
+                compiled_and_linked,
+                global_webhook_instance_limiter,
+                timers_watcher,
+                cancel_watcher,
+                &cancel_registry,
+            )
+            .instrument(span)
+            .await?
+        }
+        DatabaseConfigToml::Postgres(postgres_config_toml) => {
+            let config = db_postgres::postgres_dao::PostgresConfig {
+                host: postgres_config_toml.host,
+                user: postgres_config_toml.user,
+                password: postgres_config_toml.password,
+                db_name: postgres_config_toml.db_name,
+            };
+            let db_pool = Arc::new(
+                db_postgres::postgres_dao::PostgresPool::new(config)
+                    .await
+                    .with_context(|| format!("canont initialize postgres connection pool"))?,
+            );
+            let db_close = Box::pin({
+                let db_pool = db_pool.clone();
+                async move {
+                    db_pool.close().await;
+                }
+            });
+            spawn_tasks_and_threads(
+                db_pool,
+                db_close,
+                compiled_and_linked,
+                global_webhook_instance_limiter,
+                timers_watcher,
+                cancel_watcher,
+                &cancel_registry,
+            )
+            .instrument(span)
+            .await?
+        }
+    };
 
     let grpc_server = Arc::new(GrpcServer::new(
         server_init.db_pool.clone(),
@@ -750,7 +793,7 @@ impl ServerVerified {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
-        path_prefixes: PathPrefixes,
+        path_prefixes: Arc<PathPrefixes>,
         termination_watcher: &mut watch::Receiver<bool>,
     ) -> Result<(Self, ComponentSourceMap), anyhow::Error> {
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
@@ -913,9 +956,9 @@ impl ServerCompiledLinked {
 
 #[instrument(skip_all)]
 async fn spawn_tasks_and_threads(
+    db_pool: Arc<dyn DbPool>,
+    db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
     mut server_compiled_linked: ServerCompiledLinked,
-    sqlite_file: &Path,
-    sqlite_config: SqliteConfig,
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     timers_watcher: TimersWatcherTomlConfig,
     cancel_watcher: CancelWatcherTomlConfig,
@@ -926,10 +969,6 @@ async fn spawn_tasks_and_threads(
         server_compiled_linked.engines.weak_refs(),
         Duration::from_millis(EPOCH_MILLIS),
     );
-    let db = SqlitePool::new(sqlite_file, sqlite_config)
-        .await
-        .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?;
-    let db_pool: Arc<dyn DbPool> = Arc::new(db.clone());
 
     let timers_watcher = if timers_watcher.enabled {
         Some(expired_timers_watcher::spawn_new(
@@ -993,7 +1032,7 @@ async fn spawn_tasks_and_threads(
         .compiled_components
         .workers_linked
         .into_iter()
-        .map(|pre_spawn| pre_spawn.spawn(&db_pool, cancel_registry.clone()))
+        .map(|pre_spawn| pre_spawn.spawn(db_pool.clone(), cancel_registry.clone()))
         .collect();
 
     // Start webhook HTTP servers
@@ -1006,10 +1045,8 @@ async fn spawn_tasks_and_threads(
     )
     .await?;
     let server_init = ServerInit {
-        db_pool,
-        db_close: Box::pin(async move {
-            db.close().await;
-        }),
+        db_pool: db_pool.clone(),
+        db_close,
         exec_join_handles,
         timers_watcher,
         cancel_watcher,
@@ -1139,7 +1176,7 @@ impl ConfigVerified {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
-        path_prefixes: PathPrefixes,
+        path_prefixes: Arc<PathPrefixes>,
         global_backtrace_persist: bool,
         parent_preopen_dir: Option<Arc<Path>>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
@@ -1199,7 +1236,6 @@ impl ConfigVerified {
             }
             http_servers_to_webhook_names
         };
-        let path_prefixes = Arc::new(path_prefixes);
 
         // Fetch and verify components, each in its own tokio task.
         let activities_wasm = activities_wasm
@@ -1717,7 +1753,7 @@ struct WorkerLinked {
 impl WorkerLinked {
     fn spawn(
         self,
-        db_pool: &Arc<dyn DbPool>,
+        db_pool: Arc<dyn DbPool>,
         cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
         let worker: Arc<dyn Worker> = match self.worker {
@@ -2113,7 +2149,7 @@ mod tests {
             Arc::from(wasm_cache_dir),
             Arc::from(metadata_dir),
             VerifyParams::default().ignore_missing_env_vars,
-            config_holder.path_prefixes,
+            Arc::new(config_holder.path_prefixes),
             &mut termination_watcher,
         )
         .await?;

@@ -3,10 +3,17 @@ api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API serv
 webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
 # Note: listening on all interfaces using [::]:port is not advised, as there is no auth yet.
 
-# sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
+## SQLite configuration (enabled by default)
+# database.sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
 ## Customize PRAGMA statements.
 ## Defaults are in `crates/db-sqlite/src/sqlite_dao.rs`.
-# sqlite.pragma = { "cache_size" = "3000" }
+# database.sqlite.pragma = { "cache_size" = "3000" }
+
+## Postgres configuration
+# database.postgres.host = "127.0.0.1"
+# database.postgres.user = "postgres"
+# database.postgres.password = "postgres"
+# database.postgres.db_name = "obelisk"
 
 ## Global WASM Configuration
 # [wasm]

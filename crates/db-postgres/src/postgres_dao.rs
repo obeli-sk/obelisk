@@ -244,12 +244,15 @@ async fn create_database(
                 error!("Cannot create the database - {err:?}");
                 InitializationError
             })?;
-        info!("Database '{}' created.", config.db_name);
+
         DbInitialzationOutcome::Created
     } else {
-        debug!("Database '{}' already exists.", config.db_name);
         DbInitialzationOutcome::Existing
     };
+    match outcome {
+        DbInitialzationOutcome::Created => info!("Database '{}' created.", config.db_name),
+        DbInitialzationOutcome::Existing => info!("Database '{}' exists.", config.db_name),
+    }
     Ok(outcome)
 }
 
@@ -385,6 +388,7 @@ pub enum DbInitialzationOutcome {
 }
 
 impl PostgresPool {
+    #[instrument(skip_all, name = "postgres_new")]
     pub async fn new(config: PostgresConfig) -> Result<PostgresPool, InitializationError> {
         Self::new_with_outcome(config).await.map(|(db, _)| db)
     }

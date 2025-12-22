@@ -971,7 +971,7 @@ impl SqlitePool {
         histograms.record_command(sent_latency, ltx.func_name, started_at.elapsed());
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, name = "sqlite_new")]
+    #[instrument(skip_all, name = "sqlite_new")]
     pub async fn new<P: AsRef<Path>>(
         path: P,
         config: SqliteConfig,
