@@ -44,6 +44,7 @@ impl Database {
                 (DbGuard::Sqlite(guard), Arc::new(sqlite.clone()), closeable)
             }
             Database::Postgres => {
+                use rand::SeedableRng;
                 let config = PostgresConfig {
                     host: get_env_val("TEST_POSTGRES_HOST"),
                     user: get_env_val("TEST_POSTGRES_USER"),
@@ -52,7 +53,6 @@ impl Database {
                 };
                 loop {
                     let mut config = config.clone();
-                    use rand::SeedableRng;
                     let mut rng = rand::rngs::SmallRng::from_os_rng();
                     let suffix = (0..5)
                         .map(|_| rand::Rng::random_range(&mut rng, b'a'..=b'z') as char)
