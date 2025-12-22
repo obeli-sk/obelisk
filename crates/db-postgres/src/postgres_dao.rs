@@ -22,6 +22,7 @@ use concepts::{
 };
 use deadpool_postgres::{Client, Config, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::HashMap;
+use std::fmt::Write as _;
 use std::{collections::VecDeque, pin::Pin, str::FromStr as _, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 use tokio_postgres::{
@@ -1167,7 +1168,7 @@ async fn get_combined_state(
             &[&execution_id.to_string()],
         )
         .await
-        .map_err(|err| DbErrorRead::from(err))?;
+        .map_err(DbErrorRead::from)?;
 
     // Parsing columns
     let digest_bytes: Vec<u8> = row.get("component_id_input_digest");
@@ -1207,9 +1208,9 @@ async fn get_combined_state(
 
     let corresponding_version: i32 = row.get("corresponding_version");
     let dto = CombinedStateDTO {
-        component_id_input_digest,
         state,
         ffqn,
+        component_id_input_digest,
         pending_expires_finished,
         last_lock_version,
         executor_id,
@@ -1286,7 +1287,7 @@ async fn list_executions(
     // 3. FFQN Filter
     if let Some(ffqn) = ffqn {
         let placeholder = qb.add_param(ffqn.to_string());
-        qb.add_where(format!("ffqn = {}", placeholder));
+        qb.add_where(format!("ffqn = {placeholder}"));
     }
 
     // 4. Construct Query
@@ -1419,9 +1420,8 @@ async fn list_responses(
             r.id, r.created_at, r.join_set_id, r.delay_id, r.delay_success, r.child_execution_id, r.finished_version, l.json_value \
             FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
             WHERE \
-            r.execution_id = {} \
-            AND ( r.finished_version = l.version OR r.child_execution_id IS NULL )",
-        p_execution_id
+            r.execution_id = {p_execution_id} \
+            AND ( r.finished_version = l.version OR r.child_execution_id IS NULL )"
     );
 
     // 2. Pagination Logic
@@ -1431,7 +1431,6 @@ async fn list_responses(
             let p_cursor = add_param(Box::new(i64::from(*cursor)));
 
             // Add WHERE clause for cursor
-            use std::fmt::Write;
             write!(sql, " AND r.id {} {}", p.rel(), p_cursor).unwrap();
 
             Some(p.length())
@@ -1441,7 +1440,7 @@ async fn list_responses(
 
     // 3. Ordering
     sql.push_str(" ORDER BY r.id");
-    if pagination.as_ref().is_some_and(|p| p.is_desc()) {
+    if pagination.as_ref().is_some_and(Pagination::is_desc) {
         sql.push_str(" DESC");
     }
 
@@ -1449,8 +1448,7 @@ async fn list_responses(
     if let Some(limit) = limit {
         // Postgres limit expects i64
         let p_limit = add_param(Box::new(i64::from(limit)));
-        use std::fmt::Write;
-        write!(sql, " LIMIT {}", p_limit).unwrap();
+        write!(sql, " LIMIT {p_limit}").unwrap();
     }
 
     let params_refs: Vec<&(dyn ToSql + Sync)> = params
@@ -1461,7 +1459,7 @@ async fn list_responses(
     let rows = tx
         .query(&sql, &params_refs)
         .await
-        .map_err(|err| DbErrorRead::from(err))?;
+        .map_err(DbErrorRead::from)?;
 
     let mut results = Vec::with_capacity(rows.len());
     for row in rows {
@@ -1701,7 +1699,7 @@ async fn count_join_next(
                 ],
             )
             .await
-            .map_err(|err| DbErrorRead::from(err))?;
+            .map_err(DbErrorRead::from)?;
 
     let count: i64 = row.get("count");
     Ok(count as u64)
@@ -2333,10 +2331,9 @@ async fn get_pending_of_single_ffqn(
         .query(
             &format!(
                 "SELECT execution_id, corresponding_version FROM t_state WHERE \
-                 state = '{}' AND \
+                 state = '{STATE_PENDING_AT}' AND \
                  pending_expires_finished <= $1 AND ffqn = $2 \
-                 ORDER BY pending_expires_finished LIMIT $3",
-                STATE_PENDING_AT
+                 ORDER BY pending_expires_finished LIMIT $3"
             ),
             &[
                 &pending_at_or_sooner,
@@ -2377,7 +2374,7 @@ async fn get_pending_by_ffqns(
         }
 
         // Inline the logic of get_pending_of_single_ffqn to use the same transaction
-        if let Ok(execs) = get_pending_of_single_ffqn(&tx, needed, pending_at_or_sooner, ffqn).await
+        if let Ok(execs) = get_pending_of_single_ffqn(tx, needed, pending_at_or_sooner, ffqn).await
         {
             execution_ids_versions.extend(execs);
         }
@@ -2396,11 +2393,10 @@ async fn get_pending_by_component_input_digest(
         .query(
             &format!(
                 "SELECT execution_id, corresponding_version FROM t_state WHERE \
-                 state = '{}' AND \
+                 state = '{STATE_PENDING_AT}' AND \
                  pending_expires_finished <= $1 AND \
                  component_id_input_digest = $2 \
-                 ORDER BY pending_expires_finished LIMIT $3",
-                STATE_PENDING_AT
+                 ORDER BY pending_expires_finished LIMIT $3"
             ),
             &[
                 &pending_at_or_sooner,
@@ -2560,11 +2556,11 @@ impl DbExecutor for PostgresConnection {
                 created_at,
                 component_id.clone(),
                 &execution_id,
-                run_id.clone(),
+                run_id,
                 &version,
-                executor_id.clone(),
+                executor_id,
                 lock_expires_at,
-                retry_config.clone(),
+                retry_config,
             )
             .await
             {
@@ -2620,11 +2616,11 @@ impl DbExecutor for PostgresConnection {
                 created_at,
                 component_id.clone(),
                 &execution_id,
-                run_id.clone(),
+                run_id,
                 &version,
-                executor_id.clone(),
+                executor_id,
                 lock_expires_at,
-                retry_config.clone(),
+                retry_config,
             )
             .await
             {
@@ -2789,10 +2785,9 @@ impl DbExecutor for PostgresConnection {
                 if let Ok(tx) = client_guard.transaction().await {
                     if let Ok(res) =
                         get_pending_by_ffqns(&tx, 1, pending_at_or_sooner, &ffqns).await
+                        && !res.is_empty()
                     {
-                        if !res.is_empty() {
-                            db_has_pending = true;
-                        }
+                        db_has_pending = true;
                     }
                     // Commit/Rollback read transaction
                     let _ = tx.commit().await;
@@ -2857,10 +2852,9 @@ impl DbExecutor for PostgresConnection {
                         &component_id.input_digest,
                     )
                     .await
+                        && !res.is_empty()
                     {
-                        if !res.is_empty() {
-                            db_has_pending = true;
-                        }
+                        db_has_pending = true;
                     }
                     let _ = tx.commit().await;
                 }
@@ -3305,8 +3299,7 @@ impl DbConnection for PostgresConnection {
             &format!(
                 "SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, executor_id, run_id \
                  FROM t_state \
-                 WHERE pending_expires_finished <= $1 AND state = '{}'",
-                 STATE_LOCKED
+                 WHERE pending_expires_finished <= $1 AND state = '{STATE_LOCKED}'"
             ),
             &[&at]
         ).await.map_err(DbErrorGeneric::from)?;
@@ -3407,8 +3400,7 @@ impl DbExternalApi for PostgresConnection {
 
         let mut sql = format!(
             "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace \
-             FROM t_backtrace WHERE execution_id = {}",
-            p_execution_id_idx
+             FROM t_backtrace WHERE execution_id = {p_execution_id_idx}"
         );
 
         match &filter {
@@ -3416,8 +3408,7 @@ impl DbExternalApi for PostgresConnection {
                 params.push(Box::new(version.0 as i32));
                 let p_ver_idx = format!("${}", params.len());
                 sql.push_str(&format!(
-                    " AND version_min_including <= {} AND version_max_excluding > {}",
-                    p_ver_idx, p_ver_idx
+                    " AND version_min_including <= {p_ver_idx} AND version_max_excluding > {p_ver_idx}"
                 ));
             }
             BacktraceFilter::First => {
@@ -3426,7 +3417,7 @@ impl DbExternalApi for PostgresConnection {
             BacktraceFilter::Last => {
                 sql.push_str(" ORDER BY version_min_including DESC LIMIT 1");
             }
-        };
+        }
 
         let params_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
             params.iter().map(|p| p.as_ref() as _).collect();
