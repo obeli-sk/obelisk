@@ -771,6 +771,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::ops::Deref;
     use std::time::Duration;
+    use test_db_macro::expand_enum_database;
     use test_utils::sim_clock::SimClock;
     use tracing::debug;
     use tracing::info_span;
@@ -888,15 +889,17 @@ pub(crate) mod tests {
         )
     }
 
+    #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn fibo_workflow_should_schedule_fibo_activity_mem(
+    async fn fibo_workflow_should_schedule_fibo_activity(
+        db: Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-        fibo_workflow_should_submit_fibo_activity(
+        let (_guard, db_pool, db_close) = db.set_up().await;
+        fibo_workflow_should_submit_fibo_activity_inner(
             db_pool.clone(),
             sim_clock,
             join_next_blocking_strategy,
@@ -905,24 +908,7 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    #[rstest]
-    #[tokio::test]
-    async fn fibo_workflow_should_submit_fibo_activity_sqlite(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
-        join_next_blocking_strategy: JoinNextBlockingStrategy,
-    ) {
-        let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
-        fibo_workflow_should_submit_fibo_activity(
-            db_pool.clone(),
-            sim_clock,
-            join_next_blocking_strategy,
-        )
-        .await;
-        db_close.close().await;
-    }
-
-    async fn fibo_workflow_should_submit_fibo_activity(
+    async fn fibo_workflow_should_submit_fibo_activity_inner(
         db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -1186,7 +1172,13 @@ pub(crate) mod tests {
                 locking_strategy: LockingStrategy::default(),
             };
             let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
-            ExecTask::new_test(worker, exec_config, sim_clock.clone(), db_pool.clone(), ffqns)
+            ExecTask::new_test(
+                worker,
+                exec_config,
+                sim_clock.clone(),
+                db_pool.clone(),
+                ffqns,
+            )
         };
         {
             let worker_tasks = sleep_exec
@@ -1239,11 +1231,12 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
+    #[expand_enum_database]
     #[rstest]
     #[tokio::test]
     // TODO: Test await interleaving with timer - execution should finished in one go.
     async fn sleep_should_be_persisted_after_executor_restart(
-        #[values(Database::Memory, Database::Sqlite)] database: Database,
+        database: Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
@@ -1404,11 +1397,10 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
+    #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn stargazers_should_be_deserialized_after_interrupt(
-        #[values(Database::Sqlite, Database::Memory)] db: Database,
-    ) {
+    async fn stargazers_should_be_deserialized_after_interrupt(db: Database) {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, db_close) = db.set_up().await;
@@ -1479,16 +1471,17 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
+    #[expand_enum_database]
     #[rstest]
     #[tokio::test]
     async fn http_get(
+        db: Database,
         #[values(
             FFQN_WORKFLOW_HTTP_GET,
             FFQN_WORKFLOW_HTTP_GET_RESP,
             FFQN_WORKFLOW_HTTP_GET_SUCCESSFUL
         )]
         ffqn: FunctionFqn,
-        #[values(Database::Sqlite, Database::Memory)] db: Database,
     ) {
         const BODY: &str = "ok";
 
@@ -1574,11 +1567,10 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    #[rstest::rstest]
+    #[expand_enum_database]
+    #[rstest]
     #[tokio::test]
-    async fn http_get_concurrent(
-        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-    ) {
+    async fn http_get_concurrent(db: db_tests::Database) {
         const BODY: &str = "ok";
         const GET_SUCCESSFUL_CONCURRENTLY_STRESS: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY_STRESS);
@@ -1684,10 +1676,11 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    #[rstest::rstest]
+    #[expand_enum_database]
+    #[rstest]
     #[tokio::test]
     async fn scheduling_should_work(
-        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
+        db: db_tests::Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_strategy: JoinNextBlockingStrategy,
     ) {
@@ -1771,7 +1764,9 @@ pub(crate) mod tests {
         sim_clock.move_time_forward(SLEEP_DURATION);
         // The scheduled `noop` execution should be pending.
         let mut next_pending = db_pool
-            .connection().await.unwrap()
+            .connection()
+            .await
+            .unwrap()
             .lock_pending_by_ffqns(
                 10,
                 sim_clock.now(),
@@ -1793,11 +1788,10 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
+    #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn http_get_fallible_err(
-        #[values(Database::Memory, Database::Sqlite)] database: Database,
-    ) {
+    async fn http_get_fallible_err(database: Database) {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, db_close) = database.set_up().await;
@@ -1888,11 +1882,10 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    #[rstest::rstest]
+    #[expand_enum_database]
+    #[rstest]
     #[tokio::test]
-    async fn stubbing_should_work(
-        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-    ) {
+    async fn stubbing_should_work(db: db_tests::Database) {
         const FFQN_WORKFLOW_STUB: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_STUB_AWAIT,
         );
@@ -1999,11 +1992,10 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    #[rstest::rstest]
+    #[expand_enum_database]
+    #[rstest]
     #[tokio::test]
-    async fn two_delays_in_same_join_set(
-        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-    ) {
+    async fn two_delays_in_same_join_set(db: db_tests::Database) {
         const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::TWO_DELAYS_IN_SAME_JOIN_SET
         );
@@ -2016,11 +2008,10 @@ pub(crate) mod tests {
         .await;
     }
 
-    #[rstest::rstest]
+    #[expand_enum_database]
+    #[rstest]
     #[tokio::test]
-    async fn join_next_produces_all_processed_error(
-        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-    ) {
+    async fn join_next_produces_all_processed_error(db: db_tests::Database) {
         const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::JOIN_NEXT_PRODUCES_ALL_PROCESSED_ERROR
         );
@@ -2168,11 +2159,10 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    #[rstest::rstest]
+    #[expand_enum_database]
+    #[rstest]
     #[tokio::test]
-    async fn await_next_produces_all_processed_error(
-        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-    ) {
+    async fn await_next_produces_all_processed_error(db: db_tests::Database) {
         execute_workflow_fn_with_single_delay(
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             FunctionFqn::new_static_tuple(
@@ -2183,14 +2173,14 @@ pub(crate) mod tests {
         )
         .await;
     }
-
-    #[rstest::rstest]
+    #[expand_enum_database]
+    #[rstest]
     #[case(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_RACE_JOIN_NEXT_STUB)]
     #[case(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_RACE_JOIN_NEXT_STUB_ERROR)]
     #[tokio::test]
     async fn stub_submit_race_join_next_stub(
+        db: db_tests::Database,
         #[case] ffqn_tuple: (&'static str, &'static str),
-        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
     ) {
         execute_workflow_fn_with_single_delay(
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
@@ -2201,11 +2191,10 @@ pub(crate) mod tests {
         .await;
     }
 
-    #[rstest::rstest]
+    #[expand_enum_database]
+    #[rstest]
     #[tokio::test]
-    async fn stub_submit_race_join_next_delay(
-        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-    ) {
+    async fn stub_submit_race_join_next_delay(db: db_tests::Database) {
         execute_workflow_fn_with_single_delay(
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_RACE_JOIN_NEXT_DELAY),
@@ -2215,11 +2204,10 @@ pub(crate) mod tests {
         .await;
     }
 
-    #[rstest::rstest]
+    #[expand_enum_database]
+    #[rstest]
     #[tokio::test]
-    async fn stub_join_next_in_scope(
-        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-    ) {
+    async fn stub_join_next_in_scope(db: db_tests::Database) {
         execute_workflow_fn_with_single_delay(
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::JOIN_NEXT_IN_SCOPE),
@@ -2229,11 +2217,10 @@ pub(crate) mod tests {
         .await;
     }
 
-    #[rstest::rstest]
+    #[expand_enum_database]
+    #[rstest]
     #[tokio::test]
-    async fn invoke_expect_execution_error(
-        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-    ) {
+    async fn invoke_expect_execution_error(db: db_tests::Database) {
         const FFQN_WORKFLOW_STUB: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::INVOKE_EXPECT_EXECUTION_ERROR,
         );
@@ -2371,11 +2358,10 @@ pub(crate) mod tests {
             .unwrap();
     }
 
-    #[rstest::rstest]
+    #[expand_enum_database]
+    #[rstest]
     #[tokio::test]
-    async fn execution_failed_variant_should_work(
-        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
-    ) {
+    async fn execution_failed_variant_should_work(db: db_tests::Database) {
         const FFQN_WORKFLOW: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_serde_workflow_builder::exports::testing::serde_workflow::serde_workflow::EXPECT_TRAP,
         );

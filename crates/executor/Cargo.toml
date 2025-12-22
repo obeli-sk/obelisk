@@ -32,8 +32,9 @@ ulid.workspace = true
 [dev-dependencies]
 db-mem.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
-test-utils.workspace = true
 db-tests.workspace = true
+test-db-macro.workspace = true
+test-utils.workspace = true
 
 anyhow.workspace = true
 rstest.workspace = true

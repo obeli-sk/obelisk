@@ -28,6 +28,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
+test-db-macro.workspace = true
 
 [lints]
 workspace = true
