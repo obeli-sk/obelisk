@@ -71,7 +71,7 @@ async fn diff_proptest_inner(seed: u64) {
     for (idx, step) in append_requests.iter().enumerate() {
         println!("{idx}: {step:?}");
     }
-    let (_mem_guard, db_mem_pool, _db_exec, db_mem_close) = Database::Memory.set_up().await;
+    let (_mem_guard, db_mem_pool, db_mem_close) = Database::Memory.set_up().await;
     let mem_conn = db_mem_pool.connection_test().await.unwrap();
     let mem_log = create_and_append(
         mem_conn.as_ref(),
@@ -81,7 +81,7 @@ async fn diff_proptest_inner(seed: u64) {
     )
     .await;
     db_mem_close.close().await;
-    let (_sqlite_guard, sqlite_pool, _db_exec, db_sqlite_close) = Database::Sqlite.set_up().await;
+    let (_sqlite_guard, sqlite_pool, db_sqlite_close) = Database::Sqlite.set_up().await;
     let sqlite_conn = sqlite_pool.connection_test().await.unwrap();
     let sqlite_log = create_and_append(
         sqlite_conn.as_ref(),
@@ -229,7 +229,7 @@ async fn get_execution_event_should_not_break_json_order(
     #[values(Database::Sqlite, Database::Memory)] database: Database,
 ) {
     set_up();
-    let (_guard, db_pool, _db_exec, db_close) = database.set_up().await;
+    let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
 
     let (execution_id, version, expected_inner) =
@@ -249,7 +249,7 @@ async fn get_execution_event_should_not_break_json_order(
 #[tokio::test]
 async fn list_execution_events_should_not_break_json_order() {
     set_up();
-    let (_guard, db_pool, _db_exec, db_close) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.external_api_conn().await.unwrap();
 
     let (execution_id, version, expected_inner) =

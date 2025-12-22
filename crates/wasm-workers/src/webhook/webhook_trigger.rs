@@ -1129,9 +1129,9 @@ pub(crate) mod tests {
             async fn new(db: db_tests::Database) -> SetUpFiboWebhook {
                 let addr = SocketAddr::from(([127, 0, 0, 1], 0));
                 let sim_clock = SimClock::default();
-                let (guard, db_pool, db_exec, db_close) = db.set_up().await;
+                let (guard, db_pool, db_close) = db.set_up().await;
                 let activity_exec =
-                    new_activity_fibo(db_exec.clone(), sim_clock.clone(), TokioSleep);
+                    new_activity_fibo(db_pool.clone(), sim_clock.clone(), TokioSleep);
                 let fn_registry = TestingFnRegistry::new_from_components(vec![
                     compile_activity(
                         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
@@ -1145,7 +1145,6 @@ pub(crate) mod tests {
                     Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
                 let workflow_exec = new_workflow_fibo(
                     db_pool.clone(),
-                    db_exec,
                     sim_clock.clone(),
                     JoinNextBlockingStrategy::Interrupt,
                     &fn_registry,

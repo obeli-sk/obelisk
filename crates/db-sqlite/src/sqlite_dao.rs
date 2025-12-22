@@ -623,14 +623,21 @@ impl DbPoolCloseable for SqlitePool {
 
 #[async_trait]
 impl DbPool for SqlitePool {
+    async fn db_exec_conn(&self) -> Result<Box<dyn DbExecutor>, DbErrorGeneric> {
+        if self.0.shutdown_requested.load(Ordering::Acquire) {
+            return Err(DbErrorGeneric::Close);
+        }
+        Ok(Box::new(self.clone()))
+    }
+
     async fn connection(&self) -> Result<Box<dyn DbConnection>, DbErrorGeneric> {
-        if self.0.shutdown_finished.load(Ordering::Acquire) {
+        if self.0.shutdown_requested.load(Ordering::Acquire) {
             return Err(DbErrorGeneric::Close);
         }
         Ok(Box::new(self.clone()))
     }
     async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric> {
-        if self.0.shutdown_finished.load(Ordering::Acquire) {
+        if self.0.shutdown_requested.load(Ordering::Acquire) {
             return Err(DbErrorGeneric::Close);
         }
         Ok(Box::new(self.clone()))
@@ -639,7 +646,7 @@ impl DbPool for SqlitePool {
     async fn connection_test(
         &self,
     ) -> Result<Box<dyn concepts::storage::DbConnectionTest>, DbErrorGeneric> {
-        if self.0.shutdown_finished.load(Ordering::Acquire) {
+        if self.0.shutdown_requested.load(Ordering::Acquire) {
             return Err(DbErrorGeneric::Close);
         }
         Ok(Box::new(self.clone()))

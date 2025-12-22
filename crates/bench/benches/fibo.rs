@@ -6,7 +6,7 @@ fn main() {
 
 mod bench {
     use assert_matches::assert_matches;
-    use concepts::storage::{DbExecutor, DbPool, DbPoolCloseable};
+    use concepts::storage::{DbPool, DbPoolCloseable};
     use concepts::time::{ClockFn, Now, Sleep, TokioSleep};
     use concepts::{
         ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, FunctionRegistry, Params,
@@ -60,7 +60,7 @@ mod bench {
     }
 
     pub(crate) fn spawn_activity(
-        db_exec: Arc<dyn DbExecutor>,
+        db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
@@ -68,7 +68,7 @@ mod bench {
         cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
         spawn_activity_with_config(
-            db_exec,
+            db_pool,
             wasm_path,
             clock_fn,
             sleep,
@@ -79,7 +79,7 @@ mod bench {
     }
 
     pub(crate) fn spawn_activity_with_config(
-        db_exec: Arc<dyn DbExecutor>,
+        db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
@@ -105,7 +105,7 @@ mod bench {
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy: LockingStrategy::default(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, TokioSleep)
     }
 
     fn new_activity_worker_with_config(
@@ -134,14 +134,14 @@ mod bench {
     }
 
     pub(crate) fn spawn_activity_fibo(
-        db_exec: Arc<dyn DbExecutor>,
+        db_pool: Arc<dyn DbPool>,
         clock_fn: impl ClockFn + 'static,
         sleep: impl Sleep + 'static,
         activity_engine: Arc<Engine>,
         cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
         spawn_activity(
-            db_exec,
+            db_pool,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             clock_fn,
             sleep,
@@ -164,7 +164,6 @@ mod bench {
     #[expect(clippy::too_many_arguments)]
     fn spawn_workflow(
         db_pool: Arc<dyn DbPool>,
-        db_exec: Arc<dyn DbExecutor>,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -210,12 +209,11 @@ mod bench {
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy: LockingStrategy::default(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_exec, TokioSleep)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, TokioSleep)
     }
 
     pub(crate) fn spawn_workflow_fibo(
         db_pool: Arc<dyn DbPool>,
-        db_exec: Arc<dyn DbExecutor>,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
@@ -224,7 +222,6 @@ mod bench {
     ) -> ExecutorTaskHandle {
         spawn_workflow(
             db_pool,
-            db_exec,
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
             clock_fn,
             join_next_blocking_strategy,
@@ -274,14 +271,13 @@ mod bench {
             ),
         ]);
 
-        let (_guard, db_pool, db_exec, db_close) =
+        let (_guard, db_pool, db_close) =
             tokio.block_on(async move { database.set_up().await });
 
         let cancel_registry = CancelRegistry::new();
 
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
-            db_exec.clone(),
             Now,
             JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
@@ -292,7 +288,7 @@ mod bench {
         );
 
         let activity_exec_task = spawn_activity_fibo(
-            db_exec,
+            db_pool,
             Now,
             TokioSleep,
             engines.activity_engine.clone(),

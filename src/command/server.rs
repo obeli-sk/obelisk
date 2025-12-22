@@ -55,7 +55,6 @@ use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::DbErrorWriteNonRetriable;
-use concepts::storage::DbExecutor;
 use concepts::storage::DbExternalApi;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
@@ -989,13 +988,12 @@ async fn spawn_tasks_and_threads(
             })
             .collect()
     };
-    let db_executor = Arc::new(db.clone());
     // Spawn executors
     let exec_join_handles = server_compiled_linked
         .compiled_components
         .workers_linked
         .into_iter()
-        .map(|pre_spawn| pre_spawn.spawn(&db_pool, db_executor.clone(), cancel_registry.clone()))
+        .map(|pre_spawn| pre_spawn.spawn(&db_pool, cancel_registry.clone()))
         .collect();
 
     // Start webhook HTTP servers
@@ -1720,7 +1718,6 @@ impl WorkerLinked {
     fn spawn(
         self,
         db_pool: &Arc<dyn DbPool>,
-        db_executor: Arc<dyn DbExecutor>,
         cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
         let worker: Arc<dyn Worker> = match self.worker {
@@ -1736,7 +1733,7 @@ impl WorkerLinked {
                 cancel_registry,
             )),
         };
-        ExecTask::spawn_new(worker, self.exec_config, Now, db_executor, TokioSleep)
+        ExecTask::spawn_new(worker, self.exec_config, Now, db_pool.clone(), TokioSleep)
     }
 }
 

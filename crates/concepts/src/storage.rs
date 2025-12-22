@@ -608,6 +608,8 @@ impl From<CreateRequest> for ExecutionRequest {
 
 #[async_trait]
 pub trait DbPool: Send + Sync {
+    async fn db_exec_conn(&self) -> Result<Box<dyn DbExecutor>, DbErrorGeneric>;
+
     async fn connection(&self) -> Result<Box<dyn DbConnection>, DbErrorGeneric>;
 
     async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric>;

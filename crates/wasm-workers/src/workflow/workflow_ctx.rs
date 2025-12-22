@@ -1559,7 +1559,7 @@ pub(crate) mod tests {
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest,
-        DbExecutor, DbPool, ExecutionEvent, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt,
+        DbPool, ExecutionEvent, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt,
         JoinSetRequest, Locked, PendingState, PendingStateFinished, PendingStateFinishedError,
         PendingStateFinishedResultKind,
     };
@@ -1889,11 +1889,11 @@ pub(crate) mod tests {
         for seed in get_seed() {
             let steps = generate_steps(seed);
             let closure = |steps, mut sim_clock, seed| async move {
-                let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+                let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
                 let mut seedable_rng = StdRng::seed_from_u64(seed);
                 let next_u128 = || rand::Rng::random(&mut seedable_rng);
                 let res =
-                    execute_steps(steps, db_pool.clone(), db_exec, &mut sim_clock, next_u128).await;
+                    execute_steps(steps, db_pool.clone(), &mut sim_clock, next_u128).await;
                 db_close.close().await;
                 res
             };
@@ -1913,13 +1913,12 @@ pub(crate) mod tests {
 
             println!("Run 1");
             let (execution_id, execution_log) = {
-                let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+                let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
                 let mut seedable_rng = StdRng::seed_from_u64(seed);
                 let next_u128 = || rand::Rng::random(&mut seedable_rng);
                 let (execution_id, execution_log) = execute_steps(
                     steps.clone(),
                     db_pool.clone(),
-                    db_exec,
                     &mut SimClock::epoch(),
                     next_u128,
                 )
@@ -1929,7 +1928,7 @@ pub(crate) mod tests {
                 (execution_id, execution_log)
             };
             println!("Run 2");
-            let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
             let sim_clock = SimClock::epoch();
             let fn_registry = steps_to_registry(&steps);
             let workflow_exec = {
@@ -1954,7 +1953,7 @@ pub(crate) mod tests {
                     worker,
                     exec_config,
                     sim_clock.clone(),
-                    db_exec,
+                    db_pool.clone(),
                     Arc::new([FFQN_MOCK]),
                 )
             };
@@ -2060,7 +2059,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn creating_oneoff_and_generated_join_sets_with_same_name_should_work() {
         test_utils::set_up();
-        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "".into()).unwrap();
         let steps = vec![
             WorkflowStep::JoinSetCreateNamed {
@@ -2077,7 +2076,6 @@ pub(crate) mod tests {
         execute_steps(
             steps,
             db_pool.clone(),
-            db_exec,
             &mut SimClock::epoch(),
             || 0,
         )
@@ -2088,7 +2086,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn submitting_two_delays_should_work() {
         test_utils::set_up();
-        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "".into()).unwrap();
 
         let steps = vec![
@@ -2107,7 +2105,6 @@ pub(crate) mod tests {
         execute_steps(
             steps,
             db_pool.clone(),
-            db_exec,
             &mut SimClock::epoch(),
             || 0,
         )
@@ -2118,7 +2115,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn submitting_to_closed_join_set_should_be_permanent_execution_error() {
         test_utils::set_up();
-        let (_guard, db_pool, db_exec, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "foo".into()).unwrap();
         let steps = vec![
             WorkflowStep::JoinSetCreateNamed {
@@ -2135,7 +2132,6 @@ pub(crate) mod tests {
         let (_, log) = execute_steps(
             steps,
             db_pool.clone(),
-            db_exec,
             &mut SimClock::epoch(),
             || 0,
         )
@@ -2172,7 +2168,7 @@ pub(crate) mod tests {
     async fn check_determinism_closing_multiple_join_sets() {
         const SUBMITS: usize = 10;
         test_utils::set_up();
-        let (_guard, db_pool, _db_exec, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let sim_clock = SimClock::new(Now.now());
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -2434,7 +2430,6 @@ pub(crate) mod tests {
     async fn execute_steps(
         steps: Vec<WorkflowStep>,
         db_pool: Arc<dyn DbPool>,
-        db_exec: Arc<dyn DbExecutor>,
         sim_clock: &mut SimClock,
         mut next_u128: impl FnMut() -> u128,
     ) -> (ExecutionId, ExecutionLog) {
@@ -2482,7 +2477,7 @@ pub(crate) mod tests {
                 worker,
                 exec_config,
                 sim_clock.clone(),
-                db_exec,
+                db_pool.clone(),
                 Arc::new([FFQN_MOCK]),
             )
         };

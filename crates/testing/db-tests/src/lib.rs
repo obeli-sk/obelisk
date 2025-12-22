@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use concepts::FunctionFqn;
-use concepts::storage::DbExecutor;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
 use db_mem::inmemory_dao::InMemoryPool;
@@ -22,20 +21,12 @@ pub enum DbGuard {
 }
 
 impl Database {
-    pub async fn set_up(
-        self,
-    ) -> (
-        DbGuard,
-        Arc<dyn DbPool>,
-        Arc<dyn DbExecutor>,
-        DbPoolCloseableWrapper,
-    ) {
+    pub async fn set_up(self) -> (DbGuard, Arc<dyn DbPool>, DbPoolCloseableWrapper) {
         match self {
             Database::Memory => {
                 let mem_db = InMemoryPool::new();
-                let exec = mem_db.db_executor();
                 let closeable = DbPoolCloseableWrapper::Memory(mem_db.clone());
-                (DbGuard::Memory, Arc::new(mem_db), exec, closeable)
+                (DbGuard::Memory, Arc::new(mem_db), closeable)
             }
             Database::Sqlite => {
                 use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
@@ -44,7 +35,6 @@ impl Database {
                 (
                     DbGuard::Sqlite(guard),
                     Arc::new(sqlite.clone()),
-                    Arc::new(sqlite),
                     closeable,
                 )
             }
