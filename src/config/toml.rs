@@ -44,7 +44,7 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 pub(crate) struct ConfigToml {
     pub(crate) api: ApiConfig,
     #[serde(default)]
-    pub(crate) sqlite: SqliteConfigToml,
+    pub(crate) database: DatabaseConfigToml,
     #[serde(default)]
     pub(crate) webui: WebUIConfig,
     #[serde(default, rename = "wasm")]
@@ -80,6 +80,27 @@ pub(crate) struct ConfigToml {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ApiConfig {
     pub(crate) listening_addr: SocketAddr,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DatabaseConfigToml {
+    Sqlite(SqliteConfigToml),
+    Postgres(PostgresConfigToml),
+}
+impl Default for DatabaseConfigToml {
+    fn default() -> DatabaseConfigToml {
+        DatabaseConfigToml::Sqlite(SqliteConfigToml::default())
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PostgresConfigToml {
+    pub host: String,
+    pub user: String,
+    pub password: String,
+    pub db_name: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
