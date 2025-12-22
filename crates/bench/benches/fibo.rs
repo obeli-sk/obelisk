@@ -191,7 +191,7 @@ mod bench {
             .link(fn_registry.clone())
             .unwrap()
             .into_worker(
-                db_pool,
+                db_pool.clone(),
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: Duration::ZERO,
                     clock_fn: clock_fn.clone(),
@@ -271,8 +271,7 @@ mod bench {
             ),
         ]);
 
-        let (_guard, db_pool, db_close) =
-            tokio.block_on(async move { database.set_up().await });
+        let (_guard, db_pool, db_close) = tokio.block_on(async move { database.set_up().await });
 
         let cancel_registry = CancelRegistry::new();
 
@@ -288,7 +287,7 @@ mod bench {
         );
 
         let activity_exec_task = spawn_activity_fibo(
-            db_pool,
+            db_pool.clone(),
             Now,
             TokioSleep,
             engines.activity_engine.clone(),

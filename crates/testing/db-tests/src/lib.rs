@@ -32,11 +32,7 @@ impl Database {
                 use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
                 let (sqlite, guard) = sqlite_pool().await;
                 let closeable = DbPoolCloseableWrapper::Sqlite(sqlite.clone());
-                (
-                    DbGuard::Sqlite(guard),
-                    Arc::new(sqlite.clone()),
-                    closeable,
-                )
+                (DbGuard::Sqlite(guard), Arc::new(sqlite.clone()), closeable)
             }
         }
     }
@@ -49,7 +45,7 @@ pub enum DbPoolCloseableWrapper {
 
 #[async_trait]
 impl DbPoolCloseable for DbPoolCloseableWrapper {
-    async fn close(self) {
+    async fn close(&self) {
         match self {
             DbPoolCloseableWrapper::Memory(db) => db.close().await,
             DbPoolCloseableWrapper::Sqlite(db) => db.close().await,

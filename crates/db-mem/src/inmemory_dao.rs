@@ -596,7 +596,7 @@ impl InMemoryPool {
 
 #[async_trait]
 impl DbPoolCloseable for InMemoryPool {
-    async fn close(self) {
+    async fn close(&self) {
         self.1
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .expect("impossible to close the db twice");
