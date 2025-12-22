@@ -9,10 +9,13 @@ use tempfile::NamedTempFile;
 
 pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Database {
     Memory,
     Sqlite,
+}
+impl Database {
+    pub const ALL: [Database; 3] = [Database::Sqlite, Database::Memory, Database::Postgres];
 }
 
 pub enum DbGuard {

@@ -16,8 +16,10 @@ use concepts::time::ClockFn as _;
 use concepts::time::Now;
 use db_tests::Database;
 use db_tests::SOME_FFQN;
+use rstest::rstest;
 use std::sync::Arc;
 use std::time::Duration;
+use test_db_macro::expand_enum_database;
 use test_utils::arbitrary::UnstructuredHolder;
 use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
@@ -223,11 +225,10 @@ async fn persist_finished_event(
 
 // Test that the sqlite database no longer uses serde_json::Value during deserialization as it
 // would sorts attributes and thus break `TypeWrapper` and `WastVal`,
+#[expand_enum_database]
+#[rstest]
 #[tokio::test]
-#[rstest::rstest]
-async fn get_execution_event_should_not_break_json_order(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
-) {
+async fn get_execution_event_should_not_break_json_order(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
@@ -244,12 +245,17 @@ async fn get_execution_event_should_not_break_json_order(
     db_close.close().await;
 }
 
-// Test that the sqlite database no longer uses serde_json::Value during deserialization as it
-// would sorts attributes and thus break `TypeWrapper` and `WastVal`,
+// Test that no database uses serde_json::Value during deserialization as it
+// would sort attributes and thus break `TypeWrapper` and `WastVal`,
+#[expand_enum_database]
+#[rstest]
 #[tokio::test]
-async fn list_execution_events_should_not_break_json_order() {
+async fn list_execution_events_should_not_break_json_order(database: Database) {
+    if database == Database::Memory {
+        return; // external_api_conn not implemented for in-memory DB
+    }
     set_up();
-    let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.external_api_conn().await.unwrap();
 
     let (execution_id, version, expected_inner) =

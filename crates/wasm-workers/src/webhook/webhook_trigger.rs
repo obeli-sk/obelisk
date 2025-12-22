@@ -1092,11 +1092,13 @@ pub(crate) mod tests {
         use concepts::{ExecutionId, storage::DbPool};
         use db_tests::{Database, DbGuard, DbPoolCloseableWrapper};
         use executor::executor::ExecTask;
+        use rstest::rstest;
         use serde_json::json;
         use std::net::SocketAddr;
         use std::str::FromStr;
         use std::sync::Arc;
         use std::time::Duration;
+        use test_db_macro::expand_enum_database;
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
         use tracing::info;
@@ -1229,12 +1231,10 @@ pub(crate) mod tests {
             );
         }
 
-        #[rstest::rstest]
+        #[expand_enum_database]
+        #[rstest]
         #[tokio::test]
-        async fn direct_call_should_work_non_deterministic(
-            #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)]
-            db: db_tests::Database,
-        ) {
+        async fn direct_call_should_work_non_deterministic(db: Database) {
             test_utils::set_up();
             let fibo_webhook_harness = SetUpFiboWebhook::new(db).await;
             let server_addr = fibo_webhook_harness.server_addr.to_string();
@@ -1274,12 +1274,10 @@ pub(crate) mod tests {
             assert_eq!("fiboa(2, 1) = direct call: 1", res);
         }
 
-        #[rstest::rstest]
+        #[expand_enum_database]
+        #[rstest]
         #[tokio::test]
-        async fn scheduling_should_work(
-            #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)]
-            db: db_tests::Database,
-        ) {
+        async fn scheduling_should_work(db: db_tests::Database) {
             test_utils::set_up();
             let fibo_webhook_harness = SetUpFiboWebhook::new(db).await;
             let server_addr = fibo_webhook_harness.server_addr.to_string();

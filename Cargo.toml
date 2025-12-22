@@ -108,6 +108,7 @@ members = [
     "crates/executor",
     "crates/grpc",
     "crates/testing/db-tests",
+    "crates/testing/db-macro",
     "crates/testing/test-programs/dir/activity",
     "crates/testing/test-programs/dir/activity/builder",
     "crates/testing/test-programs/fibo/activity",
@@ -160,6 +161,7 @@ grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.31.0" }
 obelisk-component-builder = { path = "crates/testing/component-builder", features = [
     "genrs",
 ] }
+test-db-macro = { path = "crates/testing/db-macro" }
 test-programs-dir-activity-builder = { path = "crates/testing/test-programs/dir/activity/builder" }
 test-programs-fibo-activity-builder = { path = "crates/testing/test-programs/fibo/activity/builder" }
 test-programs-fibo-webhook-builder = { path = "crates/testing/test-programs/fibo/webhook/builder" }
@@ -236,6 +238,7 @@ oci-wasm = { version = "0.3.0", default-features = false, features = [ # Depende
 ] }
 prost = "0.14.1"
 prost-wkt-types = "0.7"
+quote = "1"
 rand = "0.9" # yew 0.21 needs getrandom 0.2
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
@@ -254,6 +257,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_with = "3.16.1"
 sha2 = "0.10.9"
+syn = { version = "2", features = ["full"] }
 strum = { version = "0.27.2", features = ["derive"] }
 tempfile = "3.23" # yew 0.21 needs getrandom 0.2
 thiserror = "2.0"

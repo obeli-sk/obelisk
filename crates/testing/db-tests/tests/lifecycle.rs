@@ -20,15 +20,15 @@ use db_tests::SOME_FFQN;
 use rstest::rstest;
 use std::sync::Arc;
 use std::time::Duration;
+use test_db_macro::expand_enum_database;
 use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
 use tracing::{debug, info};
 
+#[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn test_expired_lock_should_be_found_mem(
-    #[values(Database::Memory, Database::Sqlite)] database: Database,
-) {
+async fn test_expired_lock_should_be_found(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -37,11 +37,10 @@ async fn test_expired_lock_should_be_found_mem(
     db_close.close().await;
 }
 
+#[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn test_append_batch_respond_to_parent(
-    #[values(Database::Memory, Database::Sqlite)] database: Database,
-) {
+async fn test_append_batch_respond_to_parent(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -50,10 +49,11 @@ async fn test_append_batch_respond_to_parent(
     db_close.close().await;
 }
 
+#[expand_enum_database]
 #[rstest]
 #[tokio::test]
 async fn test_lock_pending_should_sort_by_scheduled_at(
-    #[values(Database::Memory, Database::Sqlite)] database: Database,
+    database: Database,
     #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
     locking_strategy: LockingStrategy,
 ) {
@@ -66,9 +66,10 @@ async fn test_lock_pending_should_sort_by_scheduled_at(
     db_close.close().await;
 }
 
+#[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn test_lock(#[values(Database::Memory, Database::Sqlite)] database: Database) {
+async fn test_lock(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -77,9 +78,10 @@ async fn test_lock(#[values(Database::Memory, Database::Sqlite)] database: Datab
     db_close.close().await;
 }
 
+#[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn test_get_expired_lock(#[values(Database::Memory, Database::Sqlite)] database: Database) {
+async fn test_get_expired_lock(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -88,9 +90,10 @@ async fn test_get_expired_lock(#[values(Database::Memory, Database::Sqlite)] dat
     db_close.close().await;
 }
 
+#[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn test_get_expired_delay(#[values(Database::Memory, Database::Sqlite)] database: Database) {
+async fn test_get_expired_delay(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -99,10 +102,11 @@ async fn test_get_expired_delay(#[values(Database::Memory, Database::Sqlite)] da
     db_close.close().await;
 }
 
-#[tokio::test]
+#[expand_enum_database]
 #[rstest]
+#[tokio::test]
 async fn append_after_finish_should_not_be_possible(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
+    database: Database,
     #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
     locking_strategy: LockingStrategy,
 ) {
@@ -239,10 +243,11 @@ async fn lock_pending(
     locked_execution.next_version
 }
 
-#[tokio::test]
+#[expand_enum_database]
 #[rstest]
+#[tokio::test]
 async fn locking_in_unlock_backoff_should_not_be_possible(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
+    database: Database,
     #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
     locking_strategy: LockingStrategy,
 ) {
@@ -354,11 +359,10 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
     db_close.close().await;
 }
 
-#[tokio::test]
+#[expand_enum_database]
 #[rstest]
-async fn lock_extended_with_the_same_executor_should_work(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
-) {
+#[tokio::test]
+async fn lock_extended_with_the_same_executor_should_work(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     {
@@ -370,11 +374,11 @@ async fn lock_extended_with_the_same_executor_should_work(
     }
     db_close.close().await;
 }
-#[tokio::test]
+
+#[expand_enum_database]
 #[rstest]
-async fn lock_extended_with_another_executor_should_fail(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
-) {
+#[tokio::test]
+async fn lock_extended_with_another_executor_should_fail(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     {
@@ -480,11 +484,10 @@ async fn lock_and_attept_to_extend(
         .await
 }
 
-#[tokio::test]
+#[expand_enum_database]
 #[rstest]
-async fn locking_in_timeout_backoff_should_not_be_possible(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
-) {
+#[tokio::test]
+async fn locking_in_timeout_backoff_should_not_be_possible(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
@@ -585,11 +588,10 @@ async fn locking_in_timeout_backoff_should_not_be_possible(
     db_close.close().await;
 }
 
-#[tokio::test]
+#[expand_enum_database]
 #[rstest]
-async fn lock_pending_while_nothing_is_pending_should_be_noop(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
-) {
+#[tokio::test]
+async fn lock_pending_while_nothing_is_pending_should_be_noop(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
@@ -621,11 +623,10 @@ async fn lock_pending_while_nothing_is_pending_should_be_noop(
     db_close.close().await;
 }
 
-#[tokio::test]
+#[expand_enum_database]
 #[rstest]
-async fn creating_execution_twice_should_fail(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
-) {
+#[tokio::test]
+async fn creating_execution_twice_should_fail(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
@@ -690,11 +691,10 @@ async fn creating_execution_twice_should_fail(
     db_close.close().await;
 }
 
-#[tokio::test]
+#[expand_enum_database]
 #[rstest]
-async fn lock_pending_while_expired_lock_should_return_nothing(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
-) {
+#[tokio::test]
+async fn lock_pending_while_expired_lock_should_return_nothing(database: Database) {
     set_up();
 
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -1425,10 +1425,11 @@ async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock
     assert_eq!(expected, actual);
 }
 
-#[tokio::test]
+#[expand_enum_database]
 #[rstest]
+#[tokio::test]
 async fn get_expired_times_with_execution_that_made_progress(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
+    database: Database,
     #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
     locking_strategy: LockingStrategy,
 ) {
@@ -1524,11 +1525,10 @@ async fn get_expired_times_with_execution_that_made_progress(
     db_close.close().await;
 }
 
+#[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn test_append_same_delay_id_twice_should_fail(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
-) {
+async fn test_append_same_delay_id_twice_should_fail(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -1650,11 +1650,10 @@ async fn create_join_set(
     *version = new_version;
 }
 
+#[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn test_append_response_with_same_delay_id_twice_should_fail(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
-) {
+async fn test_append_response_with_same_delay_id_twice_should_fail(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -1683,11 +1682,10 @@ async fn test_append_response_with_same_delay_id_twice_should_fail(
     db_close.close().await;
 }
 
+#[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn test_append_response_with_same_child_id_twice_should_fail(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
-) {
+async fn test_append_response_with_same_child_id_twice_should_fail(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -1807,11 +1805,10 @@ async fn append_response_with_same_id_twice_should_fail(
     );
 }
 
+#[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn delay_cancellation_should_be_idempotent(
-    #[values(Database::Sqlite, Database::Memory)] database: Database,
-) {
+async fn delay_cancellation_should_be_idempotent(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;

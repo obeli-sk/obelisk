@@ -882,6 +882,7 @@ mod tests {
     use rstest::rstest;
     use simple_worker::FFQN_SOME;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
+    use test_db_macro::expand_enum_database;
     use test_utils::set_up;
     use test_utils::sim_clock::{ConstClock, SimClock};
 
@@ -902,16 +903,18 @@ mod tests {
             .await
     }
 
+    #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn execute_simple_lifecycle_tick_based_mem(
+    async fn execute_simple_lifecycle_tick_based(
+        database: Database,
         #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
         locking_strategy: LockingStrategy,
     ) {
         let created_at = Now.now();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = database.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
-        execute_simple_lifecycle_tick_based(
+        execute_simple_lifecycle_tick_based_inner(
             db_connection.as_ref(),
             db_pool.clone(),
             ConstClock(created_at),
@@ -921,26 +924,7 @@ mod tests {
         db_close.close().await;
     }
 
-    #[rstest]
-    #[tokio::test]
-    async fn execute_simple_lifecycle_tick_based_sqlite(
-        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
-        locking_strategy: LockingStrategy,
-    ) {
-        let created_at = Now.now();
-        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
-        let db_connection = db_pool.connection_test().await.unwrap();
-        execute_simple_lifecycle_tick_based(
-            db_connection.as_ref(),
-            db_pool.clone(),
-            ConstClock(created_at),
-            locking_strategy,
-        )
-        .await;
-        db_close.close().await;
-    }
-
-    async fn execute_simple_lifecycle_tick_based<C: ClockFn + 'static>(
+    async fn execute_simple_lifecycle_tick_based_inner<C: ClockFn + 'static>(
         db_connection: &dyn DbConnectionTest,
         db_pool: Arc<dyn DbPool>,
         clock_fn: C,

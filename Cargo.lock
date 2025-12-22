@@ -1104,6 +1104,7 @@ dependencies = [
  "rstest",
  "serde_json",
  "tempfile",
+ "test-db-macro",
  "test-utils",
  "tokio",
  "tracing",
@@ -2631,6 +2632,7 @@ dependencies = [
  "opentelemetry",
  "rstest",
  "serde",
+ "test-db-macro",
  "test-utils",
  "thiserror 2.0.17",
  "tokio",
@@ -2751,6 +2753,7 @@ dependencies = [
  "serde_json",
  "strum",
  "tempfile",
+ "test-db-macro",
  "test-programs-dir-activity-builder",
  "test-programs-fibo-activity-builder",
  "test-programs-fibo-webhook-builder",
@@ -4307,6 +4310,14 @@ checksum = "60b8cb979cb11c32ce1603f8137b22262a9d131aaa5c37b5678025f22b8becd0"
 dependencies = [
  "rustix 1.1.2",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "test-db-macro"
+version = "0.31.0"
+dependencies = [
+ "quote",
+ "syn",
 ]
 
 [[package]]
