@@ -1558,9 +1558,9 @@ pub(crate) mod tests {
     use chrono::DateTime;
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
-        AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest,
-        DbPool, ExecutionEvent, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt,
-        JoinSetRequest, Locked, PendingState, PendingStateFinished, PendingStateFinishedError,
+        AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest, DbPool,
+        ExecutionEvent, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest,
+        Locked, PendingState, PendingStateFinished, PendingStateFinishedError,
         PendingStateFinishedResultKind,
     };
     use concepts::storage::{DbPoolCloseable, ExecutionLog};
@@ -1892,8 +1892,7 @@ pub(crate) mod tests {
                 let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
                 let mut seedable_rng = StdRng::seed_from_u64(seed);
                 let next_u128 = || rand::Rng::random(&mut seedable_rng);
-                let res =
-                    execute_steps(steps, db_pool.clone(), &mut sim_clock, next_u128).await;
+                let res = execute_steps(steps, db_pool.clone(), &mut sim_clock, next_u128).await;
                 db_close.close().await;
                 res
             };
@@ -2073,13 +2072,7 @@ pub(crate) mod tests {
                 join_set_id,
             },
         ];
-        execute_steps(
-            steps,
-            db_pool.clone(),
-            &mut SimClock::epoch(),
-            || 0,
-        )
-        .await;
+        execute_steps(steps, db_pool.clone(), &mut SimClock::epoch(), || 0).await;
         db_close.close().await;
     }
 
@@ -2102,13 +2095,7 @@ pub(crate) mod tests {
                 join_set_id,
             },
         ];
-        execute_steps(
-            steps,
-            db_pool.clone(),
-            &mut SimClock::epoch(),
-            || 0,
-        )
-        .await;
+        execute_steps(steps, db_pool.clone(), &mut SimClock::epoch(), || 0).await;
         db_close.close().await;
     }
 
@@ -2129,13 +2116,7 @@ pub(crate) mod tests {
                 join_set_id: join_set_id.clone(),
             },
         ];
-        let (_, log) = execute_steps(
-            steps,
-            db_pool.clone(),
-            &mut SimClock::epoch(),
-            || 0,
-        )
-        .await;
+        let (_, log) = execute_steps(steps, db_pool.clone(), &mut SimClock::epoch(), || 0).await;
         let kind = assert_matches!(
             log.pending_state,
             PendingState::Finished {

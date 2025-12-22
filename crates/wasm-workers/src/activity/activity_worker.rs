@@ -853,7 +853,8 @@ pub(crate) mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy: LockingStrategy::default(),
             };
-            let exec_task = ExecTask::spawn_new(worker, exec_config, Now, db_pool.clone(), TokioSleep);
+            let exec_task =
+                ExecTask::spawn_new(worker, exec_config, Now, db_pool.clone(), TokioSleep);
 
             // Create an execution.
             let execution_id = ExecutionId::generate();
@@ -1043,8 +1044,13 @@ pub(crate) mod tests {
                 locking_strategy: LockingStrategy::default(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-            let exec_task =
-                ExecTask::new_test(worker, exec_config, sim_clock.clone(), db_pool.clone(), ffqns);
+            let exec_task = ExecTask::new_test(
+                worker,
+                exec_config,
+                sim_clock.clone(),
+                db_pool.clone(),
+                ffqns,
+            );
 
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let server_address = listener
@@ -1156,8 +1162,13 @@ pub(crate) mod tests {
                 locking_strategy: LockingStrategy::default(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-            let exec_task =
-                ExecTask::new_test(worker, exec_config, sim_clock.clone(), db_pool.clone(), ffqns);
+            let exec_task = ExecTask::new_test(
+                worker,
+                exec_config,
+                sim_clock.clone(),
+                db_pool.clone(),
+                ffqns,
+            );
 
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let server_address = listener
@@ -1283,8 +1294,13 @@ pub(crate) mod tests {
                 locking_strategy: LockingStrategy::default(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-            let exec_task =
-                ExecTask::new_test(worker, exec_config, sim_clock.clone(), db_pool.clone(), ffqns);
+            let exec_task = ExecTask::new_test(
+                worker,
+                exec_config,
+                sim_clock.clone(),
+                db_pool.clone(),
+                ffqns,
+            );
 
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let server_address = listener

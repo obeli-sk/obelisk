@@ -34,10 +34,10 @@ impl From<tokio_postgres::Error> for DbErrorReadWithTimeout {
 impl From<tokio_postgres::Error> for DbErrorWrite {
     fn from(err: tokio_postgres::Error) -> Self {
         // Check for specific SQL State codes (e.g., Unique Violation)
-        if let Some(code) = err.code() {
-            if *code == SqlState::UNIQUE_VIOLATION {
-                return DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict);
-            }
+        if let Some(code) = err.code()
+            && *code == SqlState::UNIQUE_VIOLATION
+        {
+            return DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict);
         }
         warn!(backtrace = %std::backtrace::Backtrace::capture(), "Postgres error {err:?}");
         let err = err.to_string();

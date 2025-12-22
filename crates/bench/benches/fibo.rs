@@ -161,7 +161,6 @@ mod bench {
         )
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn spawn_workflow(
         db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,

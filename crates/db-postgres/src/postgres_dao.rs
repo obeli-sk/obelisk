@@ -1,4 +1,4 @@
-use crate::postgres_dao::ddl::ADMIN_DB_NAME;
+use crate::postgres_dao::ddl::{ADMIN_DB_NAME, T_METADATA_EXPECTED_SCHEMA_VERSION};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -396,7 +396,6 @@ impl PostgresPool {
     pub async fn new_with_outcome(
         config: PostgresConfig,
     ) -> Result<(PostgresPool, DbInitialzationOutcome), InitializationError> {
-        use ddl::*;
         let outcome = create_database(&config).await?;
         let mut cfg = Config::new();
         cfg.host = Some(config.host.clone());
@@ -417,24 +416,24 @@ impl PostgresPool {
         })?;
 
         let statements = vec![
-            CREATE_TABLE_T_METADATA,
-            CREATE_TABLE_T_EXECUTION_LOG,
-            CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION,
-            CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VARIANT,
-            CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_JOIN_SET,
-            CREATE_TABLE_T_JOIN_SET_RESPONSE,
-            CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID,
-            CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_CHILD_ID,
-            CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_DELAY_ID,
-            CREATE_TABLE_T_STATE,
-            IDX_T_STATE_LOCK_PENDING,
-            IDX_T_STATE_EXPIRED_TIMERS,
-            IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL,
-            IDX_T_STATE_FFQN,
-            IDX_T_STATE_CREATED_AT,
-            CREATE_TABLE_T_DELAY,
-            CREATE_TABLE_T_BACKTRACE,
-            IDX_T_BACKTRACE_EXECUTION_ID_VERSION,
+            ddl::CREATE_TABLE_T_METADATA,
+            ddl::CREATE_TABLE_T_EXECUTION_LOG,
+            ddl::CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION,
+            ddl::CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VARIANT,
+            ddl::CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_JOIN_SET,
+            ddl::CREATE_TABLE_T_JOIN_SET_RESPONSE,
+            ddl::CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID,
+            ddl::CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_CHILD_ID,
+            ddl::CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_DELAY_ID,
+            ddl::CREATE_TABLE_T_STATE,
+            ddl::IDX_T_STATE_LOCK_PENDING,
+            ddl::IDX_T_STATE_EXPIRED_TIMERS,
+            ddl::IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL,
+            ddl::IDX_T_STATE_FFQN,
+            ddl::IDX_T_STATE_CREATED_AT,
+            ddl::CREATE_TABLE_T_DELAY,
+            ddl::CREATE_TABLE_T_BACKTRACE,
+            ddl::IDX_T_BACKTRACE_EXECUTION_ID_VERSION,
         ];
 
         // Combine into one batch execution for atomicity per round-trip (or efficiency)
@@ -1559,8 +1558,8 @@ async fn lock_single_execution(
     let combined_state = get_combined_state(tx, execution_id).await?;
     combined_state.pending_state.can_append_lock(
         created_at,
-        executor_id.clone(),
-        run_id.clone(),
+        executor_id,
+        run_id,
         lock_expires_at,
     )?;
     let expected_version = combined_state.get_next_version_assert_not_finished();
@@ -1568,11 +1567,11 @@ async fn lock_single_execution(
 
     // 2. Prepare Event
     let locked_event = Locked {
-        component_id: component_id.clone(),
-        executor_id: executor_id.clone(),
+        component_id,
+        executor_id,
         lock_expires_at,
-        run_id: run_id.clone(),
-        retry_config: retry_config.clone(),
+        run_id,
+        retry_config,
     };
     let event = ExecutionRequest::Locked(locked_event.clone());
 
@@ -1605,7 +1604,7 @@ async fn lock_single_execution(
     let intermittent_event_count = update_state_locked_get_intermittent_event_count(
         tx,
         execution_id,
-        executor_id.clone(),
+        executor_id,
         run_id,
         lock_expires_at,
         appending_version,
@@ -1745,7 +1744,6 @@ async fn nth_response(
 }
 
 #[instrument(level = Level::TRACE, skip_all, fields(%execution_id))]
-#[expect(clippy::needless_return)]
 async fn append(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
@@ -3295,9 +3293,9 @@ impl DbConnection for PostgresConnection {
                 DelayId::from_str(&delay_id).map_err(|err| consistency_db_err(err.to_string()))?;
 
             let delay = ExpiredDelay {
-                execution_id: ExecutionId::from(execution_id),
-                join_set_id: JoinSetId::from(join_set_id),
-                delay_id: DelayId::from(delay_id),
+                execution_id,
+                join_set_id,
+                delay_id,
             };
             expired_timers.push(ExpiredTimer::Delay(delay));
         }

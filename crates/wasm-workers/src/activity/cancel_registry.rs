@@ -49,7 +49,10 @@ impl CancelRegistry {
                     loop {
                         let res = db_pool.connection().await;
                         let res = match res {
-                            Ok(conn) => Ok(clone.tick(conn.as_ref()).await),
+                            Ok(conn) => {
+                                clone.tick(conn.as_ref()).await;
+                                Ok(())
+                            }
                             Err(err) => Err(err),
                         };
                         log_err_if_new(res, &mut old_err);
@@ -120,7 +123,7 @@ impl CancelRegistry {
 
 fn log_err_if_new(res: Result<(), DbErrorGeneric>, old_err: &mut Option<DbErrorGeneric>) {
     match (res, &old_err) {
-        (Ok(_), _) => {
+        (Ok(()), _) => {
             *old_err = None;
         }
         (Err(err), Some(old)) if err == *old => {}
