@@ -14,7 +14,6 @@ concepts = { workspace = true, features = ["postgres"] }
 val-json.workspace = true
 
 anyhow.workspace = true
-arbitrary.workspace = true
 assert_matches.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
@@ -22,12 +21,8 @@ const_format.workspace = true
 deadpool-postgres.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
-hdrhistogram.workspace = true
-itertools.workspace = true
 tokio-postgres.workspace = true
 rand.workspace = true
-serde_json.workspace = true
-serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
