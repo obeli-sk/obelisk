@@ -711,6 +711,8 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) stub_wasi: bool,
     #[serde(default = "default_lock_extension")]
     lock_extension: DurationConfig,
+    #[serde(default = "default_max_wait_for_responses_per_iteration")]
+    max_wait_for_responses_per_iteration: DurationConfig,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
@@ -858,6 +860,7 @@ impl WorkflowComponentConfigToml {
             stub_wasi: self.stub_wasi,
             fuel,
             lock_extension: self.lock_extension.into(),
+            max_wait_for_responses_per_iteration: self.max_wait_for_responses_per_iteration.into(),
         };
         let frame_files_to_sources =
             verify_frame_files_to_sources(self.backtrace.frame_files_to_sources, &path_prefixes);
@@ -1424,6 +1427,10 @@ const fn default_convert_core_module() -> bool {
 }
 
 const fn default_lock_extension() -> DurationConfig {
+    DurationConfig::Seconds(1)
+}
+
+const fn default_max_wait_for_responses_per_iteration() -> DurationConfig {
     DurationConfig::Seconds(1)
 }
 

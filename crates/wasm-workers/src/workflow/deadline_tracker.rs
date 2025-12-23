@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::time::ClockFn;
-use std::{pin::Pin, time::Duration};
+use std::{cmp::min, pin::Pin, time::Duration};
 use tracing::{trace, warn};
 
 #[async_trait]
 pub trait DeadlineTracker: Send + Sync {
-    fn track(&self) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>>;
+    fn track(&self, max_duration: Duration) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>>;
 
     fn close_to_expired(&self) -> bool;
 
@@ -35,11 +35,13 @@ pub(crate) struct DeadlineTrackerTokio<C: ClockFn> {
 
 #[async_trait]
 impl<C: ClockFn> DeadlineTracker for DeadlineTrackerTokio<C> {
-    fn track(&self) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>> {
+    fn track(&self, max_duration: Duration) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>> {
         if self.close_to_expired() {
             None
         } else {
-            Some(Box::pin(tokio::time::sleep_until(self.deadline)))
+            let max_instant = tokio::time::Instant::now() + max_duration;
+            let shorter = min(max_instant, self.deadline);
+            Some(Box::pin(tokio::time::sleep_until(shorter)))
         }
     }
 
@@ -49,7 +51,6 @@ impl<C: ClockFn> DeadlineTracker for DeadlineTrackerTokio<C> {
 
     fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc> {
         let now = self.clock_fn.now();
-        let lock_expires_at = now + lock_extension;
         let lock_duration = if lock_extension > self.leeway {
             lock_extension.checked_sub(self.leeway).unwrap()
         } else {
@@ -57,6 +58,7 @@ impl<C: ClockFn> DeadlineTracker for DeadlineTrackerTokio<C> {
             lock_extension
         };
         self.deadline = tokio::time::Instant::now() + lock_duration;
+        let lock_expires_at = now + lock_extension;
         lock_expires_at
     }
 }

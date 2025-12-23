@@ -704,7 +704,7 @@ pub trait DbExecutor: Send + Sync {
     /// Notification mechainism with no strict guarantees for waiting while there are no pending executions.
     /// Return immediately if there are pending notifications at `pending_at_or_sooner`.
     /// Otherwise wait until `timeout_fut` resolves.
-    /// Timers that expire between `pending_at_or_sooner` and timeout can be disregarded.
+    /// Delay requests that expire between `pending_at_or_sooner` and timeout can be disregarded.
     async fn wait_for_pending_by_ffqn(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
@@ -712,6 +712,10 @@ pub trait DbExecutor: Send + Sync {
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     );
 
+    /// Notification mechainism with no strict guarantees for waiting while there are no pending executions.
+    /// Return immediately if there are pending notifications at `pending_at_or_sooner`.
+    /// Otherwise wait until `timeout_fut` resolves.
+    /// Delay requests that expire between `pending_at_or_sooner` and timeout can be disregarded.
     async fn wait_for_pending_by_component_id(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
@@ -948,6 +952,8 @@ pub trait DbConnection: DbExecutor {
     /// Parameter `start_idx` must be at most be equal to current size of responses in the execution log.
     /// If no response arrives immediately and `interrupt_after` resolves, `DbErrorReadWithTimeout::Timeout` is returned.
     /// Implementations with no pubsub support should use polling.
+    /// Callers are expected to call this function in a loop with a reasonable timeout
+    /// to support less stellar implementations.
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
@@ -957,6 +963,8 @@ pub trait DbConnection: DbExecutor {
 
     /// Notification mechainism with no strict guarantees for getting the finished result.
     /// Implementations with no pubsub support should use polling.
+    /// Callers are expected to call this function in a loop with a reasonable timeout
+    /// to support less stellar implementations.
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,

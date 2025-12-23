@@ -46,6 +46,7 @@ pub struct WorkflowConfig {
     pub stub_wasi: bool,
     pub fuel: Option<u64>,
     pub lock_extension: Duration,
+    pub max_wait_for_responses_per_iteration: Duration,
 }
 
 pub struct WorkflowWorkerCompiled<C: ClockFn> {
@@ -406,6 +407,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             self.cancel_registry.clone(),
             ctx.locked_event,
             self.config.lock_extension,
+            self.config.max_wait_for_responses_per_iteration,
         );
 
         let mut store = Store::new(&self.engine, workflow_ctx);
@@ -842,6 +844,7 @@ pub(crate) mod tests {
                     stub_wasi: false,
                     fuel: None,
                     lock_extension: Duration::ZERO,
+                    max_wait_for_responses_per_iteration: Duration::from_secs(1),
                 },
                 workflow_engine,
                 clock_fn.clone(),
@@ -1046,6 +1049,7 @@ pub(crate) mod tests {
                     stub_wasi: false,
                     fuel: None,
                     lock_extension: Duration::ZERO,
+                    max_wait_for_responses_per_iteration: Duration::from_secs(1),
                 },
                 workflow_engine,
                 clock_fn.clone(),
