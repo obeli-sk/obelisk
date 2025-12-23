@@ -252,7 +252,8 @@ pub(crate) mod params {
                         clap::Error::raw(
                             ErrorKind::Io,
                             format!(
-                                "{idx}-th parameter parsing failed: failed to read file '{file_path}': {err}"
+                                "{}-th parameter parsing failed: failed to read file '{file_path}': {err}",
+                                idx + 1
                             ),
                         )
                     })?
@@ -262,7 +263,10 @@ pub(crate) mod params {
                 let json = serde_json::from_str(&arg).map_err(|err| {
                     clap::Error::raw(
                         ErrorKind::ValueValidation,
-                        format!("{idx}-th parameter parsing failed: cannot parse as JSON: {err}"),
+                        format!(
+                            "cannot parse {}-th parameter `{arg}` as JSON -  {err}",
+                            idx + 1
+                        ),
                     )
                 })?;
                 parsed_params.push(json);
