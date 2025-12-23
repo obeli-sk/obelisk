@@ -3550,15 +3550,15 @@ impl DbConnection for SqlitePool {
         match resp_or_receiver {
             itertools::Either::Left(resp) => Ok(resp), // no need for cleanup
             itertools::Either::Right(receiver) => {
-                let res = async move {
-                    tokio::select! {
-                        resp = receiver => {
-                            Ok(resp.expect("the notifier sends to all listeners, cannot race with cleanup"))
+                let res = tokio::select! {
+                    resp = receiver => {
+                        match resp {
+                            Ok(retval) => Ok(retval),
+                            Err(_recv_err) => Err(DbErrorGeneric::Close.into())
                         }
-                        () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
                     }
-                }
-                .await;
+                    () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
+                };
                 cleanup();
                 res
             }
