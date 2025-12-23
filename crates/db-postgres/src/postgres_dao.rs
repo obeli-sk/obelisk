@@ -3093,68 +3093,60 @@ impl DbConnection for PostgresConnection {
             }
         };
 
-        let resp_or_receiver = {
+        let receiver = {
             let mut client_guard = self.client.lock().await;
             let tx = client_guard
                 .transaction()
                 .await
                 .map_err(DbErrorRead::from)?;
 
+            // Register listener
+            let (sender, receiver) = oneshot::channel();
+            {
+                let mut guard = self.execution_finished_subscribers.lock().unwrap();
+                guard
+                    .entry(execution_id.clone())
+                    .or_default()
+                    .insert(unique_tag, sender);
+            }
+
             let pending_state = get_combined_state(&tx, execution_id).await?.pending_state;
 
             if let PendingState::Finished { finished, .. } = pending_state {
                 let event = get_execution_event(&tx, execution_id, finished.version).await?;
-
                 tx.commit().await.map_err(DbErrorRead::from)?;
+                cleanup();
 
                 if let ExecutionRequest::Finished { result, .. } = event.event {
-                    Ok(itertools::Either::Left(result))
+                    return Ok(result);
                 } else {
                     error!(
                         "Mismatch, expected Finished row: {event:?} based on t_state {finished}"
                     );
-                    Err(DbErrorReadWithTimeout::from(consistency_db_err(
+                    return Err(DbErrorReadWithTimeout::from(consistency_db_err(
                         "cannot get finished event based on t_state version",
-                    )))
+                    )));
                 }
             } else {
-                // Register listener
-                let (sender, receiver) = oneshot::channel();
-                {
-                    let mut guard = self.execution_finished_subscribers.lock().unwrap();
-                    guard
-                        .entry(execution_id.clone())
-                        .or_default()
-                        .insert(unique_tag, sender);
-                }
-
                 tx.commit().await.map_err(DbErrorRead::from)?;
 
-                Ok(itertools::Either::Right(receiver))
+                receiver
             }
         };
 
-        match resp_or_receiver {
-            Ok(itertools::Either::Left(resp)) => Ok(resp),
-            Ok(itertools::Either::Right(receiver)) => {
-                let timeout_fut = timeout_fut.unwrap_or_else(|| Box::pin(std::future::pending()));
-                let res = async move {
-                    tokio::select! {
-                        resp = receiver => {
-                            Ok(resp.expect("the notifier sends to all listeners, cannot race with cleanup"))
-                        }
-                        () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
-                    }
+        let timeout_fut = timeout_fut.unwrap_or_else(|| Box::pin(std::future::pending()));
+        let res = tokio::select! {
+            resp = receiver => {
+                match resp {
+                    Ok(retval) => Ok(retval),
+                    Err(_recv_err) => Err(DbErrorGeneric::Close.into())
                 }
-                .await;
-                cleanup();
-                res
             }
-            Err(e) => {
-                cleanup();
-                Err(e)
-            }
-        }
+            () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
+        };
+
+        cleanup();
+        res
     }
 
     #[instrument(level = Level::DEBUG, skip_all, fields(%join_set_id, %execution_id))]
