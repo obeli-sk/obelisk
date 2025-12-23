@@ -58,8 +58,8 @@ impl<C: ClockFn> DeadlineTracker for DeadlineTrackerTokio<C> {
             lock_extension
         };
         self.deadline = tokio::time::Instant::now() + lock_duration;
-        let lock_expires_at = now + lock_extension;
-        lock_expires_at
+
+        now + lock_extension
     }
 }
 

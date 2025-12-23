@@ -3119,19 +3119,14 @@ impl DbConnection for PostgresConnection {
 
                 if let ExecutionRequest::Finished { result, .. } = event.event {
                     return Ok(result);
-                } else {
-                    error!(
-                        "Mismatch, expected Finished row: {event:?} based on t_state {finished}"
-                    );
-                    return Err(DbErrorReadWithTimeout::from(consistency_db_err(
-                        "cannot get finished event based on t_state version",
-                    )));
                 }
-            } else {
-                tx.commit().await.map_err(DbErrorRead::from)?;
-
-                receiver
+                error!("Mismatch, expected Finished row: {event:?} based on t_state {finished}");
+                return Err(DbErrorReadWithTimeout::from(consistency_db_err(
+                    "cannot get finished event based on t_state version",
+                )));
             }
+            tx.commit().await.map_err(DbErrorRead::from)?;
+            receiver
         };
 
         let timeout_fut = timeout_fut.unwrap_or_else(|| Box::pin(std::future::pending()));
