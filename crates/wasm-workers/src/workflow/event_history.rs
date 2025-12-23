@@ -117,6 +117,8 @@ pub(crate) struct EventHistory {
     fn_registry: Arc<dyn FunctionRegistry>,
     cancel_registry: CancelRegistry,
 
+    max_wait_for_responses_per_iteration: Duration,
+
     // Tracks join set contents for closing. One-offs are ignored, response id is removed when the response is processed.
     index_join_set_to_unawaited_requests: IndexMap<JoinSetId, IndexMap<ResponseId, ComponentType>>,
 }
@@ -139,6 +141,7 @@ impl EventHistory {
         deadline_tracker: Box<dyn DeadlineTracker>,
         locked_event: Locked,
         lock_extension: Duration,
+        max_wait_for_responses_per_iteration: Duration,
         worker_span: Span,
     ) -> EventHistory {
         EventHistory {
@@ -160,6 +163,7 @@ impl EventHistory {
             cancel_registry,
             locked_event,
             lock_extension,
+            max_wait_for_responses_per_iteration,
             index_join_set_to_unawaited_requests: IndexMap::default(),
         }
     }
@@ -363,8 +367,11 @@ impl EventHistory {
             let key = join_next_variant.as_key();
 
             // Subscribe to the next response.
-            while let Some(timeout_fut) = self.deadline_tracker.track() {
-                let next_responses = match db_connection
+            while let Some(timeout_fut) = self
+                .deadline_tracker
+                .track(self.max_wait_for_responses_per_iteration)
+            {
+                match db_connection
                     .subscribe_to_next_responses(
                         &db_connection.execution_id,
                         self.responses.len(),
@@ -372,27 +379,31 @@ impl EventHistory {
                     )
                     .await
                 {
-                    Ok(ok) => ok,
+                    Ok(next_responses) => {
+                        debug!("Got next responses {next_responses:?}");
+                        self.responses.extend(
+                            next_responses
+                                .into_iter()
+                                .map(|outer| (outer.event, Unprocessed)),
+                        );
+                        trace!("All responses: {:?}", self.responses);
+                        if let FindMatchingResponse::Found(accept_resp) =
+                            self.process_event_by_key(&key)?
+                        {
+                            debug!(join_set_id = %join_next_variant.join_set_id(), "Got result");
+                            return Ok(accept_resp);
+                        } // this did not unblock the execution, loop
+                    }
                     Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {
                         return Err(ApplyError::DbError(DbErrorWrite::from(err)));
                     }
                     Err(DbErrorReadWithTimeout::Timeout) => {
-                        info!("Giving up on waiting for response");
-                        return Err(ApplyError::InterruptDbUpdated);
+                        // Let the next iteration of the loop decide
+                        // if this was caused by `max_wait_for_responses_per_iteration` or deadline.
                     }
-                };
-                debug!("Got next responses {next_responses:?}");
-                self.responses.extend(
-                    next_responses
-                        .into_iter()
-                        .map(|outer| (outer.event, Unprocessed)),
-                );
-                trace!("All responses: {:?}", self.responses);
-                if let FindMatchingResponse::Found(accept_resp) = self.process_event_by_key(&key)? {
-                    debug!(join_set_id = %join_next_variant.join_set_id(), "Got result");
-                    return Ok(accept_resp);
                 }
             }
+            info!("Giving up on waiting for response");
             Err(ApplyError::InterruptDbUpdated)
         } else {
             debug!(join_set_id = %join_next_variant.join_set_id(),  "Interrupting on {join_next_variant:?}");
@@ -3419,7 +3430,8 @@ mod tests {
                 lock_expires_at: execution_deadline,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            Duration::ZERO, /* lock_extension */
+            Duration::ZERO,         // lock_extension
+            Duration::from_secs(1), // max_wait_for_responses_per_iteration
             info_span!("worker-test"),
         );
 

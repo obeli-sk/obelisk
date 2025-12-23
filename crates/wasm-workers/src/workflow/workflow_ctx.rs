@@ -799,6 +799,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         cancel_registry: CancelRegistry,
         locked_event: Locked,
         lock_extension: Duration,
+        max_wait_for_responses_per_iteration: Duration,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -817,6 +818,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 deadline_tracker,
                 locked_event,
                 lock_extension,
+                max_wait_for_responses_per_iteration,
                 worker_span.clone(),
             ),
             rng: StdRng::seed_from_u64(seed),
@@ -1722,7 +1724,8 @@ pub(crate) mod tests {
                 self.fn_registry.clone(),
                 cancel_registry,
                 ctx.locked_event,
-                Duration::from_secs(1),
+                Duration::from_secs(1), // lock extension
+                Duration::from_secs(1), // max_wait_for_responses_per_iteration
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");

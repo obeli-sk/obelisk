@@ -1038,6 +1038,9 @@
         "lock_extension": {
           "$ref": "#/$defs/DurationConfig"
         },
+        "max_wait_for_responses_per_iteration": {
+          "$ref": "#/$defs/DurationConfig"
+        },
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
