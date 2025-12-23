@@ -2636,7 +2636,6 @@ name = "obeli-sk-db-postgres"
 version = "0.31.0"
 dependencies = [
  "anyhow",
- "arbitrary",
  "assert_matches",
  "async-trait",
  "chrono",
@@ -2644,13 +2643,9 @@ dependencies = [
  "deadpool-postgres",
  "derive_more",
  "hashbrown 0.16.1",
- "hdrhistogram",
- "itertools",
  "obeli-sk-concepts",
  "obeli-sk-val-json",
  "rand 0.9.2",
- "serde",
- "serde_json",
  "thiserror 2.0.17",
  "tokio",
  "tokio-postgres",
@@ -2661,7 +2656,6 @@ dependencies = [
 name = "obeli-sk-db-sqlite"
 version = "0.31.0"
 dependencies = [
- "arbitrary",
  "assert_matches",
  "async-trait",
  "chrono",

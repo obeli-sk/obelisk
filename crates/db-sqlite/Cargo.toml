@@ -13,7 +13,6 @@ version.workspace = true
 concepts = { workspace = true, features = ["rusqlite"] }
 val-json.workspace = true
 
-arbitrary.workspace = true
 assert_matches.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
