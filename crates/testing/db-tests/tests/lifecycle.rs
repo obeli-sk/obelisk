@@ -34,6 +34,7 @@ async fn test_expired_lock_should_be_found(database: Database) {
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
     expired_lock_should_be_found(db_connection.as_ref(), sim_clock).await;
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -46,6 +47,7 @@ async fn test_append_batch_respond_to_parent(database: Database) {
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection_test().await.unwrap();
     append_batch_respond_to_parent(db_connection.as_ref(), sim_clock).await;
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -63,6 +65,7 @@ async fn test_lock_pending_should_sort_by_scheduled_at(
     let db_connection = db_pool.connection().await.unwrap();
     lock_pending_should_sort_by_scheduled_at(db_connection.as_ref(), sim_clock, locking_strategy)
         .await;
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -75,6 +78,7 @@ async fn test_lock(database: Database) {
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
     test_lock_inner(db_connection.as_ref(), sim_clock).await;
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -87,6 +91,7 @@ async fn test_get_expired_lock(database: Database) {
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
     get_expired_lock(db_connection.as_ref(), sim_clock).await;
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -99,6 +104,7 @@ async fn test_get_expired_delay(database: Database) {
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
     get_expired_delay(db_connection.as_ref(), sim_clock).await;
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -183,6 +189,7 @@ async fn append_after_finish_should_not_be_possible(
         );
         assert_eq!("already finished", msg.as_ref());
     }
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -356,6 +363,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
             .unwrap();
         assert_eq!(1, locked_executions.len());
     }
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -585,6 +593,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(database: Database) {
             .unwrap();
         assert!(locked_executions.is_empty());
     }
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -620,6 +629,7 @@ async fn lock_pending_while_nothing_is_pending_should_be_noop(database: Database
             .unwrap()
             .is_empty()
     );
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -688,6 +698,7 @@ async fn creating_execution_twice_should_fail(database: Database) {
         })
         .await
         .unwrap_err();
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -700,6 +711,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing(database: Databas
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
     lock_pending_while_expired_lock_should_return_nothing_inner(db_connection.as_ref()).await;
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -1521,7 +1533,7 @@ async fn get_expired_times_with_execution_that_made_progress(
         },
     };
     assert_eq!(expected_lock, expired_lock);
-
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -1534,6 +1546,7 @@ async fn test_append_same_delay_id_twice_should_fail(database: Database) {
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
     append_same_delay_id_twice_should_fail(db_connection.as_ref(), sim_clock).await;
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -1679,6 +1692,7 @@ async fn test_append_response_with_same_delay_id_twice_should_fail(database: Dat
         response,
     )
     .await;
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -1712,6 +1726,7 @@ async fn test_append_response_with_same_child_id_twice_should_fail(database: Dat
         response,
     )
     .await;
+    drop(db_connection);
     db_close.close().await;
 }
 
@@ -1882,5 +1897,6 @@ async fn delay_cancellation_should_be_idempotent(database: Database) {
         .await
         .unwrap();
     assert_eq!(CancelOutcome::Cancelled, res);
+    drop(db_connection);
     db_close.close().await;
 }
