@@ -25,7 +25,7 @@ use crate::config::toml::WorkflowComponentBacktraceConfig;
 use crate::config::toml::WorkflowComponentConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::webhook;
-use crate::config::toml::webhook::WebhookComponentVerified;
+use crate::config::toml::webhook::WebhookComponentConfigVerified;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::init;
@@ -1098,7 +1098,10 @@ impl ServerInit {
     }
 }
 
-type WebhookInstancesAndRoutes = (WebhookEndpointInstance<Now>, Vec<WebhookRouteVerified>);
+type WebhookInstancesAndRoutes = (
+    WebhookEndpointInstance<Now, TokioSleep>,
+    Vec<WebhookRouteVerified>,
+);
 
 async fn start_http_servers(
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstancesAndRoutes>)>,
@@ -1143,6 +1146,7 @@ async fn start_http_servers(
                 router,
                 db_pool.clone(),
                 Now,
+                TokioSleep,
                 fn_registry.clone(),
                 global_webhook_instance_limiter.clone(),
             ))
@@ -1158,7 +1162,7 @@ struct ConfigVerified {
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
-    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
+    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
@@ -1315,6 +1319,7 @@ impl ConfigVerified {
                             metadata_dir,
                             ignore_missing_env_vars,
                             path_prefixes,
+                            subscription_interruption,
                         )
                         .in_current_span()
                 })
@@ -1387,7 +1392,7 @@ async fn compile_and_verify(
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
-    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentVerified>,
+    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
@@ -1491,6 +1496,7 @@ async fn compile_and_verify(
                                 env_vars: webhook.env_vars,
                                 fuel,
                                 backtrace_persist: global_backtrace_persist,
+                                subscription_interruption: webhook.subscription_interruption,
                             };
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                                 config,

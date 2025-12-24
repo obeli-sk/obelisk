@@ -1200,6 +1200,7 @@ pub(crate) mod webhook {
         net::SocketAddr,
         path::{Path, PathBuf},
         sync::Arc,
+        time::Duration,
     };
     use tracing::instrument;
     use wasm_workers::envvar::EnvVar;
@@ -1237,7 +1238,9 @@ pub(crate) mod webhook {
             metadata_dir: Arc<Path>,
             ignore_missing_env_vars: bool,
             path_prefixes: Arc<PathPrefixes>,
-        ) -> Result<(ConfigName /* name */, WebhookComponentVerified), anyhow::Error> {
+            subscription_interruption: Option<Duration>,
+        ) -> Result<(ConfigName /* name */, WebhookComponentConfigVerified), anyhow::Error>
+        {
             let (common, wasm_path) = self
                 .common
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
@@ -1253,7 +1256,7 @@ pub(crate) mod webhook {
             )?;
             Ok((
                 common.name, // TODO: remove, already in component id
-                WebhookComponentVerified {
+                WebhookComponentConfigVerified {
                     component_id,
                     wasm_path,
                     routes: self
@@ -1265,6 +1268,7 @@ pub(crate) mod webhook {
                     forward_stderr: self.forward_stderr.into(),
                     env_vars: resolve_env_vars(self.env_vars, ignore_missing_env_vars)?,
                     frame_files_to_sources,
+                    subscription_interruption,
                 },
             ))
         }
@@ -1293,8 +1297,7 @@ pub(crate) mod webhook {
     }
 
     #[derive(Debug)]
-    pub(crate) struct WebhookComponentVerified {
-        // TODO: WebhookComponentConfigVerified
+    pub(crate) struct WebhookComponentConfigVerified {
         pub(crate) component_id: ComponentId,
         pub(crate) wasm_path: PathBuf,
         pub(crate) routes: Vec<WebhookRouteVerified>,
@@ -1302,6 +1305,7 @@ pub(crate) mod webhook {
         pub(crate) forward_stderr: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) env_vars: Arc<[EnvVar]>,
         pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesVerified,
+        pub(crate) subscription_interruption: Option<Duration>,
     }
 
     #[derive(Debug)]
