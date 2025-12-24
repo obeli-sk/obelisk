@@ -55,7 +55,7 @@ use wasm_workers::activity::cancel_registry::CancelRegistry;
 pub(crate) struct GrpcServer {
     #[debug(skip)]
     db_pool: Arc<dyn DbPool>,
-    termination_watcher: watch::Receiver<bool>,
+    termination_watcher: watch::Receiver<()>,
     component_registry_ro: ComponentConfigRegistryRO,
     component_source_map: ComponentSourceMap,
     #[debug(skip)]
@@ -65,7 +65,7 @@ pub(crate) struct GrpcServer {
 impl GrpcServer {
     pub(crate) fn new(
         db_pool: Arc<dyn DbPool>,
-        termination_watcher: watch::Receiver<bool>,
+        termination_watcher: watch::Receiver<()>,
         component_registry_ro: ComponentConfigRegistryRO,
         component_source_map: ComponentSourceMap,
         cancel_registry: CancelRegistry,

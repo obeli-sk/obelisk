@@ -343,7 +343,7 @@ pub(crate) async fn submit(
 
 pub(crate) async fn poll_status(
     db_pool: Arc<dyn DbPool>,
-    mut shutdown_requested: watch::Receiver<bool>,
+    mut shutdown_requested: watch::Receiver<()>,
     execution_id: ExecutionId,
     status_stream_sender: mpsc::Sender<TonicResult<GetStatusResponse>>,
     mut old_pending_state: PendingState,
@@ -476,7 +476,7 @@ pub(crate) async fn run(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
-    let (termination_sender, termination_watcher) = watch::channel(false);
+    let (termination_sender, termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
 
     Box::pin(run_internal(
@@ -505,7 +505,7 @@ pub(crate) async fn verify(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
-    let (termination_sender, mut termination_watcher) = watch::channel(false);
+    let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     Box::pin(verify_internal(
         config,
@@ -530,7 +530,7 @@ async fn verify_internal(
     config: ConfigToml,
     path_prefixes: Arc<PathPrefixes>,
     params: VerifyParams,
-    termination_watcher: &mut watch::Receiver<bool>,
+    termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
     info!("Verifying server configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
@@ -598,7 +598,7 @@ async fn run_internal(
     config: ConfigToml,
     config_holder: ConfigHolder,
     params: RunParams,
-    mut termination_watcher: watch::Receiver<bool>,
+    mut termination_watcher: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
     let span = info_span!("init");
     let api_listening_addr = config.api.listening_addr;
@@ -794,7 +794,7 @@ impl ServerVerified {
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         path_prefixes: Arc<PathPrefixes>,
-        termination_watcher: &mut watch::Receiver<bool>,
+        termination_watcher: &mut watch::Receiver<()>,
     ) -> Result<(Self, ComponentSourceMap), anyhow::Error> {
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
         let workflows_lock_extension_leeway =
@@ -928,7 +928,7 @@ struct ServerCompiledLinked {
 impl ServerCompiledLinked {
     async fn new(
         server_verified: ServerVerified,
-        termination_watcher: &mut watch::Receiver<bool>,
+        termination_watcher: &mut watch::Receiver<()>,
     ) -> Result<Self, anyhow::Error> {
         let (compiled_components, component_registry_ro, supressed_errors) = compile_and_verify(
             &server_verified.engines,
@@ -1186,7 +1186,7 @@ impl ConfigVerified {
         parent_preopen_dir: Option<Arc<Path>>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
-        termination_watcher: &mut watch::Receiver<bool>,
+        termination_watcher: &mut watch::Receiver<()>,
         subscription_interruption: Option<Duration>,
     ) -> Result<ConfigVerified, anyhow::Error> {
         // Check uniqueness of server and webhook names.
@@ -1397,7 +1397,7 @@ async fn compile_and_verify(
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
     workflows_lock_extension_leeway: Duration,
-    termination_watcher: &mut watch::Receiver<bool>,
+    termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<
     (
         LinkedComponents,
@@ -2150,7 +2150,7 @@ mod tests {
         let metadata_dir = wasm_cache_dir.join("metadata");
         tokio::fs::create_dir_all(&metadata_dir).await?;
 
-        let (_termination_sender, mut termination_watcher) = watch::channel(false);
+        let (_termination_sender, mut termination_watcher) = watch::channel(());
 
         let (server_verified, _component_source_map) = ServerVerified::new(
             config,

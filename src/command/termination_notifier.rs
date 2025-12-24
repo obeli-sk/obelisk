@@ -1,7 +1,7 @@
 use tokio::{signal, sync::watch};
 use tracing::warn;
 
-pub(crate) async fn termination_notifier(termination_sender: watch::Sender<bool>) {
+pub(crate) async fn termination_notifier(termination_sender: watch::Sender<()>) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
