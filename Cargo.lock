@@ -4655,6 +4655,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-programs-sleep-webhook"
+version = "0.31.0"
+dependencies = [
+ "anyhow",
+ "wit-bindgen 0.49.0",
+ "wstd",
+]
+
+[[package]]
+name = "test-programs-sleep-webhook-builder"
+version = "0.31.0"
+dependencies = [
+ "obelisk-component-builder",
+]
+
+[[package]]
 name = "test-programs-sleep-workflow"
 version = "0.31.0"
 dependencies = [

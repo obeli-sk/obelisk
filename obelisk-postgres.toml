@@ -50,6 +50,15 @@ name = "test_programs_sleep_workflow"
 location.oci = "docker.io/getobelisk/test_programs_sleep_workflow:2025-12-08@sha256:b833454a0c4befaa2767957ed1ddbcd4210510c7075ebf9d22ca7e2f14445ff4"
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
 
+[[webhook_endpoint]]
+name = "test_programs_sleep_webhook"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_sleep_webhook.wasm"
+http_server = "external_webhook"
+routes = [{ methods = ["GET"], route = "/sleep/:SECONDS" }]
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/webhook/src/lib.rs" }
+forward_stdout="stderr"
+forward_stderr="stderr"
+
 [log.stdout]
 enabled = true
 
