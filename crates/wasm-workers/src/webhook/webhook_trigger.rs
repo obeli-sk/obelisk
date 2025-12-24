@@ -411,7 +411,6 @@ impl<C: ClockFn, S: Sleep> HostJoinSet for WebhookEndpointCtx<C, S> {
 impl<C: ClockFn, S: Sleep> ExecutionHost for WebhookEndpointCtx<C, S> {}
 
 #[derive(thiserror::Error, Debug, Clone)]
-#[expect(clippy::enum_variant_names)]
 enum WebhookEndpointFunctionError {
     #[error(transparent)]
     DbError(#[from] DbErrorWrite),
@@ -663,7 +662,7 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                 &self.sleep,
                 db_connection.as_ref(),
                 child_execution_id,
-                &mut self.cancel_token,
+                &self.cancel_token,
             )
             .await?;
             results[0] = res.into_wast_val(move || return_type_tl).as_val();
@@ -703,7 +702,7 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                     let mut cancel_token = cancel_token.clone();
                     async move {
                         select! {
-                            _ = sleep.sleep(subscription_interruption)=>{
+                            () = sleep.sleep(subscription_interruption)=>{
                                 trace!("Sleep finished");
                             },
                             _ = cancel_token.changed() => {
@@ -721,9 +720,8 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                         if cancel_token.has_changed().is_err() {
                             debug!("Connection closed, not waiting for result");
                             break Err(WebhookEndpointFunctionError::ConnectionClosed);
-                        } else {
-                            trace!("Timeout triggers resubscribing");
                         }
+                        trace!("Timeout triggers resubscribing");
                     }
                     Ok(ok) => break Ok(ok),
                     Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {

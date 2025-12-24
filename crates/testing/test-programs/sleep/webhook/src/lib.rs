@@ -7,7 +7,7 @@ generate!({ generate_all });
 
 #[wstd::http_server]
 async fn main(_request: Request<Body>) -> Result<Response<Body>, Error> {
-    match sleep().await {
+    match sleep() {
         Ok(()) => Response::builder()
             .status(StatusCode::OK)
             .body(Body::empty())
@@ -22,7 +22,7 @@ async fn main(_request: Request<Body>) -> Result<Response<Body>, Error> {
     }
 }
 
-async fn sleep() -> Result<(), anyhow::Error> {
+fn sleep() -> Result<(), anyhow::Error> {
     let seconds: u64 = std::env::var("SECONDS")?.parse()?;
     workflow::sleep_host_activity(obelisk::types::time::Duration::Seconds(seconds))
         .map_err(|()| anyhow!("cancelled"))
