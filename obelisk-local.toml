@@ -65,6 +65,15 @@ name = "test_programs_sleep_workflow"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_sleep_workflow.wasm"
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
 
+[[webhook_endpoint]]
+name = "test_programs_sleep_webhook"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_sleep_webhook.wasm"
+http_server = "external_webhook"
+routes = [{ methods = ["GET"], route = "/sleep/:SECONDS" }]
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/webhook/src/lib.rs" }
+forward_stdout="stderr"
+forward_stderr="stderr"
+
 [[activity_wasm]]
 name = "test_programs_dir_activity"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_dir_activity.wasm"

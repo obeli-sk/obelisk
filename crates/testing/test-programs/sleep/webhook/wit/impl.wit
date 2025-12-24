@@ -1,0 +1,5 @@
+package any:any;
+
+world any {
+    import testing:sleep-workflow/workflow;
+}
