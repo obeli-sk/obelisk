@@ -182,7 +182,7 @@ mod bench {
                     stub_wasi: false,
                     fuel: None,
                     lock_extension: Duration::ZERO,
-                    max_wait_for_responses_per_iteration: Duration::from_secs(1),
+                    subscription_interruption: None,
                 },
                 workflow_engine,
                 clock_fn.clone(),

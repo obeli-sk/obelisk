@@ -595,7 +595,7 @@ async fn verify_internal(
 }
 
 async fn run_internal(
-    mut config: ConfigToml,
+    config: ConfigToml,
     config_holder: ConfigHolder,
     params: RunParams,
     mut termination_watcher: watch::Receiver<bool>,
@@ -610,7 +610,7 @@ async fn run_internal(
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
     let path_prefixes = Arc::new(config_holder.path_prefixes);
-    let database = std::mem::take(&mut config.database); // not used later, so we replace it with a dummy SQLite config.
+    let database = config.database.clone();
     let (compiled_and_linked, component_source_map) = Box::pin(verify_internal(
         config,
         path_prefixes.clone(),
@@ -882,6 +882,7 @@ impl ServerVerified {
                 .as_semaphore(),
             fuel,
             termination_watcher,
+            config.database.get_subscription_interruption(),
         )
         .await?;
         debug!("Verified config: {config:#?}");
@@ -1182,6 +1183,7 @@ impl ConfigVerified {
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
         termination_watcher: &mut watch::Receiver<bool>,
+        subscription_interruption: Option<Duration>,
     ) -> Result<ConfigVerified, anyhow::Error> {
         // Check uniqueness of server and webhook names.
         {
@@ -1294,6 +1296,7 @@ impl ConfigVerified {
                             global_backtrace_persist,
                             global_executor_instance_limiter.clone(),
                             fuel,
+                            subscription_interruption,
                         )
                         .in_current_span(),
                 )

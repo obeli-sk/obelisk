@@ -117,7 +117,7 @@ pub(crate) struct EventHistory {
     fn_registry: Arc<dyn FunctionRegistry>,
     cancel_registry: CancelRegistry,
 
-    max_wait_for_responses_per_iteration: Duration,
+    subscription_interruption: Option<Duration>,
 
     // Tracks join set contents for closing. One-offs are ignored, response id is removed when the response is processed.
     index_join_set_to_unawaited_requests: IndexMap<JoinSetId, IndexMap<ResponseId, ComponentType>>,
@@ -141,7 +141,7 @@ impl EventHistory {
         deadline_tracker: Box<dyn DeadlineTracker>,
         locked_event: Locked,
         lock_extension: Duration,
-        max_wait_for_responses_per_iteration: Duration,
+        subscription_interruption: Option<Duration>,
         worker_span: Span,
     ) -> EventHistory {
         EventHistory {
@@ -163,7 +163,7 @@ impl EventHistory {
             cancel_registry,
             locked_event,
             lock_extension,
-            max_wait_for_responses_per_iteration,
+            subscription_interruption,
             index_join_set_to_unawaited_requests: IndexMap::default(),
         }
     }
@@ -367,9 +367,8 @@ impl EventHistory {
             let key = join_next_variant.as_key();
 
             // Subscribe to the next response.
-            while let Some(timeout_fut) = self
-                .deadline_tracker
-                .track(self.max_wait_for_responses_per_iteration)
+            while let Some(timeout_fut) =
+                self.deadline_tracker.track(self.subscription_interruption)
             {
                 match db_connection
                     .subscribe_to_next_responses(
@@ -399,7 +398,7 @@ impl EventHistory {
                     }
                     Err(DbErrorReadWithTimeout::Timeout) => {
                         // Let the next iteration of the loop decide
-                        // if this was caused by `max_wait_for_responses_per_iteration` or deadline.
+                        // if this was caused by `subscription_interruption` or deadline.
                     }
                 }
             }
@@ -3430,8 +3429,8 @@ mod tests {
                 lock_expires_at: execution_deadline,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            Duration::ZERO,         // lock_extension
-            Duration::from_secs(1), // max_wait_for_responses_per_iteration
+            Duration::ZERO, // lock_extension
+            None,           // subscription_interruption
             info_span!("worker-test"),
         );
 
