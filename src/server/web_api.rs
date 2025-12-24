@@ -38,7 +38,7 @@ pub(crate) struct WebApiState {
     pub(crate) db_pool: Arc<dyn DbPool>,
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
     pub(crate) cancel_registry: CancelRegistry,
-    pub(crate) termination_watcher: watch::Receiver<bool>,
+    pub(crate) termination_watcher: watch::Receiver<()>,
 }
 
 pub(crate) fn app_router(state: WebApiState) -> Router {
@@ -641,7 +641,7 @@ async fn stream_execution_response_task(
     execution_id: ExecutionId,
     db_pool: Arc<dyn DbPool>,
     tx: mpsc::Sender<Result<Bytes, std::io::Error>>,
-    mut shutdown_requested: watch::Receiver<bool>,
+    mut shutdown_requested: watch::Receiver<()>,
 ) {
     debug!("Started streaming execution response");
     loop {
