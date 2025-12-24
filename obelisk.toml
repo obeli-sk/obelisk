@@ -40,7 +40,8 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 
 ## Global Workflow Configuration
 # [workflows]
-# lock_extension_leeway.milliseconds = 100         # Starts extending the lock a little before it expires, specifically at expires_at minus the configured leeway.
+# lock_extension_leeway.milliseconds = 100 # Starts extending the lock a little before it expires, specifically at expires_at minus the configured leeway.
+# subscription_interruption.seconds = 1    # Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism. Value can be "none" or a duration.
 
 # [wasm.codegen_cache]
 ## Defaults:

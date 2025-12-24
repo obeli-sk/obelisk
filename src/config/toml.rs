@@ -82,11 +82,21 @@ pub(crate) struct ApiConfig {
     pub(crate) listening_addr: SocketAddr,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DatabaseConfigToml {
     Sqlite(SqliteConfigToml),
     Postgres(PostgresConfigToml),
+}
+impl DatabaseConfigToml {
+    pub fn get_subscription_interruption(&self) -> Option<Duration> {
+        match self {
+            DatabaseConfigToml::Sqlite(_) => None,
+            DatabaseConfigToml::Postgres(postgres_config_toml) => {
+                postgres_config_toml.subscription_interruption.into()
+            }
+        }
+    }
 }
 impl Default for DatabaseConfigToml {
     fn default() -> DatabaseConfigToml {
@@ -94,16 +104,19 @@ impl Default for DatabaseConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PostgresConfigToml {
     pub host: String,
     pub user: String,
     pub password: String,
     pub db_name: String,
+    /// Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism.
+    #[serde(default = "default_subscription_interruption")]
+    pub subscription_interruption: DurationConfigOptional,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SqliteConfigToml {
     #[serde(default)]
@@ -711,8 +724,6 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) stub_wasi: bool,
     #[serde(default = "default_lock_extension")]
     lock_extension: DurationConfig,
-    #[serde(default = "default_max_wait_for_responses_per_iteration")]
-    max_wait_for_responses_per_iteration: DurationConfig,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
@@ -819,6 +830,7 @@ impl WorkflowConfigVerified {
 
 impl WorkflowComponentConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()))]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
@@ -827,6 +839,7 @@ impl WorkflowComponentConfigToml {
         global_backtrace_persist: bool,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
+        subscription_interruption: Option<Duration>,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
         let retry_exp_backoff = Duration::from(self.retry_exp_backoff);
         if retry_exp_backoff == Duration::ZERO {
@@ -860,7 +873,7 @@ impl WorkflowComponentConfigToml {
             stub_wasi: self.stub_wasi,
             fuel,
             lock_extension: self.lock_extension.into(),
-            max_wait_for_responses_per_iteration: self.max_wait_for_responses_per_iteration.into(),
+            subscription_interruption,
         };
         let frame_files_to_sources =
             verify_frame_files_to_sources(self.backtrace.frame_files_to_sources, &path_prefixes);
@@ -991,7 +1004,6 @@ pub(crate) enum DurationConfig {
     Minutes(u64),
     Hours(u64),
 }
-
 impl From<DurationConfig> for Duration {
     fn from(value: DurationConfig) -> Self {
         match value {
@@ -1003,6 +1015,26 @@ impl From<DurationConfig> for Duration {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DurationConfigOptional {
+    None,
+    Milliseconds(u64),
+    Seconds(u64),
+    Minutes(u64),
+    Hours(u64),
+}
+impl From<DurationConfigOptional> for Option<Duration> {
+    fn from(value: DurationConfigOptional) -> Self {
+        match value {
+            DurationConfigOptional::None => None,
+            DurationConfigOptional::Milliseconds(millis) => Some(Duration::from_millis(millis)),
+            DurationConfigOptional::Seconds(secs) => Some(Duration::from_secs(secs)),
+            DurationConfigOptional::Minutes(mins) => Some(Duration::from_secs(mins * 60)),
+            DurationConfigOptional::Hours(hrs) => Some(Duration::from_secs(hrs * 60 * 60)),
+        }
+    }
+}
 pub(crate) mod log {
     use super::{Deserialize, JsonSchema, default_out_style};
     use serde_with::serde_as;
@@ -1430,8 +1462,8 @@ const fn default_lock_extension() -> DurationConfig {
     DurationConfig::Seconds(1)
 }
 
-const fn default_max_wait_for_responses_per_iteration() -> DurationConfig {
-    DurationConfig::Seconds(1)
+const fn default_subscription_interruption() -> DurationConfigOptional {
+    DurationConfigOptional::Seconds(1)
 }
 
 fn default_out_style() -> LoggingStyle {

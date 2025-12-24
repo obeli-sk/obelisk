@@ -6,7 +6,12 @@ use tracing::{trace, warn};
 
 #[async_trait]
 pub trait DeadlineTracker: Send + Sync {
-    fn track(&self, max_duration: Duration) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>>;
+    /// Return a future that resolves on deadline. If `max_duration` is specified, the future resolves
+    /// at deadline or after this duration, whatever expires first.
+    fn track(
+        &self,
+        max_duration: Option<Duration>,
+    ) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>>;
 
     fn close_to_expired(&self) -> bool;
 
@@ -35,13 +40,21 @@ pub(crate) struct DeadlineTrackerTokio<C: ClockFn> {
 
 #[async_trait]
 impl<C: ClockFn> DeadlineTracker for DeadlineTrackerTokio<C> {
-    fn track(&self, max_duration: Duration) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>> {
+    fn track(
+        &self,
+        max_duration: Option<Duration>,
+    ) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>> {
         if self.close_to_expired() {
             None
         } else {
-            let max_instant = tokio::time::Instant::now() + max_duration;
-            let shorter = min(max_instant, self.deadline);
-            Some(Box::pin(tokio::time::sleep_until(shorter)))
+            let expiry = if let Some(max_duration) = max_duration {
+                let max_instant = tokio::time::Instant::now() + max_duration;
+                min(max_instant, self.deadline)
+            } else {
+                self.deadline
+            };
+
+            Some(Box::pin(tokio::time::sleep_until(expiry)))
         }
     }
 

@@ -477,6 +477,72 @@
         }
       ]
     },
+    "DurationConfigOptional": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "none"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "milliseconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "milliseconds"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "seconds"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "minutes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "minutes"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hours": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "hours"
+          ]
+        }
+      ]
+    },
     "EnvFilter": {
       "type": "string"
     },
@@ -622,6 +688,10 @@
         },
         "password": {
           "type": "string"
+        },
+        "subscription_interruption": {
+          "description": "Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism.",
+          "$ref": "#/$defs/DurationConfigOptional"
         },
         "user": {
           "type": "string"
@@ -1036,9 +1106,6 @@
           "$ref": "#/$defs/ComponentLocation"
         },
         "lock_extension": {
-          "$ref": "#/$defs/DurationConfig"
-        },
-        "max_wait_for_responses_per_iteration": {
           "$ref": "#/$defs/DurationConfig"
         },
         "name": {
