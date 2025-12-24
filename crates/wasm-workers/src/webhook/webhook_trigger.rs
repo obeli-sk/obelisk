@@ -5,12 +5,13 @@ use crate::webhook::webhook_trigger::types_v4_0_0::obelisk::types::join_set::Joi
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
 use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
-use concepts::prefixed_ulid::{ExecutionIdTopLevel, JOIN_SET_START_IDX};
+use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_START_IDX};
 use concepts::storage::{
-    AppendRequest, BacktraceInfo, CreateRequest, DbErrorGeneric, DbErrorReadWithTimeout,
-    DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent, JoinSetRequest, Version,
+    AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric,
+    DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent, JoinSetRequest,
+    Version,
 };
-use concepts::time::ClockFn;
+use concepts::time::{ClockFn, Sleep};
 use concepts::{
     ComponentId, ComponentType, ExecutionFailureKind, ExecutionId, ExecutionMetadata,
     FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName,
@@ -26,6 +27,7 @@ use hyper_util::rt::TokioIo;
 use route_recognizer::{Match, Router};
 use std::ops::Deref;
 use std::path::Path;
+use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::sync::OwnedSemaphorePermit;
@@ -104,11 +106,11 @@ impl WebhookEndpointCompiled {
     }
 
     #[instrument(skip_all, fields(component_id = %self.config.component_id), err)]
-    pub fn link<C: ClockFn>(
+    pub fn link<C: ClockFn, S: Sleep>(
         self,
         engine: &Engine,
         fn_registry: &dyn FunctionRegistry,
-    ) -> Result<WebhookEndpointInstance<C>, WasmFileError> {
+    ) -> Result<WebhookEndpointInstance<C, S>, WasmFileError> {
         let mut linker = Linker::new(engine);
         // Link wasi
         wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(|err| {
@@ -159,7 +161,7 @@ impl WebhookEndpointCompiled {
                         let ffqn = ffqn.clone();
                         move |mut store_ctx: wasmtime::StoreContextMut<
                             '_,
-                            WebhookEndpointCtx<C>,
+                            WebhookEndpointCtx<C, S>,
                         >,
                               _component_func: ComponentFunc,
                               params: &[Val],
@@ -217,14 +219,14 @@ impl WebhookEndpointCompiled {
 }
 
 #[derive(Clone, derive_more::Debug)]
-pub struct WebhookEndpointInstance<C: ClockFn> {
+pub struct WebhookEndpointInstance<C: ClockFn, S: Sleep> {
     #[debug(skip)]
-    proxy_pre: Arc<ProxyPre<WebhookEndpointCtx<C>>>,
+    proxy_pre: Arc<ProxyPre<WebhookEndpointCtx<C, S>>>,
     pub config: WebhookEndpointConfig,
     exim: ExIm,
 }
 
-impl<C: ClockFn> WebhookEndpointInstance<C> {
+impl<C: ClockFn, S: Sleep> WebhookEndpointInstance<C, S> {
     #[must_use]
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         &self.exim.imports_flat
@@ -279,13 +281,14 @@ impl<T> Default for MethodAwareRouter<T> {
 }
 
 #[expect(clippy::too_many_arguments)]
-pub async fn server<C: ClockFn + 'static>(
+pub async fn server<C: ClockFn + 'static, S: Sleep>(
     http_server: StrVariant,
     listener: TcpListener,
     engine: Arc<Engine>,
-    router: MethodAwareRouter<WebhookEndpointInstance<C>>,
+    router: MethodAwareRouter<WebhookEndpointInstance<C, S>>,
     db_pool: Arc<dyn DbPool>,
     clock_fn: C,
+    sleep: S,
     fn_registry: Arc<dyn FunctionRegistry>,
     max_inflight_requests: Option<Arc<tokio::sync::Semaphore>>,
 ) -> Result<(), WebhookServerError> {
@@ -303,6 +306,7 @@ pub async fn server<C: ClockFn + 'static>(
                 let router = router.clone();
                 let engine = engine.clone();
                 let clock_fn = clock_fn.clone();
+                let sleep = sleep.clone();
                 let db_pool = db_pool.clone();
                 let fn_registry = fn_registry.clone();
                 let http_server = http_server.clone();
@@ -318,6 +322,7 @@ pub async fn server<C: ClockFn + 'static>(
                                 RequestHandler {
                                     engine: engine.clone(),
                                     clock_fn: clock_fn.clone(),
+                                    sleep: sleep.clone(),
                                     db_pool: db_pool.clone(),
                                     fn_registry: fn_registry.clone(),
                                     execution_id,
@@ -344,11 +349,13 @@ pub struct WebhookEndpointConfig {
     pub env_vars: Arc<[EnvVar]>,
     pub fuel: Option<u64>,
     pub backtrace_persist: bool,
+    pub subscription_interruption: Option<Duration>,
 }
 
-struct WebhookEndpointCtx<C: ClockFn> {
+struct WebhookEndpointCtx<C: ClockFn, S: Sleep> {
     component_id: ComponentId,
     clock_fn: C,
+    sleep: S,
     db_pool: Arc<dyn DbPool>,
     fn_registry: Arc<dyn FunctionRegistry>,
     table: ResourceTable,
@@ -358,9 +365,10 @@ struct WebhookEndpointCtx<C: ClockFn> {
     next_join_set_idx: u64,
     version: Option<Version>,
     component_logger: ComponentLogger,
+    subscription_interruption: Option<Duration>,
 }
 
-impl<C: ClockFn> HostJoinSet for WebhookEndpointCtx<C> {
+impl<C: ClockFn, S: Sleep> HostJoinSet for WebhookEndpointCtx<C, S> {
     fn id(&mut self, _resource: wasmtime::component::Resource<JoinSetId>) -> String {
         unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }
@@ -394,7 +402,7 @@ impl<C: ClockFn> HostJoinSet for WebhookEndpointCtx<C> {
     }
 }
 
-impl<C: ClockFn> ExecutionHost for WebhookEndpointCtx<C> {}
+impl<C: ClockFn, S: Sleep> ExecutionHost for WebhookEndpointCtx<C, S> {}
 
 #[derive(thiserror::Error, Debug, Clone)]
 #[expect(clippy::enum_variant_names)]
@@ -412,11 +420,11 @@ impl From<DbErrorGeneric> for WebhookEndpointFunctionError {
     }
 }
 
-impl<C: ClockFn> wasmtime::component::HasData for WebhookEndpointCtx<C> {
-    type Data<'a> = &'a mut WebhookEndpointCtx<C>;
+impl<C: ClockFn, S: Sleep> wasmtime::component::HasData for WebhookEndpointCtx<C, S> {
+    type Data<'a> = &'a mut WebhookEndpointCtx<C, S>;
 }
 
-impl<C: ClockFn> WebhookEndpointCtx<C> {
+impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
     // Create new execution if this is the first call of the request/response cycle
     async fn get_version_or_create(&mut self) -> Result<Version, DbErrorWrite> {
         if let Some(found) = &self.version {
@@ -636,14 +644,13 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
                 .await?;
             self.version = Some(version);
 
-            let res = db_connection
-                .wait_for_finished_result(
-                    &ExecutionId::Derived(child_execution_id),
-                    None, /* TODO timeouts */
-                )
-                .await;
-            trace!("Finished result: {res:?}");
-
+            let res = Self::wait_for_finished_result(
+                self.subscription_interruption,
+                &self.sleep,
+                db_connection.as_ref(),
+                child_execution_id,
+            )
+            .await;
             let res = match res {
                 Ok(res) => res,
                 Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {
@@ -674,15 +681,51 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
         Ok(())
     }
 
-    fn add_to_linker(linker: &mut Linker<WebhookEndpointCtx<C>>) -> Result<(), WasmFileError> {
+    // TODO: Break when client drops the connection
+    async fn wait_for_finished_result(
+        subscription_interruption: Option<Duration>,
+        sleep: &S,
+        db_connection: &dyn DbConnection,
+        child_execution_id: ExecutionIdDerived,
+    ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
+        let child_execution_id = ExecutionId::Derived(child_execution_id);
+        let res = if let Some(subscription_interruption) = subscription_interruption {
+            loop {
+                let sleep = sleep.clone();
+                let timeout = Box::pin(async move { sleep.sleep(subscription_interruption).await });
+                let res = db_connection
+                    .wait_for_finished_result(&child_execution_id, Some(timeout))
+                    .await;
+                match res {
+                    Err(DbErrorReadWithTimeout::Timeout) => {
+                        // subscription_interruption reached, loop
+                    }
+                    res => {
+                        break res;
+                    }
+                }
+            }
+        } else {
+            db_connection
+                .wait_for_finished_result(&child_execution_id, None)
+                .await
+        };
+        trace!("Finished result: {res:?}");
+        res
+    }
+
+    fn add_to_linker(linker: &mut Linker<WebhookEndpointCtx<C, S>>) -> Result<(), WasmFileError> {
         // link obelisk:log
-        log_activities::obelisk::log::log::add_to_linker::<_, WebhookEndpointCtx<C>>(linker, |x| x)
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking log activities"),
-                err: err.into(),
-            })?;
+        log_activities::obelisk::log::log::add_to_linker::<_, WebhookEndpointCtx<C, S>>(
+            linker,
+            |x| x,
+        )
+        .map_err(|err| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking log activities"),
+            err: err.into(),
+        })?;
         // link obelisk:types
-        types_v4_0_0::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<C>>(
+        types_v4_0_0::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<C, S>>(
             linker,
             |x| x,
         )
@@ -699,12 +742,13 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
         config: WebhookEndpointConfig,
         engine: &Engine,
         clock_fn: C,
+        sleep: S,
         db_pool: Arc<dyn DbPool>,
         fn_registry: Arc<dyn FunctionRegistry>,
         params: impl Iterator<Item = (&'a str, &'a str)>,
         execution_id: ExecutionIdTopLevel,
         request_span: Span,
-    ) -> Store<WebhookEndpointCtx<C>> {
+    ) -> Store<WebhookEndpointCtx<C, S>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
         if let Some(stdout) = config.forward_stdout {
             let stdout = LogStream::new(
@@ -736,6 +780,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
         // All child executions are part of the same join set.
         let ctx = WebhookEndpointCtx {
             clock_fn,
+            sleep,
             db_pool,
             fn_registry,
             table: ResourceTable::new(),
@@ -746,6 +791,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
             next_join_set_idx: JOIN_SET_START_IDX,
             execution_id,
             component_logger: ComponentLogger { span: request_span },
+            subscription_interruption: config.subscription_interruption,
         };
         let mut store = Store::new(engine, ctx);
 
@@ -834,7 +880,7 @@ impl<C: ClockFn> WebhookEndpointCtx<C> {
     }
 }
 
-impl<C: ClockFn> log_activities::obelisk::log::log::Host for WebhookEndpointCtx<C> {
+impl<C: ClockFn, S: Sleep> log_activities::obelisk::log::log::Host for WebhookEndpointCtx<C, S> {
     fn trace(&mut self, message: String) {
         self.component_logger.trace(&message);
     }
@@ -856,7 +902,7 @@ impl<C: ClockFn> log_activities::obelisk::log::log::Host for WebhookEndpointCtx<
     }
 }
 
-impl<C: ClockFn> WasiView for WebhookEndpointCtx<C> {
+impl<C: ClockFn, S: Sleep> WasiView for WebhookEndpointCtx<C, S> {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
             ctx: &mut self.wasi_ctx,
@@ -864,12 +910,12 @@ impl<C: ClockFn> WasiView for WebhookEndpointCtx<C> {
         }
     }
 }
-impl<C: ClockFn> IoView for WebhookEndpointCtx<C> {
+impl<C: ClockFn, S: Sleep> IoView for WebhookEndpointCtx<C, S> {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
 }
-impl<C: ClockFn> WasiHttpView for WebhookEndpointCtx<C> {
+impl<C: ClockFn, S: Sleep> WasiHttpView for WebhookEndpointCtx<C, S> {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http_ctx
     }
@@ -879,13 +925,14 @@ impl<C: ClockFn> WasiHttpView for WebhookEndpointCtx<C> {
     }
 }
 
-struct RequestHandler<C: ClockFn + 'static> {
+struct RequestHandler<C: ClockFn + 'static, S: Sleep> {
     engine: Arc<Engine>,
     clock_fn: C,
+    sleep: S,
     db_pool: Arc<dyn DbPool>,
     fn_registry: Arc<dyn FunctionRegistry>,
     execution_id: ExecutionIdTopLevel,
-    router: Arc<MethodAwareRouter<WebhookEndpointInstance<C>>>,
+    router: Arc<MethodAwareRouter<WebhookEndpointInstance<C, S>>>,
 }
 
 fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
@@ -899,7 +946,7 @@ fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBod
         .unwrap()
 }
 
-impl<C: ClockFn + 'static> RequestHandler<C> {
+impl<C: ClockFn + 'static, S: Sleep> RequestHandler<C, S> {
     #[instrument(skip_all, name="incoming webhook request", fields(execution_id = %self.execution_id))]
     async fn handle_request(
         self,
@@ -968,6 +1015,7 @@ impl<C: ClockFn + 'static> RequestHandler<C> {
                 found_instance.config.clone(),
                 &self.engine,
                 self.clock_fn,
+                self.sleep,
                 self.db_pool,
                 self.fn_registry,
                 matched.params().iter(),
@@ -1162,6 +1210,7 @@ pub(crate) mod tests {
                             env_vars: Arc::from([]),
                             fuel: None,
                             backtrace_persist: false,
+                            subscription_interruption: None,
                         },
                         test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
                         &engine,
@@ -1185,6 +1234,7 @@ pub(crate) mod tests {
                         router,
                         db_pool.clone(),
                         sim_clock.clone(),
+                        TokioSleep,
                         fn_registry,
                         None,
                     ))
