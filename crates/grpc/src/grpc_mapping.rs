@@ -9,7 +9,7 @@ use concepts::{
         ExecutionListPagination, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt,
         JoinSetRequest, Locked, LockedBy, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateLocked,
-        http_client_trace::HttpClientTrace,
+        VersionParseError, http_client_trace::HttpClientTrace,
     },
 };
 use concepts::{JoinSetId, JoinSetKind};
@@ -167,6 +167,12 @@ impl<T> TonicServerOptionExt<T> for Option<T> {
 
 pub trait TonicServerResultExt<T> {
     fn to_status(self) -> Result<T, tonic::Status>;
+}
+
+impl<T> TonicServerResultExt<T> for Result<T, VersionParseError> {
+    fn to_status(self) -> Result<T, tonic::Status> {
+        self.map_err(|err| tonic::Status::invalid_argument(err.to_string()))
+    }
 }
 
 impl<T> TonicServerResultExt<T> for Result<T, DbErrorWrite> {
@@ -522,8 +528,8 @@ impl From<SupportedFunctionReturnValue> for grpc_gen::ResultDetail {
 pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::ExecutionEvent {
     grpc_gen::ExecutionEvent {
             created_at: Some(prost_wkt_types::Timestamp::from(event.created_at)),
-            version: event.version.into(),
-            backtrace_id: event.backtrace_id.map(|v|v.0),
+            version: event.version.0.into(),
+            backtrace_id: event.backtrace_id.map(|v|v.0.into()),
             event: Some(match event.event {
                 ExecutionRequest::Created {
                     ffqn,

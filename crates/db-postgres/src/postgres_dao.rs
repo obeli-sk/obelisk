@@ -1181,7 +1181,10 @@ async fn get_combined_state(
     let pending_expires_finished: DateTime<Utc> = row.get("pending_expires_finished");
 
     let last_lock_version_raw: Option<i32> = row.get("last_lock_version");
-    let last_lock_version = last_lock_version_raw.map(|v| Version::new(v as u32));
+    let last_lock_version = last_lock_version_raw
+        .map(|v| Version::try_from(v))
+        .transpose()
+        .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
     let executor_id_raw: Option<String> = row.get("executor_id");
     let executor_id = executor_id_raw
@@ -1206,7 +1209,12 @@ async fn get_combined_state(
     let result_kind: Option<Json<PendingStateFinishedResultKind>> = row.get("result_kind");
     let result_kind = result_kind.map(|it| it.0);
 
-    let corresponding_version: i32 = row.get("corresponding_version");
+    let corresponding_version = row.get::<_, i32>("corresponding_version");
+    let corresponding_version = Version::new(
+        VersionType::try_from(corresponding_version)
+            .map_err(|_| consistency_db_err("version must be non-negative"))?,
+    );
+
     let dto = CombinedStateDTO {
         state,
         ffqn,
@@ -1219,7 +1227,7 @@ async fn get_combined_state(
         join_set_closing,
         result_kind,
     };
-    CombinedState::new(dto, Version::new(corresponding_version as u32)).map_err(DbErrorRead::from)
+    CombinedState::new(dto, corresponding_version).map_err(DbErrorRead::from)
 }
 
 async fn list_executions(
@@ -1345,6 +1353,8 @@ async fn list_executions(
         let result_kind = result_kind.map(|it| it.0);
 
         let corresponding_version: i32 = row.get("corresponding_version");
+        let corresponding_version = Version::try_from(corresponding_version)
+            .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
         let combined_state_dto = CombinedStateDTO {
             component_id_input_digest: component_id_input_digest.clone(),
@@ -1358,7 +1368,9 @@ async fn list_executions(
                 .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?,
             last_lock_version: row
                 .get::<_, Option<i32>>("last_lock_version")
-                .map(|v| Version::new(v as u32)),
+                .map(|v| Version::try_from(v))
+                .transpose()
+                .map_err(|_| consistency_db_err("version must be non-negative"))?,
             run_id: row
                 .get::<_, Option<String>>("run_id")
                 .map(|id| RunId::from_str(&id))
@@ -1373,10 +1385,7 @@ async fn list_executions(
             result_kind,
         };
 
-        match CombinedState::new(
-            combined_state_dto,
-            Version::new(corresponding_version as u32),
-        ) {
+        match CombinedState::new(combined_state_dto, corresponding_version) {
             Ok(combined_state) => {
                 vec.push(ExecutionWithState {
                     execution_id,
@@ -1493,7 +1502,11 @@ fn parse_response_with_cursor(
         .map(|id| ExecutionIdDerived::from_str(&id))
         .transpose()
         .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
-    let finished_version: Option<i32> = row.get("finished_version");
+    let finished_version = row
+        .get::<_, Option<i32>>("finished_version")
+        .map(|v| Version::try_from(v))
+        .transpose()
+        .map_err(|_| consistency_db_err("version must be non-negative"))?;
     let json_value: Option<Json<ExecutionRequest>> = row.get("json_value");
     let json_value = json_value.map(|it| it.0);
 
@@ -1501,7 +1514,7 @@ fn parse_response_with_cursor(
         delay_id,
         delay_success,
         child_execution_id,
-        finished_version.map(|v| v as u32), // i32 -> u32
+        finished_version,
         json_value,
     ) {
         (Some(delay_id), Some(delay_success), None, None, None) => JoinSetResponse::DelayFinished {
@@ -1512,7 +1525,7 @@ fn parse_response_with_cursor(
             if let ExecutionRequest::Finished { result, .. } = json_val {
                 JoinSetResponse::ChildExecutionFinished {
                     child_execution_id,
-                    finished_version: Version(finished_version),
+                    finished_version,
                     result,
                 }
             } else {
@@ -1632,13 +1645,15 @@ async fn lock_single_execution(
         let event: Json<ExecutionRequest> = row.get("json_value");
         let event = event.0;
 
-        let ver_i32: i32 = row.get("version");
+        let version = row.get::<_, i32>("version");
+        let version = Version::try_from(version)
+            .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
         events.push_back(ExecutionEvent {
             created_at: DateTime::from_timestamp_nanos(0), // not used, only the inner event and version
             event,
             backtrace_id: None,
-            version: Version(ver_i32 as u32),
+            version,
         });
     }
 
@@ -2126,13 +2141,15 @@ async fn get(
         let created_at: DateTime<Utc> = row.get("created_at");
         let event: Json<ExecutionRequest> = row.get("json_value");
         let event = event.0;
-        let version_i32: i32 = row.get("version");
+        let version: i32 = row.get("version");
+        let version = Version::try_from(version)
+            .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
         events.push(ExecutionEvent {
             created_at,
             event,
             backtrace_id: None,
-            version: Version(version_i32 as u32),
+            version,
         });
     }
 
@@ -2197,9 +2214,17 @@ async fn list_execution_events(
     let mut events = Vec::with_capacity(rows.len());
     for row in rows {
         let created_at: DateTime<Utc> = row.get("created_at");
-        let backtrace_id_raw: Option<i32> = row.get("backtrace_id");
-        let backtrace_id = backtrace_id_raw.map(|v| Version::new(v as u32));
-        let version_i32: i32 = row.get("version");
+        let backtrace_id = row
+            .get::<_, Option<i32>>("backtrace_id")
+            .map(|v| Version::try_from(v))
+            .transpose()
+            .map_err(|_| consistency_db_err("version must be non-negative"))?;
+
+        let version = row.get::<_, i32>("version");
+        let version = Version::new(
+            VersionType::try_from(version)
+                .map_err(|_| consistency_db_err("version must be non-negative"))?,
+        );
         let event_req: Json<ExecutionRequest> = row.get("json_value");
         let event_req = event_req.0;
 
@@ -2207,7 +2232,7 @@ async fn list_execution_events(
             created_at,
             event: event_req,
             backtrace_id,
-            version: Version(version_i32 as u32),
+            version,
         });
     }
     Ok(events)
@@ -2229,14 +2254,16 @@ async fn get_execution_event(
 
     let created_at: DateTime<Utc> = row.get("created_at");
     let json_val: Json<ExecutionRequest> = row.get("json_value");
-    let version_i32: i32 = row.get("version");
+    let version = row.get::<_, i32>("version");
+    let version = Version::try_from(version)
+        .map_err(|_| consistency_db_err("version must be non-negative"))?;
     let event = json_val.0;
 
     Ok(ExecutionEvent {
         created_at,
         event,
         backtrace_id: None,
-        version: Version(version_i32 as u32),
+        version,
     })
 }
 
@@ -2256,13 +2283,15 @@ async fn get_last_execution_event(
     let created_at: DateTime<Utc> = row.get("created_at");
     let event: Json<ExecutionRequest> = row.get("json_value");
     let event = event.0;
-    let version_i32: i32 = row.get("version");
+    let version = row.get::<_, i32>("version");
+    let version = Version::try_from(version)
+        .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
     Ok(ExecutionEvent {
         created_at,
         event,
         backtrace_id: None,
-        version: Version(version_i32 as u32),
+        version,
     })
 }
 
@@ -2349,10 +2378,13 @@ async fn get_pending_of_single_ffqn(
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
         let eid_str: String = row.get("execution_id");
-        let ver_i32: i32 = row.get("corresponding_version");
+        let corresponding_version: i32 = row.get("corresponding_version");
+        let corresponding_version = Version::try_from(corresponding_version).map_err(|err| {
+            warn!("Ignoring consistency error {err:?}");
+        })?;
 
         if let Ok(eid) = ExecutionId::from_str(&eid_str) {
-            result.push((eid, Version::new(ver_i32 as u32).increment()));
+            result.push((eid, corresponding_version.increment()));
         }
     }
     Ok(result)
@@ -2410,11 +2442,13 @@ async fn get_pending_by_component_input_digest(
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
         let eid_str: String = row.get("execution_id");
-        let ver_i32: i32 = row.get("corresponding_version");
+        let corresponding_version: i32 = row.get("corresponding_version");
+        let corresponding_version = Version::try_from(corresponding_version)
+            .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
         let eid =
             ExecutionId::from_str(&eid_str).map_err(|err| consistency_db_err(err.to_string()))?;
-        result.push((eid, Version::new(ver_i32 as u32).increment()));
+        result.push((eid, corresponding_version.increment()));
     }
 
     Ok(result)
@@ -3296,7 +3330,13 @@ impl DbConnection for PostgresConnection {
             let execution_id = ExecutionId::from_str(&execution_id)
                 .map_err(|err| consistency_db_err(err.to_string()))?;
             let last_lock_version: i32 = row.get("last_lock_version");
+            let last_lock_version = Version::try_from(last_lock_version)
+                .map_err(|_| consistency_db_err("version must be non-negative"))?;
+
             let corresponding_version: i32 = row.get("corresponding_version");
+            let corresponding_version = Version::try_from(corresponding_version)
+                .map_err(|_| consistency_db_err("version must be non-negative"))?;
+
             let intermittent_event_count: i32 = row.get("intermittent_event_count");
             let max_retries: i32 = row.get("max_retries");
             let retry_exp_backoff_millis: i64 = row.get("retry_exp_backoff_millis");
@@ -3309,8 +3349,8 @@ impl DbConnection for PostgresConnection {
 
             let lock = ExpiredLock {
                 execution_id,
-                locked_at_version: Version::new(last_lock_version as u32),
-                next_version: Version::new(corresponding_version as u32).increment(),
+                locked_at_version: last_lock_version,
+                next_version: corresponding_version.increment(),
                 intermittent_event_count: intermittent_event_count as u32,
                 max_retries: max_retries as u32,
                 retry_exp_backoff: Duration::from_millis(retry_exp_backoff_millis as u64),
@@ -3417,9 +3457,13 @@ impl DbExternalApi for PostgresConnection {
         let component_id: Json<ComponentId> = row.get("component_id");
         let component_id = component_id.0;
 
-        // versions stored as INTEGER
-        let v_min: i32 = row.get("version_min_including");
-        let v_max: i32 = row.get("version_max_excluding");
+        let version_min_including =
+            Version::try_from(row.get::<_, i32>("version_min_including"))
+                .map_err(|_| consistency_db_err("version must be non-negative"))?;
+
+        let version_max_excluding =
+            Version::try_from(row.get::<_, i32>("version_max_excluding"))
+                .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
         // wasm_backtrace stored as JSONB
         let wasm_backtrace: Json<WasmBacktrace> = row.get("wasm_backtrace");
@@ -3430,8 +3474,8 @@ impl DbExternalApi for PostgresConnection {
         Ok(BacktraceInfo {
             execution_id: execution_id.clone(),
             component_id,
-            version_min_including: Version::new(v_min as u32),
-            version_max_excluding: Version::new(v_max as u32),
+            version_min_including,
+            version_max_excluding,
             wasm_backtrace,
         })
     }
