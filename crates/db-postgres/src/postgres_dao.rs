@@ -31,6 +31,20 @@ use tokio_postgres::{
 };
 use tracing::{Level, debug, error, info, instrument, trace, warn};
 
+macro_rules! get {
+    ($row:expr, $col:expr) => {
+        $row.try_get($col).map_err(|e| {
+            consistency_db_err(format!("Failed to retrieve column '{}': {}", $col, e))
+        })?
+    };
+    // Variant for specifying type explicitly if inference fails
+    ($row:expr, $col:expr, $ty:ty) => {
+        $row.try_get::<_, $ty>($col).map_err(|e| {
+            consistency_db_err(format!("Failed to retrieve column '{}': {}", $col, e))
+        })?
+    };
+}
+
 mod ddl {
     use concepts::storage::HISTORY_EVENT_TYPE_JOIN_NEXT;
 
@@ -473,7 +487,13 @@ impl PostgresPool {
             })?;
 
         // Postgres INTEGER maps to i32
-        let actual_version = row.map(|r| r.get::<_, i32>("schema_version"));
+        let actual_version = match row {
+            Some(r) => Some(r.try_get::<_, i32>("schema_version").map_err(|e| {
+                error!("Failed to get schema_version column: {e}");
+                InitializationError
+            })?),
+            None => None,
+        };
 
         match actual_version {
             None => {
@@ -709,8 +729,8 @@ async fn fetch_created_event(
 
     let row = tx.query_one(stmt, &[&execution_id.to_string()]).await?;
 
-    let created_at = row.get("created_at");
-    let event: Json<ExecutionRequest> = row.get("json_value");
+    let created_at = get!(row, "created_at");
+    let event: Json<ExecutionRequest> = get!(row, "json_value");
     let event = event.0;
 
     if let ExecutionRequest::Created {
@@ -1019,7 +1039,7 @@ async fn update_state_locked_get_intermittent_event_count(
         .await
         .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
 
-    let count: i64 = row.get("intermittent_event_count"); // Postgres BIGINT
+    let count: i64 = get!(row, "intermittent_event_count"); // Postgres BIGINT
     let count = u32::try_from(count)
         .map_err(|_| consistency_db_err("`intermittent_event_count` must not be negative"))?;
     Ok(count)
@@ -1189,45 +1209,45 @@ async fn get_combined_state(
         .map_err(DbErrorRead::from)?;
 
     // Parsing columns
-    let digest_bytes: Vec<u8> = row.get("component_id_input_digest");
+    let digest_bytes: Vec<u8> = get!(row, "component_id_input_digest");
     let digest = Digest::try_from(digest_bytes.as_slice())
         .map_err(|err| consistency_db_err(err.to_string()))?;
     let component_id_input_digest = InputContentDigest(ContentDigest(digest));
 
-    let state: String = row.get("state");
-    let ffqn: String = row.get("ffqn");
-    let pending_expires_finished: DateTime<Utc> = row.get("pending_expires_finished");
+    let state: String = get!(row, "state");
+    let ffqn: String = get!(row, "ffqn");
+    let pending_expires_finished: DateTime<Utc> = get!(row, "pending_expires_finished");
 
-    let last_lock_version_raw: Option<i64> = row.get("last_lock_version");
+    let last_lock_version_raw: Option<i64> = get!(row, "last_lock_version");
     let last_lock_version = last_lock_version_raw
         .map(Version::try_from)
         .transpose()
         .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
-    let executor_id_raw: Option<String> = row.get("executor_id");
+    let executor_id_raw: Option<String> = get!(row, "executor_id");
     let executor_id = executor_id_raw
         .map(|id| ExecutorId::from_str(&id))
         .transpose()
         .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
 
-    let run_id_raw: Option<String> = row.get("run_id");
+    let run_id_raw: Option<String> = get!(row, "run_id");
     let run_id = run_id_raw
         .map(|id| RunId::from_str(&id))
         .transpose()
         .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
 
-    let join_set_id_raw: Option<String> = row.get("join_set_id");
+    let join_set_id_raw: Option<String> = get!(row, "join_set_id");
     let join_set_id = join_set_id_raw
         .map(|id| JoinSetId::from_str(&id))
         .transpose()
         .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
 
-    let join_set_closing: Option<bool> = row.get("join_set_closing");
+    let join_set_closing: Option<bool> = get!(row, "join_set_closing");
 
-    let result_kind: Option<Json<PendingStateFinishedResultKind>> = row.get("result_kind");
+    let result_kind: Option<Json<PendingStateFinishedResultKind>> = get!(row, "result_kind");
     let result_kind = result_kind.map(|it| it.0);
 
-    let corresponding_version = row.get::<_, i64>("corresponding_version");
+    let corresponding_version = get!(row, "corresponding_version", i64);
     let corresponding_version = Version::new(
         VersionType::try_from(corresponding_version)
             .map_err(|_| consistency_db_err("version must be non-negative"))?,
@@ -1355,67 +1375,81 @@ async fn list_executions(
     let mut vec = Vec::with_capacity(rows.len());
 
     for row in rows {
-        let execution_id_str: String = row.get("execution_id");
-        let execution_id = ExecutionId::from_str(&execution_id_str)
-            .map_err(|err| consistency_db_err(err.to_string()))?;
+        // If parsing of the row fails, log and skip it.
+        let unpack = || -> Result<ExecutionWithState, DbErrorGeneric> {
+            let execution_id_str: String = get!(row, "execution_id");
+            let execution_id = ExecutionId::from_str(&execution_id_str)
+                .map_err(|err| consistency_db_err(err.to_string()))?;
 
-        let digest_bytes: Vec<u8> = row.get("component_id_input_digest");
-        let digest = Digest::try_from(digest_bytes.as_slice())
-            .map_err(|err| consistency_db_err(err.to_string()))?;
-        let component_id_input_digest = InputContentDigest(ContentDigest(digest));
+            let digest_bytes: Vec<u8> = get!(row, "component_id_input_digest");
+            let digest = Digest::try_from(digest_bytes.as_slice())
+                .map_err(|err| consistency_db_err(err.to_string()))?;
+            let component_id_input_digest = InputContentDigest(ContentDigest(digest));
 
-        let created_at: DateTime<Utc> = row.get("created_at");
-        let first_scheduled_at: DateTime<Utc> = row.get("first_scheduled_at");
+            let created_at: DateTime<Utc> = get!(row, "created_at");
+            let first_scheduled_at: DateTime<Utc> = get!(row, "first_scheduled_at");
 
-        let result_kind: Option<Json<PendingStateFinishedResultKind>> = row.get("result_kind");
-        let result_kind = result_kind.map(|it| it.0);
+            let result_kind: Option<Json<PendingStateFinishedResultKind>> =
+                get!(row, "result_kind");
+            let result_kind = result_kind.map(|it| it.0);
 
-        let corresponding_version: i64 = row.get("corresponding_version");
-        let corresponding_version = Version::try_from(corresponding_version)
-            .map_err(|_| consistency_db_err("version must be non-negative"))?;
+            let corresponding_version: i64 = get!(row, "corresponding_version");
+            let corresponding_version = Version::try_from(corresponding_version)
+                .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
-        let combined_state_dto = CombinedStateDTO {
-            component_id_input_digest: component_id_input_digest.clone(),
-            state: row.get("state"),
-            ffqn: row.get("ffqn"),
-            pending_expires_finished: row.get("pending_expires_finished"),
-            executor_id: row
-                .get::<_, Option<String>>("executor_id")
+            let executor_id_str: Option<String> = get!(row, "executor_id");
+            let executor_id = executor_id_str
                 .map(|id| ExecutorId::from_str(&id))
                 .transpose()
-                .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?,
-            last_lock_version: row
-                .get::<_, Option<i64>>("last_lock_version")
+                .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+
+            let last_lock_version_raw: Option<i64> = get!(row, "last_lock_version");
+            let last_lock_version = last_lock_version_raw
                 .map(Version::try_from)
                 .transpose()
-                .map_err(|_| consistency_db_err("version must be non-negative"))?,
-            run_id: row
-                .get::<_, Option<String>>("run_id")
+                .map_err(|_| consistency_db_err("version must be non-negative"))?;
+
+            let run_id_str: Option<String> = get!(row, "run_id");
+            let run_id = run_id_str
                 .map(|id| RunId::from_str(&id))
                 .transpose()
-                .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?,
-            join_set_id: row
-                .get::<_, Option<String>>("join_set_id")
+                .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+
+            let join_set_id_str: Option<String> = get!(row, "join_set_id");
+            let join_set_id = join_set_id_str
                 .map(|id| JoinSetId::from_str(&id))
                 .transpose()
-                .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?,
-            join_set_closing: row.get("join_set_closing"),
-            result_kind,
+                .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+
+            let combined_state_dto = CombinedStateDTO {
+                component_id_input_digest: component_id_input_digest.clone(),
+                state: get!(row, "state"),
+                ffqn: get!(row, "ffqn"),
+                pending_expires_finished: get!(row, "pending_expires_finished"),
+                executor_id,
+                last_lock_version,
+                run_id,
+                join_set_id,
+                join_set_closing: get!(row, "join_set_closing"),
+                result_kind,
+            };
+
+            let combined_state = CombinedState::new(combined_state_dto, corresponding_version)?;
+
+            Ok(ExecutionWithState {
+                execution_id,
+                ffqn: combined_state.ffqn,
+                pending_state: combined_state.pending_state,
+                created_at,
+                first_scheduled_at,
+                component_digest: component_id_input_digest,
+            })
         };
 
-        match CombinedState::new(combined_state_dto, corresponding_version) {
-            Ok(combined_state) => {
-                vec.push(ExecutionWithState {
-                    execution_id,
-                    ffqn: combined_state.ffqn,
-                    pending_state: combined_state.pending_state,
-                    created_at,
-                    first_scheduled_at,
-                    component_digest: component_id_input_digest,
-                });
-            }
+        match unpack() {
+            Ok(execution) => vec.push(execution),
             Err(err) => {
-                warn!("Skipping row - state error: {err:?}");
+                warn!("Skipping corrupted row in t_state: {err:?}");
             }
         }
     }
@@ -1500,32 +1534,31 @@ fn parse_response_with_cursor(
     row: &tokio_postgres::Row,
 ) -> Result<ResponseWithCursor, DbErrorRead> {
     // Postgres BIGINT = i64.
-    let id = u32::try_from(row.get::<_, i64>("id"))
+    let id = u32::try_from(get!(row, "id", i64))
         .map_err(|_| consistency_db_err("id must not be negative"))?;
 
-    let created_at: DateTime<Utc> = row.get("created_at");
-    let join_set_id_str: String = row.get("join_set_id");
+    let created_at: DateTime<Utc> = get!(row, "created_at");
+    let join_set_id_str: String = get!(row, "join_set_id");
     let join_set_id = JoinSetId::from_str(&join_set_id_str)
         .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
 
     // Extract Optionals
-    let delay_id: Option<String> = row.get("delay_id");
+    let delay_id: Option<String> = get!(row, "delay_id");
     let delay_id = delay_id
         .map(|id| DelayId::from_str(&id))
         .transpose()
         .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
-    let delay_success: Option<bool> = row.get("delay_success");
-    let child_execution_id: Option<String> = row.get("child_execution_id");
+    let delay_success: Option<bool> = get!(row, "delay_success");
+    let child_execution_id: Option<String> = get!(row, "child_execution_id");
     let child_execution_id = child_execution_id
         .map(|id| ExecutionIdDerived::from_str(&id))
         .transpose()
         .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
-    let finished_version = row
-        .get::<_, Option<i64>>("finished_version")
+    let finished_version = get!(row, "finished_version", Option<i64>)
         .map(Version::try_from)
         .transpose()
         .map_err(|_| consistency_db_err("version must be non-negative"))?;
-    let json_value: Option<Json<ExecutionRequest>> = row.get("json_value");
+    let json_value: Option<Json<ExecutionRequest>> = get!(row, "json_value");
     let json_value = json_value.map(|it| it.0);
 
     let event = match (
@@ -1660,10 +1693,10 @@ async fn lock_single_execution(
     let mut events: VecDeque<ExecutionEvent> = VecDeque::new();
 
     for row in rows {
-        let event: Json<ExecutionRequest> = row.get("json_value");
+        let event: Json<ExecutionRequest> = get!(row, "json_value");
         let event = event.0;
 
-        let version = row.get::<_, i64>("version");
+        let version: i64 = get!(row, "version");
         let version = Version::try_from(version)
             .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
@@ -1734,7 +1767,7 @@ async fn count_join_next(
             .await
             .map_err(DbErrorRead::from)?;
 
-    let count = u32::try_from(row.get::<_, i64>("count")).expect("COUNT cannot be negative");
+    let count = u32::try_from(get!(row, "count", i64)).expect("COUNT cannot be negative");
     Ok(count)
 }
 
@@ -2156,10 +2189,10 @@ async fn get(
 
     let mut events = Vec::with_capacity(rows.len());
     for row in rows {
-        let created_at: DateTime<Utc> = row.get("created_at");
-        let event: Json<ExecutionRequest> = row.get("json_value");
+        let created_at: DateTime<Utc> = get!(row, "created_at");
+        let event: Json<ExecutionRequest> = get!(row, "json_value");
         let event = event.0;
-        let version: i64 = row.get("version");
+        let version: i64 = get!(row, "version");
         let version = Version::try_from(version)
             .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
@@ -2231,19 +2264,18 @@ async fn list_execution_events(
 
     let mut events = Vec::with_capacity(rows.len());
     for row in rows {
-        let created_at: DateTime<Utc> = row.get("created_at");
-        let backtrace_id = row
-            .get::<_, Option<i64>>("backtrace_id")
+        let created_at: DateTime<Utc> = get!(row, "created_at");
+        let backtrace_id = get!(row, "backtrace_id", Option<i64>)
             .map(Version::try_from)
             .transpose()
             .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
-        let version = row.get::<_, i64>("version");
+        let version = get!(row, "version", i64);
         let version = Version::new(
             VersionType::try_from(version)
                 .map_err(|_| consistency_db_err("version must be non-negative"))?,
         );
-        let event_req: Json<ExecutionRequest> = row.get("json_value");
+        let event_req: Json<ExecutionRequest> = get!(row, "json_value");
         let event_req = event_req.0;
 
         events.push(ExecutionEvent {
@@ -2270,9 +2302,9 @@ async fn get_execution_event(
         .await
         .map_err(DbErrorRead::from)?;
 
-    let created_at: DateTime<Utc> = row.get("created_at");
-    let json_val: Json<ExecutionRequest> = row.get("json_value");
-    let version = row.get::<_, i64>("version");
+    let created_at: DateTime<Utc> = get!(row, "created_at");
+    let json_val: Json<ExecutionRequest> = get!(row, "json_value");
+    let version = get!(row, "version", i64);
     let version = Version::try_from(version)
         .map_err(|_| consistency_db_err("version must be non-negative"))?;
     let event = json_val.0;
@@ -2298,10 +2330,10 @@ async fn get_last_execution_event(
         .await
         .map_err(DbErrorRead::from)?;
 
-    let created_at: DateTime<Utc> = row.get("created_at");
-    let event: Json<ExecutionRequest> = row.get("json_value");
+    let created_at: DateTime<Utc> = get!(row, "created_at");
+    let event: Json<ExecutionRequest> = get!(row, "json_value");
     let event = event.0;
-    let version = row.get::<_, i64>("version");
+    let version = get!(row, "version", i64);
     let version = Version::try_from(version)
         .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
@@ -2329,7 +2361,10 @@ async fn delay_response(
         .await
         .map_err(DbErrorRead::from)?;
 
-    Ok(row.map(|r| r.get("delay_success")))
+    match row {
+        Some(r) => Ok(Some(get!(r, "delay_success", bool))),
+        None => Ok(None),
+    }
 }
 
 #[instrument(level = Level::TRACE, skip_all)]
@@ -2395,14 +2430,21 @@ async fn get_pending_of_single_ffqn(
 
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
-        let eid_str: String = row.get("execution_id");
-        let corresponding_version: i64 = row.get("corresponding_version");
-        let corresponding_version = Version::try_from(corresponding_version).map_err(|err| {
-            warn!("Ignoring consistency error {err:?}");
-        })?;
+        let unpack = || -> Result<(ExecutionId, Version), DbErrorGeneric> {
+            let eid_str: String = get!(row, "execution_id");
+            let corresponding_version: i64 = get!(row, "corresponding_version");
+            let corresponding_version = Version::try_from(corresponding_version)
+                .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
-        if let Ok(eid) = ExecutionId::from_str(&eid_str) {
-            result.push((eid, corresponding_version.increment()));
+            if let Ok(eid) = ExecutionId::from_str(&eid_str) {
+                return Ok((eid, corresponding_version.increment()));
+            }
+            Err(consistency_db_err("invalid execution_id"))
+        };
+
+        match unpack() {
+            Ok(val) => result.push(val),
+            Err(err) => warn!("Ignoring corrupted row in pending check: {err:?}"),
         }
     }
     Ok(result)
@@ -2459,14 +2501,23 @@ async fn get_pending_by_component_input_digest(
 
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
-        let eid_str: String = row.get("execution_id");
-        let corresponding_version: i64 = row.get("corresponding_version");
-        let corresponding_version = Version::try_from(corresponding_version)
-            .map_err(|_| consistency_db_err("version must be non-negative"))?;
+        let unpack = || -> Result<(ExecutionId, Version), DbErrorGeneric> {
+            let eid_str: String = get!(row, "execution_id");
+            let corresponding_version: i64 = get!(row, "corresponding_version");
+            let corresponding_version = Version::try_from(corresponding_version)
+                .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
-        let eid =
-            ExecutionId::from_str(&eid_str).map_err(|err| consistency_db_err(err.to_string()))?;
-        result.push((eid, corresponding_version.increment()));
+            let eid = ExecutionId::from_str(&eid_str)
+                .map_err(|err| consistency_db_err(err.to_string()))?;
+            Ok((eid, corresponding_version.increment()))
+        };
+
+        match unpack() {
+            Ok(val) => result.push(val),
+            Err(err) => {
+                warn!("Skipping corrupted row in get_pending_by_component_input_digest: {err:?}");
+            }
+        }
     }
 
     Ok(result)
@@ -3315,22 +3366,28 @@ impl DbConnection for PostgresConnection {
 
         let mut expired_timers = Vec::with_capacity(rows.len());
         for row in rows {
-            let execution_id: String = row.get("execution_id");
-            let execution_id = ExecutionId::from_str(&execution_id)
-                .map_err(|err| consistency_db_err(err.to_string()))?;
-            let join_set_id: String = row.get("join_set_id");
-            let join_set_id = JoinSetId::from_str(&join_set_id)
-                .map_err(|err| consistency_db_err(err.to_string()))?;
-            let delay_id: String = row.get("delay_id");
-            let delay_id =
-                DelayId::from_str(&delay_id).map_err(|err| consistency_db_err(err.to_string()))?;
+            let unpack = || -> Result<ExpiredTimer, DbErrorGeneric> {
+                let execution_id: String = get!(row, "execution_id");
+                let execution_id = ExecutionId::from_str(&execution_id)
+                    .map_err(|err| consistency_db_err(err.to_string()))?;
+                let join_set_id: String = get!(row, "join_set_id");
+                let join_set_id = JoinSetId::from_str(&join_set_id)
+                    .map_err(|err| consistency_db_err(err.to_string()))?;
+                let delay_id: String = get!(row, "delay_id");
+                let delay_id = DelayId::from_str(&delay_id)
+                    .map_err(|err| consistency_db_err(err.to_string()))?;
 
-            let delay = ExpiredDelay {
-                execution_id,
-                join_set_id,
-                delay_id,
+                Ok(ExpiredTimer::Delay(ExpiredDelay {
+                    execution_id,
+                    join_set_id,
+                    delay_id,
+                }))
             };
-            expired_timers.push(ExpiredTimer::Delay(delay));
+
+            match unpack() {
+                Ok(timer) => expired_timers.push(timer),
+                Err(err) => warn!("Skipping corrupted row in get_expired_timers (delays): {err:?}"),
+            }
         }
 
         // 2. Expired Locks
@@ -3344,51 +3401,56 @@ impl DbConnection for PostgresConnection {
         ).await.map_err(DbErrorGeneric::from)?;
 
         for row in rows {
-            let execution_id: String = row.get("execution_id");
-            let execution_id = ExecutionId::from_str(&execution_id)
-                .map_err(|err| consistency_db_err(err.to_string()))?;
-            let last_lock_version: i64 = row.get("last_lock_version");
-            let last_lock_version = Version::try_from(last_lock_version)
-                .map_err(|_| consistency_db_err("version must be non-negative"))?;
+            let unpack = || -> Result<ExpiredTimer, DbErrorGeneric> {
+                let execution_id: String = get!(row, "execution_id");
+                let execution_id = ExecutionId::from_str(&execution_id)
+                    .map_err(|err| consistency_db_err(err.to_string()))?;
+                let last_lock_version: i64 = get!(row, "last_lock_version");
+                let last_lock_version = Version::try_from(last_lock_version)
+                    .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
-            let corresponding_version: i64 = row.get("corresponding_version");
-            let corresponding_version = Version::try_from(corresponding_version)
-                .map_err(|_| consistency_db_err("version must be non-negative"))?;
+                let corresponding_version: i64 = get!(row, "corresponding_version");
+                let corresponding_version = Version::try_from(corresponding_version)
+                    .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
-            let intermittent_event_count =
-                u32::try_from(row.get::<_, i64>("intermittent_event_count")).map_err(|_| {
-                    consistency_db_err("`intermittent_event_count` must not be negative")
-                })?;
+                let intermittent_event_count =
+                    u32::try_from(get!(row, "intermittent_event_count", i64)).map_err(|_| {
+                        consistency_db_err("`intermittent_event_count` must not be negative")
+                    })?;
 
-            let max_retries = row
-                .get::<_, Option<i64>>("max_retries")
-                .map(u32::try_from)
-                .transpose()
-                .map_err(|_| consistency_db_err("`max_retries` must not be negative"))?;
-            let retry_exp_backoff_millis =
-                u32::try_from(row.get::<_, i64>("retry_exp_backoff_millis")).map_err(|_| {
-                    consistency_db_err("`retry_exp_backoff_millis` must not be negative")
-                })?;
-            let executor_id: String = row.get("executor_id");
-            let executor_id = ExecutorId::from_str(&executor_id)
-                .map_err(|err| consistency_db_err(err.to_string()))?;
-            let run_id: String = row.get("run_id");
-            let run_id =
-                RunId::from_str(&run_id).map_err(|err| consistency_db_err(err.to_string()))?;
+                let max_retries = get!(row, "max_retries", Option<i64>)
+                    .map(u32::try_from)
+                    .transpose()
+                    .map_err(|_| consistency_db_err("`max_retries` must not be negative"))?;
+                let retry_exp_backoff_millis =
+                    u32::try_from(get!(row, "retry_exp_backoff_millis", i64)).map_err(|_| {
+                        consistency_db_err("`retry_exp_backoff_millis` must not be negative")
+                    })?;
+                let executor_id: String = get!(row, "executor_id");
+                let executor_id = ExecutorId::from_str(&executor_id)
+                    .map_err(|err| consistency_db_err(err.to_string()))?;
+                let run_id: String = get!(row, "run_id");
+                let run_id =
+                    RunId::from_str(&run_id).map_err(|err| consistency_db_err(err.to_string()))?;
 
-            let lock = ExpiredLock {
-                execution_id,
-                locked_at_version: last_lock_version,
-                next_version: corresponding_version.increment(),
-                intermittent_event_count,
-                max_retries,
-                retry_exp_backoff: Duration::from_millis(u64::from(retry_exp_backoff_millis)),
-                locked_by: LockedBy {
-                    executor_id,
-                    run_id,
-                },
+                Ok(ExpiredTimer::Lock(ExpiredLock {
+                    execution_id,
+                    locked_at_version: last_lock_version,
+                    next_version: corresponding_version.increment(),
+                    intermittent_event_count,
+                    max_retries,
+                    retry_exp_backoff: Duration::from_millis(u64::from(retry_exp_backoff_millis)),
+                    locked_by: LockedBy {
+                        executor_id,
+                        run_id,
+                    },
+                }))
             };
-            expired_timers.push(ExpiredTimer::Lock(lock));
+
+            match unpack() {
+                Ok(timer) => expired_timers.push(timer),
+                Err(err) => warn!("Skipping corrupted row in get_expired_timers (locks): {err:?}"),
+            }
         }
 
         tx.commit().await.map_err(DbErrorGeneric::from)?;
@@ -3488,19 +3550,17 @@ impl DbExternalApi for PostgresConnection {
             .await
             .map_err(DbErrorRead::from)?;
 
-        let component_id: Json<ComponentId> = row.get("component_id");
+        let component_id: Json<ComponentId> = get!(row, "component_id");
         let component_id = component_id.0;
 
-        let version_min_including =
-            Version::try_from(row.get::<_, i64>("version_min_including"))
-                .map_err(|_| consistency_db_err("version must be non-negative"))?;
+        let version_min_including = Version::try_from(get!(row, "version_min_including", i64))
+            .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
-        let version_max_excluding =
-            Version::try_from(row.get::<_, i64>("version_max_excluding"))
-                .map_err(|_| consistency_db_err("version must be non-negative"))?;
+        let version_max_excluding = Version::try_from(get!(row, "version_max_excluding", i64))
+            .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
         // wasm_backtrace stored as JSONB
-        let wasm_backtrace: Json<WasmBacktrace> = row.get("wasm_backtrace");
+        let wasm_backtrace: Json<WasmBacktrace> = get!(row, "wasm_backtrace");
         let wasm_backtrace = wasm_backtrace.0;
 
         tx.commit().await.map_err(DbErrorRead::from)?;
