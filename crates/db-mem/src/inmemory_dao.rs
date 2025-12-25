@@ -258,7 +258,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
-        start_idx: usize,
+        start_idx: u16,
         interrupt_after: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
         let either = {
@@ -1012,12 +1012,13 @@ impl DbHolder {
     fn subscribe_to_next_responses(
         &mut self,
         execution_id: &ExecutionId,
-        start_idx: usize,
+        start_idx: u16,
     ) -> Result<
         Either<Vec<JoinSetResponseEventOuter>, oneshot::Receiver<JoinSetResponseEventOuter>>,
         DbErrorReadWithTimeout,
     > {
         debug!("next_response");
+        let start_idx = usize::from(start_idx);
         let Some(journal) = self.journals.get_mut(execution_id) else {
             return Err(DbErrorReadWithTimeout::DbErrorRead(DbErrorRead::NotFound));
         };

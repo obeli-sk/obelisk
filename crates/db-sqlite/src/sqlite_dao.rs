@@ -2602,7 +2602,7 @@ impl SqlitePool {
     fn get_responses_with_offset(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        skip_rows: usize,
+        skip_rows: u16,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorRead> {
         // TODO: Add test
         tx.prepare(
@@ -3432,7 +3432,7 @@ impl DbConnection for SqlitePool {
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
-        start_idx: usize,
+        start_idx: u16,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
         debug!("next_responses");

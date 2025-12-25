@@ -373,7 +373,11 @@ impl EventHistory {
                 match db_connection
                     .subscribe_to_next_responses(
                         &db_connection.execution_id,
-                        self.responses.len(),
+                        u16::try_from(self.responses.len()).map_err(|_| {
+                            ApplyError::ConstraintViolation(
+                                "number of responses must not exceed u16::MAX".into(),
+                            )
+                        })?,
                         timeout_fut,
                     )
                     .await
