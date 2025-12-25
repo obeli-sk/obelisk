@@ -561,8 +561,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         Ok(tonic::Response::new(grpc_gen::GetBacktraceResponse {
             wasm_backtrace: Some(grpc_gen::WasmBacktrace {
-                version_min_including: backtrace_info.version_min_including.0.into(),
-                version_max_excluding: backtrace_info.version_max_excluding.0.into(),
+                version_min_including: backtrace_info.version_min_including.0,
+                version_max_excluding: backtrace_info.version_max_excluding.0,
                 frames: backtrace_info
                     .wasm_backtrace
                     .frames

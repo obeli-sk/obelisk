@@ -528,8 +528,8 @@ impl From<SupportedFunctionReturnValue> for grpc_gen::ResultDetail {
 pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::ExecutionEvent {
     grpc_gen::ExecutionEvent {
             created_at: Some(prost_wkt_types::Timestamp::from(event.created_at)),
-            version: event.version.0.into(),
-            backtrace_id: event.backtrace_id.map(|v|v.0.into()),
+            version: event.version.0,
+            backtrace_id: event.backtrace_id.map(|v|v.0),
             event: Some(match event.event {
                 ExecutionRequest::Created {
                     ffqn,

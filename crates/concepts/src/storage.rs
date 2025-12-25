@@ -59,8 +59,7 @@ impl ExecutionLog {
         // If max_retries == None, wrapping is OK after this succeeds - we want to retry forever.
         if temporary_event_count <= max_retries.unwrap_or(u32::MAX) {
             // TODO: Add test for number of retries
-            let duration =
-                retry_exp_backoff * 2_u32.saturating_pow(u32::from(temporary_event_count - 1));
+            let duration = retry_exp_backoff * 2_u32.saturating_pow(temporary_event_count - 1);
             Some(duration)
         } else {
             None
