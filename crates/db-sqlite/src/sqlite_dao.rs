@@ -1335,7 +1335,7 @@ impl SqlitePool {
         lock_expires_at: DateTime<Utc>,
         appending_version: &Version,
         retry_config: ComponentRetryConfig,
-    ) -> Result<u16, DbErrorWrite> {
+    ) -> Result<u32, DbErrorWrite> {
         debug!("Setting t_state to Locked(`{lock_expires_at:?}`)");
         let backoff_millis = i64::try_from(retry_config.retry_exp_backoff.as_millis())
             .map_err(|_| DbErrorGeneric::Uncategorized("backoff too big".into()))?; // Keep equal to Postgres' BIGINT = i64
@@ -2602,7 +2602,7 @@ impl SqlitePool {
     fn get_responses_with_offset(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        skip_rows: u16,
+        skip_rows: u32,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorRead> {
         // TODO: Add test
         tx.prepare(
@@ -2664,11 +2664,11 @@ impl SqlitePool {
     /// Get executions and their next versions
     fn get_pending_by_ffqns(
         conn: &Connection,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: &[FunctionFqn],
     ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
-        let batch_size = usize::from(batch_size);
+        let batch_size = usize::try_from(batch_size).expect("16 bit systems are unsupported");
         let mut execution_ids_versions = Vec::with_capacity(batch_size);
         for ffqn in ffqns {
             // Select executions in PendingAt.
@@ -2702,7 +2702,7 @@ impl SqlitePool {
 
     fn get_pending_by_component_input_digest(
         conn: &Connection,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         input_digest: &InputContentDigest,
     ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
@@ -2837,7 +2837,7 @@ impl DbExecutor for SqlitePool {
     #[instrument(level = Level::TRACE, skip(self))]
     async fn lock_pending_by_ffqns(
         &self,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
@@ -2892,7 +2892,7 @@ impl DbExecutor for SqlitePool {
     #[instrument(level = Level::TRACE, skip(self))]
     async fn lock_pending_by_component_id(
         &self,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
         created_at: DateTime<Utc>,
@@ -3433,7 +3433,7 @@ impl DbConnection for SqlitePool {
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
-        start_idx: u16,
+        start_idx: u32,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
         debug!("next_responses");

@@ -2061,7 +2061,7 @@ pub struct PackageIfcFns {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComponentRetryConfig {
-    pub max_retries: Option<u16>,
+    pub max_retries: Option<u32>,
     pub retry_exp_backoff: Duration,
 }
 impl ComponentRetryConfig {

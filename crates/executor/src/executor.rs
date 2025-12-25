@@ -30,7 +30,7 @@ use tracing::{Instrument, Level, Span, debug, error, info, info_span, instrument
 pub struct ExecConfig {
     pub lock_expiry: Duration,
     pub tick_sleep: Duration,
-    pub batch_size: u16,
+    pub batch_size: u32,
     pub component_id: ComponentId,
     pub task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     pub executor_id: ExecutorId,
@@ -275,7 +275,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 return Ok(ExecutionProgress::default());
             }
             let lock_expires_at = executed_at + self.config.lock_expiry;
-            let batch_size = u16::try_from(permits.len()).expect("ExecConfig.batch_size is u16");
+            let batch_size = u32::try_from(permits.len()).expect("ExecConfig.batch_size is u32");
             let locked_executions = match &self.locking_strategy_holder {
                 LockingStrategyHolder::ByFfqns(ffqns) => {
                     db_exec

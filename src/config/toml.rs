@@ -501,7 +501,7 @@ impl Default for LockingStrategy {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecConfigToml {
     #[serde(default = "default_batch_size")]
-    batch_size: u16,
+    batch_size: u32,
     #[serde(default = "default_lock_expiry")]
     lock_expiry: DurationConfig,
     #[serde(default = "default_tick_sleep")]
@@ -549,7 +549,7 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
-    pub(crate) max_retries: u16,
+    pub(crate) max_retries: u32,
     #[serde(default = "default_retry_exp_backoff")]
     pub(crate) retry_exp_backoff: DurationConfig,
     #[serde(default)]
@@ -1434,7 +1434,7 @@ const fn default_retry_on_err() -> bool {
     true
 }
 
-const fn default_max_retries() -> u16 {
+const fn default_max_retries() -> u32 {
     5
 }
 
@@ -1446,7 +1446,7 @@ const fn default_non_blocking_event_batching() -> u32 {
     DEFAULT_NON_BLOCKING_EVENT_BATCHING
 }
 
-const fn default_batch_size() -> u16 {
+const fn default_batch_size() -> u32 {
     5
 }
 

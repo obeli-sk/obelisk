@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS t_execution_log (
     execution_id TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     json_value JSON NOT NULL,
-    version INTEGER NOT NULL CHECK (version >= 0),
+    version BIGINT NOT NULL CHECK (version >= 0),
     variant TEXT NOT NULL,
     join_set_id TEXT,
     history_event_type TEXT GENERATED ALWAYS AS (json_value #>> '{HistoryEvent,event,type}') STORED,
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS t_join_set_response (
     delay_success BOOLEAN,
 
     child_execution_id TEXT,
-    finished_version INTEGER CHECK (finished_version >= 0),
+    finished_version BIGINT CHECK (finished_version >= 0),
 
     UNIQUE (execution_id, join_set_id, delay_id, child_execution_id)
 );
@@ -113,7 +113,7 @@ ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
     is_top_level BOOLEAN NOT NULL,
-    corresponding_version INTEGER NOT NULL CHECK (corresponding_version >= 0),
+    corresponding_version BIGINT NOT NULL CHECK (corresponding_version >= 0),
     ffqn TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     component_id_input_digest BYTEA NOT NULL,
@@ -122,11 +122,11 @@ CREATE TABLE IF NOT EXISTS t_state (
     pending_expires_finished TIMESTAMPTZ NOT NULL,
     state TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    intermittent_event_count INTEGER NOT NULL CHECK (intermittent_event_count >=0),
+    intermittent_event_count BIGINT NOT NULL CHECK (intermittent_event_count >=0),
 
-    max_retries INTEGER CHECK (max_retries >= 0),
+    max_retries BIGINT CHECK (max_retries >= 0),
     retry_exp_backoff_millis BIGINT CHECK (retry_exp_backoff_millis >= 0),
-    last_lock_version INTEGER CHECK (last_lock_version >= 0),
+    last_lock_version BIGINT CHECK (last_lock_version >= 0),
     executor_id TEXT,
     run_id TEXT,
 
@@ -176,8 +176,8 @@ CREATE TABLE IF NOT EXISTS t_delay (
 CREATE TABLE IF NOT EXISTS t_backtrace (
     execution_id TEXT NOT NULL,
     component_id JSONB NOT NULL,
-    version_min_including INTEGER NOT NULL CHECK (version_min_including >= 0),
-    version_max_excluding INTEGER NOT NULL CHECK (version_max_excluding >= 0),
+    version_min_including BIGINT NOT NULL CHECK (version_min_including >= 0),
+    version_max_excluding BIGINT NOT NULL CHECK (version_max_excluding >= 0),
     wasm_backtrace JSONB NOT NULL,
     PRIMARY KEY (execution_id, version_min_including, version_max_excluding)
 );
@@ -766,7 +766,7 @@ async fn create_inner(
         &[
             &execution_id_str,
             &created_at,
-            &i32::from(version.0), // Postgres INTEGER is i32
+            &i64::from(version.0), // BIGINT
             &event,
             &event.0.variant(),
             &event.0.join_set_id().map(std::string::ToString::to_string),
@@ -797,7 +797,7 @@ async fn create_inner(
             &[
                 &execution_id_str,
                 &execution_id.is_top_level(),
-                &i32::from(version.0),
+                &i64::from(version.0),
                 &scheduled_at,
                 &ffqn.to_string(),
                 &STATE_PENDING_AT,
@@ -835,7 +835,7 @@ async fn update_state_pending_after_response_appended(
 
     // Convert types for Postgres arguments
     let execution_id_str = execution_id.to_string();
-    let version_i32 = i32::from(corresponding_version.0);
+    let version = i64::from(corresponding_version.0);
 
     let updated = tx
         .execute(
@@ -856,7 +856,7 @@ async fn update_state_pending_after_response_appended(
             WHERE execution_id = $4
             ",
             &[
-                &version_i32,      // $1
+                &version,          // $1
                 &scheduled_at,     // $2
                 &STATE_PENDING_AT, // $3
                 &execution_id_str, // $4
@@ -890,7 +890,7 @@ async fn update_state_pending_after_event_appended(
 ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
     debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
 
-    let intermittent_delta = i32::from(intermittent_failure); // 0 or 1
+    let intermittent_delta = i64::from(intermittent_failure); // 0 or 1
 
     let updated = tx
         .execute(
@@ -912,7 +912,7 @@ async fn update_state_pending_after_event_appended(
             WHERE execution_id = $5;
             ",
             &[
-                &i32::from(appending_version.0), // $1
+                &i64::from(appending_version.0), // $1
                 &scheduled_at,                   // $2
                 &STATE_PENDING_AT,               // $3
                 &intermittent_delta,             // $4
@@ -947,7 +947,7 @@ async fn update_state_locked_get_intermittent_event_count(
     lock_expires_at: DateTime<Utc>,
     appending_version: &Version,
     retry_config: ComponentRetryConfig,
-) -> Result<u16, DbErrorWrite> {
+) -> Result<u32, DbErrorWrite> {
     debug!("Setting t_state to Locked(`{lock_expires_at:?}`)");
     let backoff_millis = i64::try_from(retry_config.retry_exp_backoff.as_millis())
         .map_err(|_| DbErrorGeneric::Uncategorized("backoff too big".into()))?; // BIGINT = i64
@@ -977,10 +977,10 @@ async fn update_state_locked_get_intermittent_event_count(
             WHERE execution_id = $8
             ",
             &[
-                &i32::from(appending_version.0),          // $1
+                &i64::from(appending_version.0),          // $1
                 &lock_expires_at,                         // $2
                 &STATE_LOCKED,                            // $3
-                &retry_config.max_retries.map(i32::from), // $4
+                &retry_config.max_retries.map(i64::from), // $4
                 &backoff_millis,                          // $5
                 &executor_id.to_string(),                 // $6
                 &run_id.to_string(),                      // $7
@@ -1002,9 +1002,8 @@ async fn update_state_locked_get_intermittent_event_count(
         .await
         .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
 
-    // Postgres INTEGER = i32
-    let count: i32 = row.get("intermittent_event_count");
-    let count = u16::try_from(count)
+    let count: i64 = row.get("intermittent_event_count"); // Postgres BIGINT
+    let count = u32::try_from(count)
         .map_err(|_| consistency_db_err("`intermittent_event_count` must not be negative"))?;
     Ok(count)
 }
@@ -1038,7 +1037,7 @@ async fn update_state_blocked(
             WHERE execution_id = $6
             ",
             &[
-                &i32::from(appending_version.0), // $1
+                &i64::from(appending_version.0), // $1
                 &lock_expires_at,                // $2
                 &STATE_BLOCKED_BY_JOIN_SET,      // $3
                 &join_set_id.to_string(),        // $4
@@ -1086,7 +1085,7 @@ async fn update_state_finished(
             WHERE execution_id = $5
             ",
             &[
-                &i32::from(appending_version.0), // $1
+                &i64::from(appending_version.0), // $1
                 &finished_at,                    // $2
                 &STATE_FINISHED,                 // $3
                 &result_kind_json,               // $4
@@ -1121,7 +1120,7 @@ async fn bump_state_next_version(
             WHERE execution_id = $2
             ",
             &[
-                &i32::from(appending_version.0), // $1
+                &i64::from(appending_version.0), // $1
                 &execution_id_str,               // $2
             ],
         )
@@ -1182,7 +1181,7 @@ async fn get_combined_state(
     let ffqn: String = row.get("ffqn");
     let pending_expires_finished: DateTime<Utc> = row.get("pending_expires_finished");
 
-    let last_lock_version_raw: Option<i32> = row.get("last_lock_version");
+    let last_lock_version_raw: Option<i64> = row.get("last_lock_version");
     let last_lock_version = last_lock_version_raw
         .map(Version::try_from)
         .transpose()
@@ -1211,7 +1210,7 @@ async fn get_combined_state(
     let result_kind: Option<Json<PendingStateFinishedResultKind>> = row.get("result_kind");
     let result_kind = result_kind.map(|it| it.0);
 
-    let corresponding_version = row.get::<_, i32>("corresponding_version");
+    let corresponding_version = row.get::<_, i64>("corresponding_version");
     let corresponding_version = Version::new(
         VersionType::try_from(corresponding_version)
             .map_err(|_| consistency_db_err("version must be non-negative"))?,
@@ -1354,7 +1353,7 @@ async fn list_executions(
         let result_kind: Option<Json<PendingStateFinishedResultKind>> = row.get("result_kind");
         let result_kind = result_kind.map(|it| it.0);
 
-        let corresponding_version: i32 = row.get("corresponding_version");
+        let corresponding_version: i64 = row.get("corresponding_version");
         let corresponding_version = Version::try_from(corresponding_version)
             .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
@@ -1369,7 +1368,7 @@ async fn list_executions(
                 .transpose()
                 .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?,
             last_lock_version: row
-                .get::<_, Option<i32>>("last_lock_version")
+                .get::<_, Option<i64>>("last_lock_version")
                 .map(Version::try_from)
                 .transpose()
                 .map_err(|_| consistency_db_err("version must be non-negative"))?,
@@ -1483,7 +1482,7 @@ async fn list_responses(
 fn parse_response_with_cursor(
     row: &tokio_postgres::Row,
 ) -> Result<ResponseWithCursor, DbErrorRead> {
-    // Postgres BIGINT = i64. Casting to u32 to match Pagination signature.
+    // Postgres BIGINT = i64.
     let id = u32::try_from(row.get::<_, i64>("id"))
         .map_err(|_| consistency_db_err("id must not be negative"))?;
 
@@ -1505,7 +1504,7 @@ fn parse_response_with_cursor(
         .transpose()
         .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
     let finished_version = row
-        .get::<_, Option<i32>>("finished_version")
+        .get::<_, Option<i64>>("finished_version")
         .map(Version::try_from)
         .transpose()
         .map_err(|_| consistency_db_err("version must be non-negative"))?;
@@ -1599,7 +1598,7 @@ async fn lock_single_execution(
             &execution_id.to_string(),
             &created_at,
             &event,
-            &i32::from(appending_version.0),
+            &i64::from(appending_version.0),
             &event.0.variant(),
         ],
     )
@@ -1647,7 +1646,7 @@ async fn lock_single_execution(
         let event: Json<ExecutionRequest> = row.get("json_value");
         let event = event.0;
 
-        let version = row.get::<_, i32>("version");
+        let version = row.get::<_, i64>("version");
         let version = Version::try_from(version)
             .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
@@ -1823,7 +1822,7 @@ async fn append(
                 &execution_id.to_string(),
                 &req.created_at,
                 &event,
-                &i32::from(appending_version.0),
+                &i64::from(appending_version.0),
                 &event.0.variant(),
                 &event.0.join_set_id().map(std::string::ToString::to_string),
             ],
@@ -2028,7 +2027,7 @@ async fn append_response(
             result: _,
         } => (
             Some(child_execution_id.to_string()),
-            Some(i32::from(finished_version.0)),
+            Some(i64::from(finished_version.0)),
         ),
         JoinSetResponse::DelayFinished { .. } => (None, None),
     };
@@ -2110,8 +2109,8 @@ async fn append_backtrace(
             &[
                 &backtrace_info.execution_id.to_string(),
                 &Json(&backtrace_info.component_id),
-                &i32::from(backtrace_info.version_min_including.0),
-                &i32::from(backtrace_info.version_max_excluding.0),
+                &i64::from(backtrace_info.version_min_including.0),
+                &i64::from(backtrace_info.version_max_excluding.0),
                 &backtrace_json,
             ],
         )
@@ -2143,7 +2142,7 @@ async fn get(
         let created_at: DateTime<Utc> = row.get("created_at");
         let event: Json<ExecutionRequest> = row.get("json_value");
         let event = event.0;
-        let version: i32 = row.get("version");
+        let version: i64 = row.get("version");
         let version = Version::try_from(version)
             .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
@@ -2195,7 +2194,7 @@ async fn list_execution_events(
                 log.version"
     } else {
         "SELECT
-                created_at, json_value, NULL::INTEGER as backtrace_id, version
+                created_at, json_value, NULL::BIGINT as backtrace_id, version
             FROM t_execution_log WHERE
                 execution_id = $1 AND version >= $2 AND version < $3
             ORDER BY version"
@@ -2206,8 +2205,8 @@ async fn list_execution_events(
             sql,
             &[
                 &execution_id.to_string(),
-                &i32::from(version_min),
-                &i32::from(version_max_excluding),
+                &i64::from(version_min),
+                &i64::from(version_max_excluding),
             ],
         )
         .await
@@ -2217,12 +2216,12 @@ async fn list_execution_events(
     for row in rows {
         let created_at: DateTime<Utc> = row.get("created_at");
         let backtrace_id = row
-            .get::<_, Option<i32>>("backtrace_id")
+            .get::<_, Option<i64>>("backtrace_id")
             .map(Version::try_from)
             .transpose()
             .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
-        let version = row.get::<_, i32>("version");
+        let version = row.get::<_, i64>("version");
         let version = Version::new(
             VersionType::try_from(version)
                 .map_err(|_| consistency_db_err("version must be non-negative"))?,
@@ -2249,14 +2248,14 @@ async fn get_execution_event(
         .query_one(
             "SELECT created_at, json_value, version FROM t_execution_log WHERE \
                  execution_id = $1 AND version = $2",
-            &[&execution_id.to_string(), &i32::from(version)],
+            &[&execution_id.to_string(), &i64::from(version)],
         )
         .await
         .map_err(DbErrorRead::from)?;
 
     let created_at: DateTime<Utc> = row.get("created_at");
     let json_val: Json<ExecutionRequest> = row.get("json_value");
-    let version = row.get::<_, i32>("version");
+    let version = row.get::<_, i64>("version");
     let version = Version::try_from(version)
         .map_err(|_| consistency_db_err("version must be non-negative"))?;
     let event = json_val.0;
@@ -2285,7 +2284,7 @@ async fn get_last_execution_event(
     let created_at: DateTime<Utc> = row.get("created_at");
     let event: Json<ExecutionRequest> = row.get("json_value");
     let event = event.0;
-    let version = row.get::<_, i32>("version");
+    let version = row.get::<_, i64>("version");
     let version = Version::try_from(version)
         .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
@@ -2320,7 +2319,7 @@ async fn delay_response(
 async fn get_responses_with_offset(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    skip_rows: u16,
+    skip_rows: u32,
 ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorRead> {
     let rows = tx
             .query(
@@ -2354,7 +2353,7 @@ async fn get_responses_with_offset(
 
 async fn get_pending_of_single_ffqn(
     tx: &Transaction<'_>,
-    batch_size: u16,
+    batch_size: u32,
     pending_at_or_sooner: DateTime<Utc>,
     ffqn: &FunctionFqn,
 ) -> Result<Vec<(ExecutionId, Version)>, ()> {
@@ -2380,7 +2379,7 @@ async fn get_pending_of_single_ffqn(
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
         let eid_str: String = row.get("execution_id");
-        let corresponding_version: i32 = row.get("corresponding_version");
+        let corresponding_version: i64 = row.get("corresponding_version");
         let corresponding_version = Version::try_from(corresponding_version).map_err(|err| {
             warn!("Ignoring consistency error {err:?}");
         })?;
@@ -2395,11 +2394,11 @@ async fn get_pending_of_single_ffqn(
 /// Get executions and their next versions
 async fn get_pending_by_ffqns(
     tx: &Transaction<'_>,
-    batch_size: u16,
+    batch_size: u32,
     pending_at_or_sooner: DateTime<Utc>,
     ffqns: &[FunctionFqn],
 ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
-    let batch_size = usize::from(batch_size);
+    let batch_size = usize::try_from(batch_size).expect("16 bit systems are unsupported");
     let mut execution_ids_versions = Vec::with_capacity(batch_size);
 
     for ffqn in ffqns {
@@ -2407,7 +2406,7 @@ async fn get_pending_by_ffqns(
         if needed == 0 {
             break;
         }
-        let needed = u16::try_from(needed).expect("u16 - usize cannot overflow u16");
+        let needed = u32::try_from(needed).expect("u32 - usize cannot overflow an 32");
         if let Ok(execs) = get_pending_of_single_ffqn(tx, needed, pending_at_or_sooner, ffqn).await
         {
             execution_ids_versions.extend(execs);
@@ -2419,7 +2418,7 @@ async fn get_pending_by_ffqns(
 
 async fn get_pending_by_component_input_digest(
     tx: &Transaction<'_>,
-    batch_size: u16,
+    batch_size: u32,
     pending_at_or_sooner: DateTime<Utc>,
     input_digest: &InputContentDigest,
 ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
@@ -2444,7 +2443,7 @@ async fn get_pending_by_component_input_digest(
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
         let eid_str: String = row.get("execution_id");
-        let corresponding_version: i32 = row.get("corresponding_version");
+        let corresponding_version: i64 = row.get("corresponding_version");
         let corresponding_version = Version::try_from(corresponding_version)
             .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
@@ -2556,7 +2555,7 @@ impl DbExecutor for PostgresConnection {
     #[instrument(level = Level::TRACE, skip(self))]
     async fn lock_pending_by_ffqns(
         &self,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
@@ -2615,7 +2614,7 @@ impl DbExecutor for PostgresConnection {
     #[instrument(level = Level::TRACE, skip(self))]
     async fn lock_pending_by_component_id(
         &self,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
         created_at: DateTime<Utc>,
@@ -3048,7 +3047,7 @@ impl DbConnection for PostgresConnection {
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
-        start_idx: u16,
+        start_idx: u32,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
         debug!("next_responses");
@@ -3331,22 +3330,22 @@ impl DbConnection for PostgresConnection {
             let execution_id: String = row.get("execution_id");
             let execution_id = ExecutionId::from_str(&execution_id)
                 .map_err(|err| consistency_db_err(err.to_string()))?;
-            let last_lock_version: i32 = row.get("last_lock_version");
+            let last_lock_version: i64 = row.get("last_lock_version");
             let last_lock_version = Version::try_from(last_lock_version)
                 .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
-            let corresponding_version: i32 = row.get("corresponding_version");
+            let corresponding_version: i64 = row.get("corresponding_version");
             let corresponding_version = Version::try_from(corresponding_version)
                 .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
             let intermittent_event_count =
-                u16::try_from(row.get::<_, i32>("intermittent_event_count")).map_err(|_| {
+                u32::try_from(row.get::<_, i64>("intermittent_event_count")).map_err(|_| {
                     consistency_db_err("`intermittent_event_count` must not be negative")
                 })?;
 
             let max_retries = row
-                .get::<_, Option<i32>>("max_retries")
-                .map(u16::try_from)
+                .get::<_, Option<i64>>("max_retries")
+                .map(u32::try_from)
                 .transpose()
                 .map_err(|_| consistency_db_err("`max_retries` must not be negative"))?;
             let retry_exp_backoff_millis =
@@ -3448,7 +3447,7 @@ impl DbExternalApi for PostgresConnection {
 
         match &filter {
             BacktraceFilter::Specific(version) => {
-                params.push(Box::new(i32::from(version.0))); // $2
+                params.push(Box::new(i64::from(version.0))); // $2
                 let p_ver_idx = format!("${}", params.len()); // $2
                 write!(
                     &mut sql,
@@ -3476,11 +3475,11 @@ impl DbExternalApi for PostgresConnection {
         let component_id = component_id.0;
 
         let version_min_including =
-            Version::try_from(row.get::<_, i32>("version_min_including"))
+            Version::try_from(row.get::<_, i64>("version_min_including"))
                 .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
         let version_max_excluding =
-            Version::try_from(row.get::<_, i32>("version_max_excluding"))
+            Version::try_from(row.get::<_, i64>("version_max_excluding"))
                 .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
         // wasm_backtrace stored as JSONB

@@ -37,7 +37,7 @@ impl DbExecutor for InMemoryDbConnection {
     #[instrument(skip_all)]
     async fn lock_pending_by_ffqns(
         &self,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
@@ -63,7 +63,7 @@ impl DbExecutor for InMemoryDbConnection {
     #[instrument(skip_all)]
     async fn lock_pending_by_component_id(
         &self,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
         created_at: DateTime<Utc>,
@@ -192,7 +192,7 @@ impl DbExecutor for InMemoryDbConnection {
         let last_version = execution_log.next_version.0 - 1;
         Ok(execution_log
             .events
-            .get(usize::from(last_version))
+            .get(usize::try_from(last_version).expect("16 bit systems are unsupported"))
             .cloned()
             .ok_or(DbErrorRead::NotFound)?)
     }
@@ -250,7 +250,7 @@ impl DbConnection for InMemoryDbConnection {
         let execution_log = self.0.lock().unwrap().get(execution_id)?;
         Ok(execution_log
             .events
-            .get(usize::from(version.0))
+            .get(usize::from(version))
             .cloned()
             .ok_or(DbErrorRead::NotFound)?)
     }
@@ -258,7 +258,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
-        start_idx: u16,
+        start_idx: u32,
         interrupt_after: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
         let either = {
@@ -431,7 +431,7 @@ mod index {
         pub(super) fn fetch_pending_by_ffqns<'a>(
             &self,
             journals: &'a BTreeMap<ExecutionId, ExecutionJournal>,
-            batch_size: u16,
+            batch_size: u32,
             expiring_at_or_before: DateTime<Utc>,
             ffqns: &[concepts::FunctionFqn],
         ) -> Vec<(&'a ExecutionJournal, DateTime<Utc> /* scheduled at */)> {
@@ -445,14 +445,14 @@ mod index {
                 .collect::<Vec<_>>();
             // filter by ffqn
             pending.retain(|(journal, _)| ffqns.contains(journal.ffqn()));
-            pending.truncate(usize::from(batch_size));
+            pending.truncate(usize::try_from(batch_size).expect("16 bit systems are unsupported"));
             pending
         }
 
         pub(super) fn fetch_pending_by_component_id<'a>(
             &self,
             journals: &'a BTreeMap<ExecutionId, ExecutionJournal>,
-            batch_size: u16,
+            batch_size: u32,
             expiring_at_or_before: DateTime<Utc>,
             component_id: &ComponentId,
         ) -> Vec<(&'a ExecutionJournal, DateTime<Utc> /* scheduled at */)> {
@@ -466,7 +466,7 @@ mod index {
                 .collect::<Vec<_>>();
             // filter by ffqn
             pending.retain(|(journal, _)| component_id == journal.component_id_last());
-            pending.truncate(usize::from(batch_size));
+            pending.truncate(usize::try_from(batch_size).expect("16 bit systems are unsupported"));
             pending
         }
 
@@ -647,7 +647,7 @@ impl DbHolder {
     #[expect(clippy::too_many_arguments)]
     fn lock_pending_by_ffqns(
         &mut self,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: &[FunctionFqn],
         created_at: DateTime<Utc>,
@@ -705,7 +705,7 @@ impl DbHolder {
     #[expect(clippy::too_many_arguments)]
     fn lock_pending_by_component_id(
         &mut self,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         created_at: DateTime<Utc>,
         component_id: &ComponentId,
@@ -1012,13 +1012,13 @@ impl DbHolder {
     fn subscribe_to_next_responses(
         &mut self,
         execution_id: &ExecutionId,
-        start_idx: u16,
+        start_idx: u32,
     ) -> Result<
         Either<Vec<JoinSetResponseEventOuter>, oneshot::Receiver<JoinSetResponseEventOuter>>,
         DbErrorReadWithTimeout,
     > {
         debug!("next_response");
-        let start_idx = usize::from(start_idx);
+        let start_idx = usize::try_from(start_idx).expect("16 bit systems are unsupported");
         let Some(journal) = self.journals.get_mut(execution_id) else {
             return Err(DbErrorReadWithTimeout::DbErrorRead(DbErrorRead::NotFound));
         };

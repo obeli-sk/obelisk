@@ -797,7 +797,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
 }
 
 pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_clock: SimClock) {
-    const MAX_RETRIES: u16 = 1;
+    const MAX_RETRIES: u32 = 1;
     const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(100);
 
     let execution_id = ExecutionId::generate();

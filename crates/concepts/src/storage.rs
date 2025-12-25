@@ -52,12 +52,12 @@ impl ExecutionLog {
     /// Return `None` if no more retries are allowed.
     #[must_use]
     pub fn can_be_retried_after(
-        temporary_event_count: u16,
-        max_retries: Option<u16>,
+        temporary_event_count: u32,
+        max_retries: Option<u32>,
         retry_exp_backoff: Duration,
     ) -> Option<Duration> {
         // If max_retries == None, wrapping is OK after this succeeds - we want to retry forever.
-        if temporary_event_count <= max_retries.unwrap_or(u16::MAX) {
+        if temporary_event_count <= max_retries.unwrap_or(u32::MAX) {
             // TODO: Add test for number of retries
             let duration =
                 retry_exp_backoff * 2_u32.saturating_pow(u32::from(temporary_event_count - 1));
@@ -69,7 +69,7 @@ impl ExecutionLog {
 
     #[must_use]
     pub fn compute_retry_duration_when_retrying_forever(
-        temporary_event_count: u16,
+        temporary_event_count: u32,
         retry_exp_backoff: Duration,
     ) -> Duration {
         Self::can_be_retried_after(temporary_event_count, None, retry_exp_backoff)
@@ -140,7 +140,7 @@ impl ExecutionLog {
     }
 }
 
-pub type VersionType = u16;
+pub type VersionType = u32;
 #[derive(
     Debug,
     Default,
@@ -166,24 +166,27 @@ impl Version {
         Version(self.0 + 1)
     }
 }
-impl TryFrom<u32> for Version {
+impl TryFrom<i64> for Version {
     type Error = VersionParseError;
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
         VersionType::try_from(value)
             .map(Version::new)
             .map_err(|_| VersionParseError)
     }
 }
-impl TryFrom<i32> for Version {
-    type Error = VersionParseError;
-    fn try_from(value: i32) -> Result<Self, Self::Error> {
-        VersionType::try_from(value)
-            .map(Version::new)
-            .map_err(|_| VersionParseError)
+impl From<Version> for usize {
+    fn from(value: Version) -> Self {
+        usize::try_from(value.0).expect("16 bit systems are unsupported")
     }
 }
+impl From<&Version> for usize {
+    fn from(value: &Version) -> Self {
+        usize::try_from(value.0).expect("16 bit systems are unsupported")
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
-#[error("version must be u16")]
+#[error("version must be u32")]
 pub struct VersionParseError;
 
 #[derive(
@@ -588,7 +591,7 @@ pub struct LockedExecution {
     pub event_history: Vec<(HistoryEvent, Version)>,
     pub responses: Vec<JoinSetResponseEventOuter>,
     pub parent: Option<(ExecutionId, JoinSetId)>,
-    pub intermittent_event_count: u16,
+    pub intermittent_event_count: u32,
 }
 
 pub type LockPendingResponse = Vec<LockedExecution>;
@@ -667,7 +670,7 @@ pub trait DbExecutor: Send + Sync {
     #[expect(clippy::too_many_arguments)]
     async fn lock_pending_by_ffqns(
         &self,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
@@ -681,7 +684,7 @@ pub trait DbExecutor: Send + Sync {
     #[expect(clippy::too_many_arguments)]
     async fn lock_pending_by_component_id(
         &self,
-        batch_size: u16,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
         created_at: DateTime<Utc>,
@@ -979,7 +982,7 @@ pub trait DbConnection: DbExecutor {
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
-        start_idx: u16,
+        start_idx: u32,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout>;
 
@@ -1198,7 +1201,7 @@ mod wasm_backtrace {
     }
 }
 
-pub type ResponseCursorType = u32; // FIXME: Switch to u64 ?
+pub type ResponseCursorType = u32;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResponseWithCursor {
@@ -1331,8 +1334,8 @@ pub struct ExpiredLock {
     pub locked_at_version: Version,
     pub next_version: Version,
     /// As the execution may still be running, this represents the number of intermittent failures + timeouts prior to this execution.
-    pub intermittent_event_count: u16,
-    pub max_retries: Option<u16>,
+    pub intermittent_event_count: u32,
+    pub max_retries: Option<u32>,
     pub retry_exp_backoff: Duration,
     pub locked_by: LockedBy,
 }

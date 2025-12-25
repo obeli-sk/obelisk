@@ -415,7 +415,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let events = conn
             .list_execution_events(
                 &execution_id,
-                &Version::try_from(request.version_from).to_status()?,
+                &Version::new(request.version_from),
                 VersionType::try_from(request.length).map_err(|_| {
                     tonic::Status::invalid_argument("`length` must be u16".to_string())
                 })?,
@@ -492,7 +492,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let events = conn
             .list_execution_events(
                 &execution_id,
-                &Version::try_from(request.version_from).to_status()?,
+                &Version::new(request.version_from),
                 VersionType::try_from(request.events_length).map_err(|_| {
                     tonic::Status::invalid_argument("`events_length` must be u16".to_string())
                 })?,
@@ -545,7 +545,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let filter = match request.filter {
             Some(grpc_gen::get_backtrace_request::Filter::Specific(
                 grpc_gen::get_backtrace_request::Specific { version },
-            )) => BacktraceFilter::Specific(Version::try_from(version).to_status()?),
+            )) => BacktraceFilter::Specific(Version::new(version)),
             Some(grpc_gen::get_backtrace_request::Filter::Last(
                 grpc_gen::get_backtrace_request::Last {},
             )) => BacktraceFilter::Last,
