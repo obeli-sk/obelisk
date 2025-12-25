@@ -188,7 +188,7 @@ val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = 
 wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.31.0" }
 
 anyhow = { version = "1.0", features = ["backtrace"] }
-axum = { version = "0.8.7", features = ["http2"] }
+axum = { version = "0.8.8", features = ["http2"] }
 axum-accept = "0.0.5"
 directories = "6.0"
 arbitrary = { version = "1.4.2", features = ["derive"] }
@@ -210,7 +210,7 @@ const_format = "0.2.35"
 criterion = "0.8"
 crossterm = "0.29.0"
 deadpool-postgres = "0.14.1"
-derive_more = { version = "2.1.0", features = [
+derive_more = { version = "2.1.1", features = [
     "debug",
     "deref",
     "display",
@@ -248,7 +248,7 @@ tokio-postgres = { version = "0.7.15", features = ["with-chrono-0_4", "with-serd
 prost = "0.14.1"
 prost-wkt-types = "0.7"
 quote = "1"
-rand = "0.9" # yew 0.21 needs getrandom 0.2
+rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",
@@ -263,12 +263,12 @@ rusqlite = { version = "0.38.0", features = [
 schemars = "1.1.0"
 semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
+serde_json = "1.0.147"
 serde_with = "3.16.1"
 sha2 = "0.10.9"
 syn = { version = "2", features = ["full"] }
 strum = { version = "0.27.2", features = ["derive"] }
-tempfile = "3.23" # yew 0.21 needs getrandom 0.2
+tempfile = "3.24"
 thiserror = "2.0"
 tokio = { version = "1", features = [
     "fs",
