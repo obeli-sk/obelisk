@@ -3423,20 +3423,25 @@ impl DbExternalApi for PostgresConnection {
         let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = Vec::new();
 
         params.push(Box::new(execution_id.to_string())); // $1
-        let p_execution_id_idx = format!("${}", params.len());
+        let p_execution_id_idx = format!("${}", params.len()); // $1
 
-        let mut sql = format!(
+        let mut sql = String::new();
+        write!(
+            &mut sql,
             "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace \
-             FROM t_backtrace WHERE execution_id = {p_execution_id_idx}"
-        );
+     FROM t_backtrace WHERE execution_id = {p_execution_id_idx}"
+        )
+        .unwrap();
 
         match &filter {
             BacktraceFilter::Specific(version) => {
-                params.push(Box::new(version.0 as i32));
-                let p_ver_idx = format!("${}", params.len());
-                sql.push_str(&format!(
+                params.push(Box::new(i32::from(version.0))); // $2
+                let p_ver_idx = format!("${}", params.len()); // $2
+                write!(
+                    &mut sql,
                     " AND version_min_including <= {p_ver_idx} AND version_max_excluding > {p_ver_idx}"
-                ));
+                )
+                .unwrap();
             }
             BacktraceFilter::First => {
                 sql.push_str(" ORDER BY version_min_including LIMIT 1");
