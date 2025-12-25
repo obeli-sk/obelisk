@@ -3349,7 +3349,10 @@ impl DbConnection for PostgresConnection {
                 .map(u16::try_from)
                 .transpose()
                 .map_err(|_| consistency_db_err("`max_retries` must not be negative"))?;
-            let retry_exp_backoff_millis: i64 = row.get("retry_exp_backoff_millis");
+            let retry_exp_backoff_millis =
+                u32::try_from(row.get::<_, i64>("retry_exp_backoff_millis")).map_err(|_| {
+                    consistency_db_err("`retry_exp_backoff_millis` must not be negative")
+                })?;
             let executor_id: String = row.get("executor_id");
             let executor_id = ExecutorId::from_str(&executor_id)
                 .map_err(|err| consistency_db_err(err.to_string()))?;
@@ -3363,7 +3366,7 @@ impl DbConnection for PostgresConnection {
                 next_version: corresponding_version.increment(),
                 intermittent_event_count,
                 max_retries,
-                retry_exp_backoff: Duration::from_millis(retry_exp_backoff_millis as u64),
+                retry_exp_backoff: Duration::from_millis(u64::from(retry_exp_backoff_millis)),
                 locked_by: LockedBy {
                     executor_id,
                     run_id,
