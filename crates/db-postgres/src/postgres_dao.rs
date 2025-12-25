@@ -2408,14 +2408,23 @@ async fn get_pending_of_single_ffqn(
     batch_size: u32,
     pending_at_or_sooner: DateTime<Utc>,
     ffqn: &FunctionFqn,
+    select_strategy: SelectStrategy,
 ) -> Result<Vec<(ExecutionId, Version)>, ()> {
     let rows = tx
         .query(
             &format!(
-                "SELECT execution_id, corresponding_version FROM t_state WHERE \
-                 state = '{STATE_PENDING_AT}' AND \
-                 pending_expires_finished <= $1 AND ffqn = $2 \
-                 ORDER BY pending_expires_finished LIMIT $3"
+                "SELECT execution_id, corresponding_version FROM t_state \
+                WHERE \
+                state = '{STATE_PENDING_AT}' AND \
+                pending_expires_finished <= $1 AND ffqn = $2 \
+                ORDER BY pending_expires_finished \
+                {} \
+                LIMIT $3",
+                if select_strategy == SelectStrategy::LockForUpdate {
+                    "FOR UPDATE SKIP LOCKED"
+                } else {
+                    ""
+                }
             ),
             &[
                 &pending_at_or_sooner,
@@ -2456,6 +2465,7 @@ async fn get_pending_by_ffqns(
     batch_size: u32,
     pending_at_or_sooner: DateTime<Utc>,
     ffqns: &[FunctionFqn],
+    select_strategy: SelectStrategy,
 ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
     let batch_size = usize::try_from(batch_size).expect("16 bit systems are unsupported");
     let mut execution_ids_versions = Vec::with_capacity(batch_size);
@@ -2466,7 +2476,9 @@ async fn get_pending_by_ffqns(
             break;
         }
         let needed = u32::try_from(needed).expect("u32 - usize cannot overflow an 32");
-        if let Ok(execs) = get_pending_of_single_ffqn(tx, needed, pending_at_or_sooner, ffqn).await
+        if let Ok(execs) =
+            get_pending_of_single_ffqn(tx, needed, pending_at_or_sooner, ffqn, select_strategy)
+                .await
         {
             execution_ids_versions.extend(execs);
         }
@@ -2475,20 +2487,34 @@ async fn get_pending_by_ffqns(
     Ok(execution_ids_versions)
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum SelectStrategy {
+    Read,
+    LockForUpdate,
+}
+
 async fn get_pending_by_component_input_digest(
     tx: &Transaction<'_>,
     batch_size: u32,
     pending_at_or_sooner: DateTime<Utc>,
     input_digest: &InputContentDigest,
+    select_strategy: SelectStrategy,
 ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
     let rows = tx
         .query(
             &format!(
                 "SELECT execution_id, corresponding_version FROM t_state WHERE \
-                 state = '{STATE_PENDING_AT}' AND \
-                 pending_expires_finished <= $1 AND \
-                 component_id_input_digest = $2 \
-                 ORDER BY pending_expires_finished LIMIT $3"
+                state = '{STATE_PENDING_AT}' AND \
+                pending_expires_finished <= $1 AND \
+                component_id_input_digest = $2 \
+                ORDER BY pending_expires_finished \
+                {} \
+                LIMIT $3",
+                if select_strategy == SelectStrategy::LockForUpdate {
+                    "FOR UPDATE SKIP LOCKED"
+                } else {
+                    ""
+                }
             ),
             &[
                 &pending_at_or_sooner,
@@ -2639,8 +2665,14 @@ impl DbExecutor for PostgresConnection {
             .await
             .map_err(DbErrorGeneric::from)?;
 
-        let execution_ids_versions =
-            get_pending_by_ffqns(&tx, batch_size, pending_at_or_sooner, &ffqns).await?;
+        let execution_ids_versions = get_pending_by_ffqns(
+            &tx,
+            batch_size,
+            pending_at_or_sooner,
+            &ffqns,
+            SelectStrategy::LockForUpdate,
+        )
+        .await?;
 
         if execution_ids_versions.is_empty() {
             // Commit is required to release the connection state cleanly,
@@ -2702,6 +2734,7 @@ impl DbExecutor for PostgresConnection {
             batch_size,
             pending_at_or_sooner,
             &component_id.input_digest,
+            SelectStrategy::LockForUpdate,
         )
         .await?;
 
@@ -2886,8 +2919,14 @@ impl DbExecutor for PostgresConnection {
                 let mut client_guard = self.client.lock().await;
                 // Read-only transaction check
                 if let Ok(tx) = client_guard.transaction().await {
-                    if let Ok(res) =
-                        get_pending_by_ffqns(&tx, 1, pending_at_or_sooner, &ffqns).await
+                    if let Ok(res) = get_pending_by_ffqns(
+                        &tx,
+                        1,
+                        pending_at_or_sooner,
+                        &ffqns,
+                        SelectStrategy::Read,
+                    )
+                    .await
                         && !res.is_empty()
                     {
                         db_has_pending = true;
@@ -2953,6 +2992,7 @@ impl DbExecutor for PostgresConnection {
                         1,
                         pending_at_or_sooner,
                         &component_id.input_digest,
+                        SelectStrategy::Read,
                     )
                     .await
                         && !res.is_empty()
