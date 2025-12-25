@@ -1983,7 +1983,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
         join_set_id: &JoinSetId,
-    ) -> Result<u64, DbErrorRead> {
+    ) -> Result<u32, DbErrorRead> {
         let mut stmt = tx.prepare(
             "SELECT COUNT(*) as count FROM t_execution_log WHERE execution_id = :execution_id AND join_set_id = :join_set_id \
             AND history_event_type = :join_next",
@@ -1994,7 +1994,7 @@ impl SqlitePool {
                 ":join_set_id": join_set_id.to_string(),
                 ":join_next": HISTORY_EVENT_TYPE_JOIN_NEXT,
             },
-            |row| row.get("count"),
+            |row| row.get::<_, u32>("count"),
         )?)
     }
 
@@ -2002,7 +2002,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
         join_set_id: &JoinSetId,
-        skip_rows: u64,
+        skip_rows: u32,
     ) -> Result<Option<ResponseWithCursor>, DbErrorRead> {
         // TODO: Add test
         tx
@@ -2635,7 +2635,7 @@ impl SqlitePool {
 
     fn get_pending_of_single_ffqn(
         mut stmt: CachedStatement,
-        batch_size: usize,
+        batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         ffqn: &FunctionFqn,
     ) -> Result<Vec<(ExecutionId, Version)>, ()> {
@@ -2685,7 +2685,8 @@ impl SqlitePool {
 
             if let Ok(execs_and_versions) = Self::get_pending_of_single_ffqn(
                 stmt,
-                batch_size - execution_ids_versions.len(),
+                u32::try_from(batch_size - execution_ids_versions.len())
+                    .expect("u32 - anything must fit to u32"),
                 pending_at_or_sooner,
                 ffqn,
             ) {
@@ -3687,7 +3688,7 @@ impl DbConnection for SqlitePool {
                             let next_version = Version::new(row.get("corresponding_version")?).increment();
                             let intermittent_event_count = row.get("intermittent_event_count")?;
                             let max_retries = row.get("max_retries")?;
-                            let retry_exp_backoff_millis = row.get("retry_exp_backoff_millis")?;
+                            let retry_exp_backoff_millis = u64::from(row.get::<_, u32>("retry_exp_backoff_millis")?);
                             let executor_id = row.get("executor_id")?;
                             let run_id = row.get("run_id")?;
                             let lock = ExpiredLock {
