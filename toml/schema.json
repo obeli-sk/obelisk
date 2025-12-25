@@ -193,8 +193,9 @@
         },
         "max_retries": {
           "type": "integer",
-          "format": "uint32",
+          "format": "uint16",
           "default": 5,
+          "maximum": 65535,
           "minimum": 0
         },
         "name": {
@@ -568,8 +569,9 @@
       "properties": {
         "batch_size": {
           "type": "integer",
-          "format": "uint32",
+          "format": "uint16",
           "default": 5,
+          "maximum": 65535,
           "minimum": 0
         },
         "lock_expiry": {
