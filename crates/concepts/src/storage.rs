@@ -137,7 +137,7 @@ impl ExecutionLog {
     }
 }
 
-pub type VersionType = u32; // FIXME: Convert to u16
+pub type VersionType = u16;
 #[derive(
     Debug,
     Default,
@@ -163,6 +163,25 @@ impl Version {
         Version(self.0 + 1)
     }
 }
+impl TryFrom<u32> for Version {
+    type Error = VersionParseError;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        VersionType::try_from(value)
+            .map(Version::new)
+            .map_err(|_| VersionParseError)
+    }
+}
+impl TryFrom<i32> for Version {
+    type Error = VersionParseError;
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        VersionType::try_from(value)
+            .map(Version::new)
+            .map_err(|_| VersionParseError)
+    }
+}
+#[derive(Debug, thiserror::Error)]
+#[error("version must be u16")]
+pub struct VersionParseError;
 
 #[derive(
     Clone, Debug, derive_more::Display, PartialEq, Eq, serde::Serialize, serde::Deserialize,

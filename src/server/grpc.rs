@@ -22,6 +22,7 @@ use concepts::storage::ExecutionRequest;
 use concepts::storage::ExecutionWithState;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
+use concepts::storage::VersionType;
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use grpc::TonicRespResult;
@@ -414,8 +415,10 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let events = conn
             .list_execution_events(
                 &execution_id,
-                &Version(request.version_from),
-                request.length,
+                &Version::try_from(request.version_from).to_status()?,
+                VersionType::try_from(request.length).map_err(|_| {
+                    tonic::Status::invalid_argument(format!("`length` must be u16"))
+                })?,
                 request.include_backtrace_id,
             )
             .await
@@ -489,8 +492,10 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let events = conn
             .list_execution_events(
                 &execution_id,
-                &Version(request.version_from),
-                request.events_length,
+                &Version::try_from(request.version_from).to_status()?,
+                VersionType::try_from(request.events_length).map_err(|_| {
+                    tonic::Status::invalid_argument(format!("`events_length` must be u16"))
+                })?,
                 request.include_backtrace_id,
             )
             .await
@@ -540,7 +545,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let filter = match request.filter {
             Some(grpc_gen::get_backtrace_request::Filter::Specific(
                 grpc_gen::get_backtrace_request::Specific { version },
-            )) => BacktraceFilter::Specific(Version::new(version)),
+            )) => BacktraceFilter::Specific(Version::try_from(version).to_status()?),
             Some(grpc_gen::get_backtrace_request::Filter::Last(
                 grpc_gen::get_backtrace_request::Last {},
             )) => BacktraceFilter::Last,
@@ -556,8 +561,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         Ok(tonic::Response::new(grpc_gen::GetBacktraceResponse {
             wasm_backtrace: Some(grpc_gen::WasmBacktrace {
-                version_min_including: backtrace_info.version_min_including.into(),
-                version_max_excluding: backtrace_info.version_max_excluding.into(),
+                version_min_including: backtrace_info.version_min_including.0.into(),
+                version_max_excluding: backtrace_info.version_max_excluding.0.into(),
                 frames: backtrace_info
                     .wasm_backtrace
                     .frames
