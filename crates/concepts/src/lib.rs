@@ -2061,18 +2061,18 @@ pub struct PackageIfcFns {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComponentRetryConfig {
-    pub max_retries: u32, // FIXME: u16
+    pub max_retries: Option<u16>,
     pub retry_exp_backoff: Duration,
 }
 impl ComponentRetryConfig {
     pub const ZERO: ComponentRetryConfig = ComponentRetryConfig {
-        max_retries: 0,
+        max_retries: Some(0),
         retry_exp_backoff: Duration::ZERO,
     };
 
     #[cfg(feature = "test")]
     pub const WORKFLOW_TEST: ComponentRetryConfig = ComponentRetryConfig {
-        max_retries: u32::MAX,
+        max_retries: None,
         retry_exp_backoff: Duration::ZERO,
     };
 }

@@ -448,8 +448,8 @@ impl ExecutionJournal {
     }
 
     #[must_use]
-    pub fn temporary_event_count(&self) -> u32 {
-        u32::try_from(
+    pub fn temporary_event_count(&self) -> u16 {
+        u16::try_from(
             self.execution_events
                 .iter()
                 .filter(|event| event.event.is_temporary_event())
