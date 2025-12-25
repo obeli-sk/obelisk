@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS t_execution_log (
     execution_id TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     json_value JSON NOT NULL,
-    version INTEGER NOT NULL,
+    version INTEGER NOT NULL CHECK (version >= 0),
     variant TEXT NOT NULL,
     join_set_id TEXT,
     history_event_type TEXT GENERATED ALWAYS AS (json_value #>> '{HistoryEvent,event,type}') STORED,
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS t_join_set_response (
     delay_success BOOLEAN,
 
     child_execution_id TEXT,
-    finished_version INTEGER,
+    finished_version INTEGER CHECK (finished_version >= 0),
 
     UNIQUE (execution_id, join_set_id, delay_id, child_execution_id)
 );
@@ -113,7 +113,7 @@ ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
     is_top_level BOOLEAN NOT NULL,
-    corresponding_version INTEGER NOT NULL,
+    corresponding_version INTEGER NOT NULL CHECK (corresponding_version >= 0),
     ffqn TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     component_id_input_digest BYTEA NOT NULL,
@@ -122,11 +122,11 @@ CREATE TABLE IF NOT EXISTS t_state (
     pending_expires_finished TIMESTAMPTZ NOT NULL,
     state TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    intermittent_event_count INTEGER NOT NULL,
+    intermittent_event_count INTEGER NOT NULL CHECK (intermittent_event_count >=0),
 
     max_retries INTEGER,
-    retry_exp_backoff_millis BIGINT,
-    last_lock_version INTEGER,
+    retry_exp_backoff_millis BIGINT CHECK (retry_exp_backoff_millis >= 0),
+    last_lock_version INTEGER CHECK (last_lock_version >= 0),
     executor_id TEXT,
     run_id TEXT,
 
@@ -176,8 +176,8 @@ CREATE TABLE IF NOT EXISTS t_delay (
 CREATE TABLE IF NOT EXISTS t_backtrace (
     execution_id TEXT NOT NULL,
     component_id JSONB NOT NULL,
-    version_min_including INTEGER NOT NULL,
-    version_max_excluding INTEGER NOT NULL,
+    version_min_including INTEGER NOT NULL CHECK (version_min_including >= 0),
+    version_max_excluding INTEGER NOT NULL CHECK (version_max_excluding >= 0),
     wasm_backtrace JSONB NOT NULL,
     PRIMARY KEY (execution_id, version_min_including, version_max_excluding)
 );
