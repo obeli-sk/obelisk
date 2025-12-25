@@ -417,7 +417,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 &execution_id,
                 &Version::try_from(request.version_from).to_status()?,
                 VersionType::try_from(request.length).map_err(|_| {
-                    tonic::Status::invalid_argument(format!("`length` must be u16"))
+                    tonic::Status::invalid_argument("`length` must be u16".to_string())
                 })?,
                 request.include_backtrace_id,
             )
@@ -494,7 +494,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 &execution_id,
                 &Version::try_from(request.version_from).to_status()?,
                 VersionType::try_from(request.events_length).map_err(|_| {
-                    tonic::Status::invalid_argument(format!("`events_length` must be u16"))
+                    tonic::Status::invalid_argument("`events_length` must be u16".to_string())
                 })?,
                 request.include_backtrace_id,
             )

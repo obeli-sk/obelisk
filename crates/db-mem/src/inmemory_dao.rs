@@ -192,7 +192,7 @@ impl DbExecutor for InMemoryDbConnection {
         let last_version = execution_log.next_version.0 - 1;
         Ok(execution_log
             .events
-            .get(usize::try_from(last_version).unwrap())
+            .get(usize::from(last_version))
             .cloned()
             .ok_or(DbErrorRead::NotFound)?)
     }
@@ -250,7 +250,7 @@ impl DbConnection for InMemoryDbConnection {
         let execution_log = self.0.lock().unwrap().get(execution_id)?;
         Ok(execution_log
             .events
-            .get(usize::try_from(version.0).unwrap())
+            .get(usize::from(version.0))
             .cloned()
             .ok_or(DbErrorRead::NotFound)?)
     }

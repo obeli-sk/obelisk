@@ -766,7 +766,7 @@ async fn create_inner(
         &[
             &execution_id_str,
             &created_at,
-            &(version.0 as i32), // Postgres INTEGER is i32
+            &i32::from(version.0), // Postgres INTEGER is i32
             &event,
             &event.0.variant(),
             &event.0.join_set_id().map(std::string::ToString::to_string),
@@ -797,7 +797,7 @@ async fn create_inner(
             &[
                 &execution_id_str,
                 &execution_id.is_top_level(),
-                &(version.0 as i32),
+                &i32::from(version.0),
                 &scheduled_at,
                 &ffqn.to_string(),
                 &STATE_PENDING_AT,
@@ -835,7 +835,7 @@ async fn update_state_pending_after_response_appended(
 
     // Convert types for Postgres arguments
     let execution_id_str = execution_id.to_string();
-    let version_i32 = corresponding_version.0 as i32;
+    let version_i32 = i32::from(corresponding_version.0);
 
     let updated = tx
         .execute(
@@ -912,11 +912,11 @@ async fn update_state_pending_after_event_appended(
             WHERE execution_id = $5;
             ",
             &[
-                &(appending_version.0 as i32), // $1
-                &scheduled_at,                 // $2
-                &STATE_PENDING_AT,             // $3
-                &intermittent_delta,           // $4
-                &execution_id.to_string(),     // $5
+                &i32::from(appending_version.0), // $1
+                &scheduled_at,                   // $2
+                &STATE_PENDING_AT,               // $3
+                &intermittent_delta,             // $4
+                &execution_id.to_string(),       // $5
             ],
         )
         .await?;
@@ -977,7 +977,7 @@ async fn update_state_locked_get_intermittent_event_count(
             WHERE execution_id = $8
             ",
             &[
-                &(appending_version.0 as i32),      // $1
+                &i32::from(appending_version.0),    // $1
                 &lock_expires_at,                   // $2
                 &STATE_LOCKED,                      // $3
                 &(retry_config.max_retries as i32), // $4
@@ -1036,12 +1036,12 @@ async fn update_state_blocked(
             WHERE execution_id = $6
             ",
             &[
-                &(appending_version.0 as i32), // $1
-                &lock_expires_at,              // $2
-                &STATE_BLOCKED_BY_JOIN_SET,    // $3
-                &join_set_id.to_string(),      // $4
-                &join_set_closing,             // $5 (BOOLEAN)
-                &execution_id.to_string(),     // $6
+                &i32::from(appending_version.0), // $1
+                &lock_expires_at,                // $2
+                &STATE_BLOCKED_BY_JOIN_SET,      // $3
+                &join_set_id.to_string(),        // $4
+                &join_set_closing,               // $5 (BOOLEAN)
+                &execution_id.to_string(),       // $6
             ],
         )
         .await?;
@@ -1084,11 +1084,11 @@ async fn update_state_finished(
             WHERE execution_id = $5
             ",
             &[
-                &(appending_version.0 as i32), // $1
-                &finished_at,                  // $2
-                &STATE_FINISHED,               // $3
-                &result_kind_json,             // $4
-                &execution_id.to_string(),     // $5
+                &i32::from(appending_version.0), // $1
+                &finished_at,                    // $2
+                &STATE_FINISHED,                 // $3
+                &result_kind_json,               // $4
+                &execution_id.to_string(),       // $5
             ],
         )
         .await?;
@@ -1119,8 +1119,8 @@ async fn bump_state_next_version(
             WHERE execution_id = $2
             ",
             &[
-                &(appending_version.0 as i32), // $1
-                &execution_id_str,             // $2
+                &i32::from(appending_version.0), // $1
+                &execution_id_str,               // $2
             ],
         )
         .await?;
@@ -1182,7 +1182,7 @@ async fn get_combined_state(
 
     let last_lock_version_raw: Option<i32> = row.get("last_lock_version");
     let last_lock_version = last_lock_version_raw
-        .map(|v| Version::try_from(v))
+        .map(Version::try_from)
         .transpose()
         .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
@@ -1368,7 +1368,7 @@ async fn list_executions(
                 .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?,
             last_lock_version: row
                 .get::<_, Option<i32>>("last_lock_version")
-                .map(|v| Version::try_from(v))
+                .map(Version::try_from)
                 .transpose()
                 .map_err(|_| consistency_db_err("version must be non-negative"))?,
             run_id: row
@@ -1504,7 +1504,7 @@ fn parse_response_with_cursor(
         .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
     let finished_version = row
         .get::<_, Option<i32>>("finished_version")
-        .map(|v| Version::try_from(v))
+        .map(Version::try_from)
         .transpose()
         .map_err(|_| consistency_db_err("version must be non-negative"))?;
     let json_value: Option<Json<ExecutionRequest>> = row.get("json_value");
@@ -1597,7 +1597,7 @@ async fn lock_single_execution(
             &execution_id.to_string(),
             &created_at,
             &event,
-            &(appending_version.0 as i32),
+            &i32::from(appending_version.0),
             &event.0.variant(),
         ],
     )
@@ -1821,7 +1821,7 @@ async fn append(
                 &execution_id.to_string(),
                 &req.created_at,
                 &event,
-                &(appending_version.0 as i32),
+                &i32::from(appending_version.0),
                 &event.0.variant(),
                 &event.0.join_set_id().map(std::string::ToString::to_string),
             ],
@@ -2026,7 +2026,7 @@ async fn append_response(
             result: _,
         } => (
             Some(child_execution_id.to_string()),
-            Some(finished_version.0 as i32),
+            Some(i32::from(finished_version.0)),
         ),
         JoinSetResponse::DelayFinished { .. } => (None, None),
     };
@@ -2108,8 +2108,8 @@ async fn append_backtrace(
             &[
                 &backtrace_info.execution_id.to_string(),
                 &Json(&backtrace_info.component_id),
-                &(backtrace_info.version_min_including.0 as i32),
-                &(backtrace_info.version_max_excluding.0 as i32),
+                &i32::from(backtrace_info.version_min_including.0),
+                &i32::from(backtrace_info.version_max_excluding.0),
                 &backtrace_json,
             ],
         )
@@ -2204,8 +2204,8 @@ async fn list_execution_events(
             sql,
             &[
                 &execution_id.to_string(),
-                &(version_min as i32),
-                &(version_max_excluding as i32),
+                &i32::from(version_min),
+                &i32::from(version_max_excluding),
             ],
         )
         .await
@@ -2216,7 +2216,7 @@ async fn list_execution_events(
         let created_at: DateTime<Utc> = row.get("created_at");
         let backtrace_id = row
             .get::<_, Option<i32>>("backtrace_id")
-            .map(|v| Version::try_from(v))
+            .map(Version::try_from)
             .transpose()
             .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
@@ -2247,7 +2247,7 @@ async fn get_execution_event(
         .query_one(
             "SELECT created_at, json_value, version FROM t_execution_log WHERE \
                  execution_id = $1 AND version = $2",
-            &[&execution_id.to_string(), &(version as i32)],
+            &[&execution_id.to_string(), &i32::from(version)],
         )
         .await
         .map_err(DbErrorRead::from)?;
