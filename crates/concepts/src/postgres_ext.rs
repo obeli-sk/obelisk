@@ -14,12 +14,12 @@ impl From<tokio_postgres::Error> for DbErrorGeneric {
 
 impl From<tokio_postgres::Error> for DbErrorRead {
     fn from(err: tokio_postgres::Error) -> Self {
-        warn!(backtrace = %std::backtrace::Backtrace::capture(), "Postgres error {err:?}");
         let err = err.to_string();
         if err == "query returned an unexpected number of rows" {
             // Refactor after https://github.com/rust-postgres/rust-postgres/pull/1185 Make error::Kind public
             DbErrorRead::NotFound
         } else {
+            warn!(backtrace = %std::backtrace::Backtrace::capture(), "Postgres error {err:?}");
             DbErrorRead::from(DbErrorGeneric::Uncategorized(err.into()))
         }
     }
