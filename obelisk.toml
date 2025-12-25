@@ -9,11 +9,11 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Defaults are in `crates/db-sqlite/src/sqlite_dao.rs`.
 # database.sqlite.pragma = { "cache_size" = "3000" }
 
-## Postgres configuration
-# database.postgres.host = "127.0.0.1"
-# database.postgres.user = "postgres"
-# database.postgres.password = "postgres"
-# database.postgres.db_name = "obelisk"
+## Postgres configuration, keys support environment variable interpolation.
+# database.postgres.host =     "${POSTGRES_HOST}"
+# database.postgres.user =     "${POSTGRES_USER}"
+# database.postgres.password = "${POSTGRES_PASSWORD}"
+# database.postgres.db_name =  "${POSTGRES_DATABASE}"
 
 ## Global WASM Configuration
 # [wasm]
@@ -245,3 +245,6 @@ prefix = "obelisk.log"
 # | ${CONFIG_DIR}        | ~/.config/obelisk      | https://docs.rs/directories/6.0.0/directories/struct.ProjectDirs.html#method.config_dir
 # | ${OBELISK_TOML_DIR}  | N/A                    | Directory where the obelisk.toml file is located
 # | ${TEMP_DIR}          | /tmp                   | https://doc.rust-lang.org/std/env/fn.temp_dir.html
+
+## Appendix: Environment variable interpolation
+# Keys that support environment variable interpolation can use `${SOME}` to get the value of environment variable `SOME`.

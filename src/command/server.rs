@@ -665,12 +665,7 @@ async fn run_internal(
             .await?
         }
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
-            let config = db_postgres::postgres_dao::PostgresConfig {
-                host: postgres_config_toml.host,
-                user: postgres_config_toml.user,
-                password: postgres_config_toml.password,
-                db_name: postgres_config_toml.db_name,
-            };
+            let config = postgres_config_toml.as_config()?;
             let db_pool = Arc::new(
                 db_postgres::postgres_dao::PostgresPool::new(config)
                     .await

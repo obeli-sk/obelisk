@@ -1,12 +1,16 @@
 use super::{
     ComponentLocation, ConfigStoreCommon, config_holder::PathPrefixes, env_var::EnvVarConfig,
 };
-use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
+use crate::config::{
+    config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX},
+    env_var::replace_env_vars,
+};
 use anyhow::{anyhow, bail};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, InvalidNameError, StrVariant, check_name,
     component_id::InputContentDigest, prefixed_ulid::ExecutorId,
 };
+use db_postgres::postgres_dao::PostgresConfig;
 use db_sqlite::sqlite_dao::SqliteConfig;
 use log::{LoggingConfig, LoggingStyle};
 use schemars::JsonSchema;
@@ -107,13 +111,24 @@ impl Default for DatabaseConfigToml {
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PostgresConfigToml {
-    pub host: String,
-    pub user: String,
-    pub password: String,
-    pub db_name: String,
+    host: String,
+    user: String,
+    password: String,
+    db_name: String,
     /// Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism.
     #[serde(default = "default_subscription_interruption")]
     pub subscription_interruption: DurationConfigOptional,
+}
+
+impl PostgresConfigToml {
+    pub fn as_config(&self) -> Result<PostgresConfig, anyhow::Error> {
+        Ok(PostgresConfig {
+            host: replace_env_vars(&self.host)?,
+            user: replace_env_vars(&self.user)?,
+            password: replace_env_vars(&self.password)?,
+            db_name: replace_env_vars(&self.db_name)?,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]

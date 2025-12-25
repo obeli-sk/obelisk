@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer};
 
@@ -41,4 +42,32 @@ impl<'de> Deserialize<'de> for EnvVarConfig {
     {
         deserializer.deserialize_str(EnvVarConfigVisitor)
     }
+}
+
+pub(crate) fn replace_env_vars(input: &str) -> Result<String, anyhow::Error> {
+    let mut out = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '$' && chars.peek() == Some(&'{') {
+            chars.next(); // skip '{'
+            let mut key = String::new();
+
+            while let Some(&ch) = chars.peek() {
+                chars.next();
+                if ch == '}' {
+                    break;
+                }
+                key.push(ch);
+            }
+
+            let val = std::env::var(&key)
+                .map_err(|_| anyhow!("environment variable not set: `{key}`"))?;
+            out.push_str(&val);
+        } else {
+            out.push(c);
+        }
+    }
+
+    Ok(out)
 }

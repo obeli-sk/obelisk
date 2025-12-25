@@ -1,10 +1,10 @@
 ## Server configuration
 api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
 
-database.postgres.host = "127.0.0.1"
-database.postgres.user = "postgres"
-database.postgres.password = "postgres"
-database.postgres.db_name = "obelisk"
+database.postgres.host =     "${POSTGRES_HOST}"
+database.postgres.user =     "${POSTGRES_USER}"
+database.postgres.password = "${POSTGRES_PASSWORD}"
+database.postgres.db_name =  "${POSTGRES_DATABASE}"
 
 webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
 
