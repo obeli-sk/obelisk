@@ -72,7 +72,7 @@ impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
         _req: hyper::Request<B>,
     ) -> wasmtime::Result<Resource<HostIncomingRequest>>
     where
-        B: Body<Data = Bytes, Error = hyper::Error> + Send + Sync + 'static,
+        B: Body<Data = Bytes, Error = hyper::Error> + Send + 'static,
         Self: Sized,
     {
         unreachable!("incoming requests cannot be made")

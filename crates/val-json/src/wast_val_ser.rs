@@ -808,7 +808,7 @@ mod tests {
             .unwrap_err();
         assert_starts_with(
             &err,
-            "invalid type: floating point `6.805646932770577e38`, expected value matching F32",
+            "invalid type: floating point `6.805646932770577e+38`, expected value matching F32",
         );
     }
 

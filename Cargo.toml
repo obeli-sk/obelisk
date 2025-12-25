@@ -301,11 +301,11 @@ waki-macros = "0.5.1"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "39.0.1", features = ["memory-protection-keys"] }
-wasmtime-wasi = "39.0.1"
-wasmtime-wasi-io = "39.0.1"
-wasmtime-wasi-http = "39.0.1"
-wasmtime-environ = "39.0.1"
+wasmtime = { version = "40.0.0", features = ["memory-protection-keys"] }
+wasmtime-wasi = "40.0.0"
+wasmtime-wasi-io = "40.0.0"
+wasmtime-wasi-http = "40.0.0"
+wasmtime-environ = "40.0.0"
 # wasm-tools
 wast = "243.0.0"
 wit-parser = "0.243.0"
@@ -314,7 +314,7 @@ wit-component = "0.243.0"
 
 # testing components
 wasip2 = "1.0.1"
-wit-bindgen = "0.49.0"
+wit-bindgen = "0.50.0"
 wstd = "0.6.3"
 
 # otlp

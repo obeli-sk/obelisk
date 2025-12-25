@@ -19,7 +19,7 @@ use concepts::{
     StrVariant, TrapKind,
 };
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
-use http_body_util::combinators::BoxBody;
+use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
 use hyper::{Method, StatusCode, Uri};
@@ -411,6 +411,7 @@ impl<C: ClockFn, S: Sleep> HostJoinSet for WebhookEndpointCtx<C, S> {
 impl<C: ClockFn, S: Sleep> ExecutionHost for WebhookEndpointCtx<C, S> {}
 
 #[derive(thiserror::Error, Debug, Clone)]
+
 enum WebhookEndpointFunctionError {
     #[error(transparent)]
     DbError(#[from] DbErrorWrite),
@@ -969,7 +970,7 @@ struct RequestHandler<C: ClockFn + 'static, S: Sleep> {
 }
 
 fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
-    let body = BoxBody::new(http_body_util::BodyExt::map_err(
+    let body = UnsyncBoxBody::new(http_body_util::BodyExt::map_err(
         http_body_util::Full::new(Bytes::copy_from_slice(body.as_bytes())),
         |_| unreachable!(),
     ));
