@@ -96,7 +96,7 @@ pub(crate) async fn tick(
         match expired_timer {
             ExpiredTimer::Lock(expired) => {
                 let execution_id = expired.execution_id.clone();
-                let append = if expired.max_retries == None
+                let append = if expired.max_retries.is_none()
                     && expired.locked_at_version.0 + 1 < expired.next_version.0
                 {
                     // Workflow that made progress is unlocked and immediately available for locking.

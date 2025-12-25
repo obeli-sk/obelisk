@@ -269,7 +269,7 @@ impl CachingDbConnection {
     pub(crate) async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
-        start_idx: usize,
+        start_idx: u16,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
         self.db_connection
