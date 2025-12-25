@@ -501,7 +501,7 @@ impl Default for LockingStrategy {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecConfigToml {
     #[serde(default = "default_batch_size")]
-    batch_size: u32,
+    batch_size: u16,
     #[serde(default = "default_lock_expiry")]
     lock_expiry: DurationConfig,
     #[serde(default = "default_tick_sleep")]
@@ -1446,7 +1446,7 @@ const fn default_non_blocking_event_batching() -> u32 {
     DEFAULT_NON_BLOCKING_EVENT_BATCHING
 }
 
-const fn default_batch_size() -> u32 {
+const fn default_batch_size() -> u16 {
     5
 }
 

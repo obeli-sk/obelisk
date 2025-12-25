@@ -667,7 +667,7 @@ pub trait DbExecutor: Send + Sync {
     #[expect(clippy::too_many_arguments)]
     async fn lock_pending_by_ffqns(
         &self,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
@@ -681,7 +681,7 @@ pub trait DbExecutor: Send + Sync {
     #[expect(clippy::too_many_arguments)]
     async fn lock_pending_by_component_id(
         &self,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
         created_at: DateTime<Utc>,

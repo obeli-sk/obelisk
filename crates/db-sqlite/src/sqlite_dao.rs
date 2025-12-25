@@ -2664,10 +2664,11 @@ impl SqlitePool {
     /// Get executions and their next versions
     fn get_pending_by_ffqns(
         conn: &Connection,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: &[FunctionFqn],
     ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
+        let batch_size = usize::from(batch_size);
         let mut execution_ids_versions = Vec::with_capacity(batch_size);
         for ffqn in ffqns {
             // Select executions in PendingAt.
@@ -2701,7 +2702,7 @@ impl SqlitePool {
 
     fn get_pending_by_component_input_digest(
         conn: &Connection,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         input_digest: &InputContentDigest,
     ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
@@ -2836,7 +2837,7 @@ impl DbExecutor for SqlitePool {
     #[instrument(level = Level::TRACE, skip(self))]
     async fn lock_pending_by_ffqns(
         &self,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
@@ -2891,7 +2892,7 @@ impl DbExecutor for SqlitePool {
     #[instrument(level = Level::TRACE, skip(self))]
     async fn lock_pending_by_component_id(
         &self,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
         created_at: DateTime<Utc>,

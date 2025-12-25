@@ -2354,7 +2354,7 @@ async fn get_responses_with_offset(
 
 async fn get_pending_of_single_ffqn(
     tx: &Transaction<'_>,
-    batch_size: usize,
+    batch_size: u16,
     pending_at_or_sooner: DateTime<Utc>,
     ffqn: &FunctionFqn,
 ) -> Result<Vec<(ExecutionId, Version)>, ()> {
@@ -2369,7 +2369,7 @@ async fn get_pending_of_single_ffqn(
             &[
                 &pending_at_or_sooner,
                 &ffqn.to_string(),
-                &(batch_size as i64),
+                &(i64::from(batch_size)),
             ],
         )
         .await
@@ -2395,10 +2395,11 @@ async fn get_pending_of_single_ffqn(
 /// Get executions and their next versions
 async fn get_pending_by_ffqns(
     tx: &Transaction<'_>,
-    batch_size: usize,
+    batch_size: u16,
     pending_at_or_sooner: DateTime<Utc>,
     ffqns: &[FunctionFqn],
 ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
+    let batch_size = usize::from(batch_size);
     let mut execution_ids_versions = Vec::with_capacity(batch_size);
 
     for ffqn in ffqns {
@@ -2406,8 +2407,7 @@ async fn get_pending_by_ffqns(
         if needed == 0 {
             break;
         }
-
-        // Inline the logic of get_pending_of_single_ffqn to use the same transaction
+        let needed = u16::try_from(needed).expect("u16 - usize cannot overflow u16");
         if let Ok(execs) = get_pending_of_single_ffqn(tx, needed, pending_at_or_sooner, ffqn).await
         {
             execution_ids_versions.extend(execs);
@@ -2419,7 +2419,7 @@ async fn get_pending_by_ffqns(
 
 async fn get_pending_by_component_input_digest(
     tx: &Transaction<'_>,
-    batch_size: usize,
+    batch_size: u16,
     pending_at_or_sooner: DateTime<Utc>,
     input_digest: &InputContentDigest,
 ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
@@ -2435,7 +2435,7 @@ async fn get_pending_by_component_input_digest(
             &[
                 &pending_at_or_sooner,
                 &input_digest.as_slice(), // BYTEA
-                &(batch_size as i64),
+                &i64::from(batch_size),
             ],
         )
         .await
@@ -2556,7 +2556,7 @@ impl DbExecutor for PostgresConnection {
     #[instrument(level = Level::TRACE, skip(self))]
     async fn lock_pending_by_ffqns(
         &self,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
@@ -2615,7 +2615,7 @@ impl DbExecutor for PostgresConnection {
     #[instrument(level = Level::TRACE, skip(self))]
     async fn lock_pending_by_component_id(
         &self,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
         created_at: DateTime<Utc>,
