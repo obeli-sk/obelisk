@@ -30,7 +30,7 @@ use tracing::{Instrument, Level, Span, debug, error, info, info_span, instrument
 pub struct ExecConfig {
     pub lock_expiry: Duration,
     pub tick_sleep: Duration,
-    pub batch_size: u32,
+    pub batch_size: u16,
     pub component_id: ComponentId,
     pub task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     pub executor_id: ExecutorId,
@@ -275,12 +275,13 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 return Ok(ExecutionProgress::default());
             }
             let lock_expires_at = executed_at + self.config.lock_expiry;
+            let batch_size = u16::try_from(permits.len()).expect("ExecConfig.batch_size is u16");
             let locked_executions = match &self.locking_strategy_holder {
                 LockingStrategyHolder::ByFfqns(ffqns) => {
                     db_exec
                         .lock_pending_by_ffqns(
-                            permits.len(), // batch size
-                            executed_at,   // fetch expiring before now
+                            batch_size,
+                            executed_at, // fetch expiring before now
                             ffqns.clone(),
                             executed_at, // created at
                             self.config.component_id.clone(),
@@ -294,8 +295,8 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 LockingStrategyHolder::ByComponentId => {
                     db_exec
                         .lock_pending_by_component_id(
-                            permits.len(), // batch size
-                            executed_at,   // pending_at_or_sooner
+                            batch_size,
+                            executed_at, // pending_at_or_sooner
                             &self.config.component_id,
                             executed_at, // created at
                             self.config.executor_id,

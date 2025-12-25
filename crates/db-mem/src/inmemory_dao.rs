@@ -37,7 +37,7 @@ impl DbExecutor for InMemoryDbConnection {
     #[instrument(skip_all)]
     async fn lock_pending_by_ffqns(
         &self,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
@@ -63,7 +63,7 @@ impl DbExecutor for InMemoryDbConnection {
     #[instrument(skip_all)]
     async fn lock_pending_by_component_id(
         &self,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
         created_at: DateTime<Utc>,
@@ -431,7 +431,7 @@ mod index {
         pub(super) fn fetch_pending_by_ffqns<'a>(
             &self,
             journals: &'a BTreeMap<ExecutionId, ExecutionJournal>,
-            batch_size: usize,
+            batch_size: u16,
             expiring_at_or_before: DateTime<Utc>,
             ffqns: &[concepts::FunctionFqn],
         ) -> Vec<(&'a ExecutionJournal, DateTime<Utc> /* scheduled at */)> {
@@ -445,14 +445,14 @@ mod index {
                 .collect::<Vec<_>>();
             // filter by ffqn
             pending.retain(|(journal, _)| ffqns.contains(journal.ffqn()));
-            pending.truncate(batch_size);
+            pending.truncate(usize::from(batch_size));
             pending
         }
 
         pub(super) fn fetch_pending_by_component_id<'a>(
             &self,
             journals: &'a BTreeMap<ExecutionId, ExecutionJournal>,
-            batch_size: usize,
+            batch_size: u16,
             expiring_at_or_before: DateTime<Utc>,
             component_id: &ComponentId,
         ) -> Vec<(&'a ExecutionJournal, DateTime<Utc> /* scheduled at */)> {
@@ -466,7 +466,7 @@ mod index {
                 .collect::<Vec<_>>();
             // filter by ffqn
             pending.retain(|(journal, _)| component_id == journal.component_id_last());
-            pending.truncate(batch_size);
+            pending.truncate(usize::from(batch_size));
             pending
         }
 
@@ -647,7 +647,7 @@ impl DbHolder {
     #[expect(clippy::too_many_arguments)]
     fn lock_pending_by_ffqns(
         &mut self,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: &[FunctionFqn],
         created_at: DateTime<Utc>,
@@ -705,7 +705,7 @@ impl DbHolder {
     #[expect(clippy::too_many_arguments)]
     fn lock_pending_by_component_id(
         &mut self,
-        batch_size: usize,
+        batch_size: u16,
         pending_at_or_sooner: DateTime<Utc>,
         created_at: DateTime<Utc>,
         component_id: &ComponentId,
