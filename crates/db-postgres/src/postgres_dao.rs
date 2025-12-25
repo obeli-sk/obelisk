@@ -36,7 +36,7 @@ mod ddl {
 
     pub const ADMIN_DB_NAME: &str = "postgres";
 
-    pub const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 1;
+    pub const T_METADATA_EXPECTED_SCHEMA_VERSION: i32 = 1;
 
     // CREATE_TABLE_T_METADATA
     pub const CREATE_TABLE_T_METADATA: &str = r"
@@ -463,7 +463,7 @@ impl PostgresPool {
                 client
                     .execute(
                         "INSERT INTO t_metadata (schema_version, created_at) VALUES ($1, $2)",
-                        &[&(T_METADATA_EXPECTED_SCHEMA_VERSION as i32), &Utc::now()],
+                        &[&(T_METADATA_EXPECTED_SCHEMA_VERSION), &Utc::now()],
                     )
                     .await
                     .map_err(|err| {
@@ -473,7 +473,7 @@ impl PostgresPool {
             }
             Some(actual_version) => {
                 // Fail on unexpected `schema_version`.
-                if (actual_version as u32) != T_METADATA_EXPECTED_SCHEMA_VERSION {
+                if (actual_version) != T_METADATA_EXPECTED_SCHEMA_VERSION {
                     error!(
                         "Wrong schema version, expected {T_METADATA_EXPECTED_SCHEMA_VERSION}, got {actual_version}"
                     );
@@ -1004,7 +1004,9 @@ async fn update_state_locked_get_intermittent_event_count(
 
     // Postgres INTEGER = i32
     let count: i32 = row.get("intermittent_event_count");
-    Ok(count as u32)
+    let count = u32::try_from(count)
+        .map_err(|_| consistency_db_err("`intermittent_event_count` must not be negative"))?;
+    Ok(count)
 }
 
 async fn update_state_blocked(
@@ -1482,8 +1484,8 @@ fn parse_response_with_cursor(
     row: &tokio_postgres::Row,
 ) -> Result<ResponseWithCursor, DbErrorRead> {
     // Postgres BIGINT = i64. Casting to u32 to match Pagination signature.
-    let id_i64: i64 = row.get("id");
-    let id = id_i64 as u32;
+    let id = u32::try_from(row.get::<_, i64>("id"))
+        .map_err(|_| consistency_db_err("id must not be negative"))?;
 
     let created_at: DateTime<Utc> = row.get("created_at");
     let join_set_id_str: String = row.get("join_set_id");
@@ -1702,7 +1704,7 @@ async fn count_join_next(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
     join_set_id: &JoinSetId,
-) -> Result<u64, DbErrorRead> {
+) -> Result<u32, DbErrorRead> {
     let row = tx
             .query_one(
                 "SELECT COUNT(*) as count FROM t_execution_log WHERE execution_id = $1 AND join_set_id = $2 \
@@ -1716,15 +1718,15 @@ async fn count_join_next(
             .await
             .map_err(DbErrorRead::from)?;
 
-    let count: i64 = row.get("count");
-    Ok(count as u64)
+    let count = u32::try_from(row.get::<_, i64>("count")).expect("COUNT cannot be negative");
+    Ok(count)
 }
 
 async fn nth_response(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
     join_set_id: &JoinSetId,
-    skip_rows: u64,
+    skip_rows: u32,
 ) -> Result<Option<ResponseWithCursor>, DbErrorRead> {
     let row = tx
             .query_opt(
@@ -1744,7 +1746,7 @@ async fn nth_response(
                  &[
                      &execution_id.to_string(),
                      &join_set_id.to_string(),
-                     &(skip_rows as i64),
+                     &i64::from(skip_rows),
                  ]
             )
             .await
