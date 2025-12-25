@@ -10,7 +10,7 @@ use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, InvalidNameError, StrVariant, check_name,
     component_id::InputContentDigest, prefixed_ulid::ExecutorId,
 };
-use db_postgres::postgres_dao::PostgresConfig;
+use db_postgres::postgres_dao::{self, PostgresConfig};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use log::{LoggingConfig, LoggingStyle};
 use schemars::JsonSchema;
@@ -118,6 +118,8 @@ pub(crate) struct PostgresConfigToml {
     /// Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism.
     #[serde(default = "default_subscription_interruption")]
     pub subscription_interruption: DurationConfigOptional,
+    #[serde(default)]
+    provision_policy: PostgresProvisionPolicy,
 }
 
 impl PostgresConfigToml {
@@ -129,6 +131,21 @@ impl PostgresConfigToml {
             db_name: replace_env_vars(&self.db_name)?,
         })
     }
+    pub fn as_provision_policy(&self) -> postgres_dao::ProvisionPolicy {
+        match self.provision_policy {
+            PostgresProvisionPolicy::Never => postgres_dao::ProvisionPolicy::Never,
+            PostgresProvisionPolicy::Auto => postgres_dao::ProvisionPolicy::Auto,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PostgresProvisionPolicy {
+    #[default]
+    Never,
+    /// Create database if it does not exist.
+    Auto,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]

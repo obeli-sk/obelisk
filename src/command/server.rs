@@ -665,11 +665,13 @@ async fn run_internal(
             .await?
         }
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
-            let config = postgres_config_toml.as_config()?;
             let db_pool = Arc::new(
-                db_postgres::postgres_dao::PostgresPool::new(config)
-                    .await
-                    .context("canont initialize postgres connection pool")?,
+                db_postgres::postgres_dao::PostgresPool::new(
+                    postgres_config_toml.as_config()?,
+                    postgres_config_toml.as_provision_policy(),
+                )
+                .await
+                .context("canont initialize postgres connection pool")?,
             );
             let db_close = Box::pin({
                 let db_pool = db_pool.clone();

@@ -14,6 +14,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # database.postgres.user =     "${POSTGRES_USER}"
 # database.postgres.password = "${POSTGRES_PASSWORD}"
 # database.postgres.db_name =  "${POSTGRES_DATABASE}"
+# database.postgres.provision_policy = "never" # One of "auto"|"never". If `auto` is selected, missing database will be created on startup.
 
 ## Global WASM Configuration
 # [wasm]

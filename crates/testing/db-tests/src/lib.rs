@@ -6,6 +6,7 @@ use db_mem::inmemory_dao::InMemoryPool;
 use db_postgres::postgres_dao::DbInitialzationOutcome;
 use db_postgres::postgres_dao::PostgresConfig;
 use db_postgres::postgres_dao::PostgresPool;
+use db_postgres::postgres_dao::ProvisionPolicy;
 use db_sqlite::sqlite_dao::SqlitePool;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
@@ -59,7 +60,10 @@ impl Database {
                         .collect::<String>();
                     config.db_name = format!("{}_{}", config.db_name, suffix);
                     debug!("Using database {}", config.db_name);
-                    let (pool, outcome) = PostgresPool::new_with_outcome(config).await.unwrap();
+                    let (pool, outcome) =
+                        PostgresPool::new_with_outcome(config, ProvisionPolicy::Auto)
+                            .await
+                            .unwrap();
                     if outcome == DbInitialzationOutcome::Created {
                         let pool = Arc::new(pool);
                         let closeable = DbPoolCloseableWrapper::Postgres(pool.clone());

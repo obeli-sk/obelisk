@@ -383,6 +383,13 @@ impl PendingFfqnSubscribersHolder {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProvisionPolicy {
+    Never,
+    /// Create database if it does not exist.
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DbInitialzationOutcome {
     Created,
     Existing,
@@ -390,14 +397,24 @@ pub enum DbInitialzationOutcome {
 
 impl PostgresPool {
     #[instrument(skip_all, name = "postgres_new")]
-    pub async fn new(config: PostgresConfig) -> Result<PostgresPool, InitializationError> {
-        Self::new_with_outcome(config).await.map(|(db, _)| db)
+    pub async fn new(
+        config: PostgresConfig,
+        provision_policy: ProvisionPolicy,
+    ) -> Result<PostgresPool, InitializationError> {
+        Self::new_with_outcome(config, provision_policy)
+            .await
+            .map(|(db, _)| db)
     }
 
     pub async fn new_with_outcome(
         config: PostgresConfig,
+        provision_policy: ProvisionPolicy,
     ) -> Result<(PostgresPool, DbInitialzationOutcome), InitializationError> {
-        let outcome = create_database(&config).await?;
+        let outcome = if provision_policy == ProvisionPolicy::Auto {
+            create_database(&config).await?
+        } else {
+            DbInitialzationOutcome::Existing
+        };
         let mut cfg = Config::new();
         cfg.host = Some(config.host.clone());
         cfg.user = Some(config.user.clone());

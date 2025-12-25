@@ -5,6 +5,7 @@ database.postgres.host =     "${POSTGRES_HOST}"
 database.postgres.user =     "${POSTGRES_USER}"
 database.postgres.password = "${POSTGRES_PASSWORD}"
 database.postgres.db_name =  "${POSTGRES_DATABASE}"
+database.postgres.provision_policy = "auto"
 
 webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
 

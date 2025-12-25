@@ -689,6 +689,9 @@
         "password": {
           "type": "string"
         },
+        "provision_policy": {
+          "$ref": "#/$defs/PostgresProvisionPolicy"
+        },
         "subscription_interruption": {
           "description": "Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism.",
           "$ref": "#/$defs/DurationConfigOptional"
@@ -703,6 +706,21 @@
         "user",
         "password",
         "db_name"
+      ]
+    },
+    "PostgresProvisionPolicy": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "never"
+          ]
+        },
+        {
+          "description": "Create database if it does not exist.",
+          "type": "string",
+          "const": "auto"
+        }
       ]
     },
     "Rotation": {
