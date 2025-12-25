@@ -37,7 +37,7 @@ expression: execution_log
           "run_id": "Run_00000000000000000000000001",
           "lock_expires_at": "1970-01-01T00:00:01Z",
           "retry_config": {
-            "max_retries": 4294967295,
+            "max_retries": null,
             "retry_exp_backoff": {
               "secs": 0,
               "nanos": 0
@@ -182,7 +182,7 @@ expression: execution_log
           "run_id": "Run_00000000000000000000000002",
           "lock_expires_at": "1970-01-01T00:00:01Z",
           "retry_config": {
-            "max_retries": 4294967295,
+            "max_retries": null,
             "retry_exp_backoff": {
               "secs": 0,
               "nanos": 0
@@ -275,7 +275,7 @@ expression: execution_log
           "run_id": "Run_00000000000000000000000003",
           "lock_expires_at": "1970-01-01T00:00:01Z",
           "retry_config": {
-            "max_retries": 4294967295,
+            "max_retries": null,
             "retry_exp_backoff": {
               "secs": 0,
               "nanos": 0
@@ -360,7 +360,7 @@ expression: execution_log
           "run_id": "Run_00000000000000000000000004",
           "lock_expires_at": "1970-01-01T00:00:01Z",
           "retry_config": {
-            "max_retries": 4294967295,
+            "max_retries": null,
             "retry_exp_backoff": {
               "secs": 0,
               "nanos": 0
@@ -398,7 +398,7 @@ expression: execution_log
           "run_id": "Run_00000000000000000000000005",
           "lock_expires_at": "1970-01-01T00:00:01Z",
           "retry_config": {
-            "max_retries": 4294967295,
+            "max_retries": null,
             "retry_exp_backoff": {
               "secs": 0,
               "nanos": 0

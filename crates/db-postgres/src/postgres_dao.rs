@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     updated_at TIMESTAMPTZ NOT NULL,
     intermittent_event_count INTEGER NOT NULL CHECK (intermittent_event_count >=0),
 
-    max_retries INTEGER,
+    max_retries INTEGER CHECK (max_retries >= 0),
     retry_exp_backoff_millis BIGINT CHECK (retry_exp_backoff_millis >= 0),
     last_lock_version INTEGER CHECK (last_lock_version >= 0),
     executor_id TEXT,
@@ -947,7 +947,7 @@ async fn update_state_locked_get_intermittent_event_count(
     lock_expires_at: DateTime<Utc>,
     appending_version: &Version,
     retry_config: ComponentRetryConfig,
-) -> Result<u32, DbErrorWrite> {
+) -> Result<u16, DbErrorWrite> {
     debug!("Setting t_state to Locked(`{lock_expires_at:?}`)");
     let backoff_millis = i64::try_from(retry_config.retry_exp_backoff.as_millis())
         .map_err(|_| DbErrorGeneric::Uncategorized("backoff too big".into()))?; // BIGINT = i64
@@ -977,14 +977,14 @@ async fn update_state_locked_get_intermittent_event_count(
             WHERE execution_id = $8
             ",
             &[
-                &i32::from(appending_version.0),    // $1
-                &lock_expires_at,                   // $2
-                &STATE_LOCKED,                      // $3
-                &(retry_config.max_retries as i32), // $4
-                &backoff_millis,                    // $5
-                &executor_id.to_string(),           // $6
-                &run_id.to_string(),                // $7
-                &execution_id_str,                  // $8
+                &i32::from(appending_version.0),          // $1
+                &lock_expires_at,                         // $2
+                &STATE_LOCKED,                            // $3
+                &retry_config.max_retries.map(i32::from), // $4
+                &backoff_millis,                          // $5
+                &executor_id.to_string(),                 // $6
+                &run_id.to_string(),                      // $7
+                &execution_id_str,                        // $8
             ],
         )
         .await?;
@@ -1004,7 +1004,7 @@ async fn update_state_locked_get_intermittent_event_count(
 
     // Postgres INTEGER = i32
     let count: i32 = row.get("intermittent_event_count");
-    let count = u32::try_from(count)
+    let count = u16::try_from(count)
         .map_err(|_| consistency_db_err("`intermittent_event_count` must not be negative"))?;
     Ok(count)
 }
@@ -3339,8 +3339,16 @@ impl DbConnection for PostgresConnection {
             let corresponding_version = Version::try_from(corresponding_version)
                 .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
-            let intermittent_event_count: i32 = row.get("intermittent_event_count");
-            let max_retries: i32 = row.get("max_retries");
+            let intermittent_event_count =
+                u16::try_from(row.get::<_, i32>("intermittent_event_count")).map_err(|_| {
+                    consistency_db_err("`intermittent_event_count` must not be negative")
+                })?;
+
+            let max_retries = row
+                .get::<_, Option<i32>>("max_retries")
+                .map(u16::try_from)
+                .transpose()
+                .map_err(|_| consistency_db_err("`max_retries` must not be negative"))?;
             let retry_exp_backoff_millis: i64 = row.get("retry_exp_backoff_millis");
             let executor_id: String = row.get("executor_id");
             let executor_id = ExecutorId::from_str(&executor_id)
@@ -3353,8 +3361,8 @@ impl DbConnection for PostgresConnection {
                 execution_id,
                 locked_at_version: last_lock_version,
                 next_version: corresponding_version.increment(),
-                intermittent_event_count: intermittent_event_count as u32,
-                max_retries: max_retries as u32,
+                intermittent_event_count,
+                max_retries,
                 retry_exp_backoff: Duration::from_millis(retry_exp_backoff_millis as u64),
                 locked_by: LockedBy {
                     executor_id,

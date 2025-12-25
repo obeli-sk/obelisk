@@ -1106,7 +1106,7 @@ mod tests {
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let retry_exp_backoff = Duration::from_millis(100);
         let retry_config = ComponentRetryConfig {
-            max_retries: 1,
+            max_retries: Some(1),
             retry_exp_backoff,
         };
         let exec_config = ExecConfig {
@@ -1567,7 +1567,7 @@ mod tests {
         let lock_expiry = Duration::from_millis(100);
         let timeout_duration = Duration::from_millis(300);
         let retry_config = ComponentRetryConfig {
-            max_retries: 1,
+            max_retries: Some(1),
             retry_exp_backoff: timeout_duration,
         };
         let exec_config = ExecConfig {

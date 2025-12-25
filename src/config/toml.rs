@@ -549,7 +549,7 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
-    pub(crate) max_retries: u32,
+    pub(crate) max_retries: u16,
     #[serde(default = "default_retry_exp_backoff")]
     pub(crate) retry_exp_backoff: DurationConfig,
     #[serde(default)]
@@ -690,7 +690,7 @@ impl ActivityWasmComponentConfigToml {
             fuel,
         };
         let retry_config = ComponentRetryConfig {
-            max_retries: self.max_retries,
+            max_retries: Some(self.max_retries),
             retry_exp_backoff: self.retry_exp_backoff.into(),
         };
         Ok(ActivityWasmConfigVerified {
@@ -878,7 +878,7 @@ impl WorkflowComponentConfigToml {
         let frame_files_to_sources =
             verify_frame_files_to_sources(self.backtrace.frame_files_to_sources, &path_prefixes);
         let retry_config = ComponentRetryConfig {
-            max_retries: u32::MAX,
+            max_retries: None,
             retry_exp_backoff,
         };
         Ok(WorkflowConfigVerified {
@@ -1434,7 +1434,7 @@ const fn default_retry_on_err() -> bool {
     true
 }
 
-const fn default_max_retries() -> u32 {
+const fn default_max_retries() -> u16 {
     5
 }
 

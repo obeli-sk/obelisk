@@ -1335,7 +1335,7 @@ impl SqlitePool {
         lock_expires_at: DateTime<Utc>,
         appending_version: &Version,
         retry_config: ComponentRetryConfig,
-    ) -> Result<u32, DbErrorWrite> {
+    ) -> Result<u16, DbErrorWrite> {
         debug!("Setting t_state to Locked(`{lock_expires_at:?}`)");
         let backoff_millis = i64::try_from(retry_config.retry_exp_backoff.as_millis())
             .map_err(|_| DbErrorGeneric::Uncategorized("backoff too big".into()))?; // Keep equal to Postgres' BIGINT = i64

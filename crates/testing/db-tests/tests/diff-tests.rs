@@ -191,7 +191,7 @@ async fn persist_finished_event(
                 RunId::generate(),
                 ComponentRetryConfig {
                     retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
+                    max_retries: Some(0),
                 },
             )
             .await

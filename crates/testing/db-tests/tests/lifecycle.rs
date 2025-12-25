@@ -219,7 +219,7 @@ async fn lock_pending(
                 run_id,
                 ComponentRetryConfig {
                     retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
+                    max_retries: Some(0),
                 },
             )
             .await
@@ -235,7 +235,7 @@ async fn lock_pending(
                 run_id,
                 ComponentRetryConfig {
                     retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
+                    max_retries: Some(0),
                 },
             )
             .await
@@ -332,7 +332,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
                 RunId::generate(),
                 ComponentRetryConfig {
                     retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
+                    max_retries: Some(0),
                 },
             )
             .await
@@ -356,7 +356,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
                 RunId::generate(),
                 ComponentRetryConfig {
                     retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
+                    max_retries: Some(0),
                 },
             )
             .await
@@ -458,7 +458,7 @@ async fn lock_and_attept_to_extend(
                 run_pending,
                 ComponentRetryConfig {
                     retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
+                    max_retries: Some(0),
                 },
             )
             .await
@@ -486,7 +486,7 @@ async fn lock_and_attept_to_extend(
             created_at + lock_expiry,
             ComponentRetryConfig {
                 retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
+                max_retries: Some(0),
             },
         )
         .await
@@ -538,7 +538,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(database: Database) {
                 RunId::generate(),
                 ComponentRetryConfig {
                     retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
+                    max_retries: Some(0),
                 },
             )
             .await
@@ -586,7 +586,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(database: Database) {
                 RunId::generate(),
                 ComponentRetryConfig {
                     retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
+                    max_retries: Some(0),
                 },
             )
             .await
@@ -622,7 +622,7 @@ async fn lock_pending_while_nothing_is_pending_should_be_noop(database: Database
                 RunId::generate(),
                 ComponentRetryConfig {
                     retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
+                    max_retries: Some(0),
                 },
             )
             .await
@@ -659,7 +659,7 @@ async fn creating_execution_twice_should_fail(database: Database) {
                 RunId::generate(),
                 ComponentRetryConfig {
                     retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
+                    max_retries: Some(0),
                 },
             )
             .await
@@ -756,7 +756,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
                 RunId::generate(),
                 ComponentRetryConfig {
                     retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
+                    max_retries: Some(0),
                 },
             )
             .await
@@ -785,7 +785,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
                     RunId::generate(),
                     ComponentRetryConfig {
                         retry_exp_backoff: Duration::ZERO,
-                        max_retries: 0,
+                        max_retries: Some(0),
                     },
                 )
                 .await
@@ -797,7 +797,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
 }
 
 pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_clock: SimClock) {
-    const MAX_RETRIES: u32 = 1;
+    const MAX_RETRIES: u16 = 1;
     const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(100);
 
     let execution_id = ExecutionId::generate();
@@ -834,7 +834,7 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
                 RunId::generate(),
                 ComponentRetryConfig {
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
-                    max_retries: MAX_RETRIES,
+                    max_retries: Some(MAX_RETRIES),
                 },
             )
             .await
@@ -857,7 +857,7 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
         assert_eq!(Version::new(1), lock.locked_at_version);
         assert_eq!(Version::new(2), lock.next_version);
         assert_eq!(0, lock.intermittent_event_count);
-        assert_eq!(MAX_RETRIES, lock.max_retries);
+        assert_eq!(Some(MAX_RETRIES), lock.max_retries);
         assert_eq!(RETRY_EXP_BACKOFF, lock.retry_exp_backoff);
     }
 }
@@ -1165,7 +1165,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
                     RunId::generate(),
                     ComponentRetryConfig {
                         retry_exp_backoff: Duration::ZERO,
-                        max_retries: 0,
+                        max_retries: Some(0),
                     },
                 )
                 .await
@@ -1182,7 +1182,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
                     RunId::generate(),
                     ComponentRetryConfig {
                         retry_exp_backoff: Duration::ZERO,
-                        max_retries: 0,
+                        max_retries: Some(0),
                     },
                 )
                 .await
@@ -1271,7 +1271,7 @@ async fn lock(
             run_id,
             ComponentRetryConfig {
                 retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
+                max_retries: Some(0),
             },
         )
         .await
@@ -1334,7 +1334,7 @@ async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimClock)
         locked_at_version: Version::new(1),
         next_version: version,
         intermittent_event_count: 0,
-        max_retries: 0,
+        max_retries: Some(0),
         retry_exp_backoff: Duration::ZERO,
         locked_by: LockedBy {
             executor_id,
@@ -1525,7 +1525,7 @@ async fn get_expired_times_with_execution_that_made_progress(
         locked_at_version: Version(1),
         next_version: Version::new(3),
         intermittent_event_count: 0,
-        max_retries: 0,
+        max_retries: Some(0),
         retry_exp_backoff: Duration::ZERO,
         locked_by: LockedBy {
             executor_id: exec1,

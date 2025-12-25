@@ -48,16 +48,19 @@ pub struct ExecutionLog {
 }
 
 impl ExecutionLog {
+    /// Return some duration after which the execution will be retried.
+    /// Return `None` if no more retries are allowed.
     #[must_use]
     pub fn can_be_retried_after(
-        temporary_event_count: u32,
-        max_retries: u32,
+        temporary_event_count: u16,
+        max_retries: Option<u16>,
         retry_exp_backoff: Duration,
     ) -> Option<Duration> {
-        // If max_retries == u32::MAX, wrapping is OK after this succeeds - we want to retry forever.
-        if temporary_event_count <= max_retries {
+        // If max_retries == None, wrapping is OK after this succeeds - we want to retry forever.
+        if temporary_event_count <= max_retries.unwrap_or(u16::MAX) {
             // TODO: Add test for number of retries
-            let duration = retry_exp_backoff * 2_u32.saturating_pow(temporary_event_count - 1);
+            let duration =
+                retry_exp_backoff * 2_u32.saturating_pow(u32::from(temporary_event_count - 1));
             Some(duration)
         } else {
             None
@@ -66,10 +69,10 @@ impl ExecutionLog {
 
     #[must_use]
     pub fn compute_retry_duration_when_retrying_forever(
-        temporary_event_count: u32,
+        temporary_event_count: u16,
         retry_exp_backoff: Duration,
     ) -> Duration {
-        Self::can_be_retried_after(temporary_event_count, u32::MAX, retry_exp_backoff)
+        Self::can_be_retried_after(temporary_event_count, None, retry_exp_backoff)
             .expect("`max_retries` set to MAX must never return None")
     }
 
@@ -585,7 +588,7 @@ pub struct LockedExecution {
     pub event_history: Vec<(HistoryEvent, Version)>,
     pub responses: Vec<JoinSetResponseEventOuter>,
     pub parent: Option<(ExecutionId, JoinSetId)>,
-    pub intermittent_event_count: u32,
+    pub intermittent_event_count: u16,
 }
 
 pub type LockPendingResponse = Vec<LockedExecution>;
@@ -1195,7 +1198,7 @@ mod wasm_backtrace {
     }
 }
 
-pub type ResponseCursorType = u32; // FIXME: Switch to u64
+pub type ResponseCursorType = u32; // FIXME: Switch to u64 ?
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResponseWithCursor {
@@ -1328,8 +1331,8 @@ pub struct ExpiredLock {
     pub locked_at_version: Version,
     pub next_version: Version,
     /// As the execution may still be running, this represents the number of intermittent failures + timeouts prior to this execution.
-    pub intermittent_event_count: u32,
-    pub max_retries: u32,
+    pub intermittent_event_count: u16,
+    pub max_retries: Option<u16>,
     pub retry_exp_backoff: Duration,
     pub locked_by: LockedBy,
 }

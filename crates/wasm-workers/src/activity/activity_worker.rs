@@ -1280,7 +1280,7 @@ pub(crate) mod tests {
                 TokioSleep,
             );
             let retry_config = ComponentRetryConfig {
-                max_retries: 1,
+                max_retries: Some(1),
                 retry_exp_backoff: RETRY_EXP_BACKOFF,
             };
             let exec_config = ExecConfig {
@@ -1447,7 +1447,7 @@ pub(crate) mod tests {
             let parent_preopen_tempdir = tempfile::tempdir().unwrap();
             let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
             let retry_config = ComponentRetryConfig {
-                max_retries: 1, // should fail in first try
+                max_retries: Some(1), // should fail in first try
                 retry_exp_backoff: Duration::ZERO,
             };
             let exec = new_activity_with_config(
