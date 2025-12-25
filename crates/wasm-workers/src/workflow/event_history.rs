@@ -370,20 +370,28 @@ impl EventHistory {
             while let Some(timeout_fut) =
                 self.deadline_tracker.track(self.subscription_interruption)
             {
+                let start_idx = u32::try_from(self.responses.len()).map_err(|_| {
+                    ApplyError::ConstraintViolation(
+                        "number of responses must not exceed u32::MAX".into(),
+                    )
+                })?;
                 match db_connection
                     .subscribe_to_next_responses(
                         &db_connection.execution_id,
-                        u32::try_from(self.responses.len()).map_err(|_| {
-                            ApplyError::ConstraintViolation(
-                                "number of responses must not exceed u32::MAX".into(),
-                            )
-                        })?,
+                        start_idx,
                         timeout_fut,
                     )
                     .await
                 {
                     Ok(next_responses) => {
-                        debug!("Got next responses {next_responses:?}");
+                        debug!(
+                            "Original {orig_len} responses are extended by {len} with start_idx {start_idx} first: {first:?}, last: {last:?}",
+                            orig_len = self.responses.len(),
+                            len = next_responses.len(),
+                            first = next_responses.first(),
+                            last = next_responses.last(),
+                        );
+                        trace!("Got next responses {next_responses:?}");
                         self.responses.extend(
                             next_responses
                                 .into_iter()
@@ -1902,7 +1910,7 @@ impl SubmitChildExecution {
                 called_at,
             )
             .await?;
-        // TODO: return void
+        // TODO: return void, execution id is already known at this point
         let value =
             assert_matches!(value, ChildReturnValue::WastVal(wast_val) => wast_val.as_val());
 
@@ -2099,7 +2107,7 @@ impl JoinNextRequestingFfqn {
                         })?
                         .shift_remove(actual_id);
                     assert!(was_present.is_some());
-                }
+                } // all-processed does not change `index_join_set_to_unawaited_requests`
                 await_ext_err.as_wast_val_result()
             }
         }
