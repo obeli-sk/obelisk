@@ -398,8 +398,8 @@ impl From<grpc_gen::ExecutionFailureKind> for ExecutionFailureKind {
     }
 }
 
-pub fn convert_length(l: u32) -> Result<u8, tonic::Status> {
-    u8::try_from(l).map_err(|_| tonic::Status::invalid_argument("`length` must be an u8"))
+pub fn convert_length(l: u32) -> Result<u16, tonic::Status> {
+    u16::try_from(l).map_err(|_| tonic::Status::invalid_argument("`length` must be an u8"))
 }
 
 impl TryFrom<grpc_gen::list_executions_request::Pagination> for ExecutionListPagination {

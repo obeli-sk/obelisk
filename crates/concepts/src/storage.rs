@@ -1234,7 +1234,7 @@ impl Default for ExecutionListPagination {
 }
 impl ExecutionListPagination {
     #[must_use]
-    pub fn length(&self) -> u8 {
+    pub fn length(&self) -> u16 {
         match self {
             ExecutionListPagination::CreatedBy(pagination) => pagination.length(),
             ExecutionListPagination::ExecutionId(pagination) => pagination.length(),
@@ -1245,18 +1245,18 @@ impl ExecutionListPagination {
 #[derive(Debug, Clone, Copy)]
 pub enum Pagination<T> {
     NewerThan {
-        length: u8,
+        length: u16,
         cursor: T,
         including_cursor: bool,
     },
     OlderThan {
-        length: u8,
+        length: u16,
         cursor: T,
         including_cursor: bool,
     },
 }
 impl<T> Pagination<T> {
-    pub fn length(&self) -> u8 {
+    pub fn length(&self) -> u16 {
         match self {
             Pagination::NewerThan { length, .. } | Pagination::OlderThan { length, .. } => *length,
         }

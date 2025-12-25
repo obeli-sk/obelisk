@@ -113,7 +113,7 @@ struct ExecutionsListParams {
     #[serde(default)]
     show_nested: bool,
     cursor: Option<ExecutionListCursorDeser>,
-    length: Option<u8>,
+    length: Option<u16>,
     #[serde(default)]
     including_cursor: bool,
     #[serde(default)]
@@ -347,7 +347,7 @@ async fn execution_events(
 struct ExecutionResponsesParams {
     #[serde(default)]
     cursor_from: u32,
-    length: Option<u8>,
+    length: Option<u16>,
     #[serde(default)]
     including_cursor: bool,
 }
@@ -357,7 +357,7 @@ async fn execution_responses(
     Query(params): Query<ExecutionResponsesParams>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
-    const DEFAULT_LENGTH: u8 = 20;
+    const DEFAULT_LENGTH: u16 = 20;
     let conn = state
         .db_pool
         .external_api_conn()
