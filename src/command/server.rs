@@ -955,6 +955,7 @@ impl ServerCompiledLinked {
 }
 
 #[instrument(skip_all)]
+#[expect(clippy::too_many_arguments)]
 async fn spawn_tasks_and_threads(
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
