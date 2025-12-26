@@ -292,6 +292,7 @@ pub async fn server<C: ClockFn + 'static, S: Sleep>(
     sleep: S,
     fn_registry: Arc<dyn FunctionRegistry>,
     max_inflight_requests: Option<Arc<tokio::sync::Semaphore>>,
+    server_termination_watcher: watch::Receiver<()>,
 ) -> Result<(), WebhookServerError> {
     let router = Arc::new(router);
     loop {
@@ -301,8 +302,9 @@ pub async fn server<C: ClockFn + 'static, S: Sleep>(
             .map_err(WebhookServerError::SocketError)?;
         let stream = TokioIo::new(stream);
 
-        // Spawn a tokio task for each TCP stream.
-        tokio::task::spawn({
+        // Spawn a tokio task for each TCP connection.
+        tokio::task::spawn(
+            {
                 let router = router.clone();
                 let engine = engine.clone();
                 let clock_fn = clock_fn.clone();
@@ -312,14 +314,15 @@ pub async fn server<C: ClockFn + 'static, S: Sleep>(
                 let http_server = http_server.clone();
                 let connection_span = info_span!("connection", %http_server);
                 let max_inflight_requests = max_inflight_requests.clone();
+                let server_termination_watcher = server_termination_watcher.clone();
                 async move {
-                    let (cancel_sender, cancel_token) = watch::channel(());
+                    let (connection_drop_sender, connection_drop_watcher) = watch::channel(());
+
                     let res = http1::Builder::new()
                         .serve_connection(
                             stream,
                             hyper::service::service_fn({
                                 move |req| {
-                                    let cancel_token = cancel_token.clone();
                                     let execution_id = ExecutionId::generate().get_top_level();
                                     trace!(%execution_id, method = %req.method(), uri = %req.uri(), "Processing request");
                                     RequestHandler {
@@ -330,19 +333,21 @@ pub async fn server<C: ClockFn + 'static, S: Sleep>(
                                         fn_registry: fn_registry.clone(),
                                         execution_id,
                                         router: router.clone(),
-                                        cancel_token
+                                        connection_drop_watcher: connection_drop_watcher.clone(),
+                                        server_termination_watcher: server_termination_watcher.clone(),
                                     }
                                     .handle_request(req, max_inflight_requests.clone())
-                                    }.instrument(info_span!(parent: &connection_span, "request"))
-                    })
+                                }.instrument(info_span!(parent: &connection_span, "request"))
+                            })
                         )
                         .await;
                     if let Err(err) = res {
                         info!(%http_server, "Error serving connection: {err:?}");
-                        drop(cancel_sender);
+                        drop(connection_drop_sender);
                     }
                 }
-                }.instrument(debug_span!("tcp stream")));
+            }.instrument(debug_span!("tcp stream"))
+        );
     }
 }
 
@@ -371,7 +376,8 @@ struct WebhookEndpointCtx<C: ClockFn, S: Sleep> {
     version: Option<Version>,
     component_logger: ComponentLogger,
     subscription_interruption: Option<Duration>,
-    cancel_token: watch::Receiver<()>,
+    connection_drop_watcher: watch::Receiver<()>,
+    server_termination_watcher: watch::Receiver<()>,
 }
 
 impl<C: ClockFn, S: Sleep> HostJoinSet for WebhookEndpointCtx<C, S> {
@@ -473,8 +479,10 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
             "direct call: no-ext export must return `result`, -schedule returns `execuiton-id`"
         );
 
-        if self.cancel_token.has_changed().is_err() {
-            debug!("Connection closed, not proceeding");
+        if self.connection_drop_watcher.has_changed().is_err()
+            || self.server_termination_watcher.has_changed().is_err()
+        {
+            debug!("Cancellation request detected");
             return Err(WebhookEndpointFunctionError::ConnectionClosed);
         }
 
@@ -663,7 +671,8 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                 &self.sleep,
                 db_connection.as_ref(),
                 child_execution_id,
-                &self.cancel_token,
+                &self.connection_drop_watcher,
+                &self.server_termination_watcher,
             )
             .await?;
             results[0] = res.into_wast_val(move || return_type_tl).as_val();
@@ -693,22 +702,21 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
         sleep: &S,
         db_connection: &dyn DbConnection,
         child_execution_id: ExecutionIdDerived,
-        cancel_token: &watch::Receiver<()>,
+        connection_drop_watcher: &watch::Receiver<()>,
+        server_termination_watcher: &watch::Receiver<()>,
     ) -> Result<SupportedFunctionReturnValue, WebhookEndpointFunctionError> {
         let child_execution_id = ExecutionId::Derived(child_execution_id);
         let res = if let Some(subscription_interruption) = subscription_interruption {
             loop {
                 let sleep = sleep.clone();
                 let timeout = Box::pin({
-                    let mut cancel_token = cancel_token.clone();
+                    let mut connection_drop_watcher = connection_drop_watcher.clone();
+                    let mut server_termination_watcher = server_termination_watcher.clone();
                     async move {
                         select! {
-                            () = sleep.sleep(subscription_interruption)=>{
-                                TimeoutOutcome::Timeout
-                            },
-                            _ = cancel_token.changed() => {
-                                TimeoutOutcome::Cancel
-                            }
+                            () = sleep.sleep(subscription_interruption) => TimeoutOutcome::Timeout,
+                            _ = connection_drop_watcher.changed() => TimeoutOutcome::Cancel,
+                            _ = server_termination_watcher.changed() => TimeoutOutcome::Cancel,
                         }
                     }
                 });
@@ -731,9 +739,13 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
             }
         } else {
             let timeout = Box::pin({
-                let mut cancel_token = cancel_token.clone();
+                let mut connection_drop_watcher = connection_drop_watcher.clone();
+                let mut server_termination_watcher = server_termination_watcher.clone();
                 async move {
-                    let _ = cancel_token.changed().await;
+                    select! {
+                        _ = connection_drop_watcher.changed() => {},
+                        _ = server_termination_watcher.changed() => {}
+                    }
                     TimeoutOutcome::Cancel
                 }
             });
@@ -788,7 +800,8 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
         params: impl Iterator<Item = (&'a str, &'a str)>,
         execution_id: ExecutionIdTopLevel,
         request_span: Span,
-        cancel_token: watch::Receiver<()>,
+        connection_drop_watcher: watch::Receiver<()>,
+        server_termination_watcher: watch::Receiver<()>,
     ) -> Store<WebhookEndpointCtx<C, S>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
         if let Some(stdout) = config.forward_stdout {
@@ -833,7 +846,8 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
             execution_id,
             component_logger: ComponentLogger { span: request_span },
             subscription_interruption: config.subscription_interruption,
-            cancel_token,
+            connection_drop_watcher,
+            server_termination_watcher,
         };
         let mut store = Store::new(engine, ctx);
 
@@ -975,7 +989,8 @@ struct RequestHandler<C: ClockFn + 'static, S: Sleep> {
     fn_registry: Arc<dyn FunctionRegistry>,
     execution_id: ExecutionIdTopLevel,
     router: Arc<MethodAwareRouter<WebhookEndpointInstance<C, S>>>,
-    cancel_token: watch::Receiver<()>,
+    connection_drop_watcher: watch::Receiver<()>,
+    server_termination_watcher: watch::Receiver<()>,
 }
 
 fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
@@ -1064,7 +1079,8 @@ impl<C: ClockFn + 'static, S: Sleep> RequestHandler<C, S> {
                 matched.params().iter(),
                 self.execution_id,
                 request_span.clone(),
-                self.cancel_token,
+                self.connection_drop_watcher,
+                self.server_termination_watcher,
             );
             let req = store
                 .data_mut()
@@ -1193,6 +1209,7 @@ pub(crate) mod tests {
         use test_db_macro::expand_enum_database;
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
+        use tokio::sync::watch;
         use tracing::info;
 
         struct AbortOnDrop(tokio::task::AbortHandle);
@@ -1269,7 +1286,7 @@ pub(crate) mod tests {
                 let tcp_listener = TcpListener::bind(addr).await.unwrap();
                 let server_addr = tcp_listener.local_addr().unwrap();
                 info!("Listening on port {}", server_addr.port());
-
+                let (_server_termination_sender, server_termination_watcher) = watch::channel(());
                 let server = AbortOnDrop(
                     tokio::spawn(webhook_trigger::server(
                         StrVariant::Static("test"),
@@ -1281,6 +1298,7 @@ pub(crate) mod tests {
                         TokioSleep,
                         fn_registry,
                         None,
+                        server_termination_watcher,
                     ))
                     .abort_handle(),
                 );

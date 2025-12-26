@@ -660,6 +660,7 @@ async fn run_internal(
                 timers_watcher,
                 cancel_watcher,
                 &cancel_registry,
+                &termination_watcher,
             )
             .instrument(span)
             .await?
@@ -687,6 +688,7 @@ async fn run_internal(
                 timers_watcher,
                 cancel_watcher,
                 &cancel_registry,
+                &termination_watcher,
             )
             .instrument(span)
             .await?
@@ -961,6 +963,7 @@ async fn spawn_tasks_and_threads(
     timers_watcher: TimersWatcherTomlConfig,
     cancel_watcher: CancelWatcherTomlConfig,
     cancel_registry: &CancelRegistry,
+    termination_watcher: &watch::Receiver<()>,
 ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
     // Start components requiring a database
     let epoch_ticker = EpochTicker::spawn_new(
@@ -1040,6 +1043,7 @@ async fn spawn_tasks_and_threads(
         db_pool.clone(),
         Arc::from(server_compiled_linked.component_registry_ro.clone()),
         global_webhook_instance_limiter.clone(),
+        termination_watcher,
     )
     .await?;
     let server_init = ServerInit {
@@ -1106,6 +1110,7 @@ async fn start_http_servers(
     db_pool: Arc<dyn DbPool>,
     fn_registry: Arc<dyn FunctionRegistry>,
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    termination_watcher: &watch::Receiver<()>,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
     let mut abort_handles = Vec::with_capacity(http_servers_to_webhooks.len());
     let engine = &engines.webhook_engine;
@@ -1146,6 +1151,7 @@ async fn start_http_servers(
                 TokioSleep,
                 fn_registry.clone(),
                 global_webhook_instance_limiter.clone(),
+                termination_watcher.clone(),
             ))
             .abort_handle(),
         );
