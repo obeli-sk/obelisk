@@ -1288,11 +1288,11 @@ pub(crate) mod tests {
                 );
                 SetUpFiboWebhook {
                     server,
+                    guard,
+                    db_pool,
                     server_addr,
                     activity_exec,
                     workflow_exec,
-                    guard,
-                    db_pool,
                     sim_clock,
                     db_close,
                     server_termination_sender,
