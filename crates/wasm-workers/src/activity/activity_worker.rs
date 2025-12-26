@@ -884,7 +884,7 @@ pub(crate) mod tests {
                 expected,
                 assert_matches!(
                     db_connection
-                        .wait_for_finished_result(&execution_id, Some(Box::pin(tokio::time::sleep(Duration::from_secs(1)))))
+                        .wait_for_finished_result(&execution_id, None)
                         .await
                         .unwrap(),
                     actual => actual

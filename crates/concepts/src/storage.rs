@@ -564,7 +564,7 @@ impl From<DbErrorRead> for DbErrorWrite {
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum DbErrorReadWithTimeout {
     #[error("timeout")]
-    Timeout,
+    Timeout(TimeoutOutcome),
     #[error(transparent)]
     DbErrorRead(#[from] DbErrorRead),
 }
@@ -982,7 +982,7 @@ pub trait DbConnection: DbExecutor {
         &self,
         execution_id: &ExecutionId,
         start_idx: u32,
-        timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
+        timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout>;
 
     /// Notification mechainism with no strict guarantees for getting the finished result.
@@ -992,12 +992,19 @@ pub trait DbConnection: DbExecutor {
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,
-        timeout_fut: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+        timeout_fut: Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>>,
+        // TODO: camcel fut
     ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout>;
 
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite>;
 
     async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeoutOutcome {
+    Timeout,
+    Cancel,
 }
 
 #[cfg(feature = "test")]
@@ -1313,7 +1320,7 @@ pub async fn wait_for_pending_state_fn<T: Debug>(
     if let Some(timeout) = timeout {
         tokio::select! { // future's liveness: Dropping the loser immediately.
             res = fut => res,
-            () = tokio::time::sleep(timeout) => Err(DbErrorReadWithTimeout::Timeout)
+            () = tokio::time::sleep(timeout) => Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout))
         }
     } else {
         fut.await

@@ -14,7 +14,8 @@ use concepts::storage::{
     DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
     DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionLog,
     ExecutionRequest, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetResponse,
-    JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedExecution, Version, VersionType,
+    JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedExecution, TimeoutOutcome,
+    Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
@@ -259,7 +260,7 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         execution_id: &ExecutionId,
         start_idx: u32,
-        interrupt_after: Pin<Box<dyn Future<Output = ()> + Send>>,
+        interrupt_after: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
         let either = {
             let mut guard = self.0.lock().unwrap();
@@ -274,7 +275,7 @@ impl DbConnection for InMemoryDbConnection {
                     .map(|it| vec![it])
                     .map_err(|_| DbErrorReadWithTimeout::from(DbErrorGeneric::Close)),
 
-                    () = interrupt_after => Err(DbErrorReadWithTimeout::Timeout),
+                    outcome = interrupt_after => Err(DbErrorReadWithTimeout::Timeout(outcome)),
                 }
             }
         }
@@ -336,7 +337,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,
-        timeout_fut: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+        timeout_fut: Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>>,
     ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
         let execution_log = {
             let fut = async move {
@@ -355,7 +356,7 @@ impl DbConnection for InMemoryDbConnection {
             if let Some(timeout_fut) = timeout_fut {
                 tokio::select! { // future's liveness: Dropping the loser immediately.
                     res = fut => res,
-                    () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout)
+                    outcome = timeout_fut => Err(DbErrorReadWithTimeout::Timeout(outcome))
                 }
             } else {
                 fut.await

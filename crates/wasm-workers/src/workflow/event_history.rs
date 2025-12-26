@@ -37,6 +37,7 @@ use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::Locked;
 use concepts::storage::PersistKind;
+use concepts::storage::TimeoutOutcome;
 use concepts::storage::{
     AppendRequest, CreateRequest, ExecutionRequest, JoinSetResponse, JoinSetResponseEvent, Version,
 };
@@ -408,9 +409,12 @@ impl EventHistory {
                     Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {
                         return Err(ApplyError::DbError(DbErrorWrite::from(err)));
                     }
-                    Err(DbErrorReadWithTimeout::Timeout) => {
+                    Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout)) => {
                         // Let the next iteration of the loop decide
                         // if this was caused by `subscription_interruption` or deadline.
+                    }
+                    Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
+                        unreachable!("tracker only returns timeout")
                     }
                 }
             }

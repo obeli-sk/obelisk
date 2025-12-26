@@ -9,7 +9,7 @@ use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_
 use concepts::storage::{
     AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric,
     DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent, JoinSetRequest,
-    Version,
+    TimeoutOutcome, Version,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -704,10 +704,10 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                     async move {
                         select! {
                             () = sleep.sleep(subscription_interruption)=>{
-                                trace!("Sleep finished");
+                                TimeoutOutcome::Timeout
                             },
                             _ = cancel_token.changed() => {
-                                debug!("Cancelling");
+                                TimeoutOutcome::Cancel
                             }
                         }
                     }
@@ -716,12 +716,11 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                     .wait_for_finished_result(&child_execution_id, Some(timeout))
                     .await;
                 match res {
-                    Err(DbErrorReadWithTimeout::Timeout) => {
-                        // subscription_interruption reached
-                        if cancel_token.has_changed().is_err() {
-                            debug!("Connection closed, not waiting for result");
-                            break Err(WebhookEndpointFunctionError::ConnectionClosed);
-                        }
+                    Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
+                        debug!("Connection closed, not waiting for result");
+                        break Err(WebhookEndpointFunctionError::ConnectionClosed);
+                    }
+                    Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout)) => {
                         trace!("Timeout triggers resubscribing");
                     }
                     Ok(ok) => break Ok(ok),
@@ -738,7 +737,7 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                     DbErrorReadWithTimeout::DbErrorRead(err) => {
                         WebhookEndpointFunctionError::from(DbErrorWrite::from(err))
                     }
-                    DbErrorReadWithTimeout::Timeout => unreachable!(),
+                    DbErrorReadWithTimeout::Timeout(_) => unreachable!(),
                 })
         };
         trace!("Finished result: {res:?}");

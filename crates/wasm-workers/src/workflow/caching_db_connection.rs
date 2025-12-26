@@ -5,7 +5,8 @@ use concepts::{
     storage::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
         AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, JoinSetResponseEventOuter, Version,
+        DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, JoinSetResponseEventOuter,
+        TimeoutOutcome, Version,
     },
 };
 use std::pin::Pin;
@@ -270,7 +271,7 @@ impl CachingDbConnection {
         &self,
         execution_id: &ExecutionId,
         start_idx: u32,
-        timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
+        timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
         self.db_connection
             .subscribe_to_next_responses(execution_id, start_idx, timeout_fut)

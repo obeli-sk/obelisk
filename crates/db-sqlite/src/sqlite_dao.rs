@@ -17,7 +17,7 @@ use concepts::{
         JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedBy, LockedExecution,
         Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
         PendingStateLocked, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, Version, VersionType,
+        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite};
@@ -3435,7 +3435,7 @@ impl DbConnection for SqlitePool {
         &self,
         execution_id: &ExecutionId,
         start_idx: u32,
-        timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
+        timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
         debug!("next_responses");
         let unique_tag: u64 = rand::random();
@@ -3488,7 +3488,7 @@ impl DbConnection for SqlitePool {
                             Err(_) => Err(DbErrorReadWithTimeout::from(DbErrorGeneric::Close)),
                         }
                     }
-                    () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
+                    outcome = timeout_fut => Err(DbErrorReadWithTimeout::Timeout(outcome)),
                 };
                 cleanup();
                 res
@@ -3500,7 +3500,7 @@ impl DbConnection for SqlitePool {
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,
-        timeout_fut: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+        timeout_fut: Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>>,
     ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
         let unique_tag: u64 = rand::random();
         let execution_id = execution_id.clone();
@@ -3559,7 +3559,7 @@ impl DbConnection for SqlitePool {
                             Err(_recv_err) => Err(DbErrorGeneric::Close.into())
                         }
                     }
-                    () = timeout_fut => Err(DbErrorReadWithTimeout::Timeout),
+                    outcome = timeout_fut => Err(DbErrorReadWithTimeout::Timeout(outcome)),
                 };
                 cleanup();
                 res

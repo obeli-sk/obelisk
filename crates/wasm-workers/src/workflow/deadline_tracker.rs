@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::time::ClockFn;
+use concepts::{storage::TimeoutOutcome, time::ClockFn};
 use std::{cmp::min, pin::Pin, time::Duration};
 use tracing::{trace, warn};
 
@@ -11,7 +11,7 @@ pub trait DeadlineTracker: Send + Sync {
     fn track(
         &self,
         max_duration: Option<Duration>,
-    ) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>>;
+    ) -> Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>>;
 
     fn close_to_expired(&self) -> bool;
 
@@ -43,7 +43,7 @@ impl<C: ClockFn> DeadlineTracker for DeadlineTrackerTokio<C> {
     fn track(
         &self,
         max_duration: Option<Duration>,
-    ) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>> {
+    ) -> Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>> {
         if self.close_to_expired() {
             None
         } else {
@@ -54,7 +54,10 @@ impl<C: ClockFn> DeadlineTracker for DeadlineTrackerTokio<C> {
                 self.deadline
             };
 
-            Some(Box::pin(tokio::time::sleep_until(expiry)))
+            Some(Box::pin(async move {
+                tokio::time::sleep_until(expiry).await;
+                TimeoutOutcome::Timeout
+            }))
         }
     }
 
