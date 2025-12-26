@@ -1206,7 +1206,8 @@ pub(crate) mod tests {
         }
 
         struct SetUpFiboWebhook {
-            _server: AbortOnDrop,
+            #[expect(dead_code)]
+            server: AbortOnDrop,
             #[expect(dead_code)]
             guard: DbGuard,
             db_pool: Arc<dyn DbPool>,
@@ -1215,6 +1216,8 @@ pub(crate) mod tests {
             workflow_exec: ExecTask<SimClock>,
             sim_clock: SimClock,
             db_close: DbPoolCloseableWrapper,
+            #[expect(dead_code)]
+            server_termination_sender: watch::Sender<()>,
         }
 
         impl SetUpFiboWebhook {
@@ -1267,7 +1270,7 @@ pub(crate) mod tests {
                 let tcp_listener = TcpListener::bind(addr).await.unwrap();
                 let server_addr = tcp_listener.local_addr().unwrap();
                 info!("Listening on port {}", server_addr.port());
-                let (_server_termination_sender, server_termination_watcher) = watch::channel(());
+                let (server_termination_sender, server_termination_watcher) = watch::channel(());
                 let server = AbortOnDrop(
                     tokio::spawn(webhook_trigger::server(
                         StrVariant::Static("test"),
@@ -1283,8 +1286,8 @@ pub(crate) mod tests {
                     ))
                     .abort_handle(),
                 );
-                Self {
-                    _server: server,
+                SetUpFiboWebhook {
+                    server,
                     server_addr,
                     activity_exec,
                     workflow_exec,
@@ -1292,6 +1295,7 @@ pub(crate) mod tests {
                     db_pool,
                     sim_clock,
                     db_close,
+                    server_termination_sender,
                 }
             }
 
