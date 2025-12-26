@@ -32,7 +32,9 @@ use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::select;
 use tokio::sync::{OwnedSemaphorePermit, watch};
-use tracing::{Instrument, Span, debug, debug_span, error, info, info_span, instrument, trace};
+use tracing::{
+    Instrument, Span, debug, debug_span, error, info, info_span, instrument, trace, warn,
+};
 use types_v4_0_0::obelisk::types::execution::Host as ExecutionHost;
 use types_v4_0_0::obelisk::types::join_set::HostJoinSet;
 use utils::wasm_tools::ExIm;
@@ -706,64 +708,43 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
         server_termination_watcher: &watch::Receiver<()>,
     ) -> Result<SupportedFunctionReturnValue, WebhookEndpointFunctionError> {
         let child_execution_id = ExecutionId::Derived(child_execution_id);
-        let res = if let Some(subscription_interruption) = subscription_interruption {
-            loop {
-                let sleep = sleep.clone();
-                let timeout = Box::pin({
-                    let mut connection_drop_watcher = connection_drop_watcher.clone();
-                    let mut server_termination_watcher = server_termination_watcher.clone();
-                    async move {
-                        select! {
-                            () = sleep.sleep(subscription_interruption) => TimeoutOutcome::Timeout,
-                            _ = connection_drop_watcher.changed() => TimeoutOutcome::Cancel,
-                            _ = server_termination_watcher.changed() => TimeoutOutcome::Cancel,
-                        }
-                    }
-                });
-                let res = db_connection
-                    .wait_for_finished_result(&child_execution_id, Some(timeout))
-                    .await;
-                match res {
-                    Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
-                        debug!("Connection closed, not waiting for result");
-                        break Err(WebhookEndpointFunctionError::ConnectionClosed);
-                    }
-                    Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout)) => {
-                        trace!("Timeout triggers resubscribing");
-                    }
-                    Ok(ok) => break Ok(ok),
-                    Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {
-                        break Err(WebhookEndpointFunctionError::from(DbErrorWrite::from(err)));
-                    }
+        let timeout_factory = move || {
+            let subscription_interruption = subscription_interruption.unwrap_or(Duration::MAX);
+            let sleep = sleep.clone();
+            let mut connection_drop_watcher = connection_drop_watcher.clone();
+            let mut server_termination_watcher = server_termination_watcher.clone();
+            Box::pin(async move {
+                select! {
+                    () = sleep.sleep(subscription_interruption) => TimeoutOutcome::Timeout,
+                    _ = connection_drop_watcher.changed() => TimeoutOutcome::Cancel,
+                    _ = server_termination_watcher.changed() => TimeoutOutcome::Cancel,
+                }
+            })
+        };
+
+        loop {
+            let timeout = timeout_factory();
+            let res = db_connection
+                .wait_for_finished_result(&child_execution_id, Some(timeout))
+                .await;
+            match res {
+                Ok(ok) => {
+                    trace!("Finished ok");
+                    return Ok(ok);
+                }
+                Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout)) => {
+                    trace!("Timeout triggers resubscribing");
+                }
+                Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
+                    debug!("Connection closed, not waiting for result");
+                    return Err(WebhookEndpointFunctionError::ConnectionClosed);
+                }
+                Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {
+                    warn!("Database error: {err:?}");
+                    return Err(WebhookEndpointFunctionError::from(DbErrorWrite::from(err)));
                 }
             }
-        } else {
-            let timeout = Box::pin({
-                let mut connection_drop_watcher = connection_drop_watcher.clone();
-                let mut server_termination_watcher = server_termination_watcher.clone();
-                async move {
-                    select! {
-                        _ = connection_drop_watcher.changed() => {},
-                        _ = server_termination_watcher.changed() => {}
-                    }
-                    TimeoutOutcome::Cancel
-                }
-            });
-            db_connection
-                .wait_for_finished_result(&child_execution_id, Some(timeout))
-                .await
-                .map_err(|err| match err {
-                    DbErrorReadWithTimeout::DbErrorRead(err) => {
-                        WebhookEndpointFunctionError::from(DbErrorWrite::from(err))
-                    }
-                    DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel) => {
-                        WebhookEndpointFunctionError::ConnectionClosed
-                    }
-                    DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout) => unreachable!(),
-                })
-        };
-        trace!("Finished result: {res:?}");
-        res
+        }
     }
 
     fn add_to_linker(linker: &mut Linker<WebhookEndpointCtx<C, S>>) -> Result<(), WasmFileError> {
