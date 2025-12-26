@@ -32,7 +32,6 @@ use crate::init;
 use crate::init::Guard;
 use crate::project_dirs;
 use crate::server::grpc_server::GrpcServer;
-use crate::server::grpc_server::to_finished_status;
 use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
 use anyhow::Context;
@@ -53,15 +52,11 @@ use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
 use concepts::component_id::InputContentDigest;
 use concepts::storage::CreateRequest;
-use concepts::storage::DbConnection;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::DbExternalApi;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
-use concepts::storage::ExecutionRequest;
-use concepts::storage::PendingState;
-use concepts::storage::Version;
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::time::TokioSleep;
@@ -75,13 +70,8 @@ use executor::expired_timers_watcher;
 use executor::expired_timers_watcher::TimersWatcherConfig;
 use executor::worker::Worker;
 use futures_util::future::OptionFuture;
-use grpc::TonicResult;
 use grpc::extractor::accept_trace;
 use grpc::grpc_gen;
-use grpc::grpc_gen::GetStatusResponse;
-use grpc::grpc_gen::get_status_response::Message;
-use grpc::grpc_mapping::TonicServerResultExt;
-use grpc::grpc_mapping::db_error_read_to_status;
 use hashbrown::HashMap;
 use itertools::Either;
 use serde_json::json;
@@ -93,8 +83,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::select;
-use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tonic::codec::CompressionEncoding;
 use tonic::service::RoutesBuilder;
@@ -130,7 +118,7 @@ use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 
 const EPOCH_MILLIS: u64 = 10;
 const WEBUI_OCI_REFERENCE: &str = include_str!("../../assets/webui-version.txt");
-const GET_STATUS_POLLING_SLEEP: Duration = Duration::from_secs(1);
+pub const GET_STATUS_POLLING_SLEEP: Duration = Duration::from_secs(1);
 
 pub(crate) type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
 
@@ -338,126 +326,6 @@ pub(crate) async fn submit(
             }
         }
         Err(err) => Err(SubmitError::DbErrorWrite(err)),
-    }
-}
-
-pub(crate) async fn poll_status(
-    db_pool: Arc<dyn DbPool>,
-    mut shutdown_requested: watch::Receiver<()>,
-    execution_id: ExecutionId,
-    status_stream_sender: mpsc::Sender<TonicResult<GetStatusResponse>>,
-    mut old_pending_state: PendingState,
-    create_request: CreateRequest,
-    send_finished_status: bool,
-) {
-    let conn = match db_pool.connection().await {
-        Ok(conn) => conn,
-        Err(err) => {
-            debug!("Failed to acquire db connection for poll_status: {err:?}");
-            return;
-        }
-    };
-    loop {
-        select! {
-            res = async {
-                tokio::time::sleep(GET_STATUS_POLLING_SLEEP).await;
-                notify_status(conn.as_ref(), &execution_id, &status_stream_sender, old_pending_state, &create_request, send_finished_status).await
-            } => {
-                match res {
-                    Ok(new_state) => {
-                        old_pending_state = new_state;
-                    }
-                    Err(()) => return
-                }
-            }
-            _ = shutdown_requested.changed() => {
-                debug!("Shutdown requested");
-                let _ = status_stream_sender
-                    .send(TonicResult::Err(tonic::Status::aborted(
-                        "server is shutting down",
-                    )))
-                    .await;
-                return;
-            }
-        }
-        if status_stream_sender.is_closed() {
-            debug!("Connection was closed by the client");
-            return;
-        }
-    }
-}
-async fn notify_status(
-    conn: &dyn DbConnection,
-    execution_id: &ExecutionId,
-    status_stream_sender: &mpsc::Sender<TonicResult<GetStatusResponse>>,
-    old_pending_state: PendingState,
-    create_request: &CreateRequest,
-    send_finished_status: bool,
-) -> Result<PendingState, ()> {
-    match conn.get_pending_state(execution_id).await {
-        Ok(pending_state) => {
-            if pending_state != old_pending_state {
-                let grpc_pending_status = grpc_gen::ExecutionStatus::from(pending_state.clone());
-
-                let message = grpc_gen::GetStatusResponse {
-                    message: Some(Message::CurrentStatus(grpc_pending_status)),
-                };
-                let send_res = status_stream_sender.send(TonicResult::Ok(message)).await;
-                if let Err(err) = send_res {
-                    info!("Cannot send the message - {err:?}");
-                    return Err(());
-                }
-                if let PendingState::Finished {
-                    finished: pending_state_finished,
-                    ..
-                } = pending_state
-                {
-                    if send_finished_status {
-                        // Send the last message and close the RPC.
-                        let finished_result = conn
-                            .get_execution_event(
-                                execution_id,
-                                &Version(pending_state_finished.version),
-                            )
-                            .await
-                            .to_status()
-                            .and_then(|event| match event.event {
-                                ExecutionRequest::Finished { result, .. } => Ok(result),
-                                _ => Err(tonic::Status::internal(
-                                    "pending state finished implies `Finished` event",
-                                )),
-                            });
-
-                        let finished_result = match finished_result {
-                            Ok(finished_result) => finished_result,
-                            Err(err) => {
-                                let _ = status_stream_sender.send(Err(err)).await;
-                                return Err(());
-                            }
-                        };
-                        let message = grpc_gen::GetStatusResponse {
-                            message: Some(Message::FinishedStatus(to_finished_status(
-                                finished_result,
-                                create_request,
-                                pending_state_finished.finished_at,
-                            ))),
-                        };
-                        let send_res = status_stream_sender.send(TonicResult::Ok(message)).await;
-                        if let Err(err) = send_res {
-                            error!("Cannot send the final message - {err:?}");
-                        }
-                    }
-                    return Err(());
-                }
-            }
-            Ok(pending_state)
-        }
-        Err(db_err) => {
-            let _ = status_stream_sender
-                .send(Err(db_error_read_to_status(&db_err)))
-                .await;
-            Err(())
-        }
     }
 }
 
