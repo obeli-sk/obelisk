@@ -1133,7 +1133,7 @@ impl SqlitePool {
         tx: &Transaction,
         req: CreateRequest,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
-        debug!("create_inner");
+        trace!("create_inner");
 
         let version = Version::default();
         let execution_id = req.execution_id.clone();
