@@ -16,20 +16,23 @@ use concepts::{
     component_id::InputContentDigest,
     prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
-        self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, DbPool, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionWithState, Pagination, PendingState,
-        Version, VersionType,
+        self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
+        DbPool, ExecutionListPagination, ExecutionRequest, ExecutionWithState, Pagination,
+        PendingState, TimeoutOutcome, Version, VersionType,
     },
-    time::{ClockFn as _, Now},
+    time::{ClockFn as _, Now, Sleep as _},
 };
 use http::{StatusCode, header};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use std::{fmt::Write as _, time::Duration};
-use tokio::sync::{mpsc, watch};
+use tokio::{
+    select,
+    sync::{mpsc, watch},
+};
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{Instrument as _, debug, info_span, trace};
+use tracing::{Instrument as _, debug, info_span, trace, warn};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 
@@ -39,6 +42,7 @@ pub(crate) struct WebApiState {
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
     pub(crate) cancel_registry: CancelRegistry,
     pub(crate) termination_watcher: watch::Receiver<()>,
+    pub(crate) subscription_interruption: Option<Duration>,
 }
 
 pub(crate) fn app_router(state: WebApiState) -> Router {
@@ -529,6 +533,7 @@ async fn execution_get(
             execution_id,
             &state,
             StatusCode::OK,
+            state.subscription_interruption,
         ))
     } else {
         Ok(HttpResponse {
@@ -598,7 +603,12 @@ async fn execution_submit(
         SubmitOutcome::ExistsWithSameParameters => StatusCode::OK,
     };
     if follow {
-        Ok(stream_execution_response(execution_id, &state, status))
+        Ok(stream_execution_response(
+            execution_id,
+            &state,
+            status,
+            state.subscription_interruption,
+        ))
     } else {
         Ok(HttpResponse {
             status,
@@ -614,6 +624,7 @@ fn stream_execution_response(
     execution_id: ExecutionId,
     state: &WebApiState,
     status: StatusCode,
+    subscription_interruption: Option<Duration>,
 ) -> http::Response<Body> {
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
     let trace_id = server::gen_trace_id();
@@ -624,6 +635,7 @@ fn stream_execution_response(
             state.db_pool.clone(),
             tx,
             state.termination_watcher.clone(),
+            subscription_interruption,
         )
         .instrument(span),
     );
@@ -641,44 +653,63 @@ async fn stream_execution_response_task(
     execution_id: ExecutionId,
     db_pool: Arc<dyn DbPool>,
     tx: mpsc::Sender<Result<Bytes, std::io::Error>>,
-    mut shutdown_requested: watch::Receiver<()>,
+    server_termination_watcher: watch::Receiver<()>,
+    subscription_interruption: Option<Duration>,
 ) {
     debug!("Started streaming execution response");
-    loop {
-        tokio::select! {
-            () = tx.closed() => {
-                debug!("Client disconnected");
-                return;
-            }
-            _ = shutdown_requested.changed() => {
-                debug!("Shutdown requested");
-                // Not writing any response as the successful status header was already sent.
-                return;
-            }
-            () = tokio::time::sleep(Duration::from_secs(1)) => {
-                let last_event = match db_pool.external_api_conn().await {
-                    Ok(conn) => conn.get_last_execution_event(&execution_id).await,
-                    Err(err) => {
-                        debug!("Database error, disconnecting - {err:?}");
-                        return;
+    let db_connection = match db_pool.connection().await {
+        Ok(ok) => ok,
+        Err(err) => {
+            warn!("Cannot obtain connection - {err:?}");
+            return;
+        }
+    };
+    let sleep = concepts::time::TokioSleep;
+    let timeout_factory = {
+        let tx = tx.clone();
+        move || {
+            let subscription_interruption = subscription_interruption.unwrap_or(Duration::MAX);
+            let sleep = sleep.clone();
+            let tx = tx.clone();
+            let mut server_termination_watcher = server_termination_watcher.clone();
+            Box::pin(async move {
+                select! {
+                    () = tx.closed() => {
+                        debug!("Client disconnected");
+                        TimeoutOutcome::Cancel
                     }
-                };
-                match last_event {
-                    Ok(ExecutionEvent{event: ExecutionRequest::Finished { result, .. }, ..}) => {
-                        let result = RetVal::from(result);
-                        let result = serde_json::to_vec(&result).expect("serialization of already stored retval cannot fail");
-                        let _ = tx.try_send(Ok(Bytes::from(result))); // Ignore if the remote side is closed.
-                        debug!("Sent execution result");
-                        return;
-                    },
-                    Err(db_err) => {
-                        debug!("Database error, disconnecting - {db_err:?}");
-                        return;
-                    }
-                    Ok(other) =>{
-                        trace!("Ignoring {other}");
-                    }
+                    () = sleep.sleep(subscription_interruption) => TimeoutOutcome::Timeout,
+                    _ = server_termination_watcher.changed() => TimeoutOutcome::Cancel,
                 }
+            })
+        }
+    };
+
+    loop {
+        let timeout = timeout_factory();
+        let res = db_connection
+            .wait_for_finished_result(&execution_id, Some(timeout))
+            .await;
+        match res {
+            Ok(result) => {
+                trace!("Finished ok");
+                let result = RetVal::from(result);
+                let result = serde_json::to_vec(&result)
+                    .expect("serialization of already stored retval cannot fail");
+                let _ = tx.try_send(Ok(Bytes::from(result))); // Ignore if the remote side is closed.
+                debug!("Sent execution result");
+                return;
+            }
+            Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout)) => {
+                trace!("Timeout triggers resubscribing");
+            }
+            Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
+                debug!("Connection closed, not waiting for result");
+                return;
+            }
+            Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {
+                warn!("Database error: {err:?}");
+                return;
             }
         }
     }

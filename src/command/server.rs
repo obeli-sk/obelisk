@@ -625,6 +625,7 @@ async fn run_internal(
     .await?;
 
     let cancel_registry = CancelRegistry::new();
+    let subscription_interruption = database.get_subscription_interruption();
 
     let (server_init, component_registry_ro) = match database {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
@@ -744,6 +745,7 @@ async fn run_internal(
         component_registry_ro,
         cancel_registry,
         termination_watcher: termination_watcher.clone(),
+        subscription_interruption,
     });
     let app: axum::Router<()> = app_router.fallback_service(grpc_service);
     let app_svc = app.into_make_service();
