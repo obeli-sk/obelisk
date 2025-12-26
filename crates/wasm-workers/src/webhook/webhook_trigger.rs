@@ -730,14 +730,24 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                 }
             }
         } else {
+            let timeout = Box::pin({
+                let mut cancel_token = cancel_token.clone();
+                async move {
+                    let _ = cancel_token.changed().await;
+                    TimeoutOutcome::Cancel
+                }
+            });
             db_connection
-                .wait_for_finished_result(&child_execution_id, None)
+                .wait_for_finished_result(&child_execution_id, Some(timeout))
                 .await
                 .map_err(|err| match err {
                     DbErrorReadWithTimeout::DbErrorRead(err) => {
                         WebhookEndpointFunctionError::from(DbErrorWrite::from(err))
                     }
-                    DbErrorReadWithTimeout::Timeout(_) => unreachable!(),
+                    DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel) => {
+                        WebhookEndpointFunctionError::ConnectionClosed
+                    }
+                    DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout) => unreachable!(),
                 })
         };
         trace!("Finished result: {res:?}");
