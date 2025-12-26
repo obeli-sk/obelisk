@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0](https://github.com/obeli-sk/obelisk/compare/v0.31.0...v0.32.0)
+
+This release adds PostgreSQL support: Obelisk is finally able to run with one of most popular traditional SQL databases.
+
+### Added
+
+- *(pg)* Add `db-postgres` - ([733784c](https://github.com/obeli-sk/obelisk/commit/733784c96a4ea9a91ee88bf31a92064aacd0351e))
+- *(toml)* Support environment variable interpolation for postgres connection - ([8aa60a4](https://github.com/obeli-sk/obelisk/commit/8aa60a45500ab534968757ac87f331a8a0be89b5))
+- *(toml)* [**breaking**] Change configuration to allow switching between SQLite and Postgres - ([2e90a30](https://github.com/obeli-sk/obelisk/commit/2e90a30e89ff023a417c6d85d426962e9c26a032))
+- *(toml,pg)* Configure whether a missing database is created on startup - ([839177b](https://github.com/obeli-sk/obelisk/commit/839177b14412fc7ae2016b3d24d9d513f5044f12))
+
+### Fixed
+- Detection and handling of client connection drop and server shutdown has been improved for all HTTP servers - gRPC, WebAPI and Webhook endpoints.
+
+### Changed
+- SQLite schema version was incremented due to aligning various serialization formats with Postgres.
+
 ## [0.31.0](https://github.com/obeli-sk/obelisk/compare/v0.30.0...v0.31.0)
 
 This release adds Web API - JSON over HTTP API next to existing gRPC and gRPC-Web protocols.
