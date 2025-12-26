@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS t_metadata (
     created_at TEXT NOT NULL
 ) STRICT
 ";
-const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 4;
+const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 5;
 
 /// Stores execution history. Append only.
 const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
