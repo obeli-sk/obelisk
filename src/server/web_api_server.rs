@@ -1,6 +1,6 @@
 use crate::{
     command::server::{self, ComponentConfigRegistryRO, SubmitError, SubmitOutcome},
-    server::web_api::components::{component_wit, components_list},
+    server::web_api_server::components::{component_wit, components_list},
 };
 use axum::{
     Json, Router,
@@ -716,7 +716,7 @@ async fn stream_execution_response_task(
 }
 
 pub(crate) mod components {
-    use crate::server::web_api::HttpResponse;
+    use crate::server::web_api_server::HttpResponse;
 
     use super::{
         AcceptHeader, Arc, Deserialize, FunctionFqn, IntoResponse, Json, Query, Response,

@@ -1,2 +1,2 @@
-pub(crate) mod grpc;
-pub(crate) mod web_api;
+pub(crate) mod grpc_server;
+pub(crate) mod web_api_server;
