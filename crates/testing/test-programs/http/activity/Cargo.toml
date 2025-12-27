@@ -10,7 +10,7 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-waki.workspace = true
+wstd.workspace = true
 wit-bindgen.workspace = true
 
 [lib]

@@ -156,8 +156,10 @@ package obelisk:types@4.0.0 {
 package wasi:io@0.2.6 {
   interface poll {
     resource pollable {
-      block: func();
+      ready: func() -> bool;
     }
+
+    poll: func(in: list<borrow<pollable>>) -> list<u32>;
   }
   interface error {
     resource error {
@@ -165,19 +167,20 @@ package wasi:io@0.2.6 {
     }
   }
   interface streams {
-    use poll.{pollable};
     use error.{error};
+    use poll.{pollable};
 
     resource output-stream {
       check-write: func() -> result<u64, stream-error>;
       write: func(contents: list<u8>) -> result<_, stream-error>;
       blocking-write-and-flush: func(contents: list<u8>) -> result<_, stream-error>;
-      flush: func() -> result<_, stream-error>;
       subscribe: func() -> pollable;
+      splice: func(src: borrow<input-stream>, len: u64) -> result<u64, stream-error>;
     }
 
     resource input-stream {
-      blocking-read: func(len: u64) -> result<list<u8>, stream-error>;
+      read: func(len: u64) -> result<list<u8>, stream-error>;
+      subscribe: func() -> pollable;
     }
 
     variant stream-error {
@@ -190,7 +193,11 @@ package wasi:io@0.2.6 {
 
 package wasi:clocks@0.2.6 {
   interface monotonic-clock {
+    use wasi:io/poll@0.2.6.{pollable};
+
     type duration = u64;
+
+    subscribe-duration: func(when: duration) -> pollable;
   }
 }
 
@@ -198,25 +205,13 @@ package wasi:clocks@0.2.6 {
 package wasi:http@0.2.4 {
   interface types {
     use wasi:clocks/monotonic-clock@0.2.6.{duration};
-    use wasi:io/streams@0.2.6.{output-stream};
+    use wasi:io/streams@0.2.6.{output-stream, input-stream};
     use wasi:io/poll@0.2.6.{pollable};
-    use wasi:io/streams@0.2.6.{input-stream};
 
     resource fields {
-      from-list: static func(entries: list<tuple<field-name, field-value>>) -> result<fields, header-error>;
+      constructor();
+      append: func(name: field-name, value: field-value) -> result<_, header-error>;
       entries: func() -> list<tuple<field-name, field-value>>;
-    }
-
-    type field-key = string;
-
-    type field-name = field-key;
-
-    type field-value = list<u8>;
-
-    variant header-error {
-      invalid-syntax,
-      forbidden,
-      immutable,
     }
 
     type headers = fields;
@@ -257,6 +252,18 @@ package wasi:http@0.2.4 {
     resource request-options {
       constructor();
       set-connect-timeout: func(duration: option<duration>) -> result;
+      set-first-byte-timeout: func(duration: option<duration>) -> result;
+      set-between-bytes-timeout: func(duration: option<duration>) -> result;
+    }
+
+    resource incoming-body {
+      %stream: func() -> result<input-stream>;
+      finish: static func(this: incoming-body) -> future-trailers;
+    }
+
+    resource future-trailers {
+      subscribe: func() -> pollable;
+      get: func() -> option<result<result<option<trailers>, error-code>>>;
     }
 
     resource future-incoming-response {
@@ -264,7 +271,11 @@ package wasi:http@0.2.4 {
       get: func() -> option<result<result<incoming-response, error-code>>>;
     }
 
-    type trailers = fields;
+    resource incoming-response {
+      status: func() -> status-code;
+      headers: func() -> headers;
+      consume: func() -> result<incoming-body>;
+    }
 
     record DNS-error-payload {
       rcode: option<string>,
@@ -323,16 +334,20 @@ package wasi:http@0.2.4 {
       internal-error(option<string>),
     }
 
-    resource incoming-response {
-      status: func() -> status-code;
-      headers: func() -> headers;
-      consume: func() -> result<incoming-body>;
-    }
-
     type status-code = u16;
 
-    resource incoming-body {
-      %stream: func() -> result<input-stream>;
+    type trailers = fields;
+
+    type field-key = string;
+
+    type field-name = field-key;
+
+    type field-value = list<u8>;
+
+    variant header-error {
+      invalid-syntax,
+      forbidden,
+      immutable,
     }
   }
   interface outgoing-handler {

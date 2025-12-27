@@ -296,8 +296,6 @@ tracing-appender = "0.2.4"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 ulid = { version = "=1.1.4", features = ["serde"] }
 url = "2.5.7"
-waki = "0.5.1"
-waki-macros = "0.5.1"
 wiremock = "0.6"
 
 # wasmtime

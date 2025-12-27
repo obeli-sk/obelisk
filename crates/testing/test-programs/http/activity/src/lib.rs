@@ -1,11 +1,27 @@
 use crate::exports::testing::http::http_get::Guest;
 use exports::testing::http::http_get;
-use std::time::Duration;
 use wit_bindgen::generate;
+use wstd::{
+    http::{Body, Client, Method, Request},
+    runtime::block_on,
+};
 
 generate!({ generate_all });
 struct Component;
 export!(Component);
+
+async fn get_resp(url: String) -> Result<http_get::Response, anyhow::Error> {
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri(url)
+        .body(Body::empty())?;
+
+    let response = Client::new().send(request).await?;
+    let status_code = response.status().as_u16();
+    let mut response = response.into_body();
+    let body = Vec::from(response.contents().await?);
+    Ok(http_get::Response { body, status_code })
+}
 
 impl Guest for Component {
     fn get(url: String) -> Result<String, String> {
@@ -24,14 +40,7 @@ impl Guest for Component {
     }
 
     fn get_resp(url: String) -> Result<http_get::Response, String> {
-        let resp = waki::Client::new()
-            .get(&url)
-            .connect_timeout(Duration::from_secs(1))
-            .send()
-            .map_err(|err| format!("{err:?}"))?;
-        let status_code = resp.status_code();
-        let body = resp.body().map_err(|err| format!("{err:?}"))?;
-        Ok(http_get::Response { body, status_code })
+        block_on(async { get_resp(url).await }).map_err(|err| err.to_string())
     }
 
     fn get_stargazers() -> Result<http_get::Stargazers, String> {

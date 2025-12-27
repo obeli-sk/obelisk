@@ -2,25 +2,30 @@ use crate::obelisk::log::log::info;
 use crate::obelisk::types::time::ScheduleAt;
 use crate::testing::fibo_workflow::workflow;
 use crate::testing::fibo_workflow_obelisk_schedule::workflow as workflow_schedule;
-use waki::{ErrorCode, Request, Response, handler};
 use wit_bindgen::generate;
+use wstd::http::body::Body;
+use wstd::http::{Error, Request, Response, StatusCode};
 
 generate!({ generate_all });
 
-#[handler]
-fn handle(_req: Request) -> Result<Response, ErrorCode> {
+#[wstd::http_server]
+async fn main(_request: Request<Body>) -> Result<Response<Body>, Error> {
     let Ok(n) = std::env::var("N")
         .expect("env var `N` must be set by Obelisk if routes are configured properly")
         .parse()
     else {
-        return Response::builder().status_code(400).build();
+        return Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::empty())?);
     };
 
     let Ok(iterations) = std::env::var("ITERATIONS")
         .expect("env var `ITERATIONS` must be set by Obelisk if routes are configured properly")
         .parse()
     else {
-        return Response::builder().status_code(400).build();
+        return Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::empty())?);
     };
 
     let fibo_res = if n >= 10 {
@@ -38,7 +43,5 @@ fn handle(_req: Request) -> Result<Response, ErrorCode> {
         "hardcoded: 1".to_string() // For performance testing - no activity is called
     };
     info(&format!("Sending response {fibo_res}"));
-    Response::builder()
-        .body(format!("fiboa({n}, {iterations}) = {fibo_res}"))
-        .build()
+    Ok(Response::builder().body(Body::from(format!("fiboa({n}, {iterations}) = {fibo_res}")))?)
 }

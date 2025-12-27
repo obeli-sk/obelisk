@@ -5,22 +5,23 @@ expression: wit
 package root:component;
 
 world root {
+  import wasi:io/poll@0.2.6;
+  import wasi:clocks/monotonic-clock@0.2.6;
+  import wasi:io/error@0.2.6;
+  import wasi:io/streams@0.2.6;
+  import wasi:http/types@0.2.4;
   import obelisk:log/log@1.0.0;
   import testing:fibo-workflow/workflow;
   import obelisk:types/execution@4.0.0;
   import obelisk:types/time@4.0.0;
   import testing:fibo-workflow-obelisk-schedule/workflow;
-  import wasi:io/poll@0.2.6;
-  import wasi:io/error@0.2.6;
-  import wasi:io/streams@0.2.6;
-  import wasi:http/types@0.2.4;
   import wasi:cli/environment@0.2.6;
   import wasi:cli/exit@0.2.6;
   import wasi:cli/stdout@0.2.6;
   import wasi:cli/stderr@0.2.6;
   import wasi:random/insecure-seed@0.2.6;
 
-  export wasi:http/incoming-handler@0.2.2;
+  export wasi:http/incoming-handler@0.2.4;
 }
 package obelisk:log@1.0.0 {
   interface log {
@@ -162,28 +163,13 @@ package obelisk:types@4.0.0 {
 }
 
 
-package testing:fibo-workflow {
-  interface workflow {
-    fiboa: func(n: u8, iterations: u32) -> result<u64>;
-  }
-}
-
-
-package testing:fibo-workflow-obelisk-schedule {
-  interface workflow {
-    use obelisk:types/time@4.0.0.{schedule-at};
-    use obelisk:types/execution@4.0.0.{execution-id};
-
-    fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
-  }
-}
-
-
 package wasi:io@0.2.6 {
   interface poll {
     resource pollable {
-      block: func();
+      ready: func() -> bool;
     }
+
+    poll: func(in: list<borrow<pollable>>) -> list<u32>;
   }
   interface error {
     resource error {
@@ -194,33 +180,41 @@ package wasi:io@0.2.6 {
     use error.{error};
     use poll.{pollable};
 
+    resource output-stream {
+      check-write: func() -> result<u64, stream-error>;
+      write: func(contents: list<u8>) -> result<_, stream-error>;
+      blocking-write-and-flush: func(contents: list<u8>) -> result<_, stream-error>;
+      subscribe: func() -> pollable;
+      splice: func(src: borrow<input-stream>, len: u64) -> result<u64, stream-error>;
+    }
+
     resource input-stream {
-      blocking-read: func(len: u64) -> result<list<u8>, stream-error>;
+      subscribe: func() -> pollable;
     }
 
     variant stream-error {
       last-operation-failed(error),
       closed,
     }
+  }
+}
 
-    resource output-stream {
-      check-write: func() -> result<u64, stream-error>;
-      write: func(contents: list<u8>) -> result<_, stream-error>;
-      blocking-write-and-flush: func(contents: list<u8>) -> result<_, stream-error>;
-      flush: func() -> result<_, stream-error>;
-      subscribe: func() -> pollable;
-    }
+
+package wasi:clocks@0.2.6 {
+  interface monotonic-clock {
+    use wasi:io/poll@0.2.6.{pollable};
+
+    type duration = u64;
+
+    subscribe-duration: func(when: duration) -> pollable;
   }
 }
 
 
 package wasi:http@0.2.4 {
   interface types {
-    use wasi:io/streams@0.2.6.{input-stream, output-stream};
-
-    resource incoming-body {
-      %stream: func() -> result<input-stream>;
-    }
+    use wasi:io/streams@0.2.6.{output-stream, input-stream};
+    use wasi:io/poll@0.2.6.{pollable};
 
     resource incoming-request {
       method: func() -> method;
@@ -230,6 +224,24 @@ package wasi:http@0.2.4 {
       headers: func() -> headers;
       consume: func() -> result<incoming-body>;
     }
+
+    resource response-outparam {
+      set: static func(param: response-outparam, response: result<outgoing-response, error-code>);
+    }
+
+    resource fields {
+      constructor();
+      append: func(name: field-name, value: field-value) -> result<_, header-error>;
+      entries: func() -> list<tuple<field-name, field-value>>;
+    }
+
+    type headers = fields;
+
+    type field-key = string;
+
+    type field-name = field-key;
+
+    type field-value = list<u8>;
 
     variant method {
       get,
@@ -250,23 +262,9 @@ package wasi:http@0.2.4 {
       other(string),
     }
 
-    resource fields {
-      from-list: static func(entries: list<tuple<field-name, field-value>>) -> result<fields, header-error>;
-      entries: func() -> list<tuple<field-name, field-value>>;
-    }
-
-    type headers = fields;
-
-    type field-key = string;
-
-    type field-name = field-key;
-
-    type field-value = list<u8>;
-
-    variant header-error {
-      invalid-syntax,
-      forbidden,
-      immutable,
+    resource incoming-body {
+      %stream: func() -> result<input-stream>;
+      finish: static func(this: incoming-body) -> future-trailers;
     }
 
     resource outgoing-response {
@@ -280,6 +278,11 @@ package wasi:http@0.2.4 {
     resource outgoing-body {
       write: func() -> result<output-stream>;
       finish: static func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
+    }
+
+    resource future-trailers {
+      subscribe: func() -> pollable;
+      get: func() -> option<result<result<option<trailers>, error-code>>>;
     }
 
     type trailers = fields;
@@ -341,9 +344,33 @@ package wasi:http@0.2.4 {
       internal-error(option<string>),
     }
 
-    resource response-outparam {
-      set: static func(param: response-outparam, response: result<outgoing-response, error-code>);
+    variant header-error {
+      invalid-syntax,
+      forbidden,
+      immutable,
     }
+  }
+  interface incoming-handler {
+    use types.{incoming-request, response-outparam};
+
+    handle: func(request: incoming-request, response-out: response-outparam);
+  }
+}
+
+
+package testing:fibo-workflow {
+  interface workflow {
+    fiboa: func(n: u8, iterations: u32) -> result<u64>;
+  }
+}
+
+
+package testing:fibo-workflow-obelisk-schedule {
+  interface workflow {
+    use obelisk:types/time@4.0.0.{schedule-at};
+    use obelisk:types/execution@4.0.0.{execution-id};
+
+    fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
   }
 }
 
@@ -371,14 +398,5 @@ package wasi:cli@0.2.6 {
 package wasi:random@0.2.6 {
   interface insecure-seed {
     insecure-seed: func() -> tuple<u64, u64>;
-  }
-}
-
-
-package wasi:http@0.2.2 {
-  interface incoming-handler {
-    use wasi:http/types@0.2.4.{incoming-request, response-outparam};
-
-    handle: func(request: incoming-request, response-out: response-outparam);
   }
 }
