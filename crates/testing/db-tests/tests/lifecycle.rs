@@ -2,10 +2,11 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, RunId};
 use concepts::storage::{
-    self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CancelOutcome,
-    CreateRequest, DbConnection, DbConnectionTest, ExecutionRequest, ExpiredDelay, ExpiredLock,
-    ExpiredTimer, JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedBy,
-    LockedExecution, PendingState, Version,
+    self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
+    BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest, ExecutionRequest,
+    ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol, JoinSetRequest,
+    JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution, PendingState, Version,
+    WasmBacktrace,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
@@ -1897,6 +1898,145 @@ async fn delay_cancellation_should_be_idempotent(database: Database) {
         .await
         .unwrap();
     assert_eq!(CancelOutcome::Cancelled, res);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn test_backtrace(database: Database) {
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let execution_id = ExecutionId::generate();
+
+    let component_id = ComponentId::dummy_activity();
+
+    // Create
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: component_id.clone(),
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+    let lock_expiry = Duration::from_millis(100);
+    let mut version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + lock_expiry, // lock expires at
+        RunId::generate(),
+    )
+    .await;
+
+    // Create joinset and a backtrace 1
+    let join_set_id = JoinSetId::new(JoinSetKind::Named, "1".into()).unwrap();
+    create_join_set(
+        &execution_id,
+        &mut version,
+        join_set_id.clone(),
+        sim_clock.now(),
+        db_connection.as_ref(),
+    )
+    .await;
+    let backtrace_info_1_version = version.clone();
+    let backtrace_info_1 = BacktraceInfo {
+        execution_id: execution_id.clone(),
+        component_id: component_id.clone(),
+        version_min_including: backtrace_info_1_version.clone(),
+        version_max_excluding: backtrace_info_1_version.increment(),
+        wasm_backtrace: WasmBacktrace {
+            frames: vec![FrameInfo {
+                module: "m".to_string(),
+                func_name: "f".to_string(),
+                symbols: vec![FrameSymbol {
+                    func_name: Some("f2".to_string()),
+                    file: Some("file".to_string()),
+                    line: Some(1),
+                    col: Some(2),
+                }],
+            }],
+        },
+    };
+    db_connection
+        .append_backtrace(backtrace_info_1.clone())
+        .await
+        .unwrap();
+
+    // Create joinset and a backtrace 2
+    let join_set_id = JoinSetId::new(JoinSetKind::Named, "2".into()).unwrap();
+    create_join_set(
+        &execution_id,
+        &mut version,
+        join_set_id.clone(),
+        sim_clock.now(),
+        db_connection.as_ref(),
+    )
+    .await;
+    let backtrace_info_2_version = version.clone();
+    let backtrace_info_2 = BacktraceInfo {
+        execution_id: execution_id.clone(),
+        component_id: component_id.clone(),
+        version_min_including: backtrace_info_2_version.clone(),
+        version_max_excluding: backtrace_info_2_version.increment(),
+        wasm_backtrace: WasmBacktrace {
+            frames: vec![FrameInfo {
+                module: "m".to_string(),
+                func_name: "f".to_string(),
+                symbols: vec![],
+            }],
+        },
+    };
+    db_connection
+        .append_backtrace(backtrace_info_2.clone())
+        .await
+        .unwrap();
+
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+    let found = api_conn
+        .get_backtrace(&execution_id, BacktraceFilter::First)
+        .await
+        .unwrap();
+    assert_eq!(backtrace_info_1, found);
+    let found = api_conn
+        .get_backtrace(
+            &execution_id,
+            BacktraceFilter::Specific(backtrace_info_1_version),
+        )
+        .await
+        .unwrap();
+    assert_eq!(backtrace_info_1, found);
+
+    let found = api_conn
+        .get_backtrace(&execution_id, BacktraceFilter::Last)
+        .await
+        .unwrap();
+    assert_eq!(backtrace_info_2, found);
+    let found = api_conn
+        .get_backtrace(
+            &execution_id,
+            BacktraceFilter::Specific(backtrace_info_2_version),
+        )
+        .await
+        .unwrap();
+    assert_eq!(backtrace_info_2, found);
+
+    drop(api_conn);
     drop(db_connection);
     db_close.close().await;
 }

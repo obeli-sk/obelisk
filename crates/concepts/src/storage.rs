@@ -1123,6 +1123,7 @@ pub enum BacktraceFilter {
     Specific(Version),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BacktraceInfo {
     pub execution_id: ExecutionId,
     pub component_id: ComponentId,
@@ -1131,19 +1132,19 @@ pub struct BacktraceInfo {
     pub wasm_backtrace: WasmBacktrace,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct WasmBacktrace {
     pub frames: Vec<FrameInfo>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct FrameInfo {
     pub module: String,
     pub func_name: String,
     pub symbols: Vec<FrameSymbol>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct FrameSymbol {
     pub func_name: Option<String>,
     pub file: Option<String>,

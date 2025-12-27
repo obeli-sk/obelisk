@@ -2377,7 +2377,7 @@ impl SqlitePool {
             ?;
         stmt.execute(named_params! {
             ":execution_id": backtrace_info.execution_id.to_string(),
-            ":component_id": backtrace_info.component_id.to_string(),
+            ":component_id": JsonWrapper(&backtrace_info.component_id),
             ":version_min_including": backtrace_info.version_min_including.0,
             ":version_max_excluding": backtrace_info.version_max_excluding.0,
             ":wasm_backtrace": backtrace,
@@ -3163,7 +3163,7 @@ impl DbExecutor for SqlitePool {
             let Ok(execution_ids_versions) = self
                 .transaction(
                     {
-                        let input_digest =component_id.input_digest.clone();
+                        let input_digest = component_id.input_digest.clone();
                         move |conn| Self::get_pending_by_component_input_digest(conn, 1, pending_at_or_sooner, &input_digest)
                     },
                     "get_pending_by_component_input_digest",
