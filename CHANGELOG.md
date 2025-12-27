@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.1](https://github.com/obeli-sk/obelisk/compare/v0.32.0...v0.32.1)
+
+### Fixed
+
+- *(sqlite)* Serialize `component_id` as JSON when saving backtrace - ([5a0556a](https://github.com/obeli-sk/obelisk/commit/5a0556ac269d91ae167949999ead6539d859d8d5))
+
+
 ## [0.32.0](https://github.com/obeli-sk/obelisk/compare/v0.31.0...v0.32.0)
 
 This release adds PostgreSQL support: Obelisk is finally able to run with one of most popular traditional SQL databases.
