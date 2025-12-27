@@ -23,7 +23,7 @@ The [Stargazers](https://github.com/obeli-sk/demo-stargazers) app features:
 
 ## What's Included
 - **Obelisk Runtime**: A single binary executing deterministic workflows, activities,
-and webhook endpoints, persisting steps in execution log using SQLite.
+and webhook endpoints, persisting steps in execution log using SQLite or PostgreSQL.
 - **Control Interfaces**:
   - **CLI**: Manage executions via the `obelisk` command.
   - **gRPC API**: Programmatic interaction.
@@ -107,6 +107,8 @@ Using Nix:
 nix run github:obeli-sk/obelisk/latest
 ```
 
+For more options see [Installation](https://obeli.sk/install/).
+
 ## Getting Started
 
 Check out the [Getting Started Guide](https://obeli.sk/docs/latest/getting-started/) for details.
@@ -146,7 +148,10 @@ A [Contributor License Agreement](https://cla-assistant.io/obeli-sk/obelisk) is 
 ## Development
 Set up dependencies via Nix:
 ```sh
-nix develop
+cp .envrc-example .envrc
+$EDITOR .envrc
+direnv allow
+# If direnv is not available use `nix develop`
 ```
 Or manually install dependencies (see [dev-deps.txt](dev-deps.txt)).
 
@@ -156,6 +161,7 @@ cargo run --release
 ```
 
 ## Running Tests
+Postgres must be running. See `.envrc-example` for how to set up the environment variables.
 ```sh
 ./scripts/test.sh
 ```
