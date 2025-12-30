@@ -204,7 +204,7 @@ exec.locking_strategy = "by_component_id"
 ## Run `docker run --rm -it  -p 4317:4317 -p 16686:16686 jaegertracing/all-in-one:1.60` to start collecting traces.
 # enabled = true
 ## Defaults:
-# level = "info,app=trace"
+# level = "info,app=debug"
 # service_name = "obelisk-server"
 # otlp_endpoint = "http://localhost:4317"
 
@@ -220,7 +220,7 @@ enabled = true
 ### Sample (rolling) file configuration
 # [log.file]
 # enabled = true
-# level = "info,obeli=debug,app=trace"
+# level = "info,obeli=debug,app=debug"
 # style = "plain"                           # One of "plain","plain_compact","json"
 # span = "none"                             # One of "none","new","enter","exit","close","active","full"
 # target = false
@@ -230,11 +230,7 @@ enabled = true
 
 [log.file]
 enabled = true
-level = "info,obeli=debug,app=trace"
-style = "plain"
-span = "none"
 target = true
-rotation = "never"
 directory = "."
 prefix = "obelisk.log"
 

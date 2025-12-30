@@ -1151,7 +1151,7 @@ pub(crate) mod log {
     }
     impl Default for EnvFilter {
         fn default() -> Self {
-            Self::from_str("info,app=trace").expect("empty directive must not fail to parse")
+            Self::from_str("info,app=debug").expect("empty directive must not fail to parse")
         }
     }
 

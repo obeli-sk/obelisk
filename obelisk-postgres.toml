@@ -65,10 +65,6 @@ enabled = true
 
 [log.file]
 enabled = true
-level = "info,obeli=debug,app=trace"
-style = "plain"
-span = "none"
 target = true
-rotation = "never"
 directory = "."
 prefix = "obelisk.log"
