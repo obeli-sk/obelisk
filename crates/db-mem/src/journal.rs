@@ -11,7 +11,6 @@ use concepts::{ComponentId, JoinSetId};
 use concepts::{ExecutionId, ExecutionMetadata};
 use concepts::{FunctionFqn, Params};
 use std::cmp::max;
-use std::collections::VecDeque;
 use tokio::sync::oneshot;
 
 #[derive(Debug)]
@@ -19,7 +18,7 @@ pub(crate) struct ExecutionJournal {
     pub(crate) execution_id: ExecutionId,
     pub(crate) pending_state: PendingState, // updated on every state change
     pub(crate) component_digest: InputContentDigest, // updated on every state change
-    pub(crate) execution_events: VecDeque<ExecutionEvent>, // TODO: Use Vec instead
+    pub(crate) execution_events: Vec<ExecutionEvent>,
     pub(crate) responses: Vec<JoinSetResponseEventOuter>,
     pub(crate) response_subscriber: Option<oneshot::Sender<JoinSetResponseEventOuter>>,
 }
@@ -44,7 +43,7 @@ impl ExecutionJournal {
         Self {
             execution_id,
             pending_state,
-            execution_events: VecDeque::from([event]),
+            execution_events: vec![event],
             responses: Vec::default(),
             response_subscriber: None,
             component_digest,
@@ -64,7 +63,7 @@ impl ExecutionJournal {
 
     #[must_use]
     pub fn ffqn(&self) -> &FunctionFqn {
-        match self.execution_events.front().unwrap() {
+        match self.execution_events.first().unwrap() {
             ExecutionEvent {
                 event: ExecutionRequest::Created { ffqn, .. },
                 ..
@@ -81,7 +80,7 @@ impl ExecutionJournal {
             let ExecutionEvent {
                 event: ExecutionRequest::Created { component_id, .. },
                 ..
-            } = self.execution_events.front().unwrap()
+            } = self.execution_events.first().unwrap()
             else {
                 unreachable!("first event must be `Created`")
             };
@@ -104,7 +103,7 @@ impl ExecutionJournal {
 
     #[must_use]
     pub fn metadata(&self) -> &ExecutionMetadata {
-        match self.execution_events.front().unwrap() {
+        match self.execution_events.first().unwrap() {
             ExecutionEvent {
                 event: ExecutionRequest::Created { metadata, .. },
                 ..
@@ -168,7 +167,7 @@ impl ExecutionJournal {
             ));
         }
 
-        self.execution_events.push_back(ExecutionEvent {
+        self.execution_events.push(ExecutionEvent {
             created_at,
             event,
             backtrace_id: None,
@@ -264,7 +263,7 @@ impl ExecutionJournal {
     }
 
     fn get_create_request(&self) -> CreateRequest {
-        let execution_event = self.execution_events.front().expect("must not be empty");
+        let execution_event = self.execution_events.first().expect("must not be empty");
         let ExecutionRequest::Created {
             ffqn,
             params,
@@ -487,7 +486,7 @@ impl ExecutionJournal {
     pub fn as_execution_log(&self) -> ExecutionLog {
         ExecutionLog {
             execution_id: self.execution_id.clone(),
-            events: self.execution_events.iter().cloned().collect(),
+            events: self.execution_events.clone(),
             next_version: self.version(),
             pending_state: self.pending_state.clone(),
             responses: self.responses.clone(),
