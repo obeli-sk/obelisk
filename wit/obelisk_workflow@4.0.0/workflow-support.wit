@@ -7,6 +7,9 @@ interface workflow-support {
     use obelisk:types/join-set@4.0.0.{join-set};
 
     /// Error variants that may occur on named join set creation.
+    /// The name may only contain alphanumeric characters and the following extra characters:
+    /// * dash `-`
+    /// * forward slash `/`
     @since(version = 3.0.0)
     variant join-set-create-error {
         conflict,
@@ -36,7 +39,6 @@ interface workflow-support {
 
     /// Create a new join set with the specified name.
     /// The name may only contain alphanumeric characters and the following extra characters:
-    /// * underscore `_`
     /// * dash `-`
     /// * forward slash `/`
     @since(version = 4.0.0)
