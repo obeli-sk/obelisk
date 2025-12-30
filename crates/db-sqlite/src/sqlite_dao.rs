@@ -2129,7 +2129,7 @@ impl SqlitePool {
                     true, // an intermittent failure
                     combined_state
                         .pending_state
-                        .get_component_id_input_digest()
+                        .component_digest()
                         .clone(),
                 )?;
                 return Ok((next_version, notifier));
@@ -2146,7 +2146,7 @@ impl SqlitePool {
                     false, // not an intermittent failure
                     combined_state
                         .pending_state
-                        .get_component_id_input_digest()
+                        .component_digest()
                         .clone(),
                 )?;
                 return Ok((next_version, notifier));
@@ -2251,7 +2251,7 @@ impl SqlitePool {
                         false, // not an intermittent failure
                         combined_state
                             .pending_state
-                            .get_component_id_input_digest()
+                            .component_digest()
                             .clone(),
                     )?;
                     return Ok((next_version, notifier));

@@ -265,7 +265,7 @@ impl From<PendingState> for grpc_gen::ExecutionStatus {
     fn from(pending_state: PendingState) -> grpc_gen::ExecutionStatus {
         use grpc_gen::execution_status::{BlockedByJoinSet, Finished, Locked, PendingAt, Status};
         grpc_gen::ExecutionStatus {
-            component_digest: Some(pending_state.get_component_id_input_digest().into()),
+            component_digest: Some(pending_state.component_digest().into()),
             status: Some(match pending_state {
                 PendingState::Locked(PendingStateLocked {
                     locked_by:

@@ -1892,10 +1892,7 @@ async fn append(
                 &appending_version,
                 *backoff_expires_at,
                 true, // an intermittent failure
-                combined_state
-                    .pending_state
-                    .get_component_id_input_digest()
-                    .clone(),
+                combined_state.pending_state.component_digest().clone(),
             )
             .await?;
             return Ok((next_version, notifier));
@@ -1910,10 +1907,7 @@ async fn append(
                 &appending_version,
                 *backoff_expires_at,
                 false, // not an intermittent failure
-                combined_state
-                    .pending_state
-                    .get_component_id_input_digest()
-                    .clone(),
+                combined_state.pending_state.component_digest().clone(),
             )
             .await?;
             return Ok((next_version, notifier));
@@ -2022,10 +2016,7 @@ async fn append(
                     &appending_version,
                     scheduled_at,
                     false, // not an intermittent failure
-                    combined_state
-                        .pending_state
-                        .get_component_id_input_digest()
-                        .clone(),
+                    combined_state.pending_state.component_digest().clone(),
                 )
                 .await?;
                 return Ok((next_version, notifier));
