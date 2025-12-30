@@ -324,6 +324,7 @@ impl From<ExecutionWithState> for grpc_gen::ExecutionSummary {
             function_name: Some(value.ffqn.into()),
             created_at: Some(value.created_at.into()),
             first_scheduled_at: Some(value.first_scheduled_at.into()),
+            component_digest: Some(value.component_digest.into()),
         }
     }
 }
